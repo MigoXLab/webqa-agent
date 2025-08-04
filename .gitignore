@@ -1,0 +1,30 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/
+
+# Temp files
+./tmp/*
+/log/*
+*log
+*.log
+test.py
+
+# Data files
+report/
+reports/
+output/
+.pytest*
+test_cases_*.json
+
+.env
+
+# Environments
+.venv/
+venv/
+node_modules/
