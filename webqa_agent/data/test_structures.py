@@ -1,0 +1,293 @@
+from pydantic import BaseModel
+from typing import Dict, Any, List, Optional, Union, Tuple
+from datetime import datetime
+from webqa_agent.browser.config import DEFAULT_CONFIG
+from enum import Enum
+
+# 侧边栏标题
+CATEGORY_TITLES: Dict[str, str] = {
+    "function": "功能测试",
+    "ui": "UI测试",
+    "performance": "性能测试",
+    "security": "安全测试",
+}
+
+
+class TestCategory(str, Enum):
+    FUNCTION = "function"
+    UI = "ui"
+    SECURITY = "security"
+    PERFORMANCE = "performance"
+
+# 测试类型
+class TestType(str, Enum):
+    """Test type enumeration"""
+    UNKNOWN = "unknown"
+    BUTTON_TEST = "button_test"
+    UI_AGENT_LANGGRAPH = "ui_agent_langgraph"
+    UX_TEST = "ux_test"
+    LIGHTHOUSE = "lighthouse"
+    WEB_BASIC_CHECK = "web_basic_check"
+    SECURITY_TEST = "security_test"
+    SEO_TEST = "seo_test"
+
+
+class TestStatus(str, Enum):
+    """Test status enumeration"""
+    PENDING = "pending"
+    RUNNING = "running"
+    PASSED = "passed"
+    WARNING = "warning"
+    INCOMPLETED = "incompleted"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class TestConfiguration(BaseModel):
+    """Test configuration for parallel execution"""
+    test_id: Optional[str] = None
+    test_type: Optional[TestType] = TestType.WEB_BASIC_CHECK
+    test_name: Optional[str] = ""
+    enabled: Optional[bool] = True
+    browser_config: Optional[Dict[str, Any]] = DEFAULT_CONFIG
+    test_specific_config: Optional[Dict[str, Any]] = {}
+    timeout: Optional[int] = 300  # seconds
+    retry_count: Optional[int] = 0
+    dependencies: Optional[List[str]] = []  # test_ids that must complete first
+
+
+class TestExecutionContext(BaseModel):
+    """Execution context for a single test"""
+    test_config: TestConfiguration
+    session_id: str
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    status: Optional[TestStatus] = TestStatus.PENDING
+    error_message: Optional[str] = ""
+    retry_attempts: Optional[int] = 0
+
+    def start_execution(self):
+        """Mark test as started"""
+        self.start_time = datetime.now()
+        self.status = TestStatus.RUNNING
+
+    def complete_execution(self, success: bool = True, error_message: str = ""):
+        """Mark test as completed"""
+        self.end_time = datetime.now()
+        self.status = TestStatus.PASSED if success else TestStatus.FAILED
+        self.error_message = error_message
+
+    @property
+    def duration(self) -> Optional[float]:
+        """Get execution duration in seconds"""
+        if self.start_time and self.end_time:
+            return (self.end_time - self.start_time).total_seconds()
+        return None
+
+
+class SubTestScreenshot(BaseModel):
+    type: str
+    data: str  # base64 encoded image data
+
+
+class SubTestAction(BaseModel):
+    description: Optional[str]
+    index: int
+    success: bool
+
+
+class SubTestStep(BaseModel):
+    id: int
+    screenshots: Optional[List[SubTestScreenshot]] = []
+    modelIO: Optional[str] = ""
+    actions: Optional[List[SubTestAction]] = []
+    description: Optional[str] = ""
+    status: Optional[TestStatus] = TestStatus.PASSED
+    errors: Optional[str] = ""
+
+
+class SubTestReport(BaseModel):
+    title: str
+    issues: str
+
+
+class SubTestResult(BaseModel):
+    """
+    Fine-grained result for a sub test / test case
+    
+    TODO: Update type of `messages`
+    """
+    name: str
+    status: Optional[TestStatus] = TestStatus.PENDING
+    metrics: Optional[Dict[str, Any]] = {}
+    steps: Optional[List[SubTestStep]] = []  # Detailed execution steps
+    messages: Optional[Dict[str, Any]] = {}  # Browser monitoring data
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    final_summary: Optional[str] = ""
+    report: Optional[List[SubTestReport]] = []
+
+
+class TestResult(BaseModel):
+    """Isolated test result data"""
+    test_id: Optional[str] = ""
+    test_type: Optional[TestType] = TestType.UNKNOWN
+    test_name: Optional[str] = ""
+    module_name: Optional[str] = ""
+    status: Optional[TestStatus] = TestStatus.PENDING
+    # New field to indicate test category (function/ui/performance)
+
+    category: Optional[TestCategory] = ""
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    duration: Optional[float] = None
+
+    # Deprecated free-form dict; keep until callers migrated
+    results: Optional[Dict[str, Any]] = {}
+
+    # Structured list replacing the old 'results' field
+    sub_tests: Optional[List[SubTestResult]] = []
+
+    # Artifacts
+    logs: Optional[List[str]] = []
+    traces: Optional[List[str]] = []
+
+    # Error information
+    error_message: Optional[str] = ""
+    error_details: Optional[Dict[str, Any]] = {}
+
+    # Metrics
+    metrics: Optional[Dict[str, Union[int, float, str]]] = {}
+
+    def add_log(self, log_path: str):
+        """Add log file to results"""
+        self.logs.append(log_path)
+
+    def add_metric(self, key: str, value: Union[int, float, str]):
+        """Add metric to results"""
+        self.metrics[key] = value
+
+    def add_data(self, key: str, value: Any):
+        """Add data to results"""
+        self.results[key] = value
+
+
+class ParallelTestSession(BaseModel):
+    """Session data for parallel test execution"""
+    session_id: Optional[str] = None
+    target_url: Optional[str] = ""
+    llm_config: Optional[Dict[str, Any]] = {}
+
+    # Test configurations
+    test_configurations: Optional[List[TestConfiguration]] = []
+
+    # Execution tracking
+    test_contexts: Optional[Dict[str, TestExecutionContext]] = {}
+    test_results: Optional[Dict[str, TestResult]] = {}
+
+    # Session metadata
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    total_tests: Optional[int] = 0
+    completed_tests: Optional[int] = 0
+    failed_tests: Optional[int] = 0
+
+    # Aggregated results
+    aggregated_results: Optional[Dict[str, Any]] = {}
+    llm_summary: Optional[str] = ""
+    report_path: Optional[str] = ""
+    html_report_path: Optional[str] = ""
+
+    def add_test_configuration(self, test_config: TestConfiguration):
+        """Add test configuration to session"""
+        self.test_configurations.append(test_config)
+
+        # Create execution context
+        context = TestExecutionContext(test_config=test_config, session_id=self.session_id)
+        self.test_contexts[test_config.test_id] = context
+
+        # Initialize result
+        result = TestResult(
+            test_id=test_config.test_id,
+            test_type=test_config.test_type,
+            test_name=test_config.test_name,
+            status=TestStatus.PENDING
+        )
+        self.test_results[test_config.test_id] = result
+
+        self.total_tests += 1
+
+    def start_session(self):
+        """Start the test session"""
+        self.start_time = datetime.now()
+
+    def complete_session(self):
+        """Complete the test session"""
+        self.end_time = datetime.now()
+
+    def update_test_result(self, test_id: str, result: TestResult):
+        """Update test result"""
+        self.test_results[test_id] = result
+
+        # Update counters
+        if result.status == TestStatus.PASSED:
+            self.completed_tests += 1
+        elif result.status == TestStatus.FAILED:
+            self.failed_tests += 1
+
+    def get_test_by_type(self, test_type: TestType) -> List[TestConfiguration]:
+        """Get all tests of specific type"""
+        return [config for config in self.test_configurations if config.test_type == test_type]
+
+    def get_enabled_tests(self) -> List[TestConfiguration]:
+        """Get all enabled test configurations"""
+        return [config for config in self.test_configurations if config.enabled]
+
+    def get_summary_stats(self) -> Dict[str, Any]:
+        """Get session summary statistics"""
+        duration = None
+        if self.start_time and self.end_time:
+            duration = (self.end_time - self.start_time).total_seconds()
+
+        return {
+            "session_id": self.session_id,
+            "target_url": self.target_url,
+            "total_tests": self.total_tests,
+            "completed_tests": self.completed_tests,
+            "failed_tests": self.failed_tests,
+            "success_rate": self.completed_tests / self.total_tests if self.total_tests > 0 else 0,
+            "duration": duration,
+            "start_time": self.start_time.isoformat() if self.start_time else None,
+            "end_time": self.end_time.isoformat() if self.end_time else None
+        }
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert session to dictionary with grouped test results"""
+        # 基于 TestCategory 动态构建分组字典，便于未来扩展
+        grouped_results: Dict[str, Dict[str, Any]] = {}
+
+        # 先为所有已知枚举初始化空组，确保顺序 & 空数据也能输出
+        for cat in TestCategory:
+            key = f"{cat.value}_test_results"
+            grouped_results[key] = {
+                "title": CATEGORY_TITLES.get(cat.value, cat.name),
+                "items": []
+            }
+
+        # 将每个 TestResult 放入对应分组
+        for result in self.test_results.values():
+            key = f"{result.category.value}_test_results"
+            if key not in grouped_results:
+                # 新增的未知类别，自动创建分组并使用英文名作为 title
+                grouped_results[key] = {
+                    "title": CATEGORY_TITLES.get(result.category.value, result.category.name.title()),
+                    "items": []
+                }
+            grouped_results[key]["items"].append(result.dict())
+
+        return {
+            "session_info": self.get_summary_stats(),
+            "aggregated_results": self.aggregated_results,
+            "test_results": grouped_results,
+            "llm_summary": self.llm_summary
+        }

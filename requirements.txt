@@ -1,0 +1,15 @@
+playwright==1.52.0
+pillow
+pydantic
+langgraph
+langchain-openai
+langchain
+openai
+python-dotenv
+pycryptodome
+tldextract
+requests
+html2text
+oss2
+requests_toolbelt
+jinja2
