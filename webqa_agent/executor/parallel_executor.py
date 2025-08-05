@@ -4,6 +4,9 @@ from typing import Dict, Any, List, Optional, Callable
 from datetime import datetime
 import os
 
+# Session ID constants
+SECURITY_TEST_NO_SESSION_ID = "security_test_no_session"
+
 from webqa_agent.data import (
     TestType, TestStatus, TestConfiguration, 
     TestExecutionContext, TestResult, ParallelTestSession
@@ -14,7 +17,8 @@ from webqa_agent.executor.test_runners import (
     UXTestRunner, 
     LighthouseTestRunner,
     WebBasicCheckRunner,
-    ButtonTestRunner
+    ButtonTestRunner,
+    SecurityTestRunner
 )
 from webqa_agent.executor.result_aggregator import ResultAggregator
 from webqa_agent.utils.get_log import GetLog
@@ -35,6 +39,7 @@ class ParallelTestExecutor:
             TestType.LIGHTHOUSE: LighthouseTestRunner(),
             TestType.WEB_BASIC_CHECK: WebBasicCheckRunner(),
             TestType.BUTTON_TEST: ButtonTestRunner(),
+            TestType.SECURITY_TEST: SecurityTestRunner(),
         }
         
         # Execution tracking
@@ -207,6 +212,11 @@ class ParallelTestExecutor:
                     # Navigate to target URL
                     await session.navigate_to(test_session.target_url, cookies=test_config.test_specific_config.get("cookies", None))
                 
+                elif test_config.test_type == TestType.SECURITY_TEST:
+                    # Security tests don't need browser sessions, use a placeholder
+                    session = None
+                    test_context.session_id = SECURITY_TEST_NO_SESSION_ID
+                
                 else:
                     session = await self.session_manager.browser_session(test_config.browser_config)
                     test_context.session_id = session.session_id
@@ -274,7 +284,7 @@ class ParallelTestExecutor:
                 
             finally:
                 # Clean up browser session
-                if test_context.session_id:
+                if test_context.session_id and test_context.session_id != SECURITY_TEST_NO_SESSION_ID:
                     await self.session_manager.close_session(test_context.session_id)
     
     def _resolve_test_dependencies(self, tests: List[TestConfiguration]) -> List[List[TestConfiguration]]:
