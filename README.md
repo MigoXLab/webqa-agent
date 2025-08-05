@@ -22,9 +22,9 @@ cd webqa-agent
 cp config/config.yaml.example config/config.yaml
 # 编辑 config/config.yaml 配置文件
 
-# 3. 启动服务
-./start.sh --build      # 初次构建镜像，或者重新构建并启动 (代码/配置更新后)
-./start.sh --local      # 使用已有webqa-agent镜像快速启动
+# 3. 启动服务 for MacOS and Linux
+sh start.sh --build      # 初次构建镜像，或者重新构建并启动 (代码/配置更新后)
+sh start.sh --local      # 使用已有webqa-agent镜像快速启动
 ```
 
 ### 源码安装
@@ -53,7 +53,7 @@ Nuclei 安装
 下载地址: https://github.com/projectdiscovery/nuclei/releases/
 
 ```bash
-# macOS 安装
+# MacOS
 brew install nuclei
 
 # 其他系统请从上述下载地址获取对应架构的版本

@@ -293,22 +293,24 @@ class ParallelTestExecutor:
         Returns:
             List of test batches where each batch can run in parallel
         """
-        # Simple implementation - can be enhanced for complex dependency graphs
-        # For now, group tests by dependencies
-        
+        # dependencies for login
         independent_tests = [test for test in tests if not test.dependencies]
         dependent_tests = [test for test in tests if test.dependencies]
         
         batches = []
         
-        # First batch: independent tests
+        # First batches: independent tests (split by max_concurrent_tests)
         if independent_tests:
-            batches.append(independent_tests)
+            # Split independent tests into batches based on max_concurrent_tests
+            for i in range(0, len(independent_tests), self.max_concurrent_tests):
+                batch = independent_tests[i:i + self.max_concurrent_tests]
+                batches.append(batch)
         
-        # Additional batches for dependent tests
-        # For simplicity, run dependent tests in separate batches
+        # Additional batches for dependent tests (also split by max_concurrent_tests)
         if dependent_tests:
-            batches.append(dependent_tests)
+            for i in range(0, len(dependent_tests), self.max_concurrent_tests):
+                batch = dependent_tests[i:i + self.max_concurrent_tests]
+                batches.append(batch)
         
         return batches
     
