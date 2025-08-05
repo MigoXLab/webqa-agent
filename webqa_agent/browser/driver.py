@@ -60,6 +60,7 @@ class Driver:
             self.browser = await self.playwright.chromium.launch(
                 headless=browser_config["headless"],
                 args=[
+                    f'--no-sandbox',
                     f'--force-device-scale-factor=1',
                     f'--window-size={browser_config["viewport"]["width"]},{browser_config["viewport"]["height"]}',
                 ]

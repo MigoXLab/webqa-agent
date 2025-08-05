@@ -1,0 +1,12 @@
+{
+  "name": "webqa-agent",
+  "version": "0.1.0",
+  "description": "WebQA Agent - 全自动网页评估测试",
+  "dependencies": {
+    "lighthouse": "^11.0.0",
+    "chrome-launcher": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

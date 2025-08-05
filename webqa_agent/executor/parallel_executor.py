@@ -21,7 +21,6 @@ from webqa_agent.executor.test_runners import (
     SecurityTestRunner
 )
 from webqa_agent.executor.result_aggregator import ResultAggregator
-from webqa_agent.utils.get_log import GetLog
 
 
 class ParallelTestExecutor:

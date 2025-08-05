@@ -1,0 +1,25 @@
+target:
+  url: https://baidu.com
+  description: 测试搜索功能
+
+test_config: # 测试项配置
+  function_test:
+    enabled: True
+    type: ai  # default or ai
+  ux_test: 
+    enabled: True
+  performance_test:
+    enabled: True
+  security_test:
+    enabled: True
+
+llm_config: # 模型配置，当前仅支持 OpenAI 调用
+  model: gpt-4o-mini
+  api_key: 
+  base_url: 
+
+browser_config:
+  viewport: {"width": 1280, "height": 720}
+  headless: False  # Docker环境会自动覆盖为True
+  language: zh-CN
+  cookies: []

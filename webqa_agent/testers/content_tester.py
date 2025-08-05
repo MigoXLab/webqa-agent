@@ -213,7 +213,7 @@ class PageContentTest:
                                 description=user_case[:4]+": "+ issue_desc,
                                 modelIO=suggestion,
                                 screenshots=[screenshot],
-                                # status=TestStatus.FAILED if suggestion else TestStatus.PASSED
+                                status=TestStatus.FAILED if suggestion else TestStatus.PASSED
                             ))
                             id_counter += 1
                 

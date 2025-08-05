@@ -234,7 +234,7 @@ class UXTestRunner(BaseTestRunner):
             test_type=test_config.test_type,
             test_name=test_config.test_name,
             status=TestStatus.RUNNING,
-            category=TestCategory.UI
+            category=TestCategory.UX
         )
 
         try:

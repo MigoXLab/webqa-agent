@@ -30,7 +30,7 @@ class GetLog:
                 cls.log_folder = shared_log_folder
             else:
                 # Get current time and create corresponding log directory
-                log_dir = "./log"
+                log_dir = "./logs"
                 current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
                 cls.log_folder = os.path.join(log_dir, current_time)
                 

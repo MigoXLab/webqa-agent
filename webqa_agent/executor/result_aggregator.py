@@ -233,7 +233,7 @@ class ResultAggregator:
             # Determine report directory
             if report_dir is None:
                 timestamp = os.getenv("WEBQA_TIMESTAMP")
-                report_dir = f"./reports/report_{timestamp}"
+                report_dir = f"./reports/test_{timestamp}"
             os.makedirs(report_dir, exist_ok=True)
             
             json_path = os.path.join(report_dir, "test_results.json")
