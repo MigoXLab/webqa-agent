@@ -142,6 +142,7 @@ class PageContentTest:
             page_img = True
             id_counter = 0
             for user_case in self.user_cases:
+                all_issues = []
                 prompt = self._build_prompt(user_case, id_map)
                 test_page_content = await self._get_llm_response(
                     prompt, page_img, browser_screenshot
@@ -185,7 +186,6 @@ class PageContentTest:
                         result.status = TestStatus.FAILED
 
                     # 组织 steps 信息和收集 issue 信息
-                    all_issues = []
                     if summary_text:
                         all_issues.append(f"总结: {summary_text}")
                     
@@ -213,7 +213,7 @@ class PageContentTest:
                                 description=user_case[:4]+": "+ issue_desc,
                                 modelIO=suggestion,
                                 screenshots=[screenshot],
-                                status=TestStatus.FAILED if suggestion else TestStatus.PASSED
+                                # status=TestStatus.FAILED if suggestion else TestStatus.PASSED
                             ))
                             id_counter += 1
                 

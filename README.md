@@ -21,7 +21,12 @@ cd webqa-agent
 pip install -r requirements.txt
 playwright install
 
+# Lighthouse
 npm init -y && npm install lighthouse chrome-launcher
+
+# nuclei
+brew install nuclei
+nuclei -ut -v
 ```
 
 ## 使用说明

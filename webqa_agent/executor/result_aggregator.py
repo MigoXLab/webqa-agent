@@ -233,7 +233,7 @@ class ResultAggregator:
             # Determine report directory
             if report_dir is None:
                 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                report_dir = f"./reports/test_{timestamp}"
+                report_dir = f"./reports/report_{timestamp}"
             os.makedirs(report_dir, exist_ok=True)
             
             json_path = os.path.join(report_dir, "test_results.json")

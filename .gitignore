@@ -28,3 +28,4 @@ test_cases_*.json
 .venv/
 venv/
 node_modules/
+package*.json

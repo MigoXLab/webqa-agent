@@ -4,6 +4,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv()
+from test_cookie import get_sso_token_sync
 
 from webqa_agent.executor import ParallelMode
 
@@ -18,8 +19,10 @@ async def example():
         "function_test_type": "ai",  # "default" or "ai"
         "ui_test_enabled": False,
         "performance_test_enabled": False,
-        "security_test_enabled": True,
+        "security_test_enabled": False,
     }
+    token, cookies = get_sso_token_sync("15216760475","1qaz@WSX")
+    print(cookies)
 
     test_configurations = []
 
@@ -35,8 +38,8 @@ async def example():
                     "headless": False
                 },
                 "test_specific_config": {
-                    "business_objectives": "测试页面导航栏功能，只生成1个case",
-                    # "cookies": cookies
+                    "business_objectives": "首先你需要做的操作是关闭弹窗，测试页面文件渲染功能，只生成1个case，",
+                    "cookies": cookies
                 }
             })
         else:  # default function tests
@@ -48,7 +51,9 @@ async def example():
                         "viewport": {"width": 1280, "height": 720},
                         "headless": False
                     },
-                    "test_specific_config": {}
+                    "test_specific_config": {
+                        "cookies": cookies
+                    }
                 })
                 test_configurations.append({
                     "test_type": "web_basic_check",
@@ -58,7 +63,9 @@ async def example():
                         "viewport": {"width": 1280, "height": 720},
                         "headless": False
                     },
-                    "test_specific_config": {}
+                    "test_specific_config": {
+                        "cookies": cookies
+                    }
                 })
 
     # ---------- UI tests ----------
@@ -71,7 +78,9 @@ async def example():
                 "viewport": {"width": 1366, "height": 768},
                 "headless": False
             },
-            "test_specific_config": {}
+            "test_specific_config": {
+                "cookies": cookies
+            }
         })
 
     # ---------- Performance tests ----------
@@ -83,7 +92,9 @@ async def example():
             "browser_config": {
                 "viewport": {"width": 1920, "height": 1080},
             },
-            "test_specific_config": {}
+            "test_specific_config": {
+                "cookies": cookies
+            }
         })
 
     # ---------- Security tests (optional) ----------
@@ -98,7 +109,8 @@ async def example():
                 "headless": True  
             },
             "test_specific_config": {
-                "include_severity_scans": True
+                "include_severity_scans": True,
+                "cookies": cookies
             }
         })
 
@@ -107,7 +119,7 @@ async def example():
     
     try:
         await parallel_mode.run(
-            url="https://baidu.com/",
+            url="https://mineru.net/OpenSourceTools/Extractor/PDF/495a7ef8-fa92-4534-a54f-8e39e2d69fbf?current=1&pageSize=20&total=0",
             llm_config=llm_config,
             test_configurations=test_configurations
         )

@@ -14,7 +14,7 @@ from webqa_agent.testers import (
     WebAccessibilityTest, PageTextTest,
     PageContentTest, PageButtonTest, LighthouseMetricsTest
 )
-from webqa_agent.data.test_structures import SubTestResult, TestCategory
+from webqa_agent.data.test_structures import SubTestResult, SubTestReport, TestCategory
 
 
 class BaseTestRunner(ABC):
@@ -496,22 +496,75 @@ class SecurityTestRunner(BaseTestRunner):
             # 创建按严重程度的子测试
             for severity in ["critical", "high", "medium", "low", "info"]:
                 count = severity_counts.get(severity, 0)
+                
+                # 获取该严重程度的具体发现
+                severity_findings = [f for f in finding_details if f.get("severity") == severity]
+                
+                # 构建报告内容
+                if count == 0:
+                    issues_text = f"未发现{severity.upper()}级别安全问题"
+                else:
+                    # 取前3个问题的名称作为示例
+                    sample_issues = [f["name"] for f in severity_findings[:3]]
+                    issues_text = f"发现{count}个{severity.upper()}级别安全问题"
+                    if sample_issues:
+                        issues_text += f"：{', '.join(sample_issues)}"
+                        if count > 3:
+                            issues_text += f" 等{count}个问题"
+                
                 sub_tests.append(
                     SubTestResult(
                         name=f"{severity.upper()}级别安全问题扫描",
                         status=TestStatus.PASSED,
-                        metrics={"findings_count": count}
+                        metrics={"findings_count": count},
+                        report=[SubTestReport(
+                            title=f"{severity.upper()}级别安全漏洞扫描",
+                            issues=issues_text
+                        )]
                     )
                 )
             
             # 创建扫描类型的子测试
             for scan_type, description in {**self.SCAN_TAGS, **self.PROTOCOL_SCANS}.items():
                 type_findings = [f for f in finding_details if scan_type in f.get("template_id", "").lower()]
+                type_count = len(type_findings)
+                
+                # 构建扫描类型报告内容
+                if type_count == 0:
+                    issues_text = f"{description}：未发现相关安全问题"
+                else:
+                    # 按严重程度统计该类型的发现
+                    type_severity_counts = {}
+                    for finding in type_findings:
+                        severity = finding.get("severity", "unknown")
+                        type_severity_counts[severity] = type_severity_counts.get(severity, 0) + 1
+                    
+                    severity_summary = []
+                    for sev in ["critical", "high", "medium", "low", "info"]:
+                        if type_severity_counts.get(sev, 0) > 0:
+                            severity_summary.append(f"{sev.upper()}级{type_severity_counts[sev]}个")
+                    
+                    issues_text = f"{description}：发现{type_count}个问题"
+                    if severity_summary:
+                        issues_text += f"（{', '.join(severity_summary)}）"
+                    
+                    # 添加具体问题示例（最多3个）
+                    if type_findings:
+                        sample_names = [f["name"] for f in type_findings[:2]]
+                        if sample_names:
+                            issues_text += f"，包括：{', '.join(sample_names)}"
+                            if type_count > 2:
+                                issues_text += " 等"
+                
                 sub_tests.append(
                     SubTestResult(
                         name=f"{description}",
                         status=TestStatus.PASSED,
-                        metrics={"findings_count": len(type_findings)}
+                        metrics={"findings_count": type_count},
+                        report=[SubTestReport(
+                            title=description,
+                            issues=issues_text
+                        )]
                     )
                 )
             
@@ -613,14 +666,14 @@ class SecurityTestRunner(BaseTestRunner):
                 tasks.append(task)
         
         # 并行执行所有扫描
-        logging.info(f"开始并行执行 {len(tasks)} 个安全扫描任务...")
+        logging.info(f"Start {len(tasks)} security scan tasks...")
         scan_results = await asyncio.gather(*tasks, return_exceptions=True)
         
         # 处理结果
         results = []
         for result in scan_results:
             if isinstance(result, Exception):
-                logging.error(f"扫描任务异常: {result}")
+                logging.error(f"Scan task failed: {result}")
                 continue
             results.append(result)
         
@@ -690,7 +743,7 @@ class SecurityTestRunner(BaseTestRunner):
                                 except json.JSONDecodeError:
                                     continue
             except Exception as e:
-                logging.error(f"读取结果文件 {json_file} 失败: {e}")
+                logging.error(f"Failed to read result file {json_file}: {e}")
         
         return all_results
     
