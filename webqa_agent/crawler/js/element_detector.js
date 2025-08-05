@@ -1,3 +1,10 @@
+// This file is modified from:
+// https://github.com/browser-use/browser-use/browser_use/dom/dom_tree/index.js
+//
+// Copyright (c) 2024 Gregor Zunic
+//
+// Licensed under the MIT License
+
 (function () {
         window._highlight = window._highlight ?? true;            // RenderHighlight Switch
         window._highlightText = window._highlightText ?? false;   // RenderTextHighlight Switch
