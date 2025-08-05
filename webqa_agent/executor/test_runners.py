@@ -53,6 +53,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
             await parallel_tester.initialize()
 
             business_objectives = test_config.test_specific_config.get("business_objectives", "")
+            logging.info(f"AI 智能测试业务目标: {business_objectives}")
 
             cookies = test_config.test_specific_config.get("cookies")
 

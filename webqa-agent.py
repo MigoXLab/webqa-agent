@@ -26,10 +26,15 @@ def find_config_file(args_config=None):
             raise FileNotFoundError(f"❌ 指定的配置文件不存在: {args_config}")
     
     # 2. 按优先级搜索默认位置
+    current_dir = os.getcwd()
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    
     default_paths = [
-        'config/config.yaml',        # Docker挂载 + 本地开发主要位置
-        'config.yaml',               # 本兼容位置
-        '/app/config/config.yaml'
+        os.path.join(current_dir, 'config', 'config.yaml'),        # 当前目录下的config
+        os.path.join(script_dir, 'config', 'config.yaml'),         # 脚本目录下的config
+        os.path.join(current_dir, 'config.yaml'),                  # 当前目录兼容位置
+        os.path.join(script_dir, 'config.yaml'),                   # 脚本目录兼容位置
+        '/app/config/config.yaml'                                  # Docker容器内绝对路径
     ]
     
     for path in default_paths:
@@ -73,17 +78,28 @@ async def check_playwright_browsers_async():
 
 def check_lighthouse_installation():
     """检查 Lighthouse 是否正确安装"""
+    # 获取项目根目录和当前工作目录
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    current_dir = os.getcwd()
+    
+    # 判断操作系统类型，Windows下lighthouse是.cmd文件
+    is_windows = os.name == 'nt'
+    lighthouse_exe = 'lighthouse.cmd' if is_windows else 'lighthouse'
+    
     # 可能的lighthouse路径（本地安装优先）
     lighthouse_paths = [
-        './node_modules/.bin/lighthouse',     # 本地安装路径
-        'node_modules/.bin/lighthouse',       # 相对路径
-        '/app/node_modules/.bin/lighthouse',  # Docker容器内绝对路径
-        'lighthouse'                          # 全局安装路径（兜底）
+        os.path.join(current_dir, 'node_modules', '.bin', lighthouse_exe),     # 当前目录本地安装
+        os.path.join(script_dir, 'node_modules', '.bin', lighthouse_exe),      # 脚本目录本地安装
+        'lighthouse'                                                           # 全局安装路径（兜底）
     ]
+    
+    # 只在非Windows环境下添加Docker路径
+    if not is_windows:
+        lighthouse_paths.insert(-1, os.path.join('/app', 'node_modules', '.bin', 'lighthouse'))
     
     for lighthouse_path in lighthouse_paths:
         try:
-            result = subprocess.run([lighthouse_path, '--version'], 
+            result = subprocess.run([lighthouse_path, '--version'],
                                   capture_output=True, text=True, timeout=10)
             if result.returncode == 0:
                 version = result.stdout.strip()
@@ -191,13 +207,17 @@ def build_test_configurations(cfg, cookies=None):
 
     # function test
     if tconf.get("function_test", {}).get("enabled"):
+        
         if tconf["function_test"].get("type") == "ai":
             tests.append({
                 "test_type": "ui_agent_langgraph",
                 "test_name": "智能功能测试",
                 "enabled": True,
                 "browser_config": base_browser,
-                "test_specific_config": {"cookies": cookies},
+                "test_specific_config": {
+                    "cookies": cookies,
+                    "business_objectives": tconf["function_test"].get("business_objectives", "")
+                    },
             })
         else:
             tests += [
@@ -257,38 +277,73 @@ async def run_tests(cfg):
     if is_docker:
         print("🐳 Docker模式：自动启用headless浏览器")
     
-    # 1. 检查 Playwright 浏览器
-    ok = await check_playwright_browsers_async()
-    if not ok:
-        print("请手动执行：`playwright install` 来安装浏览器二进制，然后重试。", file=sys.stderr)
+    # 1. 根据配置检查所需工具
+    tconf = cfg.get("test_config", {})
+    
+    # 显示启用的测试类型
+    enabled_tests = []
+    if tconf.get("function_test", {}).get("enabled"):
+        test_type = tconf.get("function_test", {}).get("type", "default")
+        enabled_tests.append(f"功能测试({test_type})")
+    if tconf.get("ux_test", {}).get("enabled"):
+        enabled_tests.append("用户体验测试")
+    if tconf.get("performance_test", {}).get("enabled"):
+        enabled_tests.append("性能测试")
+    if tconf.get("security_test", {}).get("enabled"):
+        enabled_tests.append("安全测试")
+    
+    if enabled_tests:
+        print(f"📋 启用的测试类型: {', '.join(enabled_tests)}")
+        print("🔧 正在根据配置检查所需工具...")
+    else:
+        print("⚠️  未启用任何测试类型，请检查配置文件")
         sys.exit(1)
     
-    # 2. 检查 Lighthouse 安装
-    lighthouse_ok = check_lighthouse_installation()
-    if not lighthouse_ok:
-        print("请确认 Lighthouse 已正确安装：`npm install lighthouse chrome-launcher`", file=sys.stderr)
-        sys.exit(1)
+    # 检查是否需要浏览器（大部分测试都需要）
+    needs_browser = any([
+        tconf.get("function_test", {}).get("enabled"),
+        tconf.get("ux_test", {}).get("enabled"), 
+        tconf.get("performance_test", {}).get("enabled"),
+        tconf.get("security_test", {}).get("enabled")
+    ])
     
-    # 3. 检查 Nuclei 安装
-    nuclei_ok = check_nuclei_installation()
-    if not nuclei_ok:
-        print("请确认 Nuclei 已正确安装并在 PATH 中", file=sys.stderr)
-        sys.exit(1)
+    if needs_browser:
+        print("🔍 检查 Playwright 浏览器...")
+        ok = await check_playwright_browsers_async()
+        if not ok:
+            print("请手动执行：`playwright install` 来安装浏览器二进制，然后重试。", file=sys.stderr)
+            sys.exit(1)
+    
+    # 检查是否需要 Lighthouse（性能测试）
+    if tconf.get("performance_test", {}).get("enabled"):
+        print("🔍 检查 Lighthouse 安装...")
+        lighthouse_ok = check_lighthouse_installation()
+        if not lighthouse_ok:
+            print("请确认 Lighthouse 已正确安装：`npm install lighthouse chrome-launcher`", file=sys.stderr)
+            sys.exit(1)
+    
+    # 检查是否需要 Nuclei（安全测试）
+    if tconf.get("security_test", {}).get("enabled"):
+        print("🔍 检查 Nuclei 安装...")
+        nuclei_ok = check_nuclei_installation()
+        if not nuclei_ok:
+            print("请确认 Nuclei 已正确安装并在 PATH 中", file=sys.stderr)
+            sys.exit(1)
 
-    # 4. 验证和构建 LLM 配置
+    # 验证和构建 LLM 配置
     try:
         llm_config = validate_and_build_llm_config(cfg)
     except ValueError as e:
         print(f"[ERROR] {e}", file=sys.stderr)
         sys.exit(1)
 
-    # 5. 构造 test_configurations
+    # 构造 test_configurations
     cookies = [] 
     test_configurations = build_test_configurations(cfg, cookies=cookies)
 
     target_url = cfg.get("target", {}).get("url", "")
 
-    # 6. 调用执行器
+    # 调用执行器
     try:
         parallel_mode = ParallelMode([], max_concurrent_tests=4)  # 依据实际调整
         results, report_path, html_report_path = await parallel_mode.run(

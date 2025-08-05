@@ -35,7 +35,7 @@ class ParallelTestExecutor:
         self.test_runners = {
             TestType.UI_AGENT_LANGGRAPH: UIAgentLangGraphRunner(),
             TestType.UX_TEST: UXTestRunner(),
-            TestType.LIGHTHOUSE: LighthouseTestRunner(),
+            TestType.PERFORMANCE: LighthouseTestRunner(),
             TestType.WEB_BASIC_CHECK: WebBasicCheckRunner(),
             TestType.BUTTON_TEST: ButtonTestRunner(),
             TestType.SECURITY_TEST: SecurityTestRunner(),
