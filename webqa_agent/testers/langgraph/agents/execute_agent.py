@@ -10,6 +10,7 @@ from langchain_openai import ChatOpenAI
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 import logging
 import re
+import datetime
 from webqa_agent.crawler.deep_crawler import DeepCrawler
 
 
@@ -35,7 +36,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     # No need to set test name here as it's already handled
 
     system_prompt_string = get_execute_system_prompt(case)
-    logging.info(f"Generated system prompt length: {len(system_prompt_string)} characters")
+    logging.debug(f"Generated system prompt length: {len(system_prompt_string)} characters")
 
     llm_config = ui_tester_instance.llm.llm_config
 
@@ -66,7 +67,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
     # Create the agent
     agent = create_tool_calling_agent(llm, tools, prompt)
-    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, max_iterations=3)
+    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, max_iterations=2)
     logging.info("AgentExecutor created successfully")
 
     # --- Execute Preamble Actions to Restore State ---
@@ -77,7 +78,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         
         for i, step in enumerate(preamble_actions):
             if isinstance(step, dict):
-                instruction_to_execute = step.get('ai')
+                instruction_to_execute = step.get('action')
             else:
                 instruction_to_execute = step
             if not instruction_to_execute:
@@ -161,11 +162,18 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             
             try:
                 # Use a simple invoke, as preamble steps should be straightforward
+                logging.info(f"Executing preamble action {i+1} - Calling Agent...")
+                start_time = datetime.datetime.now()
+                
                 result = await agent_executor.ainvoke({"messages": preamble_messages})
                 preamble_messages = result.get("messages", [])
-
+                
+                end_time = datetime.datetime.now()
+                duration = (end_time - start_time).total_seconds()
+                
                 tool_output = result.get("output", "")
-                logging.info(f"Preamble action {i+1} result: {tool_output[:200]}...")
+                logging.info(f"Preamble action {i+1} completed in {duration:.2f} seconds")
+                logging.debug(f"Preamble action {i+1} result: {tool_output[:200]}...")
                 preamble_messages.append(AIMessage(content=tool_output))
 
                 if "[failure]" in tool_output.lower():
@@ -190,8 +198,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     total_steps = len(case.get("steps", []))
 
     for i, step in enumerate(case.get("steps", [])):
-        instruction_to_execute = step.get('ai') or step.get('aiAssert')
-        step_type = "Action" if step.get('ai') else "Assertion"
+        instruction_to_execute = step.get('action') or step.get('verify')
+        step_type = "Action" if step.get('action') else "Assertion"
         
         logging.info(f"=== Executing Step {i+1}/{total_steps} ({step_type}) ===")
         logging.info(f"Step instruction: {instruction_to_execute}")
@@ -243,7 +251,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             else:
                 # It's an AI message, a simple HumanMessage, or the last message; keep as is.
                 pruned_messages.append(msg)
-        logging.info(f"Pruned message history for token optimization. Original length: {len(current_messages)}, Pruned length: {len(pruned_messages)}")
+        logging.debug(f"Pruned message history for token optimization. Original length: {len(current_messages)}, Pruned length: {len(pruned_messages)}")
         # ---------------------------------------------
 
         # --- Tool Choice Masking ---
@@ -258,15 +266,22 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
         try:
             # The agent's history includes all prior messages
+            logging.info(f"Step {i+1} - Calling Agent to execute {step_type}...")
+            start_time = datetime.datetime.now()
+            
             result = await agent_executor.ainvoke(
                 {"messages": pruned_messages},
                 config={"configurable": {"tool_choice": tool_choice}} if tool_choice else {}
             )
-
+            
+            end_time = datetime.datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            
             messages = result.get("messages", [])
-
             tool_output = result.get("output", "")
-            logging.info(f"Step {i+1} tool output: {tool_output}")
+            
+            logging.info(f"Step {i+1} {step_type} completed in {duration:.2f} seconds")
+            logging.debug(f"Step {i+1} tool output: {tool_output}")
             messages.append(AIMessage(content=tool_output))
 
             # Check for max iterations, which indicates a failure to complete the step.
@@ -284,12 +299,12 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
     # If the loop finishes without an early exit, get a final summary
     if "FINAL_SUMMARY:" not in final_summary:
-        logging.info("All test steps completed, requesting final summary")
+        logging.debug("All test steps completed, requesting final summary")
         messages.append(HumanMessage(content="All planned steps have been executed. Please provide a final summary of the test case execution, assessing whether the overall objective was met based on the results."))
         try:
             summary_result = await agent_executor.ainvoke({"messages": messages})
             final_summary = summary_result.get("output", "Completed all steps, but no summary was generated.")
-            logging.info(f"Final summary received: {final_summary}")
+            logging.debug(f"Final summary received: {final_summary}")
         except Exception as e:
             logging.error(f"Exception during final summary generation: {str(e)}")
             final_summary = f"Completed all steps, but summary generation failed: {str(e)}"

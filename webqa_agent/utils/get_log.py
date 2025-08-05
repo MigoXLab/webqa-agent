@@ -33,6 +33,9 @@ class GetLog:
                 log_dir = "./log"
                 current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
                 cls.log_folder = os.path.join(log_dir, current_time)
+                
+                # Store timestamp in environment variable
+                os.environ['WEBQA_TIMESTAMP'] = current_time
             
             # Create log directory if it doesn't exist
             if not os.path.exists(cls.log_folder):

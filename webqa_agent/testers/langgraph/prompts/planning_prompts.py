@@ -185,8 +185,8 @@ Each test case must include these standardized components:
 - **`priority`**: Test priority level (Critical, High, Medium, Low) based on risk assessment
 - **`test_data_requirements`**: Specification of required test data and setup conditions
 - **`steps`**: Detailed test execution steps with clear action/verification pairs
-  - `ai`: Action instructions with specific, measurable activities
-  - `aiAssert`: Validation instructions with precise success criteria
+  - `action`: Action instructions with specific, measurable activities
+  - `verify`: Validation instructions with precise success criteria
 - **`preamble_actions`**: Optional setup steps to establish required test preconditions
 - **`reset_session`**: Session management flag for test isolation strategy
 - **`success_criteria`**: Measurable, verifiable conditions that define test pass/fail status
@@ -233,13 +233,13 @@ Each test case must include these standardized components:
   "test_data_requirements": "Valid email format, password meeting complexity requirements, unique username",
   "preamble_actions": [],
   "steps": [
-    {{"ai": "Navigate to the registration form by clicking the 'Sign Up' button"}},
-    {{"ai": "Enter valid email address 'testuser@example.com' in the email field"}},
-    {{"ai": "Enter secure password 'TestPass123!' in the password field"}},
-    {{"ai": "Enter matching password in the confirm password field"}},
-    {{"ai": "Click the 'Create Account' button to submit registration"}},
-    {{"aiAssert": "Verify successful registration confirmation message is displayed"}},
-    {{"aiAssert": "Verify user is redirected to welcome or dashboard page"}}
+    {{"action": "Navigate to the registration form by clicking the 'Sign Up' button"}},
+    {{"action": "Enter valid email address 'testuser@example.com' in the email field"}},
+    {{"action": "Enter secure password 'TestPass123!' in the password field"}},
+    {{"action": "Enter matching password in the confirm password field"}},
+    {{"action": "Click the 'Create Account' button to submit registration"}},
+    {{"verify": "Verify successful registration confirmation message is displayed"}},
+    {{"verify": "Verify user is redirected to welcome or dashboard page"}}
   ],
   "reset_session": true,
   "success_criteria": [
@@ -260,15 +260,15 @@ Each test case must include these standardized components:
   "priority": "Medium",
   "test_data_requirements": "Empty or invalid data for required fields",
   "preamble_actions": [
-    {{"ai": "Navigate to the target form page"}}
+    {{"action": "Navigate to the target form page"}}
   ],
   "steps": [
-    {{"ai": "Attempt to submit form with required fields left empty"}},
-    {{"aiAssert": "Verify appropriate validation messages appear for each required field"}},
-    {{"aiAssert": "Verify form submission is prevented until all required fields are completed"}},
-    {{"ai": "Fill in all required fields with valid data"}},
-    {{"ai": "Submit the completed form"}},
-    {{"aiAssert": "Verify successful form submission and appropriate success feedback"}}
+    {{"action": "Attempt to submit form with required fields left empty"}},
+    {{"verify": "Verify appropriate validation messages appear for each required field"}},
+    {{"verify": "Verify form submission is prevented until all required fields are completed"}},
+    {{"action": "Fill in all required fields with valid data"}},
+    {{"action": "Submit the completed form"}},
+    {{"verify": "Verify successful form submission and appropriate success feedback"}}
   ],
   "reset_session": false,
   "success_criteria": [
@@ -289,12 +289,12 @@ Each test case must include these standardized components:
   "test_data_requirements": "Empty or invalid data for required fields",
   "preamble_actions": [],
   "steps": [
-    {{"ai": "Attempt to submit form with required fields left empty"}},
-    {{"aiAssert": "Verify appropriate validation messages appear for each required field"}},
-    {{"aiAssert": "Verify form submission is prevented until all required fields are completed"}},
-    {{"ai": "Fill in all required fields with valid data"}},
-    {{"ai": "Submit the completed form"}},
-    {{"aiAssert": "Verify successful form submission and appropriate success feedback"}}
+    {{"action": "Attempt to submit form with required fields left empty"}},
+    {{"verify": "Verify appropriate validation messages appear for each required field"}},
+    {{"verify": "Verify form submission is prevented until all required fields are completed"}},
+    {{"action": "Fill in all required fields with valid data"}},
+    {{"action": "Submit the completed form"}},
+    {{"verify": "Verify successful form submission and appropriate success feedback"}}
   ],
   "reset_session": true,
   "success_criteria": [
@@ -318,13 +318,13 @@ Each test case must include these standardized components:
   "test_data_requirements": "Valid search terms, invalid search terms for negative testing",
   "preamble_actions": [],
   "steps": [
-    {{"ai": "Enter valid search term 'LangGraph documentation' in the search field"}},
-    {{"ai": "Click the search button or press Enter to initiate search"}},
-    {{"aiAssert": "Verify loading indicator appears during search processing"}},
-    {{"aiAssert": "Verify search results are displayed with relevant content"}},
-    {{"aiAssert": "Verify result count and pagination if applicable"}},
-    {{"ai": "Perform search with term that yields no results"}},
-    {{"aiAssert": "Verify appropriate 'no results found' message is displayed"}}
+    {{"action": "Enter valid search term 'LangGraph documentation' in the search field"}},
+    {{"action": "Click the search button or press Enter to initiate search"}},
+    {{"verify": "Verify loading indicator appears during search processing"}},
+    {{"verify": "Verify search results are displayed with relevant content"}},
+    {{"verify": "Verify result count and pagination if applicable"}},
+    {{"action": "Perform search with term that yields no results"}},
+    {{"verify": "Verify appropriate 'no results found' message is displayed"}}
   ],
   "reset_session": true,
   "success_criteria": [
@@ -371,8 +371,8 @@ Your response must follow this exact structure:
     "test_data_requirements": "data_requirements_specification",
     "preamble_actions": [optional_setup_steps],
     "steps": [
-      {{"ai": "specific_action_instruction"}},
-      {{"aiAssert": "precise_validation_instruction"}}
+      {{"action": "specific_action_instruction"}},
+      {{"verify": "precise_validation_instruction"}}
     ],
     "reset_session": boolean_isolation_flag,
     "success_criteria": ["measurable_success_conditions"],
@@ -584,8 +584,8 @@ IF (len(completed_cases) < len(current_plan)
       "test_category": "category_classification",
       "priority": "priority_based_on_risk_assessment",
       "steps": [
-        {{"ai": "action_instruction"}},
-        {{"aiAssert": "validation_instruction"}}
+        {{"action": "action_instruction"}},
+        {{"verify": "validation_instruction"}}
       ],
       "reset_session": boolean_flag,
       "success_criteria": ["measurable_success_conditions"]
