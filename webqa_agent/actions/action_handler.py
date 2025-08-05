@@ -1,17 +1,12 @@
-# -*- coding: utf-8 -*-
-from __future__ import annotations
-
 import base64
 import time
 import os
 import json
 import asyncio
-from typing import Tuple, Optional, Dict, List, Any, Union
-from webqa_agent.browser.driver import *
-from playwright.sync_api import Page
-from webqa_agent.utils.get_log import GetLog
 import logging
-
+from typing import Optional, Dict, List, Any, Union
+from webqa_agent.browser.driver import *
+from playwright.async_api import Page
 
 class ActionHandler:
     def __init__(self):
@@ -20,7 +15,7 @@ class ActionHandler:
         self.driver = None
         self.page = None
 
-    async def initialize(self, page: Page | None = None, driver: "Driver" | None = None):
+    async def initialize(self, page: Page | None = None, driver = None):
         if page is not None:
             self.page = page
             if driver is not None:

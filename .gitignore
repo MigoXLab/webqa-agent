@@ -22,9 +22,12 @@ output/
 .pytest*
 test_cases_*.json
 
-.env
-
 # Environments
 .venv/
 venv/
 node_modules/
+package-lock*.json
+
+#config
+.env
+config/config*.yaml

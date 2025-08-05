@@ -7,7 +7,7 @@ from enum import Enum
 # 侧边栏标题
 CATEGORY_TITLES: Dict[str, str] = {
     "function": "功能测试",
-    "ui": "UI测试",
+    "ux": "UX测试",
     "performance": "性能测试",
     "security": "安全测试",
 }
@@ -15,7 +15,7 @@ CATEGORY_TITLES: Dict[str, str] = {
 
 class TestCategory(str, Enum):
     FUNCTION = "function"
-    UI = "ui"
+    UX = "ux"
     SECURITY = "security"
     PERFORMANCE = "performance"
 

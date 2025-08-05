@@ -102,8 +102,8 @@ class LLMPrompt:
                 distance: null | number 
             }} 
             }}
-            * To scroll some specific element, put the element at the center of the region in the \`locate\` field. If it's a page scroll, put \`null\` in the \`locate\` field. 
-            * \`param\` is required in this action. If some fields are not specified, use direction \`down\`, \`once\` scroll type, and \`null\` distance.
+            * To scroll some specific element, put the element at the center of the region in the `locate` field. If it's a page scroll, put `null` in the `locate` field. 
+            * `param` is required in this action. If some fields are not specified, use direction `down`, `once` scroll type, and `null` distance.
         - type: 'GetNewPage', get the new page
         * {{ param: null }}
         * use this action when the instruction is a "get new page" statement or "open in new tab" or "open in new window".
