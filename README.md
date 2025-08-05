@@ -39,12 +39,29 @@ cd webqa-agent
 pip install -r requirements.txt
 playwright install
 
-# Lighthouse
+```
+
+Lighthouse 安装
+```bash
+# Lighthouse node.js>=18.0.0 
 npm init -y && npm install lighthouse chrome-launcher
 
-# nuclei for mac
+```
+
+Nuclei 安装
+
+下载地址: https://github.com/projectdiscovery/nuclei/releases/
+
+```bash
+# macOS 安装
 brew install nuclei
-nuclei -ut -v
+
+# 其他系统请从上述下载地址获取对应架构的版本
+
+# 安装后更新模板并验证
+nuclei -ut -v          # 更新nuclei模板
+nuclei -version        # 验证安装成功
+
 ```
 
 ## 使用说明
@@ -68,8 +85,8 @@ test_config: # 测试项配置
   security_test:
     enabled: False
 
-llm_config: # 模型配置，当前仅支持 OpenAI 调用
-  model: gpt-4o-mini
+llm_config: # 视觉模型配置，当前仅支持 OpenAI sdk格式兼容
+  model: gpt-4.1-mini  # 推荐使用
   api_key: your_api_key 
   base_url: https://api.example.com/v1 
 

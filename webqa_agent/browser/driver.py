@@ -60,7 +60,10 @@ class Driver:
             self.browser = await self.playwright.chromium.launch(
                 headless=browser_config["headless"],
                 args=[
-                    f'--no-sandbox',
+                    '--disable-dev-shm-usage',  # Mitigate shared memory issues in Docker
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-gpu',
                     f'--force-device-scale-factor=1',
                     f'--window-size={browser_config["viewport"]["width"]},{browser_config["viewport"]["height"]}',
                 ]

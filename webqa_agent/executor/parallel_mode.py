@@ -94,7 +94,7 @@ class ParallelMode():
         mapping = {
             "ui_agent_langgraph": TestType.UI_AGENT_LANGGRAPH,
             "ux_test": TestType.UX_TEST,
-            "lighthouse": TestType.LIGHTHOUSE,
+            "performance": TestType.PERFORMANCE,
             "web_basic_check": TestType.WEB_BASIC_CHECK,
             "button_test": TestType.BUTTON_TEST,
             "security": TestType.SECURITY_TEST,

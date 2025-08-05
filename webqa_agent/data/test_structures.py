@@ -26,7 +26,7 @@ class TestType(str, Enum):
     BUTTON_TEST = "button_test"
     UI_AGENT_LANGGRAPH = "ui_agent_langgraph"
     UX_TEST = "ux_test"
-    LIGHTHOUSE = "lighthouse"
+    PERFORMANCE = "performance_test"
     WEB_BASIC_CHECK = "web_basic_check"
     SECURITY_TEST = "security_test"
     SEO_TEST = "seo_test"
@@ -137,7 +137,7 @@ class TestResult(BaseModel):
     status: Optional[TestStatus] = TestStatus.PENDING
     # New field to indicate test category (function/ui/performance)
 
-    category: Optional[TestCategory] = ""
+    category: Optional[TestCategory] = TestCategory.FUNCTION
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     duration: Optional[float] = None
@@ -263,10 +263,8 @@ class ParallelTestSession(BaseModel):
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert session to dictionary with grouped test results"""
-        # 基于 TestCategory 动态构建分组字典，便于未来扩展
         grouped_results: Dict[str, Dict[str, Any]] = {}
 
-        # 先为所有已知枚举初始化空组，确保顺序 & 空数据也能输出
         for cat in TestCategory:
             key = f"{cat.value}_test_results"
             grouped_results[key] = {
@@ -274,11 +272,9 @@ class ParallelTestSession(BaseModel):
                 "items": []
             }
 
-        # 将每个 TestResult 放入对应分组
         for result in self.test_results.values():
             key = f"{result.category.value}_test_results"
             if key not in grouped_results:
-                # 新增的未知类别，自动创建分组并使用英文名作为 title
                 grouped_results[key] = {
                     "title": CATEGORY_TITLES.get(result.category.value, result.category.name.title()),
                     "items": []

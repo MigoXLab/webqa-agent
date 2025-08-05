@@ -6,6 +6,7 @@ test_config: # 测试项配置
   function_test:
     enabled: True
     type: ai  # default or ai
+    business_objectives: 搜索百度搜索功能
   ux_test: 
     enabled: True
   performance_test:
@@ -13,7 +14,7 @@ test_config: # 测试项配置
   security_test:
     enabled: True
 
-llm_config: # 模型配置，当前仅支持 OpenAI 调用
+llm_config: # 模型配置，当前仅支持 OpenAI sdk格式兼容
   model: gpt-4o-mini
   api_key: 
   base_url: 
