@@ -20,9 +20,6 @@ services:
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
       - DOCKER_ENV=true  # 标识Docker环境，强制headless模式
-    # Chrome运行所需的资源配置
-    # shm_size: '2gb'  # 增加共享内存，避免Chrome崩溃
-    # mem_limit: 4g    # 设置内存限制，确保有足够内存
     restart: "no"    # 开发模式不自动重启，便于调试
     networks:
       - app-network

@@ -345,7 +345,7 @@ async def run_tests(cfg):
 
     # 调用执行器
     try:
-        parallel_mode = ParallelMode([], max_concurrent_tests=4)  # 依据实际调整
+        parallel_mode = ParallelMode([], max_concurrent_tests=2)  # 依据实际调整
         results, report_path, html_report_path = await parallel_mode.run(
             url=target_url,
             llm_config=llm_config,
