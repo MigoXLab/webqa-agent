@@ -5,6 +5,7 @@ This tool allows the agent to interact with the web page.
 from typing import Optional, Dict, Any
 import logging
 import json
+import datetime
 
 from webqa_agent.crawler.deep_crawler import DeepCrawler
 from webqa_agent.testers.ui_tester import UITester
@@ -43,7 +44,7 @@ class UITool(BaseTool):
             )
             await dp.remove_marker()
 
-        logging.info(f"Page structure length: {len(page_structure)} characters")
+        logging.debug(f"Page structure length: {len(page_structure)} characters")
         return page_structure, screenshot
 
     async def _check_for_ui_error(
@@ -62,20 +63,26 @@ class UITool(BaseTool):
             f"Page Text Structure:\n{page_structure}"
         )
 
-        logging.info(f"Error detection LLM input length: {len(llm_input)} characters")
-        logging.info(f"Error detection page structure: {page_structure}")
+        logging.debug(f"Error detection LLM input length: {len(llm_input)} characters")
+        logging.debug(f"Error detection page structure: {page_structure[:500]}{'...' if len(page_structure) > 500 else ''}")
 
         # Use the same LLM instance from the ui_tester
         llm = self.ui_tester_instance.llm
         try:
+            logging.info("Starting UI error detection - Sending request to LLM...")
+            start_time = datetime.datetime.now()
+            
             response_str = await llm.get_llm_response(
                 system_prompt=prompt,
                 prompt=llm_input,
                 images=screenshot
             )
             
-            logging.info(f"Error detection LLM response length: {len(response_str)} characters")
-            logging.info(f"Error detection response: {response_str}")
+            end_time = datetime.datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            
+            logging.info(f"UI error detection completed in {duration:.2f} seconds")
+            logging.debug(f"Error detection response: {response_str[:500]}...")
 
             result = json.loads(response_str)
             error_detected = result.get("error_detected", False)
@@ -162,9 +169,16 @@ class UITool(BaseTool):
         logging.info(f"Built instruction for UITester: {instruction}")
 
         try:
-            logging.info("Calling ui_tester.action() method")
+            logging.info(f"Executing UI action: {instruction}")
+            start_time = datetime.datetime.now()
+            
             execution_steps, result = await self.ui_tester_instance.action(instruction)
-            logging.info(f"UI action completed, result type: {type(result)}")
+            
+            end_time = datetime.datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            
+            logging.info(f"UI action completed in {duration:.2f} seconds")
+            logging.debug(f"UI action result type: {type(result)}")
             
             # First, check for a hard failure from the action executor
             if not result.get("success"):

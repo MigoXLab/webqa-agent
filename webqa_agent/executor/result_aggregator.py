@@ -232,7 +232,7 @@ class ResultAggregator:
         try:
             # Determine report directory
             if report_dir is None:
-                timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                timestamp = os.getenv("WEBQA_TIMESTAMP")
                 report_dir = f"./reports/test_{timestamp}"
             os.makedirs(report_dir, exist_ok=True)
             
@@ -338,7 +338,7 @@ class ResultAggregator:
 
             # 输出
             if report_dir is None:
-                timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                timestamp = os.getenv("WEBQA_TIMESTAMP")
                 report_dir = f"./reports/test_{timestamp}"
             os.makedirs(report_dir, exist_ok=True)
             html_path = os.path.join(report_dir, "test_report.html")

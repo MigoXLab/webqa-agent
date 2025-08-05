@@ -486,8 +486,8 @@ class LLMPrompt:
     - **objective**: What the test case aims to validate
 
     ## Available Action Types
-    - **ai**: Execute an action instruction (click, type, scroll, wait, drag, upload, keyboardPress etc.)
-    - **aiAssert**: Verify expected outcomes or states
+    - **action**: Execute an action instruction (click, type, scroll, wait, drag, upload, keyboardPress etc.)
+    - **verify**: Verify expected outcomes or states
 
     ## Guidelines
     1. **Logical Flow**: Ensure test steps follow a logical user workflow
@@ -517,8 +517,8 @@ class LLMPrompt:
           "name": "descriptive_test_name",
           "objective": "what this test validates",
           "steps": [
-            {"ai": "action instruction"},
-            {"aiAssert": "validation instruction"},
+            {"action": "action instruction"},
+            {"verify": "validation instruction"},
             ...
           ]
         }
