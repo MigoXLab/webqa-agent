@@ -4,6 +4,7 @@ It includes the definitions for all nodes and edges in the orchestrator graph.
 """
 import datetime
 import logging
+import os
 from typing import List, Dict, Any
 from langgraph.graph import StateGraph, END
 from webqa_agent.testers.langgraph.state.schemas import MainGraphState
@@ -137,11 +138,13 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             case['url'] = state["url"]
 
         try:
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f'test_cases_{timestamp}.json'
-            with open(filename, 'w', encoding='utf-8') as f:
+            timestamp = os.getenv("WEBQA_TIMESTAMP")
+            report_dir = f"./reports/test_{timestamp}"
+            os.makedirs(report_dir, exist_ok=True)
+            cases_path = os.path.join(report_dir, "cases.json")
+            with open(cases_path, 'w', encoding='utf-8') as f:
                 json.dump(test_cases, f, ensure_ascii=False, indent=4)
-            logging.info(f"Successfully saved initial test cases to {filename}")
+            logging.info(f"Successfully saved initial test cases to {cases_path}")
         except Exception as e:
             logging.error(f"Failed to save initial test cases to file: {e}")
 
@@ -194,7 +197,7 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
     update = {"current_test_case_index": new_index}
 
     # FUSE MECHANISM: Check if the replan limit has been reached.
-    MAX_REPLANS = 3
+    MAX_REPLANS = 2
     if state.get("replan_count", 0) >= MAX_REPLANS:
         logging.warning(f"Maximum replan limit of {MAX_REPLANS} reached. Forcing FINISH to avoid infinite loops.")
         update["reflection_history"] = [{
