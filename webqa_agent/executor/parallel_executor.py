@@ -4,6 +4,9 @@ from typing import Dict, Any, List, Optional, Callable
 from datetime import datetime
 import os
 
+# Session ID constants
+SECURITY_TEST_NO_SESSION_ID = "security_test_no_session"
+
 from webqa_agent.data import (
     TestType, TestStatus, TestConfiguration, 
     TestExecutionContext, TestResult, ParallelTestSession
@@ -212,7 +215,7 @@ class ParallelTestExecutor:
                 elif test_config.test_type == TestType.SECURITY_TEST:
                     # Security tests don't need browser sessions, use a placeholder
                     session = None
-                    test_context.session_id = "security_test_no_session"
+                    test_context.session_id = SECURITY_TEST_NO_SESSION_ID
                 
                 else:
                     session = await self.session_manager.browser_session(test_config.browser_config)
@@ -281,7 +284,7 @@ class ParallelTestExecutor:
                 
             finally:
                 # Clean up browser session
-                if test_context.session_id and test_context.session_id != "security_test_no_session":
+                if test_context.session_id and test_context.session_id != SECURITY_TEST_NO_SESSION_ID:
                     await self.session_manager.close_session(test_context.session_id)
     
     def _resolve_test_dependencies(self, tests: List[TestConfiguration]) -> List[List[TestConfiguration]]:
