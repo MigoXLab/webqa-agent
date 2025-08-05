@@ -1,7 +1,12 @@
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 from typing import Dict, Any
 from datetime import datetime
+import json
+import time
+import subprocess
+from pathlib import Path
 
 from webqa_agent.data import TestStatus, TestConfiguration, TestResult
 from webqa_agent.browser.session import BrowserSession
@@ -406,3 +411,299 @@ class WebBasicCheckRunner(BaseTestRunner):
             raise e
 
         return result
+
+
+class SecurityTestRunner(BaseTestRunner):
+    """Runner for Security tests using Nuclei-based scanning"""
+    
+    # 常见网络扫描标签配置  
+    SCAN_TAGS = {  
+        "cve": "已知CVE漏洞扫描",  
+        "xss": "跨站脚本攻击检测",   
+        "sqli": "SQL注入检测",  
+        "rce": "远程代码执行检测",  
+        "lfi": "本地文件包含检测",  
+        "ssrf": "服务端请求伪造检测",  
+        "redirect": "开放重定向检测",  
+        "exposure": "敏感信息泄露检测",  
+        "config": "配置错误检测",  
+        "default-login": "默认凭据检测",  
+        "ssl": "SSL/TLS配置检测",  
+        "dns": "DNS相关检测",  
+        "subdomain-takeover": "子域名接管检测",  
+        "tech": "技术栈识别",  
+        "panel": "管理面板检测"  
+    }  
+    
+    # 协议类型扫描  
+    PROTOCOL_SCANS = {  
+        "http": "HTTP协议扫描",  
+        "dns": "DNS协议扫描",   
+        "tcp": "TCP协议扫描",  
+        "ssl": "SSL协议扫描"  
+    }
+    
+    async def run_test(self, session: BrowserSession, test_config: TestConfiguration,
+                       llm_config: Dict[str, Any], target_url: str) -> TestResult:
+        """Run Security tests using Nuclei scanning"""
+        logging.info(f"Running Security test: {test_config.test_name}")
+        
+        result = TestResult(
+            test_id=test_config.test_id,
+            test_type=test_config.test_type,
+            test_name=test_config.test_name,
+            status=TestStatus.RUNNING,
+            category=TestCategory.SECURITY
+        )
+        
+        try:
+            # 安全测试不需要浏览器会话，使用Nuclei进行独立扫描
+            logging.info("Security test running independently of browser session")
+            
+            # 检查nuclei是否安装
+            nuclei_available = await self._check_nuclei_available()
+            
+            if not nuclei_available:
+                result.status = TestStatus.FAILED
+                result.error_message = "Nuclei tool not found. Please install nuclei: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"
+                return result
+            
+            # 执行安全扫描
+            scan_results = await self._run_security_scan(target_url, test_config)
+            
+            # 处理扫描结果
+            findings = await self._process_scan_results(scan_results)
+            
+            # 生成子测试结果
+            sub_tests = []
+            
+            # 按严重程度分类结果
+            severity_counts = {}
+            finding_details = []
+            
+            for finding in findings:
+                severity = finding.get("info", {}).get("severity", "unknown")
+                severity_counts[severity] = severity_counts.get(severity, 0) + 1
+                finding_details.append({
+                    "template_id": finding.get("template-id", "unknown"),
+                    "name": finding.get("info", {}).get("name", "Unknown"),
+                    "severity": severity,
+                    "description": finding.get("info", {}).get("description", ""),
+                    "matched_at": finding.get("matched-at", ""),
+                    "extracted_results": finding.get("extracted-results", [])
+                })
+            
+            # 创建按严重程度的子测试
+            for severity in ["critical", "high", "medium", "low", "info"]:
+                count = severity_counts.get(severity, 0)
+                sub_tests.append(
+                    SubTestResult(
+                        name=f"{severity.upper()}级别安全问题扫描",
+                        status=TestStatus.PASSED,
+                        metrics={"findings_count": count}
+                    )
+                )
+            
+            # 创建扫描类型的子测试
+            for scan_type, description in {**self.SCAN_TAGS, **self.PROTOCOL_SCANS}.items():
+                type_findings = [f for f in finding_details if scan_type in f.get("template_id", "").lower()]
+                sub_tests.append(
+                    SubTestResult(
+                        name=f"{description}",
+                        status=TestStatus.PASSED,
+                        metrics={"findings_count": len(type_findings)}
+                    )
+                )
+            
+            result.sub_tests = sub_tests
+            result.status = TestStatus.PASSED
+            
+            # 添加总体指标
+            total_findings = len(findings)
+            critical_findings = severity_counts.get("critical", 0)
+            high_findings = severity_counts.get("high", 0)
+            
+            result.add_metric("total_findings", total_findings)
+            result.add_metric("critical_findings", critical_findings)
+            result.add_metric("high_findings", high_findings)
+            result.add_metric("security_score", max(0, 100 - (critical_findings * 20 + high_findings * 10)))
+            
+            # 添加详细结果
+            result.add_data("security_findings", finding_details)
+            result.add_data("severity_summary", severity_counts)
+            
+            # 清理临时文件
+            await self._cleanup_temp_files(scan_results.get("output_path"))
+            
+            logging.info(f"Security test completed: {test_config.test_name}, found {total_findings} issues")
+            
+        except Exception as e:
+            error_msg = f"Security test failed: {str(e)}"
+            logging.error(error_msg)
+            result.status = TestStatus.FAILED
+            result.error_message = error_msg
+            
+            # 即使失败也要清理临时文件
+            try:
+                scan_results = locals().get('scan_results', {})
+                await self._cleanup_temp_files(scan_results.get("output_path"))
+            except:
+                pass
+        
+        return result
+    
+    async def _check_nuclei_available(self) -> bool:
+        """检查nuclei工具是否可用"""
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "nuclei", "-version",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await process.communicate()
+            logging.debug(f"Nuclei check - return code: {process.returncode}")
+            logging.debug(f"Nuclei check - stdout: {stdout.decode()}")
+            logging.debug(f"Nuclei check - stderr: {stderr.decode()}")
+            return process.returncode == 0
+        except Exception as e:
+            logging.error(f"Error checking nuclei availability: {e}")
+            return False
+    
+    async def _run_security_scan(self, target_url: str, test_config: TestConfiguration) -> Dict[str, Any]:
+        """执行安全扫描"""
+        # 创建临时输出目录，使用测试ID确保唯一性
+        import tempfile
+        temp_dir = Path(tempfile.gettempdir()) / "webqa_agent_security" / test_config.test_id
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 配置扫描任务
+        scan_configs = {
+            "tag": self.SCAN_TAGS,
+            "protocol": self.PROTOCOL_SCANS
+        }
+        
+        # 从测试配置中获取自定义参数
+        custom_config = test_config.test_specific_config or {}
+        include_severity_scans = custom_config.get("include_severity_scans", True)
+        
+        if include_severity_scans:
+            scan_configs["severity"] = {
+                "critical": "严重漏洞扫描",
+                "high": "高危漏洞扫描",   
+                "medium": "中危漏洞扫描"
+            }
+        
+        # 执行并行扫描
+        scan_results = await self._execute_scan_batch(target_url, scan_configs, temp_dir)
+        
+        return {
+            "scan_results": scan_results,
+            "output_path": str(temp_dir)
+        }
+    
+    async def _execute_scan_batch(self, target_url: str, scan_configs: Dict[str, Dict], output_path: Path) -> list:
+        """并行执行一批安全扫描"""
+        tasks = []
+        
+        # 创建扫描任务
+        for scan_type, scans in scan_configs.items():
+            for scan_name, description in scans.items():
+                output_file = output_path / f"{scan_type}_{scan_name}_{int(time.time())}.json"
+                task = self._run_nuclei_command(target_url, scan_type, scan_name, output_file)
+                tasks.append(task)
+        
+        # 并行执行所有扫描
+        logging.info(f"开始并行执行 {len(tasks)} 个安全扫描任务...")
+        scan_results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # 处理结果
+        results = []
+        for result in scan_results:
+            if isinstance(result, Exception):
+                logging.error(f"扫描任务异常: {result}")
+                continue
+            results.append(result)
+        
+        return results
+    
+    async def _run_nuclei_command(self, target_url: str, scan_type: str, scan_name: str, output_file: Path) -> Dict[str, Any]:
+        """运行单个Nuclei扫描命令"""
+        cmd = ["nuclei", "-target", target_url, "-json-export", str(output_file), "-silent"]
+        
+        # 根据扫描类型添加参数
+        if scan_type == "tag":
+            cmd.extend(["-tags", scan_name])
+        elif scan_type == "protocol":
+            cmd.extend(["-type", scan_name])
+        elif scan_type == "severity":
+            cmd.extend(["-severity", scan_name])
+        
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await process.communicate()
+            
+            return {
+                "scan_name": scan_name,
+                "scan_type": scan_type,
+                "stdout": stdout.decode() if stdout else "",
+                "stderr": stderr.decode() if stderr else "",
+                "returncode": process.returncode,
+                "output_file": str(output_file)
+            }
+        except Exception as e:
+            return {
+                "scan_name": scan_name,
+                "scan_type": scan_type,
+                "stdout": "",
+                "stderr": str(e),
+                "returncode": 1,
+                "output_file": str(output_file)
+            }
+    
+    async def _process_scan_results(self, scan_results: Dict[str, Any]) -> list:
+        """读取并合并所有扫描结果"""
+        all_results = []
+        output_path = Path(scan_results["output_path"])
+        json_files = list(output_path.glob("*.json"))
+        
+        for json_file in json_files:
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+                    if content:
+                        # 处理JSONL格式（每行一个JSON对象）
+                        for line in content.split('\n'):
+                            if line.strip():
+                                try:
+                                    result = json.loads(line)
+                                    if isinstance(result, dict):
+                                        all_results.append(result)
+                                    elif isinstance(result, list):
+                                        for item in result:
+                                            if isinstance(item, dict):
+                                                all_results.append(item)
+                                except json.JSONDecodeError:
+                                    continue
+            except Exception as e:
+                logging.error(f"读取结果文件 {json_file} 失败: {e}")
+        
+        return all_results
+    
+    async def _cleanup_temp_files(self, temp_path: str):
+        """清理临时扫描文件"""
+        if not temp_path:
+            return
+            
+        try:
+            import shutil
+            temp_dir = Path(temp_path)
+            if temp_dir.exists() and temp_dir.is_dir():
+                shutil.rmtree(temp_dir)
+                logging.debug(f"Cleaned up temporary security scan files: {temp_path}")
+        except Exception as e:
+            logging.warning(f"Failed to cleanup temporary files at {temp_path}: {e}")

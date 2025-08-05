@@ -14,10 +14,10 @@ def get_execute_system_prompt(case: dict) -> str:
     # 格式化步骤信息
     formatted_steps = []
     for i, step in enumerate(steps_list):
-        if "ai" in step:
-            formatted_steps.append(f"{i+1}. Action: {step['ai']}")
-        elif "aiAssert" in step:
-            formatted_steps.append(f"{i+1}. Assert: {step['aiAssert']}")
+        if "action" in step:
+            formatted_steps.append(f"{i+1}. Action: {step['action']}")
+        elif "verify" in step:
+            formatted_steps.append(f"{i+1}. Assert: {step['verify']}")
     
     steps_str = '\n'.join(formatted_steps) if formatted_steps else "No steps provided."
 

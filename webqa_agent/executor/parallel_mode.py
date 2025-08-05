@@ -96,7 +96,9 @@ class ParallelMode():
             "ux_test": TestType.UX_TEST,
             "lighthouse": TestType.LIGHTHOUSE,
             "web_basic_check": TestType.WEB_BASIC_CHECK,
-            "button_test": TestType.BUTTON_TEST
+            "button_test": TestType.BUTTON_TEST,
+            "security": TestType.SECURITY_TEST,
+            "security_test": TestType.SECURITY_TEST
         }
         
         return mapping.get(test_type_str, TestType.WEB_BASIC_CHECK)

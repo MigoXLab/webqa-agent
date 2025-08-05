@@ -88,11 +88,18 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
         remaining_objectives=state.get("remaining_objectives")
     )
 
+    logging.info("Generating initial test plan - Sending request to LLM...")
+    start_time = datetime.datetime.now()
+    
     response = await ui_tester.llm.get_llm_response(
         system_prompt="You are a test planning expert.",
         prompt=prompt,
         images=screenshot
     )
+    
+    end_time = datetime.datetime.now()
+    duration = (end_time - start_time).total_seconds()
+    logging.info(f"LLM planning request completed in {duration:.2f} seconds")
 
     try:
         # Extract only the JSON part of the response, ignoring the scratchpad
@@ -255,15 +262,20 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
         page_content_summary=page_content_summary
     )
 
-    logging.info("Sending reflection request to LLM...")
+    logging.info("Sending reflection request to LLM (this may take a moment)...")
+    start_time = datetime.datetime.now()
+    
     response_str = await ui_tester.llm.get_llm_response(
         system_prompt="You are a QA strategist.",
         prompt=prompt,
         images=screenshot
     )
-
+    
+    end_time = datetime.datetime.now()
+    duration = (end_time - start_time).total_seconds()
+    logging.info(f"LLM reflection request completed in {duration:.2f} seconds")
     logging.info(f"Raw LLM response length: {len(response_str)} characters")
-    logging.info(f"Raw LLM response preview: {response_str}")
+    logging.debug(f"Raw LLM response preview: {response_str[:500]}...")
 
     try:
         decision_data = json.loads(response_str)

@@ -18,7 +18,7 @@ async def example():
         "function_test_type": "ai",  # "default" or "ai"
         "ui_test_enabled": False,
         "performance_test_enabled": False,
-        "security_test_enabled": False,
+        "security_test_enabled": True,
     }
 
     test_configurations = []
@@ -92,7 +92,14 @@ async def example():
             "test_type": "security",
             "test_name": "安全基线检查",
             "enabled": True,
-            "test_specific_config": {}
+            "browser_config": {
+                "browser_type": "chromium",
+                "viewport": {"width": 1280, "height": 800},
+                "headless": True  
+            },
+            "test_specific_config": {
+                "include_severity_scans": True
+            }
         })
 
     # Create parallel mode
