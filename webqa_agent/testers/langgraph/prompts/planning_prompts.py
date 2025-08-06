@@ -179,7 +179,7 @@ Generate test cases following established QA design patterns and industry best p
 ### Test Case Structure Requirements
 Each test case must include these standardized components:
 
-- **`name`**: Descriptive identifier following naming convention "Test_[Module]_[Scenario]_[ExpectedOutcome]"
+- **`name`**: 简洁直观的中文测试名称，让用户能够直接了解测试内容
 - **`objective`**: Clear statement of what business requirement or technical aspect is being validated
 - **`test_category`**: Classification (Functional, UI, Integration, Negative, Boundary, etc.)
 - **`priority`**: Test priority level (Critical, High, Medium, Low) based on risk assessment
@@ -215,6 +215,14 @@ Each test case must include these standardized components:
 - **Negative Testing**: Invalid data scenarios to test error handling
 - **Internationalization**: Multi-language and character set considerations where applicable
 
+### Scenario-Specific Test Data Guidelines
+- **Authentication Testing**: Use valid/invalid credential pairs, test accounts with different permission levels
+- **Search Functionality**: Use realistic search terms, ambiguous queries, and special characters. Search engines should return results for any input.
+- **Form Validation**: Test with valid data, empty fields, oversized input, special characters, and format violations
+- **File Operations**: Use various file formats, size limits, and naming conventions. Include valid and invalid file types.
+- **Data Operations**: Use unique test data to avoid conflicts, include special characters and unicode in text fields
+- **Pagination**: Test with data sets that span multiple pages, empty pages, and single page scenarios
+
 ### Test Environment Considerations
 - **Test Isolation**: Each test case should be independent and repeatable
 - **State Management**: Clear definition of required initial conditions
@@ -226,7 +234,7 @@ Each test case must include these standardized components:
 ### Pattern 1: User Registration/Authentication Flow
 ```json
 {{
-  "name": "Test_Authentication_UserRegistration_ValidCredentials",
+  "name": "用户注册功能验证-有效凭据",
   "objective": "Validate successful user registration with valid credentials and proper system response",
   "test_category": "Functional_Critical",
   "priority": "High",
@@ -254,7 +262,7 @@ Each test case must include these standardized components:
 ### Pattern 2: Form Validation & Error Handling (reset_session=false)
 ```json
 {{
-  "name": "Test_FormValidation_RequiredFields_NegativeScenario",
+  "name": "表单验证-必填字段为空时的错误处理",
   "objective": "Validate proper error handling and user feedback for incomplete form submissions",
   "test_category": "Negative_Testing",
   "priority": "Medium",
@@ -282,7 +290,7 @@ Each test case must include these standardized components:
 ### Pattern 3: Form Validation with Session Reset (reset_session=true)
 ```json
 {{
-  "name": "Test_FormValidation_RequiredFields_WithSessionReset",
+  "name": "表单验证-必填字段为空时的错误处理（重置会话）",
   "objective": "Validate proper error handling and user feedback for incomplete form submissions with clean session",
   "test_category": "Negative_Testing",
   "priority": "Medium",
@@ -308,29 +316,274 @@ Each test case must include these standardized components:
 **Note**: In Pattern 3, since `reset_session=true`, there's no navigation step in the `steps` array because the system automatically navigates to the target URL before execution. The `preamble_actions` is empty because no additional setup navigation is needed.
 ```
 
-### Pattern 4: Dynamic Content & Asynchronous Operations
+### Pattern 4: Search Functionality Testing (Realistic Search Engine Behavior)
 ```json
 {{
-  "name": "Test_DynamicContent_SearchFunctionality_ResponseHandling",
-  "objective": "Validate search functionality including loading states, result display, and empty result handling",
+  "name": "搜索功能验证-实际搜索引擎行为测试",
+  "objective": "Validate search functionality with realistic expectations for search engines",
   "test_category": "Functional_Integration",
   "priority": "High",
-  "test_data_requirements": "Valid search terms, invalid search terms for negative testing",
+  "test_data_requirements": "Valid search terms, ambiguous terms, special characters, very short terms",
   "preamble_actions": [],
   "steps": [
-    {{"action": "Enter valid search term 'LangGraph documentation' in the search field"}},
+    {{"action": "Enter common search term '人工智能' in the search field"}},
     {{"action": "Click the search button or press Enter to initiate search"}},
     {{"verify": "Verify loading indicator appears during search processing"}},
     {{"verify": "Verify search results are displayed with relevant content"}},
-    {{"verify": "Verify result count and pagination if applicable"}},
-    {{"action": "Perform search with term that yields no results"}},
-    {{"verify": "Verify appropriate 'no results found' message is displayed"}}
+    {{"verify": "Verify result count and related search suggestions if applicable"}},
+    {{"action": "Enter ambiguous term 'xyz123' in the search field"}},
+    {{"action": "Initiate search with the ambiguous term"}},
+    {{"verify": "Verify search engine still returns results (may include related suggestions or alternative interpretations)"}}
   ],
   "reset_session": true,
   "success_criteria": [
-    "Search functionality processes queries and returns relevant results",
-    "Loading states provide appropriate user feedback during processing",
-    "Empty result scenarios are handled gracefully with informative messaging"
+    "Search functionality processes any input and returns appropriate results",
+    "Loading states provide proper user feedback during processing",
+    "Search engines handle ambiguous terms gracefully (showing related results or suggestions)",
+    "Search results are relevant to the query terms"
+  ]
+}}
+```
+
+### Pattern 5: Login/Authentication Testing
+```json
+{{
+  "name": "用户登录验证-有效凭据和权限检查",
+  "objective": "Validate user authentication with valid credentials and proper permission checks",
+  "test_category": "Security_Functional",
+  "priority": "Critical",
+  "test_data_requirements": "Valid username/password, test user account with known permissions",
+  "preamble_actions": [],
+  "steps": [
+    {{"action": "Enter valid username in the username field"}},
+    {{"action": "Enter valid password in the password field"}},
+    {{"action": "Click the login button to authenticate"}},
+    {{"verify": "Verify successful login confirmation message is displayed"}},
+    {{"verify": "Verify user is redirected to appropriate dashboard or home page"}},
+    {{"verify": "Verify user-specific features or content are accessible based on permissions"}}
+  ],
+  "reset_session": true,
+  "success_criteria": [
+    "Authentication system accepts valid credentials",
+    "User is properly authenticated and redirected",
+    "User permissions are correctly applied post-login"
+  ]
+}}
+```
+
+### Pattern 6: Login/Authentication Negative Testing
+```json
+{{
+  "name": "用户登录验证-无效凭据和错误处理",
+  "objective": "Validate proper error handling for invalid login attempts",
+  "test_category": "Security_Negative",
+  "priority": "High",
+  "test_data_requirements": "Invalid username/password combinations, non-existent accounts",
+  "preamble_actions": [],
+  "steps": [
+    {{"action": "Enter invalid username in the username field"}},
+    {{"action": "Enter invalid password in the password field"}},
+    {{"action": "Click the login button to authenticate"}},
+    {{"verify": "Verify appropriate error message is displayed"}},
+    {{"verify": "Verify user remains on login page"}},
+    {{"verify": "Verify system does not grant access to protected areas"}},
+    {{"action": "Enter valid username with invalid password"}},
+    {{"action": "Click the login button to authenticate"}},
+    {{"verify": "Verify password-specific error message is shown"}}
+  ],
+  "reset_session": false,
+  "success_criteria": [
+    "System properly rejects invalid credentials",
+    "Clear error messages guide users to correct input",
+    "Security is maintained for invalid login attempts"
+  ]
+}}
+```
+
+### Pattern 7: Data Creation (CRUD Operations)
+```json
+{{
+  "name": "数据创建功能验证-表单提交和数据持久化",
+  "objective": "Validate data creation through form submission and database persistence",
+  "test_category": "Functional_Data",
+  "priority": "High",
+  "test_data_requirements": "Valid data for all required fields, unique test data",
+  "preamble_actions": [
+    {{"action": "Navigate to the data creation form page"}}
+  ],
+  "steps": [
+    {{"action": "Fill in all required fields with valid test data"}},
+    {{"action": "Enter optional data in appropriate fields"}},
+    {{"action": "Click the submit or save button to create the record"}},
+    {{"verify": "Verify success confirmation message is displayed"}},
+    {{"verify": "Verify new record appears in the data list or table"}},
+    {{"verify": "Verify data integrity by checking created record details"}}
+  ],
+  "reset_session": true,
+  "success_criteria": [
+    "Form accepts valid input without validation errors",
+    "Data is successfully persisted to database",
+    "User interface reflects successful creation",
+    "Data integrity is maintained"
+  ]
+}}
+```
+
+### Pattern 8: Data Deletion (CRUD Operations)
+```json
+{{
+  "name": "数据删除功能验证-记录删除和确认",
+  "objective": "Validate data deletion with proper confirmation and state management",
+  "test_category": "Functional_Data",
+  "priority": "High",
+  "test_data_requirements": "Existing test record that can be safely deleted",
+  "preamble_actions": [
+    {{"action": "Navigate to the data management page"}}
+  ],
+  "steps": [
+    {{"action": "Locate the test record in the data list or table"}},
+    {{"action": "Click the delete button for the test record"}},
+    {{"verify": "Verify deletion confirmation dialog appears"}},
+    {{"action": "Confirm the deletion action"}},
+    {{"verify": "Verify success message is displayed"}},
+    {{"verify": "Verify record is no longer visible in the data list"}},
+    {{"verify": "Verify related data or references are handled appropriately"}}
+  ],
+  "reset_session": false,
+  "success_criteria": [
+    "System requires confirmation before deletion",
+    "Record is successfully removed from database",
+    "User interface reflects deletion immediately",
+    "Data consistency is maintained after deletion"
+  ]
+}}
+```
+
+### Pattern 9: File Upload Functionality
+```json
+{{
+  "name": "文件上传功能验证-格式检查和大小限制",
+  "objective": "Validate file upload functionality with format validation and size limits",
+  "test_category": "Functional_Integration",
+  "priority": "Medium",
+  "test_data_requirements": "Valid test files (various formats), oversized files, invalid formats",
+  "preamble_actions": [
+    {{"action": "Navigate to the file upload page"}}
+  ],
+  "steps": [
+    {{"action": "Select a valid file within size limits"}},
+    {{"action": "Click the upload button to start file transfer"}},
+    {{"verify": "Verify upload progress indicator is displayed"}},
+    {{"verify": "Verify success confirmation message appears after upload"}},
+    {{"verify": "Verify uploaded file is listed or accessible"}},
+    {{"action": "Attempt to upload a file exceeding size limits"}},
+    {{"verify": "Verify appropriate size limit error message is displayed"}},
+    {{"action": "Attempt to upload a file with invalid format"}},
+    {{"verify": "Verify format validation error message is shown"}}
+  ],
+  "reset_session": false,
+  "success_criteria": [
+    "Valid files are uploaded successfully",
+    "Size limits are enforced with clear error messages",
+    "Format validation works correctly",
+    "User feedback is provided throughout the process"
+  ]
+}}
+```
+
+### Pattern 10: Page Navigation and Routing
+```json
+{{
+  "name": "页面导航验证-路由和面包屑导航",
+  "objective": "Validate page navigation, routing, and breadcrumb functionality",
+  "test_category": "UI_Navigation",
+  "priority": "Medium",
+  "test_data_requirements": "Multiple accessible pages with navigation structure",
+  "preamble_actions": [],
+  "steps": [
+    {{"action": "Click on the main navigation menu item"}},
+    {{"verify": "Verify page transitions to correct destination"}},
+    {{"verify": "Verify URL changes appropriately"}},
+    {{"verify": "Verify page title and content match navigation selection"}},
+    {{"action": "Click on breadcrumb navigation item"}},
+    {{"verify": "Verify navigation to parent or ancestor page"}},
+    {{"action": "Use browser back and forward buttons"}},
+    {{"verify": "Verify proper navigation history management"}},
+    {{"action": "Test direct URL access to internal pages"}},
+    {{"verify": "Verify proper access control and content display"}}
+  ],
+  "reset_session": false,
+  "success_criteria": [
+    "Navigation elements function correctly",
+    "URL routing matches page content",
+    "Browser navigation is properly handled",
+    "Breadcrumbs provide accurate navigation path"
+  ]
+}}
+```
+
+### Pattern 11: Pagination and Sorting
+```json
+{{
+  "name": "分页和排序功能验证-大数据集处理",
+  "objective": "Validate pagination functionality and sorting of large data sets",
+  "test_category": "Functional_Data",
+  "priority": "Medium",
+  "test_data_requirements": "Data set with multiple pages, sortable columns",
+  "preamble_actions": [
+    {{"action": "Navigate to page with paginated data"}}
+  ],
+  "steps": [
+    {{"action": "Verify initial page displays correct number of items"}},
+    {{"action": "Click next page button or link"}},
+    {{"verify": "Verify page transitions to show next set of items"}},
+    {{"verify": "Verify page number or indicator updates correctly"}},
+    {{"action": "Click previous page button or link"}},
+    {{"verify": "Verify page transitions back to previous items"}},
+    {{"action": "Click on column header to sort by that column"}},
+    {{"verify": "Verify data is re-sorted according to selected column"}},
+    {{"action": "Click same column header again to reverse sort"}},
+    {{"verify": "Verify sort order is reversed"}}
+  ],
+  "reset_session": false,
+  "success_criteria": [
+    "Pagination controls function correctly",
+    "Page transitions maintain data consistency",
+    "Sorting functionality works on all sortable columns",
+    "Sort order toggling works correctly"
+  ]
+}}
+```
+
+### Pattern 12: Comment/Feedback System
+```json
+{{
+  "name": "评论反馈系统验证-提交和审核流程",
+  "objective": "Validate comment submission and moderation workflow",
+  "test_category": "Functional_User_Interaction",
+  "priority": "Low",
+  "test_data_requirements": "Valid comment text, test user account",
+  "preamble_actions": [
+    {{"action": "Navigate to page with comment system"}},
+    {{"action": "Login with test user account if required"}}
+  ],
+  "steps": [
+    {{"action": "Enter valid comment text in comment field"}},
+    {{"action": "Click submit button to post comment"}},
+    {{"verify": "Verify comment appears in the list (may be pending approval)"}},
+    {{"verify": "Verify appropriate success message is displayed"}},
+    {{"action": "Enter comment with special characters or formatting"}},
+    {{"action": "Submit formatted comment"}},
+    {{"verify": "Verify formatting is handled correctly"}},
+    {{"action": "Test comment length limits with very long comment"}},
+    {{"verify": "Verify length validation works appropriately"}}
+  ],
+  "reset_session": false,
+  "success_criteria": [
+    "Comment system accepts valid input",
+    "Special characters and formatting are handled correctly",
+    "Length limits are enforced",
+    "User feedback is provided throughout the process"
   ]
 }}
 ```
@@ -440,6 +693,7 @@ def get_reflection_prompt(
 - **Requirements Coverage**: Percentage of specified business objectives validated
 - **Constraint Compliance**: Adherence to specified test case counts or element focus
 - **Intent Alignment**: How well test cases address the specific requirements mentioned in objectives
+- **Priority Weighted Coverage**: Critical business objectives and high-impact scenarios should be prioritized over general coverage
 """
         mode_specific_logic = """
 - **Intent-Driven Mode**: FINISH if all specified business objectives are achieved AND constraints are satisfied
@@ -458,6 +712,7 @@ def get_reflection_prompt(
 - **Element Coverage**: Percentage of interactive elements tested
 - **Functional Coverage**: Coverage of all core business functionalities
 - **Risk Coverage**: Critical and high-priority scenarios completion status
+- **Priority-Based Assessment**: Business-critical functions (login, core transactions, data integrity) should be prioritized over UI elements
 """
         mode_specific_logic = """
 - **Comprehensive Mode**: FINISH if all interactive elements are tested AND core functionalities are validated
@@ -579,7 +834,7 @@ IF (len(completed_cases) < len(current_plan)
   }},
   "new_plan": [
     {{
-      "name": "revised_test_case_name",
+      "name": "修订后的测试用例（中文命名）",
       "objective": "clear_test_purpose_aligned_with_remaining_objectives",
       "test_category": "category_classification",
       "priority": "priority_based_on_risk_assessment",
