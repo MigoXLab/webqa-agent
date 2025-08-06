@@ -38,7 +38,7 @@
         /**
          * Retrieves a unique identifier for a given HTML element.
          *
-         * If the element does not already have a 'webqa-id' attribute, this function assigns a new,
+         * If the element does not already have a 'id' attribute, this function assigns a new,
          * auto-incrementing ID to it. This ensures that every element can be uniquely identified
          * during the crawling process.
          *

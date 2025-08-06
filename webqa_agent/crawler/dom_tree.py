@@ -36,6 +36,7 @@ class DomTreeNode:
         children (List['DomTreeNode']): A list of child nodes.
         depth (int): The depth of the node in the tree (root is at depth 0).
         subtree (Dict[str, Any]): A copy of the raw subtree data from the crawler, if any.
+
     """
 
     # Mapped from original node fields

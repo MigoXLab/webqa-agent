@@ -233,20 +233,27 @@ async def main(url: str):
         page.set_default_navigation_timeout(60000)
         await page.goto(url, wait_until="networkidle")
 
+        # create DeepCrawler instance
         dp = DeepCrawler(page)
+
+        # crawl page elements and highlight
         rawdata, highlight_id_map = await dp.crawl(page,
                                                    highlight=True,
                                                    highlight_text=False,
                                                    viewport_only=True)
-
+        # crawl page content
         txt_info = dp.get_text()
         # print(txt_info)
 
+        # get page clickable elements
         clickable_elements = dp.get_clickable_elements()
         # print(clickable_elements)
 
+        # screenshot
         await dp.take_screenshot()
 
-        # dp.dump_json(rawdata, dp.RESULTS_DIR / "dump_raw.json")
+        # dump crawled data into json format
+        dp.dump_json(rawdata, dp.RESULTS_DIR / "rawdata.json")
 
+        # keep browser opened
         # await asyncio.Event().wait()
