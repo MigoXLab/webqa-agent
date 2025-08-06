@@ -6,6 +6,8 @@ import json
 
 from collections import defaultdict
 from pathlib import Path
+from typing import List, Dict, Any, Tuple
+
 from playwright.async_api import Page, async_playwright
 from webqa_agent.crawler.dom_tree import DomTreeNode as dtree
 from typing import List, Dict, Optional, Any, Callable
@@ -13,14 +15,26 @@ from typing import List, Dict, Optional, Any, Callable
 
 def get_time() -> str:
     """
-    Time stamp: YYYYMMDD_HHMMSS
+    Get the current time as a formatted string.
+    Timestamp format: YYYYMMDD_HH_MM_SS
     """
-    return datetime.datetime.fromtimestamp(time.time()).strftime("%Y%m%d_%H_%M_%S")
+    return datetime.datetime.now().strftime("%Y%m%d_%H_%M_%S")
 
 
 class DeepCrawler:
     """
-    Crawl page elements.
+    A deep crawler for recursively extracting structured element data from a web page.
+
+    This class injects a JavaScript payload (`element_detector.js`) into a Playwright
+    page to build a hierarchical tree of DOM elements, capturing properties like
+    visibility, interactivity, and position. It can also highlight elements on the
+    page for debugging purposes.
+
+    Key functionalities include:
+    - Crawling a page to get a nested dictionary representing the DOM.
+    - Identifying clickable elements and extracting text content.
+    - Taking screenshots and saving crawl results to JSON files.
+    - Removing visual markers added during highlighting.
     """
     default_dir = Path(__file__).parent
     # File paths
@@ -34,128 +48,130 @@ class DeepCrawler:
     # Parameters
     MAX_DEPTH = 2
 
-    CRAWL_CONFIG = {"KeepNodeType": ["isVisible", "isInteractive", "isTopElement"],
-                    "href": "https"}
+    # Configuration for filtering elements to be considered clickable.
+    # An element is kept if it satisfies all conditions in `KeepNodeType`.
+    # `href` is currently not used but reserved for future filtering logic.
+    CRAWL_CONFIG = {
+        "KeepNodeType": ["isVisible", "isInteractive", "isTopElement"],
+    }
 
     def __init__(self, page: Page, depth: int = 0):
-        self.page = page if isinstance(page, Page) else False
-        if not self.page:
-            raise ValueError("FormatError: Crawler page MUST BE Playwright Page")
+        """
+        Initialize the DeepCrawler.
 
+        Args:
+            page: The Playwright Page object to crawl.
+            depth: The current crawling depth.
+        """
+        if not isinstance(page, Page):
+            raise ValueError("Crawler page MUST BE a Playwright Page object")
+        self.page = page
         self.depth = depth
         self.crawled_result = None
 
     @staticmethod
-    def read_js(file_dir):
-        """Read JavaScript file content"""
-        with open(file_dir, "r", encoding="utf-8") as file:
+    def read_js(file_path: Path) -> str:
+        """Reads and returns the content of a JavaScript file."""
+        with open(file_path, "r", encoding="utf-8") as file:
             return file.read()
 
-    @staticmethod
-    def load_js(file_dir):
-        with open(file_dir, "r", encoding="utf-8") as file:
-            return json.load(file)
+    async def crawl(
+            self,
+            page: Optional[Page] = None,
+            highlight: bool = False,
+            highlight_text: bool = False,
+            viewport_only: bool = False
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """
+        Injects JavaScript to crawl the page and returns a structured element tree.
 
-    async def crawl(self, page=None, highlight=False, highlight_text=False, viewport_only=False,
-                    dump_json=False) -> Dict[str, Any]:
+        This method executes the `element_detector.js` script in the browser context,
+        which builds and returns a hierarchical representation of the DOM. It can also
+        pass parameters to control highlighting and viewport-only processing.
+
+        Args:
+            page: The Playwright Page to crawl. If None, uses the instance's page.
+            highlight: If True, visually highlights detected elements on the page.
+            highlight_text: If True, highlights text nodes. Requires `highlight` to be True.
+            viewport_only: If True, restricts element detection to the current viewport.
+
+        Returns:
+            A tuple containing:
+            - A dictionary representing the root of the crawled element tree.
+            - A dictionary mapping highlight IDs to element information.
         """
-        Crawl current page elements and return nested dictionary with hierarchical structure
-        """
-        if not page:
+        if page is None:
             page = self.page
 
         try:
-            payload = (f"window._highlight = {str(highlight).lower()};"
-                       f"window._highlightText = {str(highlight_text).lower()};\n"
-                       f"window._viewportOnly = {str(viewport_only).lower()};\n"
-                       f"\n{self.read_js(self.DETECTOR_JS)}")
-            await page.evaluate(payload)
-            self.crawled_result, highlight_id_map = await page.evaluate("buildElementTree()")
+            payload = (
+                f"(() => {{"
+                f"window._highlight = {str(highlight).lower()};"
+                f"window._highlightText = {str(highlight_text).lower()};\n"
+                f"window._viewportOnly = {str(viewport_only).lower()};\n"
+                f"\n{self.read_js(self.DETECTOR_JS)}"
+                f"\nreturn buildElementTree();"
+                f"}})()"
+            )
+            self.crawled_result, highlight_id_map = await page.evaluate(payload)
             return self.crawled_result, highlight_id_map
 
         except Exception as e:
-            print(f"Inject JS Exception: {e}")
+            print(f"Error during JavaScript(DeepCrawler.DETECTOR_JS) injection or evaluation: {e}")
+            return {}, {}
 
-    async def deep_crawl(self, page=None, is_clean_mode=True, highlight=True, timeout=60000):
-        """
-        Deep crawl page elements within max depth 2, add subtree to original dom tree
-        """
-        if not page:
+    async def remove_marker(self, page: Optional[Page] = None) -> None:
+        """Removes the highlight markers from the page."""
+        if page is None:
             page = self.page
-        ctx = page.context
-        seen = set()  # Only crawl same link once
-        sub_link = defaultdict(list)  # {url: [id_list]} for storing links and their IDs
-        temp_nodes = await self.crawl(page, highlight=highlight)  # Temporary nodes
-
-        async def _traverse(node: Dict[str, Any]):
-            """
-            Add subtree node to dom tree
-            """
-            node_info = node.get("node")
-            if node_info:
-                if all(node_info.get(n) for n in self.CRAWL_CONFIG["KeepNodeType"]):
-                    for attr in node_info.get("attributes", []):
-                        attr_val = attr.get("value")
-                        if attr["name"].lower() == "href" and attr_val.startswith(self.CRAWL_CONFIG['href']):
-                            sub_link[attr_val].append(node_info['id'])
-
-                            if attr_val not in seen:
-                                seen.add(attr_val)
-                                p = await ctx.new_page()
-                                await p.goto(attr_val, timeout=timeout, wait_until="domcontentloaded")
-
-                                subtree_nodes = await self.crawl(p, highlight=highlight)
-
-                                if is_clean_mode:
-                                    await p.close()
-
-                                node['subtree'] = subtree_nodes
-
-                            else:  # Record repeated link
-                                node['subtree'] = attr_val
-
-            for child in node.get("children", []):
-                await _traverse(child)
-
         try:
-            await _traverse(temp_nodes)
-            return temp_nodes, sub_link
-        except Exception as e:
-            print(f"DeepCrawlFailure: {e}")
-
-    async def remove_marker(self, page=None):
-        if not page:
-            page = self.page
-
-        try:
-            script = self.read_js(str(self.REMOVER_JS))
+            script = self.read_js(self.REMOVER_JS)
             await page.evaluate(script)
 
         except Exception as e:
-            print(e)
+            print(f"Error while removing markers: {e}")
 
     @staticmethod
     def dump_json(node: Dict[str, Any], path: Path) -> None:
-        """Save tree dictionary to JSON file."""
+        """Saves a dictionary to a JSON file."""
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(node, f, ensure_ascii=False, indent=2)
 
-    async def take_screenshot(self, page=None, screenshot_path=None):
-        if not screenshot_path:
-            path = self.SCREENSHOTS_DIR / f"{get_time()}_marker.png"
-        else:
+    async def take_screenshot(
+            self,
+            page: Optional[Page] = None,
+            screenshot_path: Optional[str] = None
+    ) -> None:
+        """Takes a screenshot of the page and saves it to a file."""
+        if page is None:
+            page = self.page
+
+        if screenshot_path:
             path = Path(screenshot_path)
+        else:
+            path = self.SCREENSHOTS_DIR / f"{get_time()}_marker.png"
 
         path.parent.mkdir(parents=True, exist_ok=True)
 
         await page.screenshot(path=str(path), full_page=True)
-        print(f"Saved screenshot --> {path}")
+        print(f"Saved screenshot to {path}")
 
-    def get_clickable_elements(self) -> List[Any]:
-        _root = None
-        if self.crawled_result:
-            _root = dtree.build_root(self.crawled_result)
+    def get_clickable_elements(self) -> List[Dict[str, Any]]:
+        """
+        Filters and returns a list of clickable elements from the crawled data.
+
+        This method traverses the DOM tree built from the crawled result and identifies
+        elements that meet the criteria defined in `CRAWL_CONFIG`. It extracts key
+        information such as element ID, tag, position, and selectors.
+
+        Returns:
+            A list of dictionaries, where each dictionary represents a clickable element.
+        """
+        if not self.crawled_result:
+            return []
+
+        _root = dtree.build_root(self.crawled_result)
 
         coords = []
         if _root:
@@ -181,44 +197,40 @@ class DeepCrawler:
                         })
         return coords
 
-    def get_text(self):
-        _root = None
-        if self.crawled_result:
-            _root = dtree.build_root(self.crawled_result)
-
-        if _root:
-            text = []
-            for n in _root.pre_iter():
-                text.append(n.inner_text)
-
-            return "\n".join(text)
-
-        return ""
-
-    @staticmethod
-    def is_clickable(node: dtree) -> bool:
+    def get_text(self) -> str:
         """
-        Only keep elements that satisfy both conditions:
-          1. isInteractive == True
-          2. center_x, center_y, viewport.width, viewport.height are all not None
+        Extracts and concatenates the inner text of all nodes in the crawled DOM tree.
+
+        Returns:
+            A single string containing all the text from the page, with nodes separated by newlines.
         """
-        if not node.isInteractive:
-            return False
+        if not self.crawled_result:
+            return ""
 
-        # Check center coordinates
-        if node.center_x is None or node.center_y is None:
-            return False
+        root = dtree.build_root(self.crawled_result)
+        if root is None:
+            return ""
 
-        vp = node.viewport or {}
-        w = vp.get("width")
-        h = vp.get("height")
-        if w is None or h is None:
-            return False
+        texts = (
+            node.inner_text.strip()
+            for node in root.pre_iter()
+            if node.inner_text and node.inner_text.strip()
+        )
 
-        return True
+        return "\n".join(texts)
 
 
-async def python_main(url, depth=0):
+async def main(url: str):
+    """
+    An example function to demonstrate the usage of the DeepCrawler.
+
+    This function initializes a Playwright browser, navigates to a URL, and uses
+    the DeepCrawler to extract element data. It then prints the extracted text
+    and saves the raw data to a JSON file.
+
+    Args:
+        url: The URL to crawl.
+    """
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=False)
         context = await browser.new_context()
@@ -227,41 +239,22 @@ async def python_main(url, depth=0):
         await page.goto(url, wait_until="networkidle")
 
         dp = DeepCrawler(page)
-        # ts = time.time()
-        # rawdata = await dp.crawl(page, enable_highlight=True)  # dict(dict)
         rawdata, highlight_id_map = await dp.crawl(page,
-                                                   highlight=False,
-                                                   highlight_text=True,
-                                                   viewport_only=False)  # dict(dict)
+                                                   highlight=True,
+                                                   highlight_text=False,
+                                                   viewport_only=False)
 
         txt_info = dp.get_text()
-        print(txt_info)
+        # print(txt_info)
 
-        # print(highlight_id_map)
-        # highlight_id_map_json_str = json.dumps(highlight_id_map, separators=(',', ':'), ensure_ascii=False)
-        # print(highlight_id_map_json_str)
-        # rt = dtree.build_root(rawdata)
-        # pruned_elems = dtree.cutting(rt)['children']
+        clickable_elements = dp.get_clickable_elements()
+        # print(clickable_elements)
 
-        # print(pruned_elems)
-        # print(type(pruned_elems))
-        # json_str = json.dumps(rawdata, separators=(',', ':'), ensure_ascii=False)
-        # print(json_str)
+        # dp.dump_json(rawdata, dp.RESULTS_DIR / "dump_raw.json")
 
-        # rawdata, href = await dp.deep_crawl(page, enable_highlight=True, is_clean_mode=False)  # dict(dict)
-        # print(rawdata, href)
-        dp.dump_json(rawdata, dp.RESULTS_DIR / "dump_raw_test_2.json")
-        # r = dp.get_clickable_elements()
-        # print(r)
-
-        # elapsed = time.time() - ts
-        # print(f"total time: {elapsed:.2f}s")
         await asyncio.Event().wait()
 
 
 if __name__ == '__main__':
     url = f"https://www.google.com"
-
-    asyncio.run(python_main(url))
-    # asyncio.run(ts_debug(url))
-    # main()
+    asyncio.run(main(url))
