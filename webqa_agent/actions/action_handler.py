@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import re
 from typing import Any, Dict, List, Optional, Union
 
 from playwright.async_api import Page
@@ -323,14 +324,92 @@ class ActionHandler:
                 return False
 
             await asyncio.sleep(1)
-            # type text
-            await self.page.locator(element["selector"]).fill(text)
-            logging.info(f"Typed '{text}' into element {id}")
+            # Type text with CSS validation and XPath fallback
+            selector = element["selector"]
+            
+            # First validate CSS selector format
+            if self._is_valid_css_selector(selector):
+                try:
+                    # Try using CSS selector
+                    await self.page.locator(selector).fill(text)
+                    logging.info(f"Typed '{text}' into element {id} using CSS selector: {selector}")
+                except Exception as css_error:
+                    logging.warning(f"CSS selector type failed for element {id}: {css_error}")
+                    # CSS selector failed, try XPath
+                    xpath = element.get("xpath")
+                    if xpath:
+                        try:
+                            await self.page.locator(f"xpath={xpath}").fill(text)
+                            logging.info(f"Typed '{text}' into element {id} using XPath fallback: {xpath}")
+                        except Exception as xpath_error:
+                            logging.error(f"Both CSS and XPath type failed for element {id}. CSS error: {css_error}, XPath error: {xpath_error}")
+                            return False
+                    else:
+                        logging.error(f"CSS selector type failed and no XPath available for element {id}")
+                        return False
+            else:
+                logging.warning(f"Invalid CSS selector format for element {id}: {selector}")
+                # CSS selector format invalid, use XPath directly
+                xpath = element.get("xpath")
+                if xpath:
+                    try:
+                        await self.page.locator(f"xpath={xpath}").fill(text)
+                        logging.info(f"Typed '{text}' into element {id} using XPath: {xpath}")
+                    except Exception as xpath_error:
+                        logging.error(f"XPath type failed for element {id}: {xpath_error}")
+                        return False
+                else:
+                    logging.error(f"Invalid CSS selector and no XPath available for element {id}")
+                    return False
 
             await asyncio.sleep(1)
             return True
         except Exception as e:
             logging.error(f"Failed to type into element {id}: {e}")
+            return False
+    
+    @staticmethod
+    def _is_valid_css_selector(selector: str) -> bool:
+        """
+        Validate if CSS selector format is valid
+        
+        Args:
+            selector: CSS selector string
+            
+        Returns:
+            bool: True if selector format is valid, False otherwise
+        """
+        if not selector or not isinstance(selector, str):
+            return False
+            
+        # Basic CSS selector format validation
+        # Check for invalid characters or format
+        try:
+            # Remove whitespace
+            selector = selector.strip()
+            if not selector:
+                return False
+                
+            # Basic CSS selector syntax check
+            # Cannot start with a number (unless it's a pseudo-selector)
+            if re.match(r'^[0-9]', selector) and not selector.startswith(':'):
+                return False
+                
+            # Check basic CSS selector pattern
+            # Allow: tag names, class names, IDs, attributes, pseudo-classes, pseudo-elements, combinators, etc.
+            css_pattern = r'^[a-zA-Z_\-\[\]().,:#*>+~\s="\'0-9]+$'
+            if not re.match(css_pattern, selector):
+                return False
+                
+            # Check bracket matching
+            if selector.count('[') != selector.count(']'):
+                return False
+            if selector.count('(') != selector.count(')'):
+                return False
+                
+            return True
+            
+        except Exception:
             return False
 
     async def clear(self, id) -> bool:
@@ -356,9 +435,41 @@ class ActionHandler:
 
             selector = element_to_clear["selector"]
 
-            # Use fill with an empty string to clear the input
-            await self.page.locator(selector).fill("")
-            logging.info(f"Cleared input for element {id} using selector: {selector}")
+            # Clear input with CSS validation and XPath fallback
+            # First validate CSS selector format
+            if self._is_valid_css_selector(selector):
+                try:
+                    # Try using CSS selector
+                    await self.page.locator(selector).fill("")
+                    logging.info(f"Cleared input for element {id} using CSS selector: {selector}")
+                except Exception as css_error:
+                    logging.warning(f"CSS selector clear failed for element {id}: {css_error}")
+                    # CSS selector failed, try XPath
+                    xpath = element_to_clear.get("xpath")
+                    if xpath:
+                        try:
+                            await self.page.locator(f"xpath={xpath}").fill("")
+                            logging.info(f"Cleared input for element {id} using XPath fallback: {xpath}")
+                        except Exception as xpath_error:
+                            logging.error(f"Both CSS and XPath clear failed for element {id}. CSS error: {css_error}, XPath error: {xpath_error}")
+                            return False
+                    else:
+                        logging.error(f"CSS selector clear failed and no XPath available for element {id}")
+                        return False
+            else:
+                logging.warning(f"Invalid CSS selector format for element {id}: {selector}")
+                # CSS selector format invalid, use XPath directly
+                xpath = element_to_clear.get("xpath")
+                if xpath:
+                    try:
+                        await self.page.locator(f"xpath={xpath}").fill("")
+                        logging.info(f"Cleared input for element {id} using XPath: {xpath}")
+                    except Exception as xpath_error:
+                        logging.error(f"XPath clear failed for element {id}: {xpath_error}")
+                        return False
+                else:
+                    logging.error(f"Invalid CSS selector and no XPath available for element {id}")
+                    return False
 
             await asyncio.sleep(0.5)
             return True

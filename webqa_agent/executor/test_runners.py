@@ -9,7 +9,7 @@ from typing import Any, Dict
 
 from webqa_agent.browser.session import BrowserSession
 from webqa_agent.data import TestConfiguration, TestResult, TestStatus
-from webqa_agent.data.test_structures import SubTestReport, SubTestResult, TestCategory
+from webqa_agent.data.test_structures import SubTestReport, SubTestResult, get_category_for_test_type
 from webqa_agent.testers import (
     LighthouseMetricsTest,
     PageButtonTest,
@@ -49,7 +49,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
             test_type=test_config.test_type,
             test_name=test_config.test_name,
             status=TestStatus.RUNNING,
-            category=TestCategory.FUNCTION,
+            category=get_category_for_test_type(test_config.test_type),
         )
 
         parallel_tester: UITester | None = None
@@ -238,7 +238,7 @@ class UXTestRunner(BaseTestRunner):
             test_type=test_config.test_type,
             test_name=test_config.test_name,
             status=TestStatus.RUNNING,
-            category=TestCategory.UX,
+            category=get_category_for_test_type(test_config.test_type),
         )
 
         try:
@@ -295,7 +295,7 @@ class LighthouseTestRunner(BaseTestRunner):
             test_type=test_config.test_type,
             test_name=test_config.test_name,
             status=TestStatus.RUNNING,
-            category=TestCategory.PERFORMANCE,
+            category=get_category_for_test_type(test_config.test_type),
         )
 
         try:
@@ -339,7 +339,7 @@ class ButtonTestRunner(BaseTestRunner):
             test_type=test_config.test_type,
             test_name=test_config.test_name,
             status=TestStatus.RUNNING,
-            category=TestCategory.FUNCTION,
+            category=get_category_for_test_type(test_config.test_type),
         )
 
         try:
@@ -390,7 +390,7 @@ class WebBasicCheckRunner(BaseTestRunner):
             test_type=test_config.test_type,
             test_name=test_config.test_name,
             status=TestStatus.RUNNING,
-            category=TestCategory.FUNCTION,
+            category=get_category_for_test_type(test_config.test_type),
         )
 
         try:
@@ -456,7 +456,7 @@ class SecurityTestRunner(BaseTestRunner):
             test_type=test_config.test_type,
             test_name=test_config.test_name,
             status=TestStatus.RUNNING,
-            category=TestCategory.SECURITY,
+            category=get_category_for_test_type(test_config.test_type),
         )
 
         try:

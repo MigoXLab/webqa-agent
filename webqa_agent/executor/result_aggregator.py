@@ -95,6 +95,7 @@ class ResultAggregator:
                 logging.error(f"Failed to initialise LLM, falling back to heuristic issue extraction: {e}")
                 use_llm = False
 
+        logging.info(f"LLM 总结测试结果中...")
         # Iterate over all tests and their sub-tests
         for test_result in test_session.test_results.values():
             for sub in test_result.sub_tests or []:
@@ -118,7 +119,7 @@ class ResultAggregator:
                             '如果有问题，返回 JSON 格式：{"severity": "high|medium|low", "issues": "一句话中文问题描述"}。\n'
                             f"子测试信息: {json.dumps(prompt_content, ensure_ascii=False, default=str)}"
                         )
-                        logging.info(f"LLM Issue Prompt: {prompt}")
+                        logging.debug(f"LLM Issue Prompt: {prompt}")
                         llm_response = await llm.get_llm_response("", prompt)
                         try:
                             parsed = json.loads(llm_response)

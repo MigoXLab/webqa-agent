@@ -36,6 +36,20 @@ class TestType(str, Enum):
     SEO_TEST = "seo_test"
 
 
+def get_category_for_test_type(test_type: TestType) -> TestCategory:
+    """Map TestType to TestCategory."""
+    mapping = {
+        TestType.UI_AGENT_LANGGRAPH: TestCategory.FUNCTION,
+        TestType.BUTTON_TEST: TestCategory.FUNCTION,
+        TestType.WEB_BASIC_CHECK: TestCategory.FUNCTION,
+        TestType.UX_TEST: TestCategory.UX,
+        TestType.PERFORMANCE: TestCategory.PERFORMANCE,
+        TestType.SECURITY_TEST: TestCategory.SECURITY,
+        TestType.UNKNOWN: TestCategory.FUNCTION,  # Default to function for unknown types
+    }
+    return mapping.get(test_type, TestCategory.FUNCTION)
+
+
 class TestStatus(str, Enum):
     """Test status enumeration."""
 
@@ -218,6 +232,7 @@ class ParallelTestSession(BaseModel):
             test_type=test_config.test_type,
             test_name=test_config.test_name,
             status=TestStatus.PENDING,
+            category=get_category_for_test_type(test_config.test_type),
         )
         self.test_results[test_config.test_id] = result
 
