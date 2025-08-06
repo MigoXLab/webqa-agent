@@ -197,9 +197,6 @@ class ParallelTestSession(BaseModel):
     # Session metadata
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
-    total_tests: Optional[int] = 0
-    completed_tests: Optional[int] = 0
-    failed_tests: Optional[int] = 0
 
     # Aggregated results
     aggregated_results: Optional[Dict[str, Any]] = {}
@@ -224,8 +221,6 @@ class ParallelTestSession(BaseModel):
         )
         self.test_results[test_config.test_id] = result
 
-        self.total_tests += 1
-
     def start_session(self):
         """Start the test session."""
         self.start_time = datetime.now()
@@ -238,12 +233,6 @@ class ParallelTestSession(BaseModel):
         """Update test result."""
         self.test_results[test_id] = result
 
-        # Update counters
-        if result.status == TestStatus.PASSED:
-            self.completed_tests += 1
-        elif result.status == TestStatus.FAILED:
-            self.failed_tests += 1
-
     def get_test_by_type(self, test_type: TestType) -> List[TestConfiguration]:
         """Get all tests of specific type."""
         return [config for config in self.test_configurations if config.test_type == test_type]
@@ -253,19 +242,10 @@ class ParallelTestSession(BaseModel):
         return [config for config in self.test_configurations if config.enabled]
 
     def get_summary_stats(self) -> Dict[str, Any]:
-        """Get session summary statistics."""
-        duration = None
-        if self.start_time and self.end_time:
-            duration = (self.end_time - self.start_time).total_seconds()
-
+        """Get session summary statistics"""
         return {
             "session_id": self.session_id,
             "target_url": self.target_url,
-            "total_tests": self.total_tests,
-            "completed_tests": self.completed_tests,
-            "failed_tests": self.failed_tests,
-            "success_rate": self.completed_tests / self.total_tests if self.total_tests > 0 else 0,
-            "duration": duration,
             "start_time": self.start_time.isoformat() if self.start_time else None,
             "end_time": self.end_time.isoformat() if self.end_time else None,
         }

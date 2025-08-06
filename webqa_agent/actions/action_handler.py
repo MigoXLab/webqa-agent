@@ -84,7 +84,6 @@ class ActionHandler:
 
             logging.info(f"Normalized URLs - Current: {current_normalized}, Target: {target_normalized}")
 
-            # 如果已经在目标页面，则不需要导航
             if current_normalized == target_normalized:
                 logging.info("Already on target page (normalized match), skipping navigation")
                 return False
@@ -165,11 +164,13 @@ class ActionHandler:
 
     async def scroll(self, direction: str = "down", scrollType: str = "once", distance: Optional[int] = None) -> bool:
         """Scroll page.
+        Args:
+            direction: 'up' or 'down'
+            scrollType: 'once' or 'untilBottom'
+            distance: None or Number
 
-        :param direction: 'up' or 'down'
-        :param scrollType: 'once' or 'untilBottom'
-        :param distance: None or Number
-        :return: True if success, False if failed
+        Returns:
+            bool: Whether scroll operation was performed
         """
         logging.info("Start scrolling page")
 

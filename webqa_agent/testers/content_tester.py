@@ -177,14 +177,14 @@ class PageContentTest:
                         if issues_candidate:
                             issues_list.append(issues_candidate)
                     else:
-                        # 非结构化，直接当 summary
+                        # if not structured, use raw text as summary
                         summary_text = str(test_page_content) if test_page_content else None
 
-                    # 如果有发现问题，则将测试结果标记为失败
+                    # if found issues, set test result to warning
                     if issues_list or (summary_text and summary_text.strip()):
-                        result.status = TestStatus.FAILED
+                        result.status = TestStatus.WARNING
 
-                    # 组织 steps 信息和收集 issue 信息
+                    # collect summary info for report
                     if summary_text:
                         all_issues.append(f"总结: {summary_text}")
 
@@ -192,27 +192,20 @@ class PageContentTest:
                         # collect issue info for report
                         issue_desc = issue.get("issue") or issue.get("description") or str(issue)
                         suggestion = issue.get("suggestion")
-                        if suggestion:
-                            all_issues.append(f"问题: {issue_desc} | 建议: {suggestion}")
-                        else:
-                            all_issues.append(f"问题: {issue_desc}")
+                        all_issues.append(f"问题: {issue_desc}")
 
                         # if screenshot index, append corresponding screenshot and create step
                         screenshot_idx = issue.get("id")
                         if isinstance(screenshot_idx, int) and 1 <= screenshot_idx <= len(browser_screenshot):
                             screenshot_data = browser_screenshot[screenshot_idx - 1]
 
-                            screenshot = SubTestScreenshot(type="base64", data=screenshot_data)
-
-                            result.steps.append(
-                                SubTestStep(
-                                    id=int(id_counter + 1),
-                                    description=user_case[:4] + ": " + issue_desc,
-                                    modelIO=suggestion,
-                                    screenshots=[screenshot],
-                                    status=TestStatus.FAILED if suggestion else TestStatus.PASSED,
-                                )
-                            )
+                            result.steps.append(SubTestStep(
+                                id=int(id_counter+1),
+                                description=user_case[:4]+": "+ issue_desc,
+                                modelIO=suggestion,
+                                screenshots=[screenshot_data],
+                                status=TestStatus.WARNING if suggestion else TestStatus.PASSED #
+                            ))
                             id_counter += 1
 
                 issues_text = "; ".join(all_issues) if all_issues else "无发现问题"

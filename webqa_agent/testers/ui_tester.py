@@ -73,11 +73,11 @@ class UITester:
         self.console_check = ConsoleCheck(self.page)
 
     async def action(self, test_step: str, file_path: str = None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """执行AI驱动的测试指令并返回 (step_dict, summary_dict)
+        """Execute AI-driven test instructions and return (step_dict, summary_dict)
 
         Args:
-            test_step: 测试步骤描述
-            file_path: 文件路径（用于上传操作）
+            test_step: Test step description
+            file_path: File path (for upload operations)
 
         Returns:
             Tuple (step_dict, summary_dict)
@@ -90,53 +90,53 @@ class UITester:
         try:
             logging.info(f"Executing AI instruction: {test_step}")
 
-            # 爬取当前页面状态
+            # Crawl current page state
             dp = DeepCrawler(self.page)
             _, id_map = await dp.crawl(highlight=True, viewport_only=True)
             await self._actions.update_element_buffer(id_map)
 
-            # 步骤 2: 获取完整的页面文本结构
+            # Get complete page text structure
             await dp.crawl(highlight=False, highlight_text=True, viewport_only=True)
             page_structure = dp.get_text()
 
-            # 截屏
+            # Take screenshot
             marker_screenshot = await self._actions.b64_page_screenshot(file_name="marker")
 
-            # 移除标记
+            # Remove marker
             await dp.remove_marker()
 
-            # 准备LLM输入
+            # Prepare LLM input
             user_prompt = self._prepare_prompt(test_step, id_map, LLMPrompt.planner_output_prompt, page_structure)
 
-            # 生成计划
+            # Generate plan
             plan_json = await self._generate_plan(LLMPrompt.planner_system_prompt, user_prompt, marker_screenshot)
 
             logging.info(f"Generated plan: {plan_json}")
 
-            # 执行计划
+            # Execute plan
             execution_steps, execution_result = await self._execute_plan(test_step, plan_json, file_path)
 
             end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # 聚合截图列表：第一个为页面标记截图，其余为每个动作后的截图
+            # Aggregate screenshots: first is page marker screenshot, rest are screenshots after each action
             screenshots_list = [{"type": "base64", "data": marker_screenshot}] + [
                 {"type": "base64", "data": step.get("screenshot")} for step in execution_steps if step.get("screenshot")
             ]
 
-            # 构建符合用例步骤格式的结构体
+            # Build structure for case step format
             status_str = "passed" if execution_result.get("success") else "failed"
             execution_steps_dict = {
-                # id 与 number 将由外层流程（如 LangGraph 节点）补充
+                # id and number will be filled by outer process (e.g. LangGraph node)
                 "description": f"action: {test_step}",
-                "actions": execution_steps,  # 所有动作聚合在一起
-                "screenshots": screenshots_list,  # 所有截图聚合在一起
+                "actions": execution_steps,  # All actions aggregated together
+                "screenshots": screenshots_list,  # All screenshots aggregated together
                 "modelIO": json.dumps(plan_json, indent=2, ensure_ascii=False) if isinstance(plan_json, dict) else "",
                 "status": status_str,
                 "start_time": start_time,
                 "end_time": end_time,
             }
 
-            # 自动存储step数据
+            # Automatically store step data
             self.add_step_data(execution_steps_dict, step_type="action")
 
             return execution_steps_dict, execution_result
@@ -147,34 +147,34 @@ class UITester:
 
             end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # 安全获取可能未定义的变量
+            # Safely get possibly undefined variables
             safe_marker_screenshot = locals().get("marker_screenshot")
             safe_plan_json = locals().get("plan_json", {})
 
-            # 构建错误情况下的执行步骤字典结构
+            # Build error case execution step dictionary structure
             error_screenshots = [{"type": "base64", "data": safe_marker_screenshot}] if safe_marker_screenshot else []
 
             error_execution_steps = {
                 "description": f"action: {test_step}",
                 "actions": [],
                 "screenshots": error_screenshots,
-                "modelIO": "",  # 无有效模型交互输出
+                "modelIO": "",  # No valid model interaction output
                 "status": "failed",
                 "error": str(e),
                 "start_time": start_time,
                 "end_time": end_time,
             }
 
-            # 自动存储错误step数据
+            # Automatically store error step data
             self.add_step_data(error_execution_steps, step_type="action")
 
             return error_execution_steps, {"success": False, "message": f"An exception occurred in action: {str(e)}"}
 
     async def verify(self, assertion: str) -> tuple[Dict[str, Any], Dict[str, Any]]:
-        """执行AI驱动的断言验证.
+        """Execute AI-driven assertion verification.
 
         Args:
-            assertion: 断言描述
+            assertion: Assertion description
 
         Returns:
             Tuple (step_dict, model_output)
@@ -187,7 +187,7 @@ class UITester:
         try:
             logging.info(f"Executing AI assertion: {assertion}")
 
-            # 爬取当前页面
+            # Crawl current page
             dp = DeepCrawler(self.page)
             _, id_map = await dp.crawl(highlight=True, viewport_only=True)
 
@@ -196,11 +196,11 @@ class UITester:
 
             screenshot = await self._actions.b64_page_screenshot(file_name="assert")
 
-            # 获取页面结构
+            # Get page structure
             await dp.crawl(highlight=False, highlight_text=True, viewport_only=True)
             page_structure = dp.get_text()
 
-            # 准备LLM输入
+            # Prepare LLM input
             user_prompt = self._prepare_prompt(
                 f"assertion: {assertion}", f"page label: {id_map}", LLMPrompt.verification_prompt, page_structure
             )
@@ -209,7 +209,7 @@ class UITester:
                 LLMPrompt.verification_system_prompt, user_prompt, images=[marker_screenshot, screenshot]
             )
 
-            # 处理结果
+            # Process result
             if isinstance(result, str):
                 try:
                     model_output = json.loads(result)
@@ -226,17 +226,21 @@ class UITester:
                     "Details": f"LLM returned unexpected type: {type(result)}",
                 }
 
-            # 确定状态
+            # Determine status
             is_passed = model_output.get("Validation Result") == "Validation Passed"
 
             end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # 构建验证结果
+            # Build verification result
             status_str = "passed" if is_passed else "failed"
-
+            verify_action_list = [{
+                "description": "Verify",
+                "success": is_passed,
+                "index": 1,
+            }]
             verification_step = {
                 "description": f"verify: {assertion}",
-                "actions": [],  # 断言步骤通常不包含 actions
+                "actions": verify_action_list,  # Assertion steps usually don't contain actions
                 "screenshots": [{"type": "base64", "data": marker_screenshot}, {"type": "base64", "data": screenshot}],
                 "modelIO": result if isinstance(result, str) else json.dumps(result, ensure_ascii=False),
                 "status": status_str,
@@ -244,7 +248,7 @@ class UITester:
                 "end_time": end_time,
             }
 
-            # 自动存储assertion step数据
+            # Automatically store assertion step data
             self.add_step_data(verification_step, step_type="assertion")
 
             return verification_step, model_output
@@ -253,7 +257,7 @@ class UITester:
             error_msg = f"AI assertion failed: {str(e)}"
             logging.error(error_msg)
 
-            # 尝试获取基本的页面信息，即使出错了
+            # Try to get basic page information even if it fails
             try:
                 basic_screenshot = await self._actions.b64_page_screenshot(file_name="error_assert")
             except:
@@ -272,14 +276,14 @@ class UITester:
                 "end_time": end_time,
             }
 
-            # 自动存储错误assertion step数据
+            # Error assertion step data
             self.add_step_data(error_step, step_type="assertion")
 
-            # 返回 error_step 和 一个表示失败的模型输出
+            # Return error_step and a failed model output
             return error_step, {"Validation Result": "Validation Failed", "Details": error_msg}
 
     def _prepare_prompt(self, test_step: str, browser_elements: str, prompt_template: str, page_structure: str) -> str:
-        """准备LLM提示."""
+        """Prepare LLM prompt."""
         return (
             f"test step: {test_step}\n"
             f"====================\n"
@@ -291,19 +295,19 @@ class UITester:
         )
 
     async def _generate_plan(self, system_prompt: str, prompt: str, browser_screenshot: str) -> Dict[str, Any]:
-        """生成测试计划."""
+        """Generate test plan."""
         max_retries = 2
 
         for attempt in range(max_retries):
             try:
-                # 获取LLM响应
+                # Get LLM response
                 test_plan = await self.llm.get_llm_response(system_prompt, prompt, images=browser_screenshot)
 
-                # 处理API错误
+                # Process API error
                 if isinstance(test_plan, dict) and "error" in test_plan:
                     raise ValueError(f"LLM API error: {test_plan['error']}")
 
-                # 验证响应
+                # Verify response
                 if not test_plan or not (isinstance(test_plan, str) and test_plan.strip()):
                     raise ValueError(f"Empty response from LLM: {test_plan}")
 
@@ -325,7 +329,7 @@ class UITester:
                 await asyncio.sleep(1)
 
     async def _execute_plan(self, user_case: str, plan_json: Dict[str, Any], file_path: str = None) -> Dict[str, Any]:
-        """执行测试计划."""
+        """Execute test plan."""
         execute_results = []
         action_count = len(plan_json.get("actions", []))
 
@@ -334,13 +338,13 @@ class UITester:
             logging.info(f"Executing step {index}/{action_count}: {action_desc}")
 
             try:
-                # 执行动作
+                # Execute action
                 if action.get("type") == "Upload" and file_path:
                     execution_result = await self._action_executor._execute_upload(action, file_path)
                 else:
                     execution_result = await self._action_executor.execute(action)
 
-                # 处理执行结果
+                # Process execution result
                 if isinstance(execution_result, dict):
                     success = execution_result.get("success", False)
                     message = execution_result.get("message", "No message provided")
@@ -348,7 +352,7 @@ class UITester:
                     success = bool(execution_result)
                     message = "Legacy boolean result"
 
-                # 等待页面稳定
+                # Wait for page to stabilize
                 try:
                     await self.page.wait_for_load_state("networkidle", timeout=10000)
                     await asyncio.sleep(1.5)
@@ -356,7 +360,7 @@ class UITester:
                     logging.warning(f"Page did not become network idle: {e}")
                     await asyncio.sleep(1)
 
-                # 截屏
+                # Take screenshot
                 post_action_ss = await self._actions.b64_page_screenshot(file_name=f"action_{action_desc}_{index}")
 
                 action_result = {
@@ -388,7 +392,7 @@ class UITester:
         }
 
     def get_monitoring_results(self) -> Dict[str, Any]:
-        """获取监控结果."""
+        """Get monitoring results."""
         results = {}
 
         if self.network_check:
@@ -400,7 +404,7 @@ class UITester:
         return results
 
     async def end_session(self):
-        """结束会话: 关闭监控、回收资源（简化实现）"""
+        """End session: close monitoring, recycle resources"""
         try:
             results = self.get_monitoring_results()
 
@@ -426,13 +430,12 @@ class UITester:
         LangGraph workflow)."""
         self.current_test_name = name
 
-    # === 数据存储管理方法 ===
     def start_case(self, case_name: str, case_data: Optional[Dict[str, Any]] = None):
-        """开始一个新的测试case."""
-        # 同时设置current_test_name，确保兼容性
+        """Start a new test case."""
+        # Set current_test_name to ensure compatibility
         self.current_test_name = case_name
 
-        # 如果有现有的case数据，先完成它
+        # If there is existing case data, finish it first
         if self.current_case_data:
             logging.warning(
                 f"Starting new case '{case_name}' while previous case '{self.current_case_data.get('name')}' is still active. Finishing previous case."
@@ -455,30 +458,30 @@ class UITester:
             "report": [],
         }
         self.current_case_steps = []
-        self.step_counter = 0  # 重置step计数器
+        self.step_counter = 0  # Reset step counter
         logging.info(f"Started tracking case: {case_name} (step counter reset)")
 
     def add_step_data(self, step_data: Dict[str, Any], step_type: str = "action"):
-        """添加step数据到当前case."""
+        """Add step data to current case."""
         if not self.current_case_data:
             logging.warning("No active case to add step data to")
             return
 
         self.step_counter += 1
 
-        # 处理actions数据，移除其中的截图
+        # Process actions data, remove screenshots
         original_actions = step_data.get("actions", [])
         cleaned_actions = []
 
         for action in original_actions:
-            # 复制action数据，但移除screenshot字段
+            # Copy action data, but remove screenshot field
             cleaned_action = {}
             for key, value in action.items():
-                if key != "screenshot":  # 移除screenshot字段
+                if key != "screenshot":  # Remove screenshot field
                     cleaned_action[key] = value
             cleaned_actions.append(cleaned_action)
 
-        # 转换为符合runner格式的step结构
+        # Convert to runner format step structure
         formatted_step = {
             "id": self.step_counter,
             "number": self.step_counter,
@@ -489,12 +492,12 @@ class UITester:
                 if isinstance(step_data.get("modelIO", ""), str)
                 else json.dumps(step_data.get("modelIO", ""), ensure_ascii=False)
             ),
-            "actions": cleaned_actions,  # 使用清理后的actions
+            "actions": cleaned_actions,  # Use cleaned actions
             "status": step_data.get("status", "passed"),
             "end_time": step_data.get("end_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
         }
 
-        # 如果有错误信息，添加到step中
+        # If there is error information, add to step
         if "error" in step_data:
             formatted_step["error"] = step_data["error"]
 
@@ -503,7 +506,7 @@ class UITester:
         logging.info(f"Added step {formatted_step['id']} to case {self.current_test_name}")
 
     def finish_case(self, final_status: str = "completed", final_summary: Optional[str] = None):
-        """结束当前case并保存数据."""
+        """Finish current case and save data."""
         if not self.current_case_data:
             logging.warning("No active case to finish")
             return
@@ -511,7 +514,7 @@ class UITester:
         case_name = self.current_case_data.get("name", "Unknown")
         steps_count = len(self.current_case_steps)
 
-        # 获取监控数据
+        # Get monitoring data
         # monitoring_data = self.get_monitoring_results()
 
         self.current_case_data.update(
@@ -523,7 +526,7 @@ class UITester:
             }
         )
 
-        # # 更新监控数据
+        # # Update monitoring data
         # if monitoring_data:
         #     if "network" in monitoring_data:
         #         self.current_case_data["messages"]["network"] = monitoring_data["network"]
@@ -532,34 +535,34 @@ class UITester:
         #         self.current_case_data["messages"]["console"] = monitoring_data["console"]
         #         logging.info(f"Added console monitoring data for case '{case_name}'")
 
-        # 验证steps数据
+        # Verify steps data
         stored_steps = self.current_case_data.get("steps", [])
         if len(stored_steps) != steps_count:
             logging.error(
                 f"Steps count mismatch for case '{case_name}': stored={len(stored_steps)}, tracked={steps_count}"
             )
 
-        # 保存到全部案例数据中
+        # Save to all cases data
         self.all_cases_data.append(self.current_case_data.copy())
         logging.info(
             f"Finished case: '{case_name}' with status: {final_status}, {steps_count} steps, total cases: {len(self.all_cases_data)}"
         )
 
-        # 清理当前case数据
+        # Clean up current case data
         self.current_case_data = None
         self.current_case_steps = []
         self.step_counter = 0
 
     def get_current_case_steps(self) -> List[Dict[str, Any]]:
-        """获取当前case的所有step数据."""
+        """Get all steps data for current case."""
         return self.current_case_steps.copy()
 
     def get_all_cases_data(self) -> List[Dict[str, Any]]:
-        """获取所有case的完整数据."""
+        """Get all cases data."""
         return self.all_cases_data.copy()
 
     def get_case_summary(self) -> Dict[str, Any]:
-        """获取测试执行的汇总信息."""
+        """Get summary information for test execution."""
         total_cases = len(self.all_cases_data)
         passed_cases = sum(1 for case in self.all_cases_data if case.get("status") == "passed")
         failed_cases = sum(1 for case in self.all_cases_data if case.get("status") == "failed")
@@ -575,7 +578,7 @@ class UITester:
         }
 
     def generate_runner_format_report(self, test_id: str = None, test_name: str = None) -> Dict[str, Any]:
-        """生成符合runner标准格式的完整测试报告."""
+        """Generate a complete test report in runner format."""
         import uuid
         from datetime import datetime
 
@@ -583,7 +586,6 @@ class UITester:
             logging.warning("No case data available for report generation")
             return {}
 
-        # 验证数据完整性
         total_steps = 0
         for i, case in enumerate(self.all_cases_data):
             case_steps = case.get("steps", [])
@@ -595,14 +597,13 @@ class UITester:
 
         logging.info(f"Report generation - Total cases: {len(self.all_cases_data)}, Total steps: {total_steps}")
 
-        # 计算整体测试时间
+        # Calculate overall test time
         start_times = [case.get("start_time") for case in self.all_cases_data if case.get("start_time")]
         end_times = [case.get("end_time") for case in self.all_cases_data if case.get("end_time")]
 
         overall_start = min(start_times) if start_times else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         overall_end = max(end_times) if end_times else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # 计算持续时间（简化计算，实际可以更精确）
         try:
             start_dt = datetime.strptime(overall_start, "%Y-%m-%d %H:%M:%S")
             end_dt = datetime.strptime(overall_end, "%Y-%m-%d %H:%M:%S")
@@ -610,7 +611,7 @@ class UITester:
         except:
             duration = 0.0
 
-        # 判断整体状态
+        # Determine overall status
         overall_status = "completed"
         if any(case.get("status") == "failed" for case in self.all_cases_data):
             overall_status = "failed"
@@ -633,9 +634,9 @@ class UITester:
                 "total_steps": summary["total_steps"],
                 "success_rate": summary["success_rate"],
             },
-            "sub_tests": self.all_cases_data,  # 这里包含了所有符合格式的case数据
-            "logs": [],  # 可以根据需要添加日志
-            "traces": [],  # 可以根据需要添加追踪信息
+            "sub_tests": self.all_cases_data,  # Here contains all formatted case data
+            "logs": [],  # Can add logs if needed
+            "traces": [],  # Can add traces if needed
             "error_message": "",
             "error_details": {},
             "metrics": {},

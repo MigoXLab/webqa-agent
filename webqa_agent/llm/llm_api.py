@@ -19,14 +19,9 @@ class LLMAPI:
                 raise ValueError("API key is empty. OpenAI client not initialized.")
             self.base_url = self.llm_config.get("base_url")
             # Use AsyncOpenAI client for async operations
-            self.client = (
-                AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
-                if self.base_url
-                else AsyncOpenAI(api_key=self.api_key)
-            )
-            logging.info(
-                f"AsyncOpenAI client initialized with API key: {self.api_key}, Model: {self.model} and base URL: {self.base_url}"
-            )
+            self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url) if self.base_url else AsyncOpenAI(
+                api_key=self.api_key)
+            logging.debug(f"AsyncOpenAI client initialized with API key: {self.api_key}, Model: {self.model} and base URL: {self.base_url}")
         else:
             raise ValueError("Invalid API type or missing credentials. LLM client not initialized.")
 
