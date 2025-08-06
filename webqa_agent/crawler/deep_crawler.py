@@ -250,8 +250,3 @@ async def main(url: str):
         # dp.dump_json(rawdata, dp.RESULTS_DIR / "dump_raw.json")
 
         # await asyncio.Event().wait()
-
-
-if __name__ == '__main__':
-    url = f"https://intern.openxlab.org.cn/"
-    asyncio.run(main(url))

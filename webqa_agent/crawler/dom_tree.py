@@ -230,12 +230,3 @@ class DomTreeNode:
         """Counts the number of nodes at each depth level."""
         counts = Counter(n.depth for n in self.pre_iter())
         return dict(counts)
-
-
-# Example Usage
-if __name__ == '__main__':
-    with open('test_tree.json', encoding='utf-8') as f:
-        raw_data = json.load(f)
-    root_node = DomTreeNode.build_root(raw_data)
-    print('Depth distribution:', root_node.count_depth())
-    # print('All links:', [n for n in root.find_by_tag('a')])
