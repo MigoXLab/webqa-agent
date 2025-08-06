@@ -66,6 +66,12 @@ nuclei -version        # 验证安装成功
 
 ```
 
+可以通过以下命令运行：
+
+```bash
+python webqa-agent.py
+```
+
 ## 使用说明
 
 ### 项目配置
@@ -74,40 +80,45 @@ nuclei -version        # 验证安装成功
 
 ```yaml
 target:
-  url: https://example.com/ # 需要测试的网站URL
-  description: 测试搜索功能
+  url: https://example.com/                       # 需要测试的网站URL
+  description: example description
 
-test_config: # 测试项配置
-  function_test:
+test_config:                                      # 测试项配置
+  function_test:                                  # 功能测试
     enabled: True
-    type: ai  # default or ai
-  ux_test:
+    type: ai                                      # default or ai
+    business_objectives: example business objectives  # 建议加入测试范围和数量描述，如：测试搜索功能，生成x个用例
+  ux_test:                                        # 用户体验测试
+    enabled: True
+  performance_test:                               # 性能测试
     enabled: False
-  performance_test:
-    enabled: False
-  security_test:
+  security_test:                                  # 安全测试
     enabled: False
 
-llm_config: # 视觉模型配置，当前仅支持 OpenAI sdk格式兼容
-  model: gpt-4.1-mini  # 推荐使用
+llm_config:                                       # 视觉模型配置，当前仅支持 OpenAI sdk格式兼容
+  model: gpt-4.1                                  # 推荐使用
   api_key: your_api_key
   base_url: https://api.example.com/v1
 
 browser_config:
   viewport: {"width": 1280, "height": 720}
-  headless: False
+  headless: False                                 # Docker环境会自动覆盖为True
   language: zh-CN
-  cookies: ***
+  cookies: []
 
 ```
 
-### 运行测试
+在配置和运行测试时，请注意以下重要事项：
 
-可以通过以下命令运行：
+#### 1. 功能测试说明
 
-```bash
-python webqa-agent.py
-```
+- **AI模式**：当在配置文件中指定生成测试用例的数量时，系统可能会根据实际测试情况进行代理重新规划和调整。这可能导致最终执行的测试用例数量与初始设定存在一定出入，以确保测试的准确性和有效性。
+
+- **Default模式**：功能测试的 `default` 模式主要验证UI元素的点击行为是否成功执行，包括按钮点击、链接跳转等基本交互功能。该模式不会检查页面内容变化、业务逻辑正确性或数据完整性等相关项目（开发中）。
+
+#### 2. 用户体验测试说明
+
+UX（用户体验）测试专注于评估网站的交互设计、可用性和用户友好程度。测试结果中包含的模型输出内容是基于用户体验最佳实践提供的改进建议，供开发和设计团队参考优化。
 
 ## 查看结果
 

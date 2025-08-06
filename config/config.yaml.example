@@ -6,18 +6,18 @@ test_config: # 测试项配置
   function_test:
     enabled: True
     type: ai  # default or ai
-    business_objectives: 搜索百度搜索功能
+    business_objectives: 测试百度搜索功能，生成3个用例
   ux_test:
     enabled: True
   performance_test:
-    enabled: True
+    enabled: False
   security_test:
-    enabled: True
+    enabled: False
 
-llm_config: # 模型配置，当前仅支持 OpenAI sdk格式兼容
-  model: gpt-4o-mini
-  api_key:
-  base_url:
+llm_config: # 视觉模型配置，当前仅支持 OpenAI sdk格式兼容
+  model: gpt-4.1  # 推荐使用
+  api_key: your_api_key
+  base_url:  https://api.example.com/v1
 
 browser_config:
   viewport: {"width": 1280, "height": 720}

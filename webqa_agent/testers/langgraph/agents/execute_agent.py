@@ -72,7 +72,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
     # Create the agent
     agent = create_tool_calling_agent(llm, tools, prompt)
-    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, max_iterations=2)
+    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, max_iterations=5)
     logging.info("AgentExecutor created successfully")
 
     # --- Execute Preamble Actions to Restore State ---
