@@ -565,79 +565,69 @@ class LLMPrompt:
     # You are a web content quality inspector. You need to carefully read the text content of the webpage and complete the task based on the user's test objective. Please ensure that the output JSON format does not contain any code blocks or backticks.
 
     TEXT_USER_CASES = [
-        """内容纠错：仔细检查当前页面上的文本内容，寻找并指出其中存在的英文单词拼写错误及中文错别字。
-        注意事项：
-        - 请你首先检查是否用户可正常阅读的网站内容。
-        - 请分别列出发现的所有英文拼写错误和中文错别字。
-        - 对于每个错误，请提供其所在位置以及正确的书写形式。"""
+    f"""内容纠错: Carefully inspect the text on the current page and identify any English spelling mistakes and Chinese character errors.
+        Notes: 
+        - First, verify whether the page content is readable by the user.
+        - List all English spelling mistakes and Chinese character errors separately. 
+        - For each error, provide its location and the correct form."""
     ]
     CONTENT_USER_CASES = [
-        #   f"""排版校验：检查提供的页面截图中是否存在明显的排版问题。请尽量完整地描述发现的问题，并建议可能的修正方法，同时对于页面渲染可能未完全加载的情况，提出合理的预期。
-        #     注意事项：
-        #     1. 仔细查看整个页面截图，注意文字、图片等元素的位置是否存在较大的异常（如错位、重叠或留白过多）。
-        #     2. 若无法确定是渲染未加载完全导致的问题，尝试根据页面整体风格提出可能的修正建议。
-        #     3. 如果发现问题，请说明问题截图的序号，并具体描述错误位置和表现形式，附带改进建议。""",
-        # f"""元素缺失：检查提供的页面截图中是否存在明显的元素缺失或显示异常的情况。请尽量指出发现的问题，同时对可能因渲染不完整导致的异常提供合理推测和建议。
-        #     注意事项：
-        #     1. 仔细检查页面，确认所有关键元素（如按钮、图片、图标等）是否大致完整，并能正常显示或交互。
-        #     2. 针对可能因加载不完全、图片模糊等问题，结合页面逻辑和样式提出合理的预期和修正建议。
-        #     3. 如果发现问题，请说明问题截图的序号，并具体描述问题位置和表现形式，附带改进建议。"""
-        """排版校验：请严格检查截图中是否存在排版问题。
+      f"""排版检查: Rigorously check the screenshot for any layout issues.
 
-      【检查标准】
-      1. 文字对齐：标题 / 段落 / 列表是否有明显偏移
-      2. 元素间距：是否过大 / 过小 / 不均
-      3. 元素重叠：是否有遮挡、超出容器
-      4. 响应式断点：布局在视口宽度下是否断裂
-      5. 视觉层级：重要信息是否被遮蔽
+      [Checklist]
+      1. Text Alignment: Are headings / paragraphs / lists obviously offset  
+      2. Element Spacing: Too large / too small / uneven  
+      3. Element Overlap: Any obstruction or content overflowing its container  
+      4. Responsive Breakpoints: Does the layout break at the current viewport width  
+      5. Visual Hierarchy: Is important information covered
 
       """,
-        """元素缺失：请严格检查截图中是否存在关键元素缺失或显示异常。
+      f"""元素缺失: Rigorously check the screenshot for missing key elements or display anomalies.
 
-      【检查标准】
-      1. 功能元素：按钮 / 链接 / 输入框
-      2. 内容元素：图片 / Icon / 文本
-      3. 导航元素：菜单 / 面包屑
-      4. 加载失败：裂图、404、字体缺失
-        """,
+      [Checklist]
+      1. Functional Elements: Buttons / Links / Input fields  
+      2. Content Elements: Images / Icons / Text  
+      3. Navigation Elements: Menus / Breadcrumbs  
+      4. Loading Failure: Broken images, 404, missing fonts  
+        """
     ]
 
     OUTPUT_FORMAT = """
-    输出要求
-    1. **若未发现任何错误**：请只输出 None ，不要包含任何解释; 描述中不得出现“可能”“大概”等模糊词
-    2. **若发现错误**：请使用 **JSON 数组** 输出，每个对象对应一张截图的一个错误；字段说明如下
+    Output Requirements
+    1. **If no errors are found**: Output only None with no explanations; avoid vague words such as "maybe" or "probably".
+    2. **If errors are found**: Output a **JSON array**, each object corresponding to one error in one screenshot; field definitions are as follows
     [
         {
-            "id": <number>, #截图序号（整数）
-            "element": "<string>", #出现问题的核心元素（示例：标题、按钮、图片、段落等）
-            "issue": "<string>", #问题描述（简明准确,请使用文本直接给出具体错误的原因）
-            "suggestion": "<string>", #修正 / 预期方案（可多条要点，用 ";" 分隔）
-            "confidence": "<high|medium|low>" #判断置信度，取值 *high* / *medium* / *low*
+            "id": <number>, # screenshot index (integer)
+            "element": "<string>", # core element where the issue occurs (e.g., title, button, image, paragraph)
+            "issue": "<string>", # concise problem description stating the exact cause
+            "suggestion": "<string>", # suggestions / expected solutions (multiple points, separated by ";")
+            "confidence": "<high|medium|low>" # confidence level, values: *high* / *medium* / *low* 
         }
     ]
-    3.  **示例格式**（仅示例，真正输出请替换为实际内容）
+    3.  **Example format** (only for reference, replace with actual content when outputting)  
         ```json
         [
-            "summary": "页面存在的问题 1:描述；2:描述",
+            "summary": "Page issues 1: description; 2: description",
             {
                 "id": 2,
-                "element": "主导航栏",
-                "description": "导航项与 logo 重叠，导致文字不可读",
+                "element": "Main Navigation Bar",
+                "description": "Navigation items overlap with the logo, making the text unreadable",
                 "suggestion": "",
-                "confidence": "high"
+                "confidence": "medium"
             },
             {
                 "id": 3,
-                "element": "商品列表卡片",
-                "description": "卡片间垂直留白过大，列表无法一次展示完整首屏",
+                "element": "Product List Card",
+                "description": "Excess vertical whitespace between cards prevents the first screen from displaying completely",
                 "suggestion": "",
-                "confidence": "medium"
+                "confidence": "low"
             }
         ]
         ```
-    注意：
-    一个截图存在的多个问题请放在一个对象中，不要分开。
-    如果无法确定问题是否由渲染未完成导致，也要给出最佳推测与建议。
-    描述尽量精炼，用中文；issue 一句阐明问题，suggestion 给出可操作改进。
-    关注是否符合业务逻辑，是否符合用户预期。
+    Notes:
+    If multiple issues exist in the same screenshot, list them in a single object; do not split them.
+    If you are unsure whether a problem is due to incomplete rendering, still provide your best guess and suggestion.
+    Keep descriptions concise; the issue field should state the problem in one sentence, and the suggestion field should provide actionable improvements.
+    Focus on whether it meets business logic and user expectations.
     """

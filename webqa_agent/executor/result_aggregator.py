@@ -8,15 +8,8 @@ from webqa_agent.llm.llm_api import LLMAPI
 
 
 class ResultAggregator:
-    """Aggregates and analyzes parallel test results."""
-
-    def __init__(self):
-        self.summary_templates = {
-            "executive": self._get_executive_summary_template(),
-            "technical": self._get_technical_summary_template(),
-            "recommendations": self._get_recommendations_template(),
-        }
-
+    """Aggregates and analyzes parallel test results"""
+    
     async def aggregate_results(self, test_session: ParallelTestSession) -> Dict[str, Any]:
         """Aggregate all test results into a comprehensive summary.
 
@@ -30,19 +23,25 @@ class ResultAggregator:
 
         # Generate issue list (LLM powered when possible)
         issues = await self._generate_llm_issues(test_session)
+        
+        # 统计指标改为基于所有子测试（SubTest）
+        total_sub_tests = sum(len(r.sub_tests or []) for r in test_session.test_results.values())
+        passed_sub_tests = sum(
+            1
+            for r in test_session.test_results.values()
+            for sub in (r.sub_tests or [])
+            if sub.status == TestStatus.PASSED
+        )
+        critical_sub_tests = total_sub_tests - passed_sub_tests  # 未通过即视为关键问题
 
         # Build content for executive summary tab
         executive_content = {
             "executiveSummary": "",
             "statistics": [
-                {"label": "评估项总数", "value": str(len(test_session.test_results)), "colorClass": "text-blue-600"},
-                {
-                    "label": "符合预期",
-                    "value": str(sum(1 for r in test_session.test_results.values() if r.status == TestStatus.PASSED)),
-                    "colorClass": "text-green-600",
-                },
-                {"label": "关键问题", "value": str(len(issues)), "colorClass": "text-red-600"},
-            ],
+                {"label": "评估项总数", "value": str(total_sub_tests), "colorClass": "var(--warning-color)"},
+                {"label": "测试通过", "value": str(passed_sub_tests), "colorClass": "var(--success-color)"},
+                {"label": "测试失败", "value": str(critical_sub_tests), "colorClass": "var(--failure-color)"},
+            ]
         }
 
         aggregated_results_list = [
@@ -96,6 +95,7 @@ class ResultAggregator:
                 logging.error(f"Failed to initialise LLM, falling back to heuristic issue extraction: {e}")
                 use_llm = False
 
+        logging.info(f"LLM 总结测试结果中...")
         # Iterate over all tests and their sub-tests
         for test_result in test_session.test_results.values():
             for sub in test_result.sub_tests or []:
@@ -119,7 +119,7 @@ class ResultAggregator:
                             '如果有问题，返回 JSON 格式：{"severity": "high|medium|low", "issues": "一句话中文问题描述"}。\n'
                             f"子测试信息: {json.dumps(prompt_content, ensure_ascii=False, default=str)}"
                         )
-                        logging.info(f"LLM Issue Prompt: {prompt}")
+                        logging.debug(f"LLM Issue Prompt: {prompt}")
                         llm_response = await llm.get_llm_response("", prompt)
                         try:
                             parsed = json.loads(llm_response)
@@ -263,57 +263,24 @@ class ResultAggregator:
             logging.warning(f"Failed to read JS file: {e}")
         return ""
 
-    def _get_executive_summary_template(self) -> str:
-        """Get executive summary template."""
-        return """
-        测试执行概况：
-        - 总测试数量：{{ total_tests }}
-        - 成功率：{{ success_rate }}%
-        - 执行时间：{{ duration }}秒
-        """
-
-    def _get_technical_summary_template(self) -> str:
-        """Get technical summary template."""
-        return """
-        技术细节：
-        - 并行执行能力：{{ max_concurrent_tests }}
-        - 浏览器会话：{{ browser_sessions }}
-        - 数据隔离：已实现
-        """
-
-    def _get_recommendations_template(self) -> str:
-        """Get recommendations template."""
-        return """
-        改进建议：
-        - 基于测试结果的具体建议
-        - 性能优化方向
-        - 用户体验改进点
-        """
-
-    def generate_html_report_fully_inlined(
-        self, test_session, report_dir: str | None = None, template_path: str = None
-    ) -> str:
-        """基于index.html结构生成报告，把style.css、data.js、index.js全部内嵌，data.js内容为本次sessi
-        on数据."""
+    def generate_html_report_fully_inlined(self, test_session, report_dir: str | None = None, template_path: str = None) -> str:
+        """Generate a fully inlined HTML report for the test session."""
+        import re
         import json
         import re
 
         try:
-            # 默认模板路径
             if template_path is None:
                 template_path = os.path.join(os.path.dirname(__file__), "../html/index.html")
             with open(template_path, "r", encoding="utf-8") as f:
                 html_template = f.read()
 
-            # 读取内容
             css_content = self._read_css_content()
             js_content = self._read_js_content()
-            # 动态生成data.js内容
             datajs_content = (
                 "window.testResultData = " + json.dumps(test_session.to_dict(), ensure_ascii=False, default=str) + ";"
             )
 
-            # 替换（用lambda防止反斜杠转义问题）
             html_out = html_template
             html_out = re.sub(
                 r'<link\s+rel="stylesheet"\s+href="/assets/style.css"\s*>',
@@ -331,7 +298,6 @@ class ResultAggregator:
                 html_out,
             )
 
-            # 输出
             if report_dir is None:
                 timestamp = os.getenv("WEBQA_TIMESTAMP")
                 report_dir = f"./reports/test_{timestamp}"

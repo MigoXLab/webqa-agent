@@ -9,7 +9,7 @@ from typing import Any, Dict
 
 from webqa_agent.browser.session import BrowserSession
 from webqa_agent.data import TestConfiguration, TestResult, TestStatus
-from webqa_agent.data.test_structures import SubTestReport, SubTestResult, TestCategory
+from webqa_agent.data.test_structures import SubTestReport, SubTestResult, get_category_for_test_type
 from webqa_agent.testers import (
     LighthouseMetricsTest,
     PageButtonTest,
@@ -49,7 +49,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
             test_type=test_config.test_type,
             test_name=test_config.test_name,
             status=TestStatus.RUNNING,
-            category=TestCategory.FUNCTION,
+            category=get_category_for_test_type(test_config.test_type),
         )
 
         parallel_tester: UITester | None = None
@@ -238,7 +238,7 @@ class UXTestRunner(BaseTestRunner):
             test_type=test_config.test_type,
             test_name=test_config.test_name,
             status=TestStatus.RUNNING,
-            category=TestCategory.UX,
+            category=get_category_for_test_type(test_config.test_type),
         )
 
         try:
@@ -295,7 +295,7 @@ class LighthouseTestRunner(BaseTestRunner):
             test_type=test_config.test_type,
             test_name=test_config.test_name,
             status=TestStatus.RUNNING,
-            category=TestCategory.PERFORMANCE,
+            category=get_category_for_test_type(test_config.test_type),
         )
 
         try:
@@ -339,7 +339,7 @@ class ButtonTestRunner(BaseTestRunner):
             test_type=test_config.test_type,
             test_name=test_config.test_name,
             status=TestStatus.RUNNING,
-            category=TestCategory.FUNCTION,
+            category=get_category_for_test_type(test_config.test_type),
         )
 
         try:
@@ -390,7 +390,7 @@ class WebBasicCheckRunner(BaseTestRunner):
             test_type=test_config.test_type,
             test_name=test_config.test_name,
             status=TestStatus.RUNNING,
-            category=TestCategory.FUNCTION,
+            category=get_category_for_test_type(test_config.test_type),
         )
 
         try:
@@ -456,7 +456,7 @@ class SecurityTestRunner(BaseTestRunner):
             test_type=test_config.test_type,
             test_name=test_config.test_name,
             status=TestStatus.RUNNING,
-            category=TestCategory.SECURITY,
+            category=get_category_for_test_type(test_config.test_type),
         )
 
         try:
@@ -557,17 +557,37 @@ class SecurityTestRunner(BaseTestRunner):
                             issues_text += f"，包括：{', '.join(sample_names)}"
                             if type_count > 2:
                                 issues_text += " 等"
-
-                sub_tests.append(
+                
+                combined_reports = []
+                if not finding_details:
+                    # No security issues found
+                    combined_reports.append(SubTestReport(title="安全检查", issues="无发现问题"))
+                else:
+                    for fd in finding_details:
+                        title = f"[{fd.get('severity', 'unknown').upper()}] {fd.get('name')}"
+                        details_parts = []
+                        if fd.get('description'):
+                            details_parts.append(fd['description'])
+                        if fd.get('matched_at'):
+                            details_parts.append(f"Matched at: {fd['matched_at']}")
+                        if fd.get('extracted_results'):
+                            details_parts.append(f"Extracted: {', '.join(map(str, fd['extracted_results']))}")
+                        issues_text = " | ".join(details_parts) if details_parts else "No further details."
+                        combined_reports.append(SubTestReport(title=title, issues=issues_text))
+                
+                sub_tests = [
                     SubTestResult(
-                        name=f"{description}",
+                        name="nuclei检查",
                         status=TestStatus.PASSED,
-                        metrics={"findings_count": type_count},
-                        report=[SubTestReport(title=description, issues=issues_text)],
+                        metrics={
+                            "total_findings": len(finding_details),
+                            **severity_counts
+                        },
+                        report=combined_reports
                     )
-                )
-
-            result.sub_tests = sub_tests
+                ]
+                
+                result.sub_tests = sub_tests
             result.status = TestStatus.PASSED
 
             # 添加总体指标

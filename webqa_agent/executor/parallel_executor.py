@@ -8,6 +8,7 @@ SECURITY_TEST_NO_SESSION_ID = "security_test_no_session"
 
 from webqa_agent.browser.session import BrowserSessionManager
 from webqa_agent.data import ParallelTestSession, TestConfiguration, TestResult, TestStatus, TestType
+from webqa_agent.data.test_structures import get_category_for_test_type
 from webqa_agent.executor.result_aggregator import ResultAggregator
 from webqa_agent.executor.test_runners import (
     ButtonTestRunner,
@@ -158,6 +159,7 @@ class ParallelTestExecutor:
                                 test_type=test_config.test_type,
                                 test_name=test_config.test_name,
                                 status=TestStatus.CANCELLED,
+                                category=get_category_for_test_type(test_config.test_type),
                                 error_message="Test was cancelled",
                             )
                             test_session.update_test_result(test_config.test_id, cancelled_result)
@@ -168,6 +170,7 @@ class ParallelTestExecutor:
                                 test_type=test_config.test_type,
                                 test_name=test_config.test_name,
                                 status=TestStatus.FAILED,
+                                category=get_category_for_test_type(test_config.test_type),
                                 error_message=str(result),
                             )
                             test_session.update_test_result(test_config.test_id, failed_result)
@@ -258,6 +261,7 @@ class ParallelTestExecutor:
                     test_type=test_config.test_type,
                     test_name=test_config.test_name,
                     status=TestStatus.FAILED,
+                    category=get_category_for_test_type(test_config.test_type),
                     start_time=test_context.start_time,
                     end_time=test_context.end_time,
                     duration=test_context.duration,
@@ -276,6 +280,7 @@ class ParallelTestExecutor:
                     test_type=test_config.test_type,
                     test_name=test_config.test_name,
                     status=TestStatus.CANCELLED,
+                    category=get_category_for_test_type(test_config.test_type),
                     start_time=test_context.start_time,
                     end_time=test_context.end_time,
                     duration=test_context.duration,
