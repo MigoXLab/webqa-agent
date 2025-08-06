@@ -85,4 +85,4 @@ esac
 
 echo "✅ 容器启动完成！"
 echo "📋 查看日志: docker-compose logs -f"
-echo "🛑 停止服务: docker-compose down" 
+echo "🛑 停止服务: docker-compose down"

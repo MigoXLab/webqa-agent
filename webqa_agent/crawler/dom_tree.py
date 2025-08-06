@@ -1,8 +1,8 @@
-import json
 import copy
-from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Any, Callable
+import json
 from collections import Counter
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional
 
 
 @dataclass
@@ -20,8 +20,8 @@ class DomTreeNode:
     attributes: Dict[str, str] = field(default_factory=dict)
 
     # 新增 selector, xpath
-    selector: str = "",
-    xpath: str = "",
+    selector: str = ("",)
+    xpath: str = ("",)
 
     # 布局信息
     viewport: Dict[str, float] = field(default_factory=dict)
@@ -35,9 +35,9 @@ class DomTreeNode:
     is_in_viewport: Optional[bool] = None
 
     # 父节点
-    parent: Optional['DomTreeNode'] = None
+    parent: Optional["DomTreeNode"] = None
     # 子节点
-    children: List['DomTreeNode'] = field(default_factory=list)
+    children: List["DomTreeNode"] = field(default_factory=list)
     # 深度
     depth: int = 0
     # 子 DOM 树
@@ -46,29 +46,23 @@ class DomTreeNode:
     def __repr__(self):
         return f"<DomTreeNode id={self.id!r} tag={self.tag!r} depth={self.depth}>"
 
-    def add_child(self, child: 'DomTreeNode') -> None:
-        """
-        将 child 挂载到 self.children，同步设置 parent 和 depth。
-        """
+    def add_child(self, child: "DomTreeNode") -> None:
+        """将 child 挂载到 self.children，同步设置 parent 和 depth。"""
         child.parent = self
         child.depth = self.depth + 1
         self.children.append(child)
 
-    def find_by_tag(self, tag_name: str) -> List['DomTreeNode']:
-        """
-        递归查找所有匹配 tag_name 的节点。
-        """
-        matches: List['DomTreeNode'] = []
+    def find_by_tag(self, tag_name: str) -> List["DomTreeNode"]:
+        """递归查找所有匹配 tag_name 的节点。"""
+        matches: List["DomTreeNode"] = []
         if self.tag == tag_name:
             matches.append(self)
         for c in self.children:
             matches.extend(c.find_by_tag(tag_name))
         return matches
 
-    def find_by_id(self, target_id: int) -> Optional['DomTreeNode']:
-        """
-        深度优先查找：返回第一个 id == target_id 的节点，找不到则返回 None。
-        """
+    def find_by_id(self, target_id: int) -> Optional["DomTreeNode"]:
+        """深度优先查找：返回第一个 id == target_id 的节点，找不到则返回 None。"""
         # 先检查自身
         if self.id == target_id:
             return self
@@ -81,13 +75,10 @@ class DomTreeNode:
 
         return None
 
-    def prune(self, predicate: Callable[['DomTreeNode'], bool]) -> Optional['DomTreeNode']:
-        """
-        剪枝：保留满足 predicate 的节点，并递归处理子树。
-        如果当前节点和所有子节点都不满足，则返回 None。
-        """
+    def prune(self, predicate: Callable[["DomTreeNode"], bool]) -> Optional["DomTreeNode"]:
+        """剪枝：保留满足 predicate 的节点，并递归处理子树。 如果当前节点和所有子节点都不满足，则返回 None。"""
         # 处理子节点
-        pruned_children: List['DomTreeNode'] = []
+        pruned_children: List["DomTreeNode"] = []
         for c in self.children:
             pc = c.prune(predicate)
             if pc:
@@ -115,7 +106,7 @@ class DomTreeNode:
                 subtree=copy.deepcopy(self.subtree),
                 depth=self.depth,
                 selector=self.selector,  # 新增
-                xpath=self.xpath,        # 新增
+                xpath=self.xpath,  # 新增
             )
             for child in pruned_children:
                 new_node.add_child(child)
@@ -123,29 +114,27 @@ class DomTreeNode:
         return None
 
     def to_dict(self) -> Dict[str, Any]:
-        """
-        序列化回原始嵌套 dict 格式，包含 'node' 和 'children'。
-        """
+        """序列化回原始嵌套 dict 格式，包含 'node' 和 'children'。"""
         node_data: Dict[str, Any] = {
-            'id': self.id,
-            'highlightIndex': self.highlightIndex,
-            'tagName': self.tag,
-            'className': self.class_name,
-            'innerText': self.inner_text,
-            'type': self.element_type,
-            'placeholder': self.placeholder,
-            'attributes': [{'name': k, 'value': v} for k, v in self.attributes.items()],
-            'viewport': self.viewport,
-            'center_x': self.center_x,
-            'center_y': self.center_y,
-            'isVisible': self.isVisible,
-            'isInteractive': self.isInteractive,
-            'isTopElement': self.isTopElement,
-            'isInViewport': self.is_in_viewport
+            "id": self.id,
+            "highlightIndex": self.highlightIndex,
+            "tagName": self.tag,
+            "className": self.class_name,
+            "innerText": self.inner_text,
+            "type": self.element_type,
+            "placeholder": self.placeholder,
+            "attributes": [{"name": k, "value": v} for k, v in self.attributes.items()],
+            "viewport": self.viewport,
+            "center_x": self.center_x,
+            "center_y": self.center_y,
+            "isVisible": self.isVisible,
+            "isInteractive": self.isInteractive,
+            "isTopElement": self.isTopElement,
+            "isInViewport": self.is_in_viewport,
         }
 
         def serialize_subtree(raw: Any) -> Any:
-            if isinstance(raw, dict) and 'node' in raw and 'children' in raw:
+            if isinstance(raw, dict) and "node" in raw and "children" in raw:
                 # 直接当作一整段 “raw data” 递归返回
                 return raw
             elif isinstance(raw, list):
@@ -154,81 +143,73 @@ class DomTreeNode:
                 return raw
 
         return {
-            'node': node_data,
-            'children': [c.to_dict() for c in self.children],
-            'subtree': serialize_subtree(self.subtree)
+            "node": node_data,
+            "children": [c.to_dict() for c in self.children],
+            "subtree": serialize_subtree(self.subtree),
         }
 
     @classmethod
-    def build_root(cls, data: Dict[str, Any]) -> 'DomTreeNode':
-        if data.get('node') is None:
+    def build_root(cls, data: Dict[str, Any]) -> "DomTreeNode":
+        if data.get("node") is None:
             fake_node = {
-                'node': {
-                    'id': None,
-                    'highlightIndex': None,
-                    'tagName': '__root__',
-                    'className': None,
-                    'innerText': '',
-                    'type': None,
-                    'placeholder': None,
-                    'attributes': [],
-                    'selector': None,  # 新增
-                    'xpath': None,     # 新增
-                    'viewport': {},
-                    'center_x': None,
-                    'center_y': None,
-                    'isVisible': True,
-                    'isInteractive': False,
-                    'isTopElement': False,
-                    'isInViewport': True
+                "node": {
+                    "id": None,
+                    "highlightIndex": None,
+                    "tagName": "__root__",
+                    "className": None,
+                    "innerText": "",
+                    "type": None,
+                    "placeholder": None,
+                    "attributes": [],
+                    "selector": None,  # 新增
+                    "xpath": None,  # 新增
+                    "viewport": {},
+                    "center_x": None,
+                    "center_y": None,
+                    "isVisible": True,
+                    "isInteractive": False,
+                    "isTopElement": False,
+                    "isInViewport": True,
                 },
-                'children': [data],
-                'subtree': []
+                "children": [data],
+                "subtree": [],
             }
 
             data = fake_node
 
-        def build_dom_tree(data: Dict[str, Any],
-                           parent: Optional['DomTreeNode'] = None,
-                           depth: int = 0) -> List['DomTreeNode']:
-            """
-            从注入 JS 结果（嵌套 dict）构建 DomTreeNode 列表。
-            返回顶层（或多根）节点列表。
-            """
+        def build_dom_tree(
+            data: Dict[str, Any], parent: Optional["DomTreeNode"] = None, depth: int = 0
+        ) -> List["DomTreeNode"]:
+            """从注入 JS 结果（嵌套 dict）构建 DomTreeNode 列表。 返回顶层（或多根）节点列表。"""
             nodes: List[DomTreeNode] = []
-            node_data = data.get('node')
-            children_data = data.get('children', [])
+            node_data = data.get("node")
+            children_data = data.get("children", [])
             subtree_data = copy.deepcopy(data.get("subtree", {}))
 
             if node_data:
-                attrs = {a['name']: a['value'] for a in node_data.get('attributes', [])}
+                attrs = {a["name"]: a["value"] for a in node_data.get("attributes", [])}
 
                 node = cls(
-                    id=node_data.get('id'),
-                    highlightIndex=node_data.get('highlightIndex'),
-                    tag=(node_data.get('tagName') or '').lower() or None,
-                    class_name=node_data.get('className'),
-                    inner_text=(node_data.get('innerText') or '').strip(),
-                    element_type=node_data.get('type'),
-                    placeholder=node_data.get('placeholder'),
-
+                    id=node_data.get("id"),
+                    highlightIndex=node_data.get("highlightIndex"),
+                    tag=(node_data.get("tagName") or "").lower() or None,
+                    class_name=node_data.get("className"),
+                    inner_text=(node_data.get("innerText") or "").strip(),
+                    element_type=node_data.get("type"),
+                    placeholder=node_data.get("placeholder"),
                     attributes=attrs,
-
-                    selector=node_data.get('selector'),  # 新增
-                    xpath=node_data.get('xpath'),        # 新增
-
-                    viewport=node_data.get('viewport', {}),
-                    center_x=node_data.get('center_x'),
-                    center_y=node_data.get('center_y'),
-
-                    isVisible=node_data.get('isVisible'),
-                    isInteractive=node_data.get('isInteractive'),
-                    isTopElement=node_data.get('isTopElement'),
-                    is_in_viewport=node_data.get('isInViewport'),
-
+                    selector=node_data.get("selector"),  # 新增
+                    xpath=node_data.get("xpath"),  # 新增
+                    viewport=node_data.get("viewport", {}),
+                    center_x=node_data.get("center_x"),
+                    center_y=node_data.get("center_y"),
+                    isVisible=node_data.get("isVisible"),
+                    isInteractive=node_data.get("isInteractive"),
+                    isTopElement=node_data.get("isTopElement"),
+                    is_in_viewport=node_data.get("isInViewport"),
                     subtree=subtree_data,
                     parent=parent,
-                    depth=depth
+                    depth=depth,
                 )
 
                 for cd in children_data:
@@ -247,16 +228,16 @@ class DomTreeNode:
 
         return roots[0]
 
-    def pre_iter(self) -> List['DomTreeNode']:
+    def pre_iter(self) -> List["DomTreeNode"]:
         """前序遍历，返回节点列表。"""
         nodes = [self]
         for c in self.children:
             nodes.extend(c.pre_iter())
         return nodes
 
-    def post_iter(self) -> List['DomTreeNode']:
+    def post_iter(self) -> List["DomTreeNode"]:
         """后序遍历，返回节点列表。"""
-        nodes: List['DomTreeNode'] = []
+        nodes: List["DomTreeNode"] = []
         for c in self.children:
             nodes.extend(c.post_iter())
         nodes.append(self)
@@ -267,10 +248,8 @@ class DomTreeNode:
         return dict(counts)
 
     @classmethod
-    def cutting(cls, node: 'DomTreeNode') -> dict:
-        """
-        cut off invalid info
-        """
+    def cutting(cls, node: "DomTreeNode") -> dict:
+        """Cut off invalid info."""
         vp = node.viewport or {}
         left = vp.get("x")
         top = vp.get("y")
@@ -292,7 +271,7 @@ class DomTreeNode:
             int(left) if left is not None else None,
             int(top) if top is not None else None,
             int(right) if right is not None else None,
-            int(bottom) if bottom is not None else None
+            int(bottom) if bottom is not None else None,
         ]
 
         node_dict = {
@@ -301,7 +280,7 @@ class DomTreeNode:
             "innerText": node.inner_text,
             "bbox": bbox,
             "center_x": int(node.center_x) if node.center_x is not None else None,
-            "center_y": int(node.center_y) if node.center_y is not None else None
+            "center_y": int(node.center_y) if node.center_y is not None else None,
         }
 
         # 2. 递归处理 children
@@ -310,18 +289,15 @@ class DomTreeNode:
             children_list.append(cls.cutting(child))
 
         # 3. 返回新的嵌套结构
-        return {
-            "node": node_dict,
-            "children": children_list
-        }
+        return {"node": node_dict, "children": children_list}
 
 
 # Example Usage
-if __name__ == '__main__':
-    with open('test_tree.json', encoding='utf-8') as f:
+if __name__ == "__main__":
+    with open("test_tree.json", encoding="utf-8") as f:
         raw = json.load(f)
     root = DomTreeNode.build_root(raw)
-    print('Depth distribution:', root.count_depth())
+    print("Depth distribution:", root.count_depth())
 
     res = DomTreeNode.cutting(root)
     print(res)

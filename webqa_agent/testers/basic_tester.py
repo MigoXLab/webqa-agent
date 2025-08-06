@@ -1,12 +1,13 @@
 import asyncio
-import functools
-import requests
-import ssl
+import logging
 import socket
+import ssl
 from datetime import datetime
 from urllib.parse import urlparse
-from webqa_agent.data.test_structures import SubTestResult, SubTestReport, TestStatus
-import logging
+
+import requests
+
+from webqa_agent.data.test_structures import SubTestReport, SubTestResult, TestStatus
 
 
 class WebAccessibilityTest:
@@ -23,7 +24,7 @@ class WebAccessibilityTest:
                 "status": main_status,
                 "https_valid": main_valid,
                 "https_reason": main_reason,
-                "https_expiry_date": main_expiry_date
+                "https_expiry_date": main_expiry_date,
             }
 
             # check sub links
@@ -34,11 +35,17 @@ class WebAccessibilityTest:
             if sub_links:
                 total_links += len(sub_links)
                 for link in sub_links:
-                    sub_result = {"url": link, "status": None, "https_valid": None, "https_reason": None,
-                                  "https_expiry_date": None}
+                    sub_result = {
+                        "url": link,
+                        "status": None,
+                        "https_valid": None,
+                        "https_reason": None,
+                        "https_expiry_date": None,
+                    }
                     try:
-                        sub_result["https_valid"], sub_result["https_reason"], sub_result[
-                            "https_expiry_date"] = await self.check_https_expiry(link)
+                        sub_result["https_valid"], sub_result["https_reason"], sub_result["https_expiry_date"] = (
+                            await self.check_https_expiry(link)
+                        )
                     except Exception as e:
                         logging.error(f"Failed to check HTTPS for {link}: {str(e)}")
                         sub_result["https"] = {"error": str(e)}
@@ -71,23 +78,14 @@ class WebAccessibilityTest:
             result.status = TestStatus.PASSED if all_passed else TestStatus.FAILED
 
             # add main link check steps
-            result.report.append(
-                SubTestReport(
-                    title=f"主链接检查",
-                    issues=f"测试结果: {main_url_result}"
-                )
-            )
+            result.report.append(SubTestReport(title="主链接检查", issues=f"测试结果: {main_url_result}"))
 
             # add sub link check steps
             if sub_links:
                 for i, sub_link_result in enumerate(sub_link_results):
                     result.report.append(
-                        SubTestReport(
-                            title=f"子链接检查 {i + 1}",
-                            issues=f"测试结果: {sub_link_result}"
-                        )
+                        SubTestReport(title=f"子链接检查 {i + 1}", issues=f"测试结果: {sub_link_result}")
                     )
-
 
         except Exception as e:
             error_message = f"An error occurred in WebAccessibilityTest: {str(e)}"
@@ -99,7 +97,8 @@ class WebAccessibilityTest:
 
     @staticmethod
     async def check_https_expiry(url: str, timeout: float = 10.0) -> tuple[bool, str, str]:
-        """Check HTTPS certificate expiry in a thread to avoid blocking the event loop"""
+        """Check HTTPS certificate expiry in a thread to avoid blocking the
+        event loop."""
         loop = asyncio.get_running_loop()
 
         def _sync_check():
@@ -115,8 +114,8 @@ class WebAccessibilityTest:
                     with context.wrap_socket(sock, server_hostname=hostname) as ssock:
                         cert = ssock.getpeercert()
 
-                expiry_date = datetime.strptime(cert['notAfter'], '%b %d %H:%M:%S %Y %Z')
-                formatted_expiry_date = expiry_date.strftime('%Y-%m-%d %H:%M:%S')
+                expiry_date = datetime.strptime(cert["notAfter"], "%b %d %H:%M:%S %Y %Z")
+                formatted_expiry_date = expiry_date.strftime("%Y-%m-%d %H:%M:%S")
                 result_valid = datetime.now() < expiry_date
                 result_expiry_date = formatted_expiry_date
                 logging.debug(f"HTTPS certificate is {'valid' if result_valid else 'expired'} for {url}")
@@ -134,7 +133,8 @@ class WebAccessibilityTest:
 
     @staticmethod
     async def check_page_status(url: str, timeout: float = 10.0) -> int:
-        """Get page status code using requests in a thread pool to avoid blocking"""
+        """Get page status code using requests in a thread pool to avoid
+        blocking."""
         loop = asyncio.get_running_loop()
 
         def _sync_get():

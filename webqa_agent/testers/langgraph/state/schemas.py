@@ -1,12 +1,12 @@
-from typing import List, Any, Optional, Annotated
-from typing_extensions import TypedDict
 import operator
+from typing import Annotated, Any, List, Optional
+
+from typing_extensions import TypedDict
 
 
 class MainGraphState(TypedDict):
-    """
-    Represents the overall state of the main testing workflow.
-    """
+    """Represents the overall state of the main testing workflow."""
+
     url: str
     business_objectives: Optional[str]
     cookies: Optional[str]

@@ -1,16 +1,13 @@
-"""
-执行代理相关的提示词模板
-"""
-from webqa_agent.testers.langgraph.utils.prompt_utils import check_repetition
+"""执行代理相关的提示词模板."""
 
 
 def get_execute_system_prompt(case: dict) -> str:
-    """生成执行代理的详细系统提示词"""
-    
-    objective = case.get('objective', 'Not specified')
-    success_criteria = case.get('success_criteria', ['Not specified'])
-    steps_list = case.get('steps', [])
-    
+    """生成执行代理的详细系统提示词."""
+
+    objective = case.get("objective", "Not specified")
+    success_criteria = case.get("success_criteria", ["Not specified"])
+    steps_list = case.get("steps", [])
+
     # 格式化步骤信息
     formatted_steps = []
     for i, step in enumerate(steps_list):
@@ -18,8 +15,6 @@ def get_execute_system_prompt(case: dict) -> str:
             formatted_steps.append(f"{i+1}. Action: {step['action']}")
         elif "verify" in step:
             formatted_steps.append(f"{i+1}. Assert: {step['verify']}")
-    
-    steps_str = '\n'.join(formatted_steps) if formatted_steps else "No steps provided."
 
     system_prompt = f"""You are an intelligent UI test execution agent specialized in web application testing. Your role is to execute individual test cases by performing UI interactions and validations in a systematic, reliable manner following established QA best practices.
 
@@ -36,7 +31,7 @@ Your primary mission is to execute ONE single instruction (action or assertion) 
 ## Available Tools
 You have access to two specialized testing tools:
 
-- **`execute_ui_action(action: str, target: str, value: Optional[str], description: Optional[str], clear_before_type: bool)`**: 
+- **`execute_ui_action(action: str, target: str, value: Optional[str], description: Optional[str], clear_before_type: bool)`**:
   Performs UI interactions such as clicking, typing, scrolling, dropdown selection, etc.
   - `action`: Action type ('click', 'type', 'scroll', 'SelectDropdown', 'clear', etc.)
   - `target`: Element descriptor (use natural language descriptions)
@@ -44,7 +39,7 @@ You have access to two specialized testing tools:
   - `description`: Purpose of the action for logging and context
   - `clear_before_type`: Set to `True` for input corrections or when explicitly required
 
-- **`execute_ui_assertion(assertion: str)`**: 
+- **`execute_ui_assertion(assertion: str)`**:
   Validates expected UI states and behaviors
   - `assertion`: Natural language statement describing what to verify (e.g., "Verify the login success message is displayed")
 
@@ -78,7 +73,7 @@ You have access to two specialized testing tools:
 - Maintain clear action descriptions for test documentation
 - Track progress through the test plan systematically
 
-### 3. Test Objective Achievement (THIRD PRIORITY)  
+### 3. Test Objective Achievement (THIRD PRIORITY)
 **Goal-Oriented Execution**:
 - Keep the test objective as the ultimate success criterion
 - If the standard test steps cannot achieve the objective due to UI changes, adapt the approach while maintaining test integrity
@@ -109,7 +104,7 @@ You have access to two specialized testing tools:
 
 ### Pattern 1: Form Validation Errors
 **Scenario**: Input validation fails after entering data
-**Solution**: 
+**Solution**:
 1. Analyze error message for validation requirements
 2. Clear the problematic field (`clear_before_type: true`)
 3. Enter corrected value that meets validation criteria
@@ -165,7 +160,7 @@ When all test steps are completed or an unrecoverable error occurs:
 
 ## Quality Assurance Standards
 - **Precision**: Every action must be purposeful and documented
-- **Reliability**: Consistent behavior across different UI states  
+- **Reliability**: Consistent behavior across different UI states
 - **Traceability**: Clear audit trail of all actions and decisions
 - **Adaptability**: Intelligent response to dynamic UI conditions
 - **Completeness**: Thorough validation of success criteria"""

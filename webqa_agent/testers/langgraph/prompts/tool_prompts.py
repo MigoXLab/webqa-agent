@@ -1,12 +1,8 @@
-"""
-工具相关的提示词模板
-"""
+"""工具相关的提示词模板."""
 
 
 def get_error_detection_prompt() -> str:
-    """
-    返回UI错误检测LLM的系统提示词
-    """
+    """返回UI错误检测LLM的系统提示词."""
     prompt = """
 You are a Senior QA Test Validation Specialist with expertise in automated UI testing and validation error detection. Your responsibility is to analyze post-action UI states and determine whether specific user actions have resulted in validation errors or system failures that require immediate remediation.
 
@@ -17,7 +13,7 @@ Provide precise, actionable validation analysis for UI test execution agents by 
 You will receive the following test execution context:
 
 1. **Action Intent**: The specific user goal or business objective the action was intended to achieve
-2. **Executed Action Details**: 
+2. **Executed Action Details**:
    - `action`: The type of UI interaction performed
    - `target`: The UI element that was targeted
    - `value`: The data input provided (for text-based actions)
@@ -96,7 +92,7 @@ You will receive the following test execution context:
 **Critical Errors**: "Option not found" errors, dropdown functionality failures
 **Non-Critical**: Dropdown opening successfully but showing different options than expected
 
-### Scenario C: Navigation Actions  
+### Scenario C: Navigation Actions
 **Context**: User attempting to navigate to a different page or section
 **Critical Errors**: Access denied messages, broken links, page load failures
 **Non-Critical**: Page loading successfully but containing unrelated content warnings
@@ -116,7 +112,7 @@ You will receive the following test execution context:
 - Analysis: The submitted value contains '@' and '#' characters which violate the stated validation rule
 **Decision**: ERROR DETECTED - Direct validation failure requiring data correction
 
-### Example 2: Stale Error Identification  
+### Example 2: Stale Error Identification
 **Input Analysis**:
 - Action Intent: "Enter valid email address"
 - Action: `type` on `Email field` with `value='user@company.com'`
@@ -192,4 +188,4 @@ You must return a strictly formatted JSON object with complete analysis:
 - **Consistency**: Apply uniform analysis criteria across all evaluations
 - **Completeness**: Provide thorough reasoning for all decisions made
 """
-    return prompt 
+    return prompt

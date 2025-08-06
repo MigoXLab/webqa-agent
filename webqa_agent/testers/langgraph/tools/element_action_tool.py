@@ -1,17 +1,20 @@
-"""
-This module defines the `execute_ui_action` tool for the LangGraph-based UI testing application.
+"""This module defines the `execute_ui_action` tool for the LangGraph-based UI
+testing application.
+
 This tool allows the agent to interact with the web page.
 """
-from typing import Optional, Dict, Any
-import logging
-import json
-import datetime
 
-from webqa_agent.crawler.deep_crawler import DeepCrawler
-from webqa_agent.testers.ui_tester import UITester
+import datetime
+import json
+import logging
+from typing import Any, Dict, Optional
+
 from langchain_core.tools import BaseTool
 from pydantic import Field
+
+from webqa_agent.crawler.deep_crawler import DeepCrawler
 from webqa_agent.testers.langgraph.prompts.tool_prompts import get_error_detection_prompt
+from webqa_agent.testers.ui_tester import UITester
 
 
 class UITool(BaseTool):
@@ -21,7 +24,9 @@ class UITool(BaseTool):
     description: str = "Executes a UI action using the UITester and returns a structured summary of the new page state."
     ui_tester_instance: UITester = Field(...)
 
-    async def get_full_page_context(self, include_screenshot: bool = False, viewport_only: bool = True) -> tuple[str, str | None]:
+    async def get_full_page_context(
+        self, include_screenshot: bool = False, viewport_only: bool = True
+    ) -> tuple[str, str | None]:
         """Helper to get a token-efficient summary of the page structure.
 
         Args:
@@ -38,9 +43,7 @@ class UITool(BaseTool):
         if include_screenshot:
             logging.info("Capturing post-action screenshot")
             screenshot = await self.ui_tester_instance._actions.b64_page_screenshot(
-                file_name="check_ui_error",
-                save_to_log=False,
-                full_page=not viewport_only
+                file_name="check_ui_error", save_to_log=False, full_page=not viewport_only
             )
             await dp.remove_marker()
 
@@ -50,12 +53,10 @@ class UITool(BaseTool):
     async def _check_for_ui_error(
         self, action: str, target: str, value: Optional[str], intent: str, page_structure: str, screenshot: str
     ) -> Dict[str, Any]:
-        """
-        Uses an LLM to check for a UI validation error after an action.
-        """
+        """Uses an LLM to check for a UI validation error after an action."""
         logging.info(f"Starting UI error detection for action: {action} on {target}")
         logging.info(f"Error detection intent: {intent}")
-        
+
         prompt = get_error_detection_prompt()
         llm_input = (
             f"Action Intent: {intent}\n"
@@ -64,46 +65,44 @@ class UITool(BaseTool):
         )
 
         logging.debug(f"Error detection LLM input length: {len(llm_input)} characters")
-        logging.debug(f"Error detection page structure: {page_structure[:500]}{'...' if len(page_structure) > 500 else ''}")
+        logging.debug(
+            f"Error detection page structure: {page_structure[:500]}{'...' if len(page_structure) > 500 else ''}"
+        )
 
         # Use the same LLM instance from the ui_tester
         llm = self.ui_tester_instance.llm
         try:
             logging.info("Starting UI error detection - Sending request to LLM...")
             start_time = datetime.datetime.now()
-            
-            response_str = await llm.get_llm_response(
-                system_prompt=prompt,
-                prompt=llm_input,
-                images=screenshot
-            )
-            
+
+            response_str = await llm.get_llm_response(system_prompt=prompt, prompt=llm_input, images=screenshot)
+
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()
-            
+
             logging.info(f"UI error detection completed in {duration:.2f} seconds")
             logging.debug(f"Error detection response: {response_str[:500]}...")
 
             result = json.loads(response_str)
             error_detected = result.get("error_detected", False)
             error_message = result.get("error_message", "")
-            
+
             logging.info(f"Error detection result: {'ERROR' if error_detected else 'NO ERROR'}")
             if error_detected:
                 logging.warning(f"UI error detected: {error_message}")
             else:
                 logging.info("No UI validation errors detected")
-                
+
             return result
-            
+
         except json.JSONDecodeError as e:
             logging.error(f"Failed to decode JSON from error detection LLM: {e}")
             logging.error(f"Raw response: {response_str}")
             # Fallback to a safe default if LLM response is invalid
             fallback_result = {
-                "error_detected": False, 
-                "error_message": "Invalid response from error detection model.", 
-                "reasoning": "JSON parsing failed"
+                "error_detected": False,
+                "error_message": "Invalid response from error detection model.",
+                "reasoning": "JSON parsing failed",
             }
             logging.warning("Using fallback error detection result")
             return fallback_result
@@ -112,16 +111,17 @@ class UITool(BaseTool):
             return {
                 "error_detected": False,
                 "error_message": f"Error detection failed: {str(e)}",
-                "reasoning": "Exception during error detection process"
+                "reasoning": "Exception during error detection process",
             }
 
     def _run(self, action: str, target: str, **kwargs) -> str:
         raise NotImplementedError("Use arun for asynchronous execution.")
 
-    async def _arun(self, action: str, target: str, value: str = None, description: str = None, clear_before_type: bool = False) -> str:
-        """
-        Executes a UI action using the UITester and returns a formatted summary of the result.
-        """
+    async def _arun(
+        self, action: str, target: str, value: str = None, description: str = None, clear_before_type: bool = False
+    ) -> str:
+        """Executes a UI action using the UITester and returns a formatted
+        summary of the result."""
         if not self.ui_tester_instance:
             error_msg = "UITester instance not provided for action execution"
             logging.error(error_msg)
@@ -135,11 +135,11 @@ class UITool(BaseTool):
 
         # Build the instruction for ui_tester.action()
         instruction_parts = []
-        
+
         if description:
             instruction_parts.append(description)
             logging.info(f"Using custom description: {description}")
-        
+
         # Build the action phrase
         if action.lower() == "click":
             action_phrase = f"Click on the {target}"
@@ -159,32 +159,34 @@ class UITool(BaseTool):
             action_phrase = f"{action} on {target}"
             if value:
                 action_phrase += f" with value '{value}'"
-        
+
         if not description:
             instruction_parts.append(action_phrase)
         else:
             instruction_parts.append(action_phrase)
-            
+
         instruction = " - ".join(instruction_parts)
         logging.info(f"Built instruction for UITester: {instruction}")
 
         try:
             logging.info(f"Executing UI action: {instruction}")
             start_time = datetime.datetime.now()
-            
+
             execution_steps, result = await self.ui_tester_instance.action(instruction)
-            
+
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()
-            
+
             logging.info(f"UI action completed in {duration:.2f} seconds")
             logging.debug(f"UI action result type: {type(result)}")
-            
+
             # First, check for a hard failure from the action executor
             if not result.get("success"):
-                error_message = f"Action '{action}' on '{target}' failed. Reason: {result.get('message', 'No details provided.')}"
-                if 'available_options' in result:
-                    options_str = ", ".join(result['available_options'])
+                error_message = (
+                    f"Action '{action}' on '{target}' failed. Reason: {result.get('message', 'No details provided.')}"
+                )
+                if "available_options" in result:
+                    options_str = ", ".join(result["available_options"])
                     error_message += f" Available options are: [{options_str}]."
                     logging.warning(f"Action failed with available options: {options_str}")
                 else:
@@ -209,21 +211,21 @@ class UITool(BaseTool):
             if error_check_result.get("error_detected", False):
                 error_msg = error_check_result.get("error_message", "Validation error detected")
                 reasoning = error_check_result.get("reasoning", "")
-                
+
                 logging.warning(f"UI validation error detected: {error_msg}")
                 logging.info(f"Error reasoning: {reasoning}")
-                
+
                 # Format as expected by execution agent
                 failure_response = f"[FAILURE] Action '{action}' on '{target}' appeared to succeed, but a validation error was detected on the page. You MUST resolve this before proceeding."
                 if error_msg:
                     failure_response += f" Error Details: {error_msg}"
                 if reasoning:
                     failure_response += f" Analysis: {reasoning}"
-                
+
                 # Include truncated page context for agent analysis
                 context_preview = page_structure[:2000] + "..." if len(page_structure) > 2000 else page_structure
                 failure_response += f"\n\nPage Context Preview:\n{context_preview}"
-                
+
                 logging.info("Returning failure response due to UI validation error")
                 return failure_response
 
@@ -232,16 +234,16 @@ class UITool(BaseTool):
             success_response = f"[SUCCESS] Action '{action}' on '{target}' completed successfully."
             if description:
                 success_response += f" ({description})"
-            
+
             # Add contextual information about the current page state
             if result.get("message"):
                 success_response += f" Status: {result['message']}"
                 logging.info(f"Action status message: {result['message']}")
-            
+
             # Include essential page structure information for next step planning
             context_preview = page_structure[:1500] + "..." if len(page_structure) > 1500 else page_structure
             success_response += f"\n\nCurrent Page State:\n{context_preview}"
-            
+
             logging.info("Returning success response with page context")
             return success_response
 
@@ -263,39 +265,38 @@ class UIAssertTool(BaseTool):
         raise NotImplementedError("Use arun for asynchronous execution.")
 
     async def _arun(self, assertion: str) -> str:
-        """
-        Executes a UI assertion using the UITester and returns a formatted verification result.
-        """
+        """Executes a UI assertion using the UITester and returns a formatted
+        verification result."""
         if not self.ui_tester_instance:
             return "[FAILURE] Error: UITester instance not provided for assertion."
 
         logging.info(f"Executing UI assertion: {assertion}")
-        
+
         try:
             execution_steps, result = await self.ui_tester_instance.verify(assertion)
-            
+
             if not isinstance(result, dict):
                 return f"[FAILURE] Assertion error: Invalid response format from UITester.verify(). Expected dict, got {type(result)}"
-            
+
             # Extract validation result from the response
             validation_result = result.get("Validation Result", "Unknown")
             details = result.get("Details", [])
-            
+
             if validation_result == "Validation Passed":
                 success_response = f"[SUCCESS] Assertion '{assertion}' PASSED."
                 if details:
                     success_response += f" Verification Details: {'; '.join(details)}"
                 return success_response
-            
+
             elif validation_result == "Validation Failed":
                 failure_response = f"[FAILURE] Assertion '{assertion}' FAILED."
                 if details:
                     failure_response += f" Failure Details: {'; '.join(details)}"
                 return failure_response
-            
+
             else:
                 return f"[FAILURE] Assertion '{assertion}' returned unexpected result: {validation_result}"
-                
+
         except Exception as e:
             logging.error(f"Error executing UI assertion: {str(e)}")
             return f"[FAILURE] Unexpected error during assertion execution: {str(e)}"

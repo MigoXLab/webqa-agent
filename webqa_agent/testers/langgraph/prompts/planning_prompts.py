@@ -1,6 +1,5 @@
-"""
-测试计划和用例生成相关的提示词模板
-"""
+"""测试计划和用例生成相关的提示词模板."""
+
 import json
 
 
@@ -11,11 +10,10 @@ def get_test_case_planning_prompt(
     page_structure: str,
     completed_cases: list = None,
     reflection_history: list = None,
-    remaining_objectives: str = None
+    remaining_objectives: str = None,
 ) -> str:
-    """
-    生成测试用例规划的提示词
-    
+    """生成测试用例规划的提示词.
+
     Args:
         state_url: 目标URL
         business_objectives: 业务目标
@@ -24,11 +22,11 @@ def get_test_case_planning_prompt(
         completed_cases: 已完成的测试用例（用于重新规划）
         reflection_history: 反思历史（用于重新规划）
         remaining_objectives: 剩余目标（用于重新规划）
-    
+
     Returns:
         格式化的提示词字符串
     """
-    
+
     # 判断是初始规划还是重新规划
     if not completed_cases:
         # 根据business_objectives是否为空决定模式
@@ -153,7 +151,7 @@ Perform comprehensive analysis within an `<analysis_scratchpad>` section using t
 - **Integration Points**: Identify external system interactions (APIs, databases, third-party services)
 - **Data Flow Analysis**: Map information flow through the application
 
-#### 1.2 User Journey & Workflow Analysis  
+#### 1.2 User Journey & Workflow Analysis
 - **Primary User Paths**: Identify main user workflows from entry to goal completion
 - **Alternative Scenarios**: Document secondary paths and edge cases
 - **Error Scenarios**: Anticipate failure points and error handling requirements
@@ -195,7 +193,7 @@ Each test case must include these standardized components:
 ### Navigation Optimization Guidelines
 **IMPORTANT**: To avoid redundant navigation operations:
 
-1. **When `reset_session=true`**: 
+1. **When `reset_session=true`**:
    - The system will automatically navigate to the target URL before test execution
    - Do NOT include navigation steps in the `steps` array (e.g., "Navigate to homepage")
    - Only include navigation in `preamble_actions` if you need to navigate to a different page within the same domain
@@ -601,7 +599,7 @@ Your response must follow this exact structure:
 **1. Functional Module Identification:**
 [Detailed analysis of UI components, business logic, and integration points]
 
-**2. User Journey & Workflow Analysis:**  
+**2. User Journey & Workflow Analysis:**
 [Analysis of primary and alternative user paths, error scenarios]
 
 **3. Test Coverage Planning:**
@@ -641,7 +639,7 @@ Your response must follow this exact structure:
 - **Reliability**: Create stable tests that produce consistent results across executions
 - **Efficiency**: Balance thorough testing with practical execution time constraints
 """
-    
+
     return prompt
 
 
@@ -650,34 +648,33 @@ def get_reflection_prompt(
     current_plan: list,
     completed_cases: list,
     page_structure: str,
-    page_content_summary: dict = None
+    page_content_summary: dict = None,
 ) -> str:
-    """
-    生成反思和重新规划的提示词
-    
+    """生成反思和重新规划的提示词.
+
     Args:
         business_objectives: 总体业务目标
         current_plan: 当前测试计划
         completed_cases: 已完成的用例
         page_structure: 当前UI文本结构
         page_content_summary: 可交互元素映射（ID到元素信息的字典），可选
-    
+
     Returns:
         格式化的反思提示词
     """
-    
+
     completed_summary = json.dumps(completed_cases, indent=2)
     current_plan_json = json.dumps(current_plan, indent=2)
-    
+
     # 构建交互元素映射部分
     interactive_elements_section = ""
     if page_content_summary:
         interactive_elements_json = json.dumps(page_content_summary, indent=2)
         interactive_elements_section = f"""
-- **Interactive Elements Map**: 
+- **Interactive Elements Map**:
 {interactive_elements_json}
 - **Visual Element Reference**: The attached screenshot contains numbered markers corresponding to interactive elements. Each number in the image maps to an element ID in the Interactive Elements Map above, providing precise visual-textual correlation for comprehensive UI analysis."""
-    
+
     # 确定测试模式用于反思决策
     if business_objectives and business_objectives.strip():
         mode_context = f"""
@@ -728,7 +725,7 @@ Analyze current test execution status, evaluate progress against the original te
 {mode_context}
 
 ## Execution Context Analysis
-- **Current Test Plan**: 
+- **Current Test Plan**:
 {current_plan_json}
 - **Completed Test Execution Summary**:
 {completed_summary}
@@ -751,8 +748,8 @@ Apply the following decision logic in **STRICT SEQUENTIAL ORDER**:
 
 **Decision Logic for Normal Progress**:
 ```
-IF (len(completed_cases) < len(current_plan) 
-    AND last_completed_case_status is successful 
+IF (len(completed_cases) < len(current_plan)
+    AND last_completed_case_status is successful
     AND no_critical_blocking_errors):
     THEN decision = "CONTINUE"
     EXPLANATION: "Normal test execution progress detected. The last test case completed successfully and more planned test cases remain to be executed. Continuing with sequential execution."
@@ -854,7 +851,7 @@ IF (len(completed_cases) < len(current_plan)
 ### Navigation Optimization Guidelines for Replanning
 **IMPORTANT**: When generating new test cases during replanning, apply the same navigation optimization rules:
 
-1. **When `reset_session=true`**: 
+1. **When `reset_session=true`**:
    - The system will automatically navigate to the target URL before test execution
    - Do NOT include navigation steps in the `steps` array (e.g., "Navigate to homepage")
    - Only include navigation in `preamble_actions` if you need to navigate to a different page within the same domain
@@ -881,5 +878,5 @@ IF (len(completed_cases) < len(current_plan)
 - **Traceability**: Provide clear rationale linking analysis to strategic decisions
 - **Progress-Oriented**: Favor CONTINUE decisions when tests are progressing normally to avoid unnecessary interruptions
 """
-    
+
     return prompt

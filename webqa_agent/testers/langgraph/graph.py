@@ -1,19 +1,23 @@
-"""
-This module defines the main graph for the LangGraph-based UI testing application.
+"""This module defines the main graph for the LangGraph-based UI testing
+application.
+
 It includes the definitions for all nodes and edges in the orchestrator graph.
 """
+
 import datetime
+import json
 import logging
 import os
-from typing import List, Dict, Any
-from langgraph.graph import StateGraph, END
-from webqa_agent.testers.langgraph.state.schemas import MainGraphState
-from webqa_agent.testers.langgraph.agents.execute_agent import agent_worker_node
-from webqa_agent.testers.langgraph.prompts.planning_prompts import get_test_case_planning_prompt, get_reflection_prompt
-import json
-from webqa_agent.crawler.deep_crawler import DeepCrawler
 import re
+from typing import Any, Dict, List
+
+from langgraph.graph import END, StateGraph
+
 from webqa_agent.actions.action_handler import ActionHandler
+from webqa_agent.crawler.deep_crawler import DeepCrawler
+from webqa_agent.testers.langgraph.agents.execute_agent import agent_worker_node
+from webqa_agent.testers.langgraph.prompts.planning_prompts import get_reflection_prompt, get_test_case_planning_prompt
+from webqa_agent.testers.langgraph.state.schemas import MainGraphState
 
 
 async def setup_session(state: MainGraphState) -> Dict[str, Any]:
@@ -29,12 +33,13 @@ async def setup_session(state: MainGraphState) -> Dict[str, Any]:
 
 
 async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any]]]:
-    """
-    Analyzes the initial page and generates test cases.
-    If is_replan is True, it appends the replanned cases instead of generating new ones.
+    """Analyzes the initial page and generates test cases.
+
+    If is_replan is True, it appends the replanned cases instead of generating
+    new ones.
     """
     is_replan = state.get("is_replan", False)
-    
+
     if is_replan:
         logging.info("Appending replanned test cases to the existing plan.")
         existing_cases = state.get("test_cases", [])
@@ -44,16 +49,18 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
 
         # Add metadata to new cases
         for case in new_cases:
-            case['status'] = 'pending'
-            case['completed_steps'] = []
-            case['test_context'] = {}
-            case['url'] = state["url"]
+            case["status"] = "pending"
+            case["completed_steps"] = []
+            case["test_context"] = {}
+            case["url"] = state["url"]
 
         # Insert the new cases immediately after the current index
         current_index = state["current_test_case_index"]
         updated_cases = existing_cases[:current_index] + new_cases + existing_cases[current_index:]
 
-        logging.info(f"Inserted {len(new_cases)} new cases at index {current_index}. Total cases are now {len(updated_cases)}.")
+        logging.info(
+            f"Inserted {len(new_cases)} new cases at index {current_index}. Total cases are now {len(updated_cases)}."
+        )
 
         # Save updated cases to cases.json
         try:
@@ -61,19 +68,14 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             report_dir = f"./reports/test_{timestamp}"
             os.makedirs(report_dir, exist_ok=True)
             cases_path = os.path.join(report_dir, "cases.json")
-            with open(cases_path, 'w', encoding='utf-8') as f:
+            with open(cases_path, "w", encoding="utf-8") as f:
                 json.dump(updated_cases, f, ensure_ascii=False, indent=4)
             logging.info(f"Successfully saved updated test cases (including replanned cases) to {cases_path}")
         except Exception as e:
             logging.error(f"Failed to save updated test cases to file: {e}")
 
         # Reset the replan flag and clear the temporary list
-        return {
-            "test_cases": updated_cases, 
-            "is_replan": False, 
-            "replan_count": replan_count,
-            "replanned_cases": []
-        }
+        return {"test_cases": updated_cases, "is_replan": False, "replan_count": replan_count, "replanned_cases": []}
 
     # If not a replan, proceed with the original logic
     logging.info("Generating initial test plan.")
@@ -82,7 +84,9 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
     page = await ui_tester.get_current_page()
     dp = DeepCrawler(page)
     _, page_content_summary = await dp.crawl(highlight=True, viewport_only=False)
-    screenshot = await ui_tester._actions.b64_page_screenshot(file_name="plan_or_replan", save_to_log=False, full_page=True)
+    screenshot = await ui_tester._actions.b64_page_screenshot(
+        file_name="plan_or_replan", save_to_log=False, full_page=True
+    )
     await dp.remove_marker()
     await dp.crawl(highlight=False, highlight_text=True, viewport_only=False)
     page_structure = dp.get_text()
@@ -98,36 +102,34 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
         page_structure=page_structure,
         completed_cases=completed_cases,
         reflection_history=state.get("reflection_history"),
-        remaining_objectives=state.get("remaining_objectives")
+        remaining_objectives=state.get("remaining_objectives"),
     )
 
     logging.info("Generating initial test plan - Sending request to LLM...")
     start_time = datetime.datetime.now()
-    
+
     response = await ui_tester.llm.get_llm_response(
-        system_prompt="You are a test planning expert.",
-        prompt=prompt,
-        images=screenshot
+        system_prompt="You are a test planning expert.", prompt=prompt, images=screenshot
     )
-    
+
     end_time = datetime.datetime.now()
     duration = (end_time - start_time).total_seconds()
     logging.info(f"LLM planning request completed in {duration:.2f} seconds")
 
     try:
         # Extract only the JSON part of the response, ignoring the scratchpad
-        json_part_match = re.search(r'```json\s*([\s\S]*?)\s*```', response)
+        json_part_match = re.search(r"```json\s*([\s\S]*?)\s*```", response)
         if not json_part_match:
             # Fallback for responses that might not have the json markdown
             json_str = ""
             # A more robust way to find the JSON array
-            start_bracket = response.find('[')
-            end_bracket = response.rfind(']')
+            start_bracket = response.find("[")
+            end_bracket = response.rfind("]")
             if start_bracket != -1 and end_bracket != -1 and end_bracket > start_bracket:
-                json_str = response[start_bracket:end_bracket + 1]
+                json_str = response[start_bracket : end_bracket + 1]
             else:  # Try with curly braces for single object
-                start_brace = response.find('{')
-                end_brace = response.rfind('}')
+                start_brace = response.find("{")
+                end_brace = response.rfind("}")
                 if start_brace != -1 and end_brace != -1 and end_brace > start_brace:
                     # Wrap in array brackets if it's a single object
                     json_str = f"[{response[start_brace:end_brace + 1]}]"
@@ -138,23 +140,23 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             json_str = json_part_match.group(1)
 
         # Wrap single object in a list if necessary
-        if json_str.strip().startswith('{'):
+        if json_str.strip().startswith("{"):
             json_str = f"[{json_str}]"
 
         test_cases = json.loads(json_str)
 
         for case in test_cases:
-            case['status'] = 'pending'
-            case['completed_steps'] = []
-            case['test_context'] = {}
-            case['url'] = state["url"]
+            case["status"] = "pending"
+            case["completed_steps"] = []
+            case["test_context"] = {}
+            case["url"] = state["url"]
 
         try:
             timestamp = os.getenv("WEBQA_TIMESTAMP")
             report_dir = f"./reports/test_{timestamp}"
             os.makedirs(report_dir, exist_ok=True)
             cases_path = os.path.join(report_dir, "cases.json")
-            with open(cases_path, 'w', encoding='utf-8') as f:
+            with open(cases_path, "w", encoding="utf-8") as f:
                 json.dump(test_cases, f, ensure_ascii=False, indent=4)
             logging.info(f"Successfully saved initial test cases to {cases_path}")
         except Exception as e:
@@ -171,8 +173,8 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
 
 
 def should_start_cases(state: MainGraphState) -> str:
-    """
-    Determines if there are test cases to run.
+    """Determines if there are test cases to run.
+
     If so, it routes to a node that will start the sequential execution loop.
     """
     if state.get("generate_only"):
@@ -190,42 +192,43 @@ async def get_next_test_case(state: MainGraphState) -> dict[str, Any]:
     """Selects the next test case from the list based on the current index."""
     index = state["current_test_case_index"]
     case = state["test_cases"][index]
-    case_name = case.get('name')
+    case_name = case.get("name")
     logging.info(f"Preparing to execute test case #{index + 1}: {case_name}")
 
     return {"current_case": case}
 
 
 async def reflect_and_replan(state: MainGraphState) -> dict:
-    """
-    Analyzes execution, increments index, and decides on the next strategic move.
-    """
+    """Analyzes execution, increments index, and decides on the next strategic
+    move."""
     logging.info("=== Starting Reflection and Replanning Analysis ===")
 
     # CRITICAL: Increment the test case index here to ensure progress
     # This guarantees that whether we continue, replan, or finish, we are always moving forward.
     new_index = state["current_test_case_index"] + 1
-    logging.info(f"Test case #{state['current_test_case_index'] + 1} has been processed. Incrementing index to {new_index}.")
+    logging.info(
+        f"Test case #{state['current_test_case_index'] + 1} has been processed. Incrementing index to {new_index}."
+    )
     update = {"current_test_case_index": new_index}
 
     # FUSE MECHANISM: Check if the replan limit has been reached.
     MAX_REPLANS = 2
     if state.get("replan_count", 0) >= MAX_REPLANS:
         logging.warning(f"Maximum replan limit of {MAX_REPLANS} reached. Forcing FINISH to avoid infinite loops.")
-        update["reflection_history"] = [{
-            "decision": "FINISH",
-            "reasoning": f"Maximum replan limit of {MAX_REPLANS} reached. The agent was unable to resolve the issue after multiple replanning attempts. Terminating workflow to prevent infinite loops.",
-            "new_plan": []
-        }]
+        update["reflection_history"] = [
+            {
+                "decision": "FINISH",
+                "reasoning": f"Maximum replan limit of {MAX_REPLANS} reached. The agent was unable to resolve the issue after multiple replanning attempts. Terminating workflow to prevent infinite loops.",
+                "new_plan": [],
+            }
+        ]
         return update
 
-
     # 详细的状态分析
-    completed_cases = state.get('completed_cases', [])
-    test_cases = state.get('test_cases', [])
-    current_index = state.get('current_test_case_index', 0)
+    completed_cases = state.get("completed_cases", [])
+    test_cases = state.get("test_cases", [])
 
-    logging.info(f"State Analysis:")
+    logging.info("State Analysis:")
     logging.info(f"  - Total planned test cases: {len(test_cases)}")
     logging.info(f"  - Completed test cases: {len(completed_cases)}")
     # Use the length of completed_cases for a more accurate progress count
@@ -271,21 +274,19 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
     # 使用新的反思提示词函数，传入page_content_summary
     prompt = get_reflection_prompt(
         business_objectives=state.get("business_objectives"),
-        current_plan=state['test_cases'],
-        completed_cases=state['completed_cases'],
+        current_plan=state["test_cases"],
+        completed_cases=state["completed_cases"],
         page_structure=page_structure,
-        page_content_summary=page_content_summary
+        page_content_summary=page_content_summary,
     )
 
     logging.info("Sending reflection request to LLM (this may take a moment)...")
     start_time = datetime.datetime.now()
-    
+
     response_str = await ui_tester.llm.get_llm_response(
-        system_prompt="You are a QA strategist.",
-        prompt=prompt,
-        images=screenshot
+        system_prompt="You are a QA strategist.", prompt=prompt, images=screenshot
     )
-    
+
     end_time = datetime.datetime.now()
     duration = (end_time - start_time).total_seconds()
     logging.info(f"LLM reflection request completed in {duration:.2f} seconds")
@@ -316,11 +317,13 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
             if decision == "REPLAN":
                 logging.warning("REPLAN decision made but no new_plan provided. Treating as CONTINUE.")
                 # 修正决策数据
-                update["reflection_history"] = [{
-                    "decision": "CONTINUE",
-                    "reasoning": "REPLAN was requested but no new plan was provided, defaulting to CONTINUE",
-                    "new_plan": []
-                }]
+                update["reflection_history"] = [
+                    {
+                        "decision": "CONTINUE",
+                        "reasoning": "REPLAN was requested but no new plan was provided, defaulting to CONTINUE",
+                        "new_plan": [],
+                    }
+                ]
 
         logging.info("=== Reflection Analysis Complete ===")
         return update
@@ -332,7 +335,7 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
         fallback_decision = {
             "decision": "CONTINUE",
             "reasoning": f"Failed to parse LLM response due to JSON decode error: {str(e)}",
-            "new_plan": []
+            "new_plan": [],
         }
         logging.info("Using fallback decision: CONTINUE")
         update["reflection_history"] = [fallback_decision]
@@ -340,8 +343,8 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
 
 
 async def execute_single_case(state: MainGraphState) -> dict:
-    """
-    Executes a single test case using the agent worker node.
+    """Executes a single test case using the agent worker node.
+
     This node is the core of the execution loop.
     """
     case = state["current_case"]
@@ -355,7 +358,7 @@ async def execute_single_case(state: MainGraphState) -> dict:
     # Conditionally reset the session based on the test case flag
     if case.get("reset_session", False):
         logging.info(f"Resetting session: Checking if navigation to {case.get('url')} is needed.")
-        await ui_tester_instance.start_session(case.get('url'))
+        await ui_tester_instance.start_session(case.get("url"))
         page = await ui_tester_instance.get_current_page()
         action_handler = ActionHandler()
         # 使用智能导航，避免重复导航
@@ -369,13 +372,9 @@ async def execute_single_case(state: MainGraphState) -> dict:
 
     # Invoke the agent worker for the single case
     # Pass the current completed cases to the worker so it can append
-    worker_input_state = {
-        "test_case": case,
-        "completed_cases": state.get("completed_cases", [])
-    }
+    worker_input_state = {"test_case": case, "completed_cases": state.get("completed_cases", [])}
     result = await agent_worker_node(
-        worker_input_state,
-        config={"configurable": {"ui_tester_instance": ui_tester_instance}}
+        worker_input_state, config={"configurable": {"ui_tester_instance": ui_tester_instance}}
     )
 
     # The result from the worker now contains the single case result
@@ -384,16 +383,16 @@ async def execute_single_case(state: MainGraphState) -> dict:
     # === 结束case跟踪并获取详细数据 ===
     final_status = case_result.get("status", "completed") if case_result else "failed"
     final_summary = case_result.get("final_summary", "") if case_result else "No summary available"
-        
+
     ui_tester_instance.finish_case(final_status, final_summary)
-    
+
     # Return the single result in a list to be appended by the graph state
     return {"completed_cases": [case_result] if case_result else []}
 
 
 def should_replan_or_continue(state: MainGraphState) -> str:
-    """
-    Checks the latest reflection decision to route the graph.
+    """Checks the latest reflection decision to route the graph.
+
     Enhanced with detailed state checking and logging.
     """
     # 获取状态信息
@@ -402,7 +401,7 @@ def should_replan_or_continue(state: MainGraphState) -> str:
     current_index = state.get("current_test_case_index", 0)
 
     # 详细的状态日志
-    logging.info(f"=== Decision Context Analysis ===")
+    logging.info("=== Decision Context Analysis ===")
     logging.info(f"Completed cases count: {completed_count}")
     logging.info(f"Total planned cases: {total_planned}")
     logging.info(f"Current test case index (for loop control): {current_index}")
@@ -428,7 +427,7 @@ def should_replan_or_continue(state: MainGraphState) -> str:
     if decision == "FINISH":
         logging.info("Reflection resulted in FINISH. Aggregating results.")
         return "aggregate_results"
-    
+
     if decision == "REPLAN":
         logging.info("Reflection resulted in REPLAN. Routing back to the planner to append new cases.")
         return "plan_test_cases"
@@ -443,7 +442,6 @@ def should_replan_or_continue(state: MainGraphState) -> str:
     # If we are here, it means decision is CONTINUE and there are more cases to run.
     logging.info("Reflection resulted in CONTINUE. Moving to the next test case.")
     return "get_next_test_case"
-
 
 
 async def aggregate_results(state: MainGraphState) -> Dict[str, Dict[str, Any]]:
@@ -503,8 +501,8 @@ workflow.add_conditional_edges(
     {
         "get_next_test_case": "get_next_test_case",
         "plan_test_cases": "plan_test_cases",
-        "aggregate_results": "aggregate_results"
-    }
+        "aggregate_results": "aggregate_results",
+    },
 )
 
 # After sequential execution, the results are aggregated.

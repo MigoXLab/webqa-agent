@@ -1,41 +1,46 @@
 import asyncio
-import logging
-from abc import ABC, abstractmethod
-from typing import Dict, Any
-from datetime import datetime
 import json
+import logging
 import time
-import subprocess
+from abc import ABC, abstractmethod
+from datetime import datetime
 from pathlib import Path
+from typing import Any, Dict
 
-from webqa_agent.data import TestStatus, TestConfiguration, TestResult
 from webqa_agent.browser.session import BrowserSession
+from webqa_agent.data import TestConfiguration, TestResult, TestStatus
+from webqa_agent.data.test_structures import SubTestReport, SubTestResult, TestCategory
 from webqa_agent.testers import (
-    WebAccessibilityTest, PageTextTest,
-    PageContentTest, PageButtonTest, LighthouseMetricsTest
+    LighthouseMetricsTest,
+    PageButtonTest,
+    PageContentTest,
+    PageTextTest,
+    WebAccessibilityTest,
 )
-from webqa_agent.data.test_structures import SubTestResult, SubTestReport, TestCategory
 
 
 class BaseTestRunner(ABC):
-    """Base class for test runners"""
+    """Base class for test runners."""
 
     @abstractmethod
-    async def run_test(self, session: BrowserSession, test_config: TestConfiguration,
-                       llm_config: Dict[str, Any], target_url: str) -> TestResult:
-        """Run the test and return results"""
+    async def run_test(
+        self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
+    ) -> TestResult:
+        """Run the test and return results."""
         pass
 
 
 class UIAgentLangGraphRunner(BaseTestRunner):
-    """Runner for UIAgent LangGraph tests"""
+    """Runner for UIAgent LangGraph tests."""
 
-    async def run_test(self, session: BrowserSession, test_config: TestConfiguration,
-                       llm_config: Dict[str, Any], target_url: str) -> TestResult:
-        """Run UIAgent LangGraph test using LangGraph workflow with ParallelUITester"""
-        import asyncio
-        from webqa_agent.testers.ui_tester import UITester
+    async def run_test(
+        self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
+    ) -> TestResult:
+        """Run UIAgent LangGraph test using LangGraph workflow with
+        ParallelUITester."""
+
         from webqa_agent.testers.langgraph.graph import app as graph_app
+        from webqa_agent.testers.ui_tester import UITester
 
         logging.info(f"Running UIAgent LangGraph test: {test_config.test_name}")
 
@@ -44,7 +49,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
             test_type=test_config.test_type,
             test_name=test_config.test_name,
             status=TestStatus.RUNNING,
-            category=TestCategory.FUNCTION
+            category=TestCategory.FUNCTION,
         )
 
         parallel_tester: UITester | None = None
@@ -68,10 +73,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                 "current_test_case_index": 0,
             }
 
-            graph_config = {
-                "configurable": {"ui_tester_instance": parallel_tester},
-                "recursion_limit": 100
-            }
+            graph_config = {"configurable": {"ui_tester_instance": parallel_tester}, "recursion_limit": 100}
 
             # Mapping from case name to status obtained from LangGraph aggregate_results
             graph_case_status_map: Dict[str, str] = {}
@@ -107,8 +109,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                 # 生成符合runner标准格式的完整报告
                 test_name = f"UI Agent Test - {target_url}"
                 runner_format_report = parallel_tester.generate_runner_format_report(
-                    test_id=test_config.test_id,
-                    test_name=test_name
+                    test_id=test_config.test_id, test_name=test_name
                 )
 
                 sub_tests_data = runner_format_report.get("sub_tests", [])
@@ -149,7 +150,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                             start_time=case.get("start_time"),
                             end_time=case.get("end_time"),
                             final_summary=case.get("final_summary", ""),
-                            report=case.get("report", [])
+                            report=case.get("report", []),
                         )
                     )
 
@@ -222,11 +223,13 @@ class UIAgentLangGraphRunner(BaseTestRunner):
 
 
 class UXTestRunner(BaseTestRunner):
-    """Runner for UX tests using parallel-friendly test classes without GetLog dependencies"""
+    """Runner for UX tests using parallel-friendly test classes without GetLog
+    dependencies."""
 
-    async def run_test(self, session: BrowserSession, test_config: TestConfiguration,
-                       llm_config: Dict[str, Any], target_url: str) -> TestResult:
-        """Run UX tests with enhanced screenshot and data collection"""
+    async def run_test(
+        self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
+    ) -> TestResult:
+        """Run UX tests with enhanced screenshot and data collection."""
 
         logging.info(f"Running UX test: {test_config.test_name}")
 
@@ -235,12 +238,11 @@ class UXTestRunner(BaseTestRunner):
             test_type=test_config.test_type,
             test_name=test_config.test_name,
             status=TestStatus.RUNNING,
-            category=TestCategory.UX
+            category=TestCategory.UX,
         )
 
         try:
             page = session.get_page()
-            browser_config = session.browser_config
 
             text_test = PageTextTest(llm_config)
             text_result: SubTestResult = await text_test.run(page=page)
@@ -280,11 +282,12 @@ class UXTestRunner(BaseTestRunner):
 
 
 class LighthouseTestRunner(BaseTestRunner):
-    """Runner for Lighthouse"""
+    """Runner for Lighthouse."""
 
-    async def run_test(self, session: BrowserSession, test_config: TestConfiguration,
-                       llm_config: Dict[str, Any], target_url: str) -> TestResult:
-        """Run  tests"""
+    async def run_test(
+        self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
+    ) -> TestResult:
+        """Run  tests."""
         logging.info(f"Running Lighthouse test: {test_config.test_name}")
 
         result = TestResult(
@@ -292,7 +295,7 @@ class LighthouseTestRunner(BaseTestRunner):
             test_type=test_config.test_type,
             test_name=test_config.test_name,
             status=TestStatus.RUNNING,
-            category=TestCategory.PERFORMANCE
+            category=TestCategory.PERFORMANCE,
         )
 
         try:
@@ -324,10 +327,11 @@ class LighthouseTestRunner(BaseTestRunner):
 
 
 class ButtonTestRunner(BaseTestRunner):
-    """Runner dedicated to button click tests"""
+    """Runner dedicated to button click tests."""
 
-    async def run_test(self, session: BrowserSession, test_config: TestConfiguration,
-                       llm_config: Dict[str, Any], target_url: str) -> TestResult:
+    async def run_test(
+        self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
+    ) -> TestResult:
         logging.info(f"Running Button test: {test_config.test_name}")
 
         result = TestResult(
@@ -335,7 +339,7 @@ class ButtonTestRunner(BaseTestRunner):
             test_type=test_config.test_type,
             test_name=test_config.test_name,
             status=TestStatus.RUNNING,
-            category=TestCategory.FUNCTION
+            category=TestCategory.FUNCTION,
         )
 
         try:
@@ -344,14 +348,14 @@ class ButtonTestRunner(BaseTestRunner):
 
             # Discover clickable elements via crawler
             from webqa_agent.crawler.crawl import CrawlHandler
+
             crawler = CrawlHandler(target_url)
             clickable_elements = await crawler.clickable_elements_detection(page)
             logging.info(f"Clickable elements number: {len(clickable_elements)}")
 
             button_test = PageButtonTest()
             button_test_result = await button_test.run(
-                target_url, page=page, clickable_elements=clickable_elements,
-                browser_config=browser_config
+                target_url, page=page, clickable_elements=clickable_elements, browser_config=browser_config
             )
 
             # Second subtest: each clickable result? keep detailed reports if needed; here we only include traverse test
@@ -373,11 +377,12 @@ class ButtonTestRunner(BaseTestRunner):
 
 
 class WebBasicCheckRunner(BaseTestRunner):
-    """Runner for Web Basic Check tests"""
+    """Runner for Web Basic Check tests."""
 
-    async def run_test(self, session: BrowserSession, test_config: TestConfiguration,
-                       llm_config: Dict[str, Any], target_url: str) -> TestResult:
-        """Run Web Basic Check tests"""
+    async def run_test(
+        self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
+    ) -> TestResult:
+        """Run Web Basic Check tests."""
         logging.info(f"Running Web Basic Check test: {test_config.test_name}")
 
         result = TestResult(
@@ -385,7 +390,7 @@ class WebBasicCheckRunner(BaseTestRunner):
             test_type=test_config.test_type,
             test_name=test_config.test_name,
             status=TestStatus.RUNNING,
-            category=TestCategory.FUNCTION
+            category=TestCategory.FUNCTION,
         )
 
         try:
@@ -393,6 +398,7 @@ class WebBasicCheckRunner(BaseTestRunner):
 
             # Discover page elements
             from webqa_agent.crawler.crawl import CrawlHandler
+
             crawler = CrawlHandler(target_url)
             links = await crawler.extract_links(page)
 
@@ -415,92 +421,90 @@ class WebBasicCheckRunner(BaseTestRunner):
 
 
 class SecurityTestRunner(BaseTestRunner):
-    """Runner for Security tests using Nuclei-based scanning"""
-    
-    # 常见网络扫描标签配置  
-    SCAN_TAGS = {  
-        "cve": "已知CVE漏洞扫描",  
-        "xss": "跨站脚本攻击检测",   
-        "sqli": "SQL注入检测",  
-        "rce": "远程代码执行检测",  
-        "lfi": "本地文件包含检测",  
-        "ssrf": "服务端请求伪造检测",  
-        "redirect": "开放重定向检测",  
-        "exposure": "敏感信息泄露检测",  
-        "config": "配置错误检测",  
-        "default-login": "默认凭据检测",  
-        "ssl": "SSL/TLS配置检测",  
-        "dns": "DNS相关检测",  
-        "subdomain-takeover": "子域名接管检测",  
-        "tech": "技术栈识别",  
-        "panel": "管理面板检测"  
-    }  
-    
-    # 协议类型扫描  
-    PROTOCOL_SCANS = {  
-        "http": "HTTP协议扫描",  
-        "dns": "DNS协议扫描",   
-        "tcp": "TCP协议扫描",  
-        "ssl": "SSL协议扫描"  
+    """Runner for Security tests using Nuclei-based scanning."""
+
+    # 常见网络扫描标签配置
+    SCAN_TAGS = {
+        "cve": "已知CVE漏洞扫描",
+        "xss": "跨站脚本攻击检测",
+        "sqli": "SQL注入检测",
+        "rce": "远程代码执行检测",
+        "lfi": "本地文件包含检测",
+        "ssrf": "服务端请求伪造检测",
+        "redirect": "开放重定向检测",
+        "exposure": "敏感信息泄露检测",
+        "config": "配置错误检测",
+        "default-login": "默认凭据检测",
+        "ssl": "SSL/TLS配置检测",
+        "dns": "DNS相关检测",
+        "subdomain-takeover": "子域名接管检测",
+        "tech": "技术栈识别",
+        "panel": "管理面板检测",
     }
-    
-    async def run_test(self, session: BrowserSession, test_config: TestConfiguration,
-                       llm_config: Dict[str, Any], target_url: str) -> TestResult:
-        """Run Security tests using Nuclei scanning"""
+
+    # 协议类型扫描
+    PROTOCOL_SCANS = {"http": "HTTP协议扫描", "dns": "DNS协议扫描", "tcp": "TCP协议扫描", "ssl": "SSL协议扫描"}
+
+    async def run_test(
+        self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
+    ) -> TestResult:
+        """Run Security tests using Nuclei scanning."""
         logging.info(f"Running Security test: {test_config.test_name}")
-        
+
         result = TestResult(
             test_id=test_config.test_id,
             test_type=test_config.test_type,
             test_name=test_config.test_name,
             status=TestStatus.RUNNING,
-            category=TestCategory.SECURITY
+            category=TestCategory.SECURITY,
         )
-        
+
         try:
             # 安全测试不需要浏览器会话，使用Nuclei进行独立扫描
             logging.info("Security test running independently of browser session")
-            
+
             # 检查nuclei是否安装
             nuclei_available = await self._check_nuclei_available()
-            
+
             if not nuclei_available:
                 result.status = TestStatus.FAILED
                 result.error_message = "Nuclei tool not found. Please install nuclei: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"
                 return result
-            
+
             # 执行安全扫描
             scan_results = await self._run_security_scan(target_url, test_config)
-            
+
             # 处理扫描结果
             findings = await self._process_scan_results(scan_results)
-            
+
             # 生成子测试结果
             sub_tests = []
-            
+
             # 按严重程度分类结果
             severity_counts = {}
             finding_details = []
-            
+
             for finding in findings:
                 severity = finding.get("info", {}).get("severity", "unknown")
                 severity_counts[severity] = severity_counts.get(severity, 0) + 1
-                finding_details.append({
-                    "template_id": finding.get("template-id", "unknown"),
-                    "name": finding.get("info", {}).get("name", "Unknown"),
-                    "severity": severity,
-                    "description": finding.get("info", {}).get("description", ""),
-                    "matched_at": finding.get("matched-at", ""),
-                    "extracted_results": finding.get("extracted-results", [])
-                })
-            
+                finding_details.append(
+                    {
+                        "template_id": finding.get("template-id", "unknown"),
+                        "name": finding.get("info", {}).get("name", "Unknown"),
+                        "severity": severity,
+                        "description": finding.get("info", {}).get("description", ""),
+                        "matched_at": finding.get("matched-at", ""),
+                        "extracted_results": finding.get("extracted-results", []),
+                    }
+                )
+
             # 创建按严重程度的子测试
             for severity in ["critical", "high", "medium", "low", "info"]:
                 count = severity_counts.get(severity, 0)
-                
+
                 # 获取该严重程度的具体发现
                 severity_findings = [f for f in finding_details if f.get("severity") == severity]
-                
+
                 # 构建报告内容
                 if count == 0:
                     issues_text = f"未发现{severity.upper()}级别安全问题"
@@ -512,24 +516,21 @@ class SecurityTestRunner(BaseTestRunner):
                         issues_text += f"：{', '.join(sample_issues)}"
                         if count > 3:
                             issues_text += f" 等{count}个问题"
-                
+
                 sub_tests.append(
                     SubTestResult(
                         name=f"{severity.upper()}级别安全问题扫描",
                         status=TestStatus.PASSED,
                         metrics={"findings_count": count},
-                        report=[SubTestReport(
-                            title=f"{severity.upper()}级别安全漏洞扫描",
-                            issues=issues_text
-                        )]
+                        report=[SubTestReport(title=f"{severity.upper()}级别安全漏洞扫描", issues=issues_text)],
                     )
                 )
-            
+
             # 创建扫描类型的子测试
             for scan_type, description in {**self.SCAN_TAGS, **self.PROTOCOL_SCANS}.items():
                 type_findings = [f for f in finding_details if scan_type in f.get("template_id", "").lower()]
                 type_count = len(type_findings)
-                
+
                 # 构建扫描类型报告内容
                 if type_count == 0:
                     issues_text = f"{description}：未发现相关安全问题"
@@ -539,16 +540,16 @@ class SecurityTestRunner(BaseTestRunner):
                     for finding in type_findings:
                         severity = finding.get("severity", "unknown")
                         type_severity_counts[severity] = type_severity_counts.get(severity, 0) + 1
-                    
+
                     severity_summary = []
                     for sev in ["critical", "high", "medium", "low", "info"]:
                         if type_severity_counts.get(sev, 0) > 0:
                             severity_summary.append(f"{sev.upper()}级{type_severity_counts[sev]}个")
-                    
+
                     issues_text = f"{description}：发现{type_count}个问题"
                     if severity_summary:
                         issues_text += f"（{', '.join(severity_summary)}）"
-                    
+
                     # 添加具体问题示例（最多3个）
                     if type_findings:
                         sample_names = [f["name"] for f in type_findings[:2]]
@@ -556,63 +557,58 @@ class SecurityTestRunner(BaseTestRunner):
                             issues_text += f"，包括：{', '.join(sample_names)}"
                             if type_count > 2:
                                 issues_text += " 等"
-                
+
                 sub_tests.append(
                     SubTestResult(
                         name=f"{description}",
                         status=TestStatus.PASSED,
                         metrics={"findings_count": type_count},
-                        report=[SubTestReport(
-                            title=description,
-                            issues=issues_text
-                        )]
+                        report=[SubTestReport(title=description, issues=issues_text)],
                     )
                 )
-            
+
             result.sub_tests = sub_tests
             result.status = TestStatus.PASSED
-            
+
             # 添加总体指标
             total_findings = len(findings)
             critical_findings = severity_counts.get("critical", 0)
             high_findings = severity_counts.get("high", 0)
-            
+
             result.add_metric("total_findings", total_findings)
             result.add_metric("critical_findings", critical_findings)
             result.add_metric("high_findings", high_findings)
             result.add_metric("security_score", max(0, 100 - (critical_findings * 20 + high_findings * 10)))
-            
+
             # 添加详细结果
             result.add_data("security_findings", finding_details)
             result.add_data("severity_summary", severity_counts)
-            
+
             # 清理临时文件
             await self._cleanup_temp_files(scan_results.get("output_path"))
-            
+
             logging.info(f"Security test completed: {test_config.test_name}, found {total_findings} issues")
-            
+
         except Exception as e:
             error_msg = f"Security test failed: {str(e)}"
             logging.error(error_msg)
             result.status = TestStatus.FAILED
             result.error_message = error_msg
-            
+
             # 即使失败也要清理临时文件
             try:
-                scan_results = locals().get('scan_results', {})
+                scan_results = locals().get("scan_results", {})
                 await self._cleanup_temp_files(scan_results.get("output_path"))
             except:
                 pass
-        
+
         return result
-    
+
     async def _check_nuclei_available(self) -> bool:
-        """检查nuclei工具是否可用"""
+        """检查nuclei工具是否可用."""
         try:
             process = await asyncio.create_subprocess_exec(
-                "nuclei", "-version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                "nuclei", "-version", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
             stdout, stderr = await process.communicate()
             logging.debug(f"Nuclei check - return code: {process.returncode}")
@@ -622,54 +618,45 @@ class SecurityTestRunner(BaseTestRunner):
         except Exception as e:
             logging.error(f"Error checking nuclei availability: {e}")
             return False
-    
+
     async def _run_security_scan(self, target_url: str, test_config: TestConfiguration) -> Dict[str, Any]:
-        """执行安全扫描"""
+        """执行安全扫描."""
         # 创建临时输出目录，使用测试ID确保唯一性
         import tempfile
+
         temp_dir = Path(tempfile.gettempdir()) / "webqa_agent_security" / test_config.test_id
         temp_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # 配置扫描任务
-        scan_configs = {
-            "tag": self.SCAN_TAGS,
-            "protocol": self.PROTOCOL_SCANS
-        }
-        
+        scan_configs = {"tag": self.SCAN_TAGS, "protocol": self.PROTOCOL_SCANS}
+
         # 从测试配置中获取自定义参数
         custom_config = test_config.test_specific_config or {}
         include_severity_scans = custom_config.get("include_severity_scans", True)
-        
+
         if include_severity_scans:
-            scan_configs["severity"] = {
-                "critical": "严重漏洞扫描",
-                "high": "高危漏洞扫描",   
-                "medium": "中危漏洞扫描"
-            }
-        
+            scan_configs["severity"] = {"critical": "严重漏洞扫描", "high": "高危漏洞扫描", "medium": "中危漏洞扫描"}
+
         # 执行并行扫描
         scan_results = await self._execute_scan_batch(target_url, scan_configs, temp_dir)
-        
-        return {
-            "scan_results": scan_results,
-            "output_path": str(temp_dir)
-        }
-    
+
+        return {"scan_results": scan_results, "output_path": str(temp_dir)}
+
     async def _execute_scan_batch(self, target_url: str, scan_configs: Dict[str, Dict], output_path: Path) -> list:
-        """并行执行一批安全扫描"""
+        """并行执行一批安全扫描."""
         tasks = []
-        
+
         # 创建扫描任务
         for scan_type, scans in scan_configs.items():
             for scan_name, description in scans.items():
                 output_file = output_path / f"{scan_type}_{scan_name}_{int(time.time())}.json"
                 task = self._run_nuclei_command(target_url, scan_type, scan_name, output_file)
                 tasks.append(task)
-        
+
         # 并行执行所有扫描
         logging.info(f"Start {len(tasks)} security scan tasks...")
         scan_results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         # 处理结果
         results = []
         for result in scan_results:
@@ -677,13 +664,15 @@ class SecurityTestRunner(BaseTestRunner):
                 logging.error(f"Scan task failed: {result}")
                 continue
             results.append(result)
-        
+
         return results
-    
-    async def _run_nuclei_command(self, target_url: str, scan_type: str, scan_name: str, output_file: Path) -> Dict[str, Any]:
-        """运行单个Nuclei扫描命令"""
+
+    async def _run_nuclei_command(
+        self, target_url: str, scan_type: str, scan_name: str, output_file: Path
+    ) -> Dict[str, Any]:
+        """运行单个Nuclei扫描命令."""
         cmd = ["nuclei", "-target", target_url, "-json-export", str(output_file), "-silent"]
-        
+
         # 根据扫描类型添加参数
         if scan_type == "tag":
             cmd.extend(["-tags", scan_name])
@@ -691,23 +680,21 @@ class SecurityTestRunner(BaseTestRunner):
             cmd.extend(["-type", scan_name])
         elif scan_type == "severity":
             cmd.extend(["-severity", scan_name])
-        
+
         try:
             process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
-            
+
             stdout, stderr = await process.communicate()
-            
+
             return {
                 "scan_name": scan_name,
                 "scan_type": scan_type,
                 "stdout": stdout.decode() if stdout else "",
                 "stderr": stderr.decode() if stderr else "",
                 "returncode": process.returncode,
-                "output_file": str(output_file)
+                "output_file": str(output_file),
             }
         except Exception as e:
             return {
@@ -716,22 +703,22 @@ class SecurityTestRunner(BaseTestRunner):
                 "stdout": "",
                 "stderr": str(e),
                 "returncode": 1,
-                "output_file": str(output_file)
+                "output_file": str(output_file),
             }
-    
+
     async def _process_scan_results(self, scan_results: Dict[str, Any]) -> list:
-        """读取并合并所有扫描结果"""
+        """读取并合并所有扫描结果."""
         all_results = []
         output_path = Path(scan_results["output_path"])
         json_files = list(output_path.glob("*.json"))
-        
+
         for json_file in json_files:
             try:
-                with open(json_file, 'r', encoding='utf-8') as f:
+                with open(json_file, "r", encoding="utf-8") as f:
                     content = f.read().strip()
                     if content:
                         # 处理JSONL格式（每行一个JSON对象）
-                        for line in content.split('\n'):
+                        for line in content.split("\n"):
                             if line.strip():
                                 try:
                                     result = json.loads(line)
@@ -745,16 +732,17 @@ class SecurityTestRunner(BaseTestRunner):
                                     continue
             except Exception as e:
                 logging.error(f"Failed to read result file {json_file}: {e}")
-        
+
         return all_results
-    
+
     async def _cleanup_temp_files(self, temp_path: str):
-        """清理临时扫描文件"""
+        """清理临时扫描文件."""
         if not temp_path:
             return
-            
+
         try:
             import shutil
+
             temp_dir = Path(temp_path)
             if temp_dir.exists() and temp_dir.is_dir():
                 shutil.rmtree(temp_dir)

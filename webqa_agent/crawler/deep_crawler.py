@@ -1,14 +1,14 @@
-import argparse
 import asyncio
-import time
 import datetime
 import json
-
+import time
 from collections import defaultdict
 from pathlib import Path
+from typing import Any, Dict, List
+
 from playwright.async_api import Page, async_playwright
+
 from webqa_agent.crawler.dom_tree import DomTreeNode as dtree
-from typing import List, Dict, Optional, Any, Callable
 
 
 def get_time() -> str:
@@ -19,9 +19,8 @@ def get_time() -> str:
 
 
 class DeepCrawler:
-    """
-    Crawl page elements.
-    """
+    """Crawl page elements."""
+
     default_dir = Path(__file__).parent
     # File paths
     DETECTOR_JS = default_dir / "js" / "element_detector.js"
@@ -34,8 +33,7 @@ class DeepCrawler:
     # Parameters
     MAX_DEPTH = 2
 
-    CRAWL_CONFIG = {"KeepNodeType": ["isVisible", "isInteractive", "isTopElement"],
-                    "href": "https"}
+    CRAWL_CONFIG = {"KeepNodeType": ["isVisible", "isInteractive", "isTopElement"], "href": "https"}
 
     def __init__(self, page: Page, depth: int = 0):
         self.page = page if isinstance(page, Page) else False
@@ -47,7 +45,7 @@ class DeepCrawler:
 
     @staticmethod
     def read_js(file_dir):
-        """Read JavaScript file content"""
+        """Read JavaScript file content."""
         with open(file_dir, "r", encoding="utf-8") as file:
             return file.read()
 
@@ -56,19 +54,21 @@ class DeepCrawler:
         with open(file_dir, "r", encoding="utf-8") as file:
             return json.load(file)
 
-    async def crawl(self, page=None, highlight=False, highlight_text=False, viewport_only=False,
-                    dump_json=False) -> Dict[str, Any]:
-        """
-        Crawl current page elements and return nested dictionary with hierarchical structure
-        """
+    async def crawl(
+        self, page=None, highlight=False, highlight_text=False, viewport_only=False, dump_json=False
+    ) -> Dict[str, Any]:
+        """Crawl current page elements and return nested dictionary with
+        hierarchical structure."""
         if not page:
             page = self.page
 
         try:
-            payload = (f"window._highlight = {str(highlight).lower()};"
-                       f"window._highlightText = {str(highlight_text).lower()};\n"
-                       f"window._viewportOnly = {str(viewport_only).lower()};\n"
-                       f"\n{self.read_js(self.DETECTOR_JS)}")
+            payload = (
+                f"window._highlight = {str(highlight).lower()};"
+                f"window._highlightText = {str(highlight_text).lower()};\n"
+                f"window._viewportOnly = {str(viewport_only).lower()};\n"
+                f"\n{self.read_js(self.DETECTOR_JS)}"
+            )
             await page.evaluate(payload)
             self.crawled_result, highlight_id_map = await page.evaluate("buildElementTree()")
             return self.crawled_result, highlight_id_map
@@ -77,9 +77,8 @@ class DeepCrawler:
             print(f"Inject JS Exception: {e}")
 
     async def deep_crawl(self, page=None, is_clean_mode=True, highlight=True, timeout=60000):
-        """
-        Deep crawl page elements within max depth 2, add subtree to original dom tree
-        """
+        """Deep crawl page elements within max depth 2, add subtree to original
+        dom tree."""
         if not page:
             page = self.page
         ctx = page.context
@@ -88,16 +87,14 @@ class DeepCrawler:
         temp_nodes = await self.crawl(page, highlight=highlight)  # Temporary nodes
 
         async def _traverse(node: Dict[str, Any]):
-            """
-            Add subtree node to dom tree
-            """
+            """Add subtree node to dom tree."""
             node_info = node.get("node")
             if node_info:
                 if all(node_info.get(n) for n in self.CRAWL_CONFIG["KeepNodeType"]):
                     for attr in node_info.get("attributes", []):
                         attr_val = attr.get("value")
-                        if attr["name"].lower() == "href" and attr_val.startswith(self.CRAWL_CONFIG['href']):
-                            sub_link[attr_val].append(node_info['id'])
+                        if attr["name"].lower() == "href" and attr_val.startswith(self.CRAWL_CONFIG["href"]):
+                            sub_link[attr_val].append(node_info["id"])
 
                             if attr_val not in seen:
                                 seen.add(attr_val)
@@ -109,10 +106,10 @@ class DeepCrawler:
                                 if is_clean_mode:
                                     await p.close()
 
-                                node['subtree'] = subtree_nodes
+                                node["subtree"] = subtree_nodes
 
                             else:  # Record repeated link
-                                node['subtree'] = attr_val
+                                node["subtree"] = attr_val
 
             for child in node.get("children", []):
                 await _traverse(child)
@@ -138,7 +135,7 @@ class DeepCrawler:
     def dump_json(node: Dict[str, Any], path: Path) -> None:
         """Save tree dictionary to JSON file."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, 'w', encoding='utf-8') as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(node, f, ensure_ascii=False, indent=2)
 
     async def take_screenshot(self, page=None, screenshot_path=None):
@@ -168,17 +165,19 @@ class DeepCrawler:
                     w = vp.get("width")
                     h = vp.get("height")
                     if w is not None and h is not None:
-                        coords.append({
-                            "id": n.id,
-                            "tag": n.tag,
-                            "center_x": n.center_x,
-                            "center_y": n.center_y,
-                            "width": w,
-                            "height": h,
-                            "selector": n.selector,
-                            "xpath": n.xpath,
-                            "text": n.inner_text[:200]
-                        })
+                        coords.append(
+                            {
+                                "id": n.id,
+                                "tag": n.tag,
+                                "center_x": n.center_x,
+                                "center_y": n.center_y,
+                                "width": w,
+                                "height": h,
+                                "selector": n.selector,
+                                "xpath": n.xpath,
+                                "text": n.inner_text[:200],
+                            }
+                        )
         return coords
 
     def get_text(self):
@@ -229,10 +228,9 @@ async def python_main(url, depth=0):
         dp = DeepCrawler(page)
         # ts = time.time()
         # rawdata = await dp.crawl(page, enable_highlight=True)  # dict(dict)
-        rawdata, highlight_id_map = await dp.crawl(page,
-                                                   highlight=False,
-                                                   highlight_text=True,
-                                                   viewport_only=False)  # dict(dict)
+        rawdata, highlight_id_map = await dp.crawl(
+            page, highlight=False, highlight_text=True, viewport_only=False
+        )  # dict(dict)
 
         txt_info = dp.get_text()
         print(txt_info)
@@ -259,8 +257,8 @@ async def python_main(url, depth=0):
         await asyncio.Event().wait()
 
 
-if __name__ == '__main__':
-    url = f"https://www.google.com"
+if __name__ == "__main__":
+    url = "https://www.google.com"
 
     asyncio.run(python_main(url))
     # asyncio.run(ts_debug(url))

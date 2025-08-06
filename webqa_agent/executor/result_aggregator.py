@@ -1,71 +1,68 @@
 import json
 import logging
 import os
-import asyncio
-from typing import Dict, Any, List, Optional
-from datetime import datetime
-from jinja2 import Template
+from typing import Any, Dict, List, Optional
 
-from webqa_agent.data import ParallelTestSession, TestResult, TestType, TestStatus
+from webqa_agent.data import ParallelTestSession, TestStatus
 from webqa_agent.llm.llm_api import LLMAPI
 
 
 class ResultAggregator:
-    """Aggregates and analyzes parallel test results"""
-    
+    """Aggregates and analyzes parallel test results."""
+
     def __init__(self):
         self.summary_templates = {
             "executive": self._get_executive_summary_template(),
             "technical": self._get_technical_summary_template(),
-            "recommendations": self._get_recommendations_template()
+            "recommendations": self._get_recommendations_template(),
         }
-    
+
     async def aggregate_results(self, test_session: ParallelTestSession) -> Dict[str, Any]:
-        """
-        Aggregate all test results into a comprehensive summary
-        
+        """Aggregate all test results into a comprehensive summary.
+
         Args:
             test_session: Session containing all test results
-            
+
         Returns:
             Aggregated results dictionary
         """
         logging.info(f"Aggregating results for session: {test_session.session_id}")
-        
+
         # Generate issue list (LLM powered when possible)
         issues = await self._generate_llm_issues(test_session)
-        
+
         # Build content for executive summary tab
         executive_content = {
-            "executiveSummary": "", 
+            "executiveSummary": "",
             "statistics": [
                 {"label": "评估项总数", "value": str(len(test_session.test_results)), "colorClass": "text-blue-600"},
-                {"label": "符合预期", "value": str(sum(1 for r in test_session.test_results.values() if r.status == TestStatus.PASSED)), "colorClass": "text-green-600"},
+                {
+                    "label": "符合预期",
+                    "value": str(sum(1 for r in test_session.test_results.values() if r.status == TestStatus.PASSED)),
+                    "colorClass": "text-green-600",
+                },
                 {"label": "关键问题", "value": str(len(issues)), "colorClass": "text-red-600"},
-            ]
+            ],
         }
 
         aggregated_results_list = [
-            {
-                "id": "subtab-summary-advice",
-                "title": "摘要与建议",
-                "content": executive_content
-            },
+            {"id": "subtab-summary-advice", "title": "摘要与建议", "content": executive_content},
             {
                 "id": "subtab-issue-tracker",
                 "title": "问题列表",
                 "content": {
                     "title": "问题追踪列表",
                     "note": "注：此列表汇总了所有检测到的“失败”和“警告”项。请点击“查看详情”跳转到具体问题描述。",
-                    "issues": issues
-                }
-            }
+                    "issues": issues,
+                },
+            },
         ]
 
         # Store additional raw analysis for LLM etc.
         raw_analysis = {
             "session_summary": test_session.get_summary_stats(),
         }
+
         def dict_to_text(d, indent=0):
             lines = []
             for k, v in d.items():
@@ -76,18 +73,15 @@ class ResultAggregator:
                     lines.append(" " * indent + f"{k}: {v}")
             return "\n".join(lines)
 
-        executive_content["executiveSummary"] = (
-            f"{dict_to_text(raw_analysis['session_summary'])}"
-        )
+        executive_content["executiveSummary"] = f"{dict_to_text(raw_analysis['session_summary'])}"
 
-        return {
-            "title": "评估总览",
-            "tabs": aggregated_results_list
-        }
-    
-    
+        return {"title": "评估总览", "tabs": aggregated_results_list}
+
     async def _generate_llm_issues(self, test_session: ParallelTestSession) -> List[Dict[str, Any]]:
-        """Use LLM to summarise issues for each sub-test. Fallback to heuristic if LLM unavailable."""
+        """Use LLM to summarise issues for each sub-test.
+
+        Fallback to heuristic if LLM unavailable.
+        """
         llm_config = test_session.llm_config or {}
         use_llm = bool(llm_config)
         critical_issues: List[Dict[str, Any]] = []
@@ -120,9 +114,9 @@ class ResultAggregator:
                             "final_summary": sub.final_summary,
                         }
                         prompt = (
-                            "你是一名经验丰富的软件测试分析师。请根据以下子测试信息判断是否存在问题，并给出严重程度，请关注report中的失败问题，其他内容为辅助标准；如果没有report字段，根据其他内容总结。" \
-                            "如果没有问题，返回 JSON {\"severity\": \"none\"}。\n" \
-                            "如果有问题，返回 JSON 格式：{\"severity\": \"high|medium|low\", \"issues\": \"一句话中文问题描述\"}。\n" \
+                            "你是一名经验丰富的软件测试分析师。请根据以下子测试信息判断是否存在问题，并给出严重程度，请关注report中的失败问题，其他内容为辅助标准；如果没有report字段，根据其他内容总结。"
+                            '如果没有问题，返回 JSON {"severity": "none"}。\n'
+                            '如果有问题，返回 JSON 格式：{"severity": "high|medium|low", "issues": "一句话中文问题描述"}。\n'
                             f"子测试信息: {json.dumps(prompt_content, ensure_ascii=False, default=str)}"
                         )
                         logging.info(f"LLM Issue Prompt: {prompt}")
@@ -164,28 +158,27 @@ class ResultAggregator:
             except Exception as e:
                 logging.warning(f"Failed to close LLM client: {e}")
         return critical_issues
-    
-    async def generate_llm_summary(self, aggregated_results: Dict[str, Any], 
-                                 llm_config: Dict[str, Any]) -> str:
-        """Generate LLM-powered summary and analysis"""
+
+    async def generate_llm_summary(self, aggregated_results: Dict[str, Any], llm_config: Dict[str, Any]) -> str:
+        """Generate LLM-powered summary and analysis."""
         try:
             llm = LLMAPI(llm_config)
-            
+
             # Create comprehensive prompt
             prompt = self._create_analysis_prompt(aggregated_results)
-            
-            # Get LLM analysis  
+
+            # Get LLM analysis
             await llm.initialize()  # 确保LLM已初始化
             summary = await llm.get_llm_response("", prompt)
-            
+
             return summary
-            
+
         except Exception as e:
             logging.error(f"Failed to generate LLM summary: {e}")
             return f"LLM summary generation failed: {str(e)}"
-    
+
     def _create_analysis_prompt(self, aggregated_results: Dict[str, Any]) -> str:
-        """Create analysis prompt for LLM"""
+        """Create analysis prompt for LLM."""
         prompt = f"""
         请基于以下并行测试结果进行综合分析，生成专业的测试报告总结：
 
@@ -224,76 +217,72 @@ class ResultAggregator:
         - 包含风险等级评估
         """
         logging.debug(f"Analysis Prompt: {prompt}")
-        
+
         return prompt
-    
+
     async def generate_json_report(self, test_session: ParallelTestSession, report_dir: str | None = None) -> str:
-        """Generate comprehensive JSON report"""
+        """Generate comprehensive JSON report."""
         try:
             # Determine report directory
             if report_dir is None:
                 timestamp = os.getenv("WEBQA_TIMESTAMP")
                 report_dir = f"./reports/test_{timestamp}"
             os.makedirs(report_dir, exist_ok=True)
-            
+
             json_path = os.path.join(report_dir, "test_results.json")
-            with open(json_path, 'w', encoding='utf-8') as f:
+            with open(json_path, "w", encoding="utf-8") as f:
                 json.dump(test_session.to_dict(), f, indent=2, ensure_ascii=False, default=str)
-            
+
             absolute_path = os.path.abspath(json_path)
             logging.info(f"JSON report generated: {absolute_path}")
             return absolute_path
-            
+
         except Exception as e:
             logging.error(f"Failed to generate JSON report: {e}")
             return ""
-    
-    
-    
+
     def _read_css_content(self) -> str:
-        """Read and return CSS content"""
+        """Read and return CSS content."""
         try:
-            css_path = os.path.join(os.path.dirname(__file__), '../html/assets/style.css')
+            css_path = os.path.join(os.path.dirname(__file__), "../html/assets/style.css")
             if os.path.exists(css_path):
-                with open(css_path, 'r', encoding='utf-8') as f:
+                with open(css_path, "r", encoding="utf-8") as f:
                     return f.read()
         except Exception as e:
             logging.warning(f"Failed to read CSS file: {e}")
         return ""
-    
+
     def _read_js_content(self) -> str:
-        """Read and return JavaScript content"""
+        """Read and return JavaScript content."""
         try:
-            js_path = os.path.join(os.path.dirname(__file__), '../html/assets/index.js')
+            js_path = os.path.join(os.path.dirname(__file__), "../html/assets/index.js")
             if os.path.exists(js_path):
-                with open(js_path, 'r', encoding='utf-8') as f:
+                with open(js_path, "r", encoding="utf-8") as f:
                     return f.read()
         except Exception as e:
             logging.warning(f"Failed to read JS file: {e}")
         return ""
-    
 
-    
     def _get_executive_summary_template(self) -> str:
-        """Get executive summary template"""
+        """Get executive summary template."""
         return """
         测试执行概况：
         - 总测试数量：{{ total_tests }}
         - 成功率：{{ success_rate }}%
         - 执行时间：{{ duration }}秒
         """
-    
+
     def _get_technical_summary_template(self) -> str:
-        """Get technical summary template"""
+        """Get technical summary template."""
         return """
         技术细节：
         - 并行执行能力：{{ max_concurrent_tests }}
         - 浏览器会话：{{ browser_sessions }}
         - 数据隔离：已实现
         """
-    
+
     def _get_recommendations_template(self) -> str:
-        """Get recommendations template"""
+        """Get recommendations template."""
         return """
         改进建议：
         - 基于测试结果的具体建议
@@ -301,39 +290,45 @@ class ResultAggregator:
         - 用户体验改进点
         """
 
-    def generate_html_report_fully_inlined(self, test_session, report_dir: str | None = None, template_path: str = None) -> str:
-        """基于index.html结构生成报告，把style.css、data.js、index.js全部内嵌，data.js内容为本次session数据"""
-        import re
+    def generate_html_report_fully_inlined(
+        self, test_session, report_dir: str | None = None, template_path: str = None
+    ) -> str:
+        """基于index.html结构生成报告，把style.css、data.js、index.js全部内嵌，data.js内容为本次sessi
+        on数据."""
         import json
+        import re
+
         try:
             # 默认模板路径
             if template_path is None:
-                template_path = os.path.join(os.path.dirname(__file__), '../html/index.html')
-            with open(template_path, 'r', encoding='utf-8') as f:
+                template_path = os.path.join(os.path.dirname(__file__), "../html/index.html")
+            with open(template_path, "r", encoding="utf-8") as f:
                 html_template = f.read()
 
             # 读取内容
             css_content = self._read_css_content()
             js_content = self._read_js_content()
             # 动态生成data.js内容
-            datajs_content = "window.testResultData = " + json.dumps(test_session.to_dict(), ensure_ascii=False, default=str) + ";"
+            datajs_content = (
+                "window.testResultData = " + json.dumps(test_session.to_dict(), ensure_ascii=False, default=str) + ";"
+            )
 
             # 替换（用lambda防止反斜杠转义问题）
             html_out = html_template
             html_out = re.sub(
                 r'<link\s+rel="stylesheet"\s+href="/assets/style.css"\s*>',
-                lambda m: f'<style>\n{css_content}\n</style>',
-                html_out
+                lambda m: f"<style>\n{css_content}\n</style>",
+                html_out,
             )
             html_out = re.sub(
                 r'<script\s+src="/data.js"\s*>\s*</script>',
-                lambda m: f'<script>\n{datajs_content}\n</script>',
-                html_out
+                lambda m: f"<script>\n{datajs_content}\n</script>",
+                html_out,
             )
             html_out = re.sub(
                 r'<script\s+type="module"\s+crossorigin\s+src="/assets/index.js"\s*>\s*</script>',
                 lambda m: f'<script type="module">\n{js_content}\n</script>',
-                html_out
+                html_out,
             )
 
             # 输出
@@ -342,7 +337,7 @@ class ResultAggregator:
                 report_dir = f"./reports/test_{timestamp}"
             os.makedirs(report_dir, exist_ok=True)
             html_path = os.path.join(report_dir, "test_report.html")
-            with open(html_path, 'w', encoding='utf-8') as f:
+            with open(html_path, "w", encoding="utf-8") as f:
                 f.write(html_out)
             absolute_path = os.path.abspath(html_path)
             logging.info(f"HTML report generated: {absolute_path}")

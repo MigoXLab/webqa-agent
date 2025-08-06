@@ -18,7 +18,7 @@
 git clone <repository-url>
 cd webqa-agent
 
-# 2. 配置项目 
+# 2. 配置项目
 cp config/config.yaml.example config/config.yaml
 # 编辑 config/config.yaml 配置文件
 
@@ -28,6 +28,7 @@ sh start.sh --local      # 使用已有webqa-agent镜像快速启动
 ```
 
 ### 源码安装
+
 ```bash
 git clone
 cd webqa-agent
@@ -42,8 +43,9 @@ playwright install
 ```
 
 Lighthouse 安装
+
 ```bash
-# Lighthouse node.js>=18.0.0 
+# Lighthouse node.js>=18.0.0
 npm init -y && npm install lighthouse chrome-launcher
 
 ```
@@ -69,6 +71,7 @@ nuclei -version        # 验证安装成功
 ### 项目配置
 
 `webqa-agent` 通过 YAML 配置项目的运行参数：
+
 ```yaml
 target:
   url: https://example.com/ # 需要测试的网站URL
@@ -78,7 +81,7 @@ test_config: # 测试项配置
   function_test:
     enabled: True
     type: ai  # default or ai
-  ux_test: 
+  ux_test:
     enabled: False
   performance_test:
     enabled: False
@@ -87,8 +90,8 @@ test_config: # 测试项配置
 
 llm_config: # 视觉模型配置，当前仅支持 OpenAI sdk格式兼容
   model: gpt-4.1-mini  # 推荐使用
-  api_key: your_api_key 
-  base_url: https://api.example.com/v1 
+  api_key: your_api_key
+  base_url: https://api.example.com/v1
 
 browser_config:
   viewport: {"width": 1280, "height": 720}
