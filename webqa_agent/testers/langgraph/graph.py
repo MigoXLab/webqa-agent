@@ -55,6 +55,18 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
 
         logging.info(f"Inserted {len(new_cases)} new cases at index {current_index}. Total cases are now {len(updated_cases)}.")
 
+        # Save updated cases to cases.json
+        try:
+            timestamp = os.getenv("WEBQA_TIMESTAMP")
+            report_dir = f"./reports/test_{timestamp}"
+            os.makedirs(report_dir, exist_ok=True)
+            cases_path = os.path.join(report_dir, "cases.json")
+            with open(cases_path, 'w', encoding='utf-8') as f:
+                json.dump(updated_cases, f, ensure_ascii=False, indent=4)
+            logging.info(f"Successfully saved updated test cases (including replanned cases) to {cases_path}")
+        except Exception as e:
+            logging.error(f"Failed to save updated test cases to file: {e}")
+
         # Reset the replan flag and clear the temporary list
         return {
             "test_cases": updated_cases, 
