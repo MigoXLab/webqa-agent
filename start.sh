@@ -18,9 +18,26 @@ fi
 # 简化配置验证
 echo "🔍 验证配置文件..."
 
-# 检查YAML语法
-python3 -c "import yaml; yaml.safe_load(open('config/config.yaml'))" 2>/dev/null
-if [ $? -ne 0 ]; then
+# 检查 YAML 语法（优先使用 yq，其次使用 Python+PyYAML，如均不可用则跳过）
+if command -v yq >/dev/null 2>&1; then
+    yq eval '.' config/config.yaml >/dev/null 2>&1
+    YAML_STATUS=$?
+else
+    python3 - <<'PY'
+import sys, importlib.util, pathlib
+spec = importlib.util.find_spec('yaml')
+if spec is None:
+    sys.exit(0)  # 未安装 PyYAML，跳过检查
+import yaml
+try:
+    yaml.safe_load(open('config/config.yaml'))
+except Exception:
+    sys.exit(1)
+PY
+    YAML_STATUS=$?
+fi
+
+if [ $YAML_STATUS -ne 0 ]; then
     echo "❌ 配置文件YAML语法错误"
     exit 1
 fi

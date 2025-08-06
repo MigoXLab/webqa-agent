@@ -159,6 +159,7 @@ class PageContentTest:
                     except Exception:
                         try:
                             parsed = ast.literal_eval(test_page_content)
+                            logging.info(f"Parsed LLM output: {parsed}")
                         except Exception:
                             logging.warning("Unable to parse LLM output as JSON, keep raw text")
                             parsed = None
@@ -199,12 +200,18 @@ class PageContentTest:
                         if isinstance(screenshot_idx, int) and 1 <= screenshot_idx <= len(browser_screenshot):
                             screenshot_data = browser_screenshot[screenshot_idx - 1]
 
+                            screenshots = []
+                            if isinstance(screenshot_data, str):
+                                screenshots.append(SubTestScreenshot(type="base64", data=screenshot_data))
+                            elif isinstance(screenshot_data, dict):
+                                screenshots.append(SubTestScreenshot(**screenshot_data))
+
                             result.steps.append(SubTestStep(
-                                id=int(id_counter+1),
-                                description=user_case[:4]+": "+ issue_desc,
+                                id=int(id_counter + 1),
+                                description=user_case[:4] + ": " + issue_desc,
                                 modelIO=suggestion,
-                                screenshots=[screenshot_data],
-                                status=TestStatus.WARNING if suggestion else TestStatus.PASSED #
+                                screenshots=screenshots,
+                                status=TestStatus.WARNING if suggestion else TestStatus.PASSED,
                             ))
                             id_counter += 1
 
