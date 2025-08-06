@@ -1,17 +1,18 @@
-import uuid
-import json
 import ast
 import asyncio
+import json
+import logging
+import uuid
 from typing import List
+
 from html2text import html2text
+from playwright.async_api import Page
+
+from webqa_agent.actions.action_handler import ActionHandler
+from webqa_agent.actions.scroll_handler import ScrollHandler
+from webqa_agent.data.test_structures import SubTestReport, SubTestResult, SubTestScreenshot, SubTestStep, TestStatus
 from webqa_agent.llm.llm_api import LLMAPI
 from webqa_agent.llm.prompt import LLMPrompt
-from webqa_agent.actions.scroll_handler import ScrollHandler
-from webqa_agent.actions.action_handler import ActionHandler
-from webqa_agent.crawler.deep_crawler import DeepCrawler
-from playwright.async_api import Page
-from webqa_agent.data.test_structures import SubTestResult, SubTestStep, SubTestScreenshot, SubTestReport, TestStatus, SubTestAction
-import logging
 
 
 class PageTextTest:
@@ -30,10 +31,9 @@ class PageTextTest:
         return page_text
 
     async def run(self, page: Page) -> SubTestResult:
-        """
-        Runs a test to check the text content of a web page and identifies any issues based on predefined user cases.
-        """
-        test_name = f"错别字检查"
+        """Runs a test to check the text content of a web page and identifies
+        any issues based on predefined user cases."""
+        test_name = "错别字检查"
 
         result = SubTestResult(name=test_name)
 
@@ -64,7 +64,7 @@ class PageTextTest:
                 prompt = self._build_prompt(page_text, user_case)
 
                 # 确保LLM已初始化
-                if not hasattr(self.llm, '_client') or self.llm._client is None:
+                if not hasattr(self.llm, "_client") or self.llm._client is None:
                     await self.llm.initialize()
 
                 test_page_content = await self.llm.get_llm_response(LLMPrompt.page_default_prompt, prompt)
@@ -76,11 +76,13 @@ class PageTextTest:
                     issues = test_page_content
                 else:
                     result.status = TestStatus.PASSED
-                    issues = "没有发现错别字" 
-                result.report.append(SubTestReport(
-                    title=user_case[:4],
-                    issues=issues,
-                ))
+                    issues = "没有发现错别字"
+                result.report.append(
+                    SubTestReport(
+                        title=user_case[:4],
+                        issues=issues,
+                    )
+                )
 
         except Exception as e:
             error_message = f"PageTextTest error: {str(e)}"
@@ -92,11 +94,11 @@ class PageTextTest:
 
     @staticmethod
     def _build_prompt(page_text: str, user_case: str) -> str:
-        """构建LLM提示"""
-        return f"""任务描述：根据提供的网页内容用户用例，检查是否存在任何错别字，或者英文语法错误。如果发现错误，请按照指定的JSON格式输出结果。 
+        """构建LLM提示."""
+        return f"""任务描述：根据提供的网页内容用户用例，检查是否存在任何错别字，或者英文语法错误。如果发现错误，请按照指定的JSON格式输出结果。
                 输入信息：
-                - 网页内容：${page_text} 
-                - 用户用例：${user_case} 
+                - 网页内容：${page_text}
+                - 用户用例：${user_case}
                 输出要求：
                 - 如果没有发现错误，请只输出 None ，不要包含任何解释。
                 - 如果发现了错误，请使用以下JSON格式输出：  {{'error': '', 'reason': ''}}； error表示错误点，reason给出具体错误的原因和更改结果。
@@ -122,18 +124,17 @@ class PageContentTest:
         test_name = f"网页内容检查_{page.viewport_size['width']}x{page.viewport_size['height']}"
         result = SubTestResult(name=test_name)
         logging.info(
-            f"Testing with browser configuration: {page.viewport_size['width']}x{page.viewport_size['height']}")
+            f"Testing with browser configuration: {page.viewport_size['width']}x{page.viewport_size['height']}"
+        )
 
         try:
-            if not hasattr(self.llm, '_client') or self.llm._client is None:
+            if not hasattr(self.llm, "_client") or self.llm._client is None:
                 await self.llm.initialize()
 
             page_identifier = str(int(uuid.uuid4().int) % 10000)
             _scroll = ScrollHandler(page)
             browser_screenshot = await _scroll.scroll_and_crawl(
-                scroll=True,
-                max_scrolls=10,
-                page_identifier=page_identifier
+                scroll=True, max_scrolls=10, page_identifier=page_identifier
             )
             id_map = {}
             # dp = DeepCrawler(page)
@@ -144,9 +145,7 @@ class PageContentTest:
             for user_case in self.user_cases:
                 all_issues = []
                 prompt = self._build_prompt(user_case, id_map)
-                test_page_content = await self._get_llm_response(
-                    prompt, page_img, browser_screenshot
-                )
+                test_page_content = await self._get_llm_response(prompt, page_img, browser_screenshot)
 
                 # parse LLM response
                 summary_text = None
@@ -188,7 +187,7 @@ class PageContentTest:
                     # 组织 steps 信息和收集 issue 信息
                     if summary_text:
                         all_issues.append(f"总结: {summary_text}")
-                    
+
                     for idx, issue in enumerate(issues_list):
                         # collect issue info for report
                         issue_desc = issue.get("issue") or issue.get("description") or str(issue)
@@ -202,27 +201,23 @@ class PageContentTest:
                         screenshot_idx = issue.get("id")
                         if isinstance(screenshot_idx, int) and 1 <= screenshot_idx <= len(browser_screenshot):
                             screenshot_data = browser_screenshot[screenshot_idx - 1]
-                            
-                            screenshot = SubTestScreenshot(
-                                type="base64",
-                                data=screenshot_data
-                            )
 
-                            result.steps.append(SubTestStep(
-                                id=int(id_counter+1),
-                                description=user_case[:4]+": "+ issue_desc,
-                                modelIO=suggestion,
-                                screenshots=[screenshot],
-                                status=TestStatus.FAILED if suggestion else TestStatus.PASSED
-                            ))
+                            screenshot = SubTestScreenshot(type="base64", data=screenshot_data)
+
+                            result.steps.append(
+                                SubTestStep(
+                                    id=int(id_counter + 1),
+                                    description=user_case[:4] + ": " + issue_desc,
+                                    modelIO=suggestion,
+                                    screenshots=[screenshot],
+                                    status=TestStatus.FAILED if suggestion else TestStatus.PASSED,
+                                )
+                            )
                             id_counter += 1
-                
+
                 issues_text = "; ".join(all_issues) if all_issues else "无发现问题"
-                
-                result.report.append(SubTestReport(
-                    title=user_case[:4],
-                    issues=issues_text
-                ))
+
+                result.report.append(SubTestReport(title=user_case[:4], issues=issues_text))
 
         except Exception as e:
             error_message = f"PageContentTest error: {str(e)}"
@@ -234,9 +229,9 @@ class PageContentTest:
 
     @staticmethod
     def _build_prompt(user_case: str, id_map: dict) -> str:
-        return f"""任务描述：根据提供的网页截图以及用户用例，检查是否存在任何错误。如果发现错误，请按照指定的文本格式输出结果。 
+        return f"""任务描述：根据提供的网页截图以及用户用例，检查是否存在任何错误。如果发现错误，请按照指定的文本格式输出结果。
                 输入信息：
-                - 用户用例：${user_case} 
+                - 用户用例：${user_case}
                 - 网页截图
                 - 网页dom元素信息: ${id_map}
                 输出要求：
@@ -257,9 +252,8 @@ class PageButtonTest:
 
     @staticmethod
     async def run(url: str, page: Page, clickable_elements: list, **kwargs) -> SubTestResult:
-        """
-        run page button test
-        
+        """Run page button test.
+
         Args:
             url: target url
             page: playwright page
@@ -274,6 +268,7 @@ class PageButtonTest:
         try:
             status = TestStatus.PASSED
             from webqa_agent.actions.click_handler import ClickHandler
+
             click_handler = ClickHandler()
             await click_handler.setup_listeners(page)
 
@@ -283,7 +278,7 @@ class PageButtonTest:
             if clickable_elements:
                 for i, element in enumerate(clickable_elements):
                     # Run single test with the provided browser configuration
-                    element_text = element.get('selector', 'Unknown')
+                    element_text = element.get("selector", "Unknown")
                     logging.info(f"Testing clickable element {i + 1}: {element_text}")
 
                     try:
@@ -294,24 +289,22 @@ class PageButtonTest:
 
                         screenshots = []
                         click_result = await click_handler.click_and_screenshot(page, element, i)
-                        if click_result.get('screenshot_after'):
-                            scr = click_result['screenshot_after']
+                        if click_result.get("screenshot_after"):
+                            scr = click_result["screenshot_after"]
                             if isinstance(scr, str):
                                 screenshots.append(SubTestScreenshot(type="base64", data=scr))
                             elif isinstance(scr, dict):
                                 screenshots.append(SubTestScreenshot(**scr))
-                        if click_result.get('new_page_screenshot'):
-                            scr = click_result['new_page_screenshot']
+                        if click_result.get("new_page_screenshot"):
+                            scr = click_result["new_page_screenshot"]
                             if isinstance(scr, str):
                                 screenshots.append(SubTestScreenshot(type="base64", data=scr))
                             elif isinstance(scr, dict):
                                 screenshots.append(SubTestScreenshot(**scr))
 
-                        business_success = click_result['success']
+                        business_success = click_result["success"]
                         step = SubTestStep(
-                            id=int(i+1),
-                            description=f"点击元素: {element_text}",
-                            screenshots=screenshots
+                            id=int(i + 1), description=f"点击元素: {element_text}", screenshots=screenshots
                         )
                         # Determine step status based on business result
                         step_status = TestStatus.PASSED if business_success else TestStatus.FAILED
@@ -334,10 +327,12 @@ class PageButtonTest:
                     finally:
                         sub_test_results.append(step)
 
-            result.report.append(SubTestReport(
-                title="遍历测试结果",
-                issues=f"可点击元素{total}个，点击行为失败{total_failed}个",
-            ))
+            result.report.append(
+                SubTestReport(
+                    title="遍历测试结果",
+                    issues=f"可点击元素{total}个，点击行为失败{total_failed}个",
+                )
+            )
 
         except Exception as e:
             error_message = f"PageButtonTest error: {str(e)}"

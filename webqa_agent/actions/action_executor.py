@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
 
 
 class ActionExecutor:
@@ -15,16 +15,16 @@ class ActionExecutor:
             "Scroll": self._execute_scroll,
             "KeyboardPress": self._execute_keyboard_press,
             "FalsyConditionStatement": self._execute_falsy,
-            "Check": self._execute_check,            
+            "Check": self._execute_check,
             "GetNewPage": self._execute_get_new_page,
             "Upload": self._execute_upload,
             "SelectDropdown": self._execute_select_dropdown,
             "Drag": self._execute_drag,
         }
-        
+
     async def initialize(self):
         return self
-        
+
     async def execute(self, action):
         try:
             # Validate the action
@@ -46,23 +46,23 @@ class ActionExecutor:
         except Exception as e:
             logging.error(f"Action execution failed: {str(e)}")
             return {"success": False, "message": f"Action execution failed with an exception: {e}"}
-        
+
     def _validate_params(self, action, required_params):
         for param in required_params:
-            keys = param.split('.')
+            keys = param.split(".")
             value = action
             for key in keys:
                 value = value.get(key)
                 if value is None:
-                    if action['type'] == 'Scroll' and key == 'distance':
+                    if action["type"] == "Scroll" and key == "distance":
                         continue
                     logging.error(f"Missing required parameter: {param}")
                     return False  # Return False to indicate validation failure
         return True  # Return True if all parameters are present
-    
+
     # Individual action execution methods - NO SCREENSHOTS
     async def _execute_clear(self, action):
-        """Execute clear action on an input field"""
+        """Execute clear action on an input field."""
         if not self._validate_params(action, ["locate.id"]):
             return {"success": False, "message": "Missing locate.id for clear action"}
         success = await self._actions.clear(action.get("locate").get("id"))
@@ -72,7 +72,7 @@ class ActionExecutor:
             return {"success": False, "message": "Clear action failed. The element might not be clearable."}
 
     async def _execute_tap(self, action):
-        """Execute tap/click action"""
+        """Execute tap/click action."""
         if not self._validate_params(action, ["locate.id"]):
             return {"success": False, "message": "Missing locate.id for tap action"}
         success = await self._actions.click(action.get("locate").get("id"))
@@ -82,7 +82,7 @@ class ActionExecutor:
             return {"success": False, "message": "Tap action failed. The element might not be clickable."}
 
     async def _execute_hover(self, action):
-        """Execute hover action"""
+        """Execute hover action."""
         if not self._validate_params(action, ["locate.id"]):
             return {"success": False, "message": "Missing locate.id for hover action"}
         success = await self._actions.hover(action.get("locate").get("id"))
@@ -92,7 +92,7 @@ class ActionExecutor:
             return {"success": False, "message": "Hover action failed. The element might not be hoverable."}
 
     async def _execute_sleep(self, action):
-        """Execute sleep/wait action"""
+        """Execute sleep/wait action."""
         if not self._validate_params(action, ["param.timeMs"]):
             return {"success": False, "message": "Missing param.timeMs for sleep action"}
         time_ms = action.get("param").get("timeMs")
@@ -100,41 +100,42 @@ class ActionExecutor:
         return {"success": True, "message": f"Slept for {time_ms}ms."}
 
     async def _execute_input(self, action):
-        """Execute input/type action"""
+        """Execute input/type action."""
         if not self._validate_params(action, ["locate.id", "param.value"]):
             return {"success": False, "message": "Missing locate.id or param.value for input action"}
         try:
             value = action.get("param").get("value")
             clear_before_type = action.get("param").get("clear_before_type", False)  # Default is False
             success = await self._actions.type(
-                action.get("locate").get("id"),
-                value,
-                clear_before_type=clear_before_type
+                action.get("locate").get("id"), value, clear_before_type=clear_before_type
             )
             if success:
                 return {"success": True, "message": "Input action successful."}
             else:
-                return {"success": False, "message": "Input action failed. The element might not be available for typing."}
+                return {
+                    "success": False,
+                    "message": "Input action failed. The element might not be available for typing.",
+                }
         except Exception as e:
             logging.error(f"Action '_execute_input' execution failed: {str(e)}")
             return {"success": False, "message": f"Input action failed with an exception: {e}"}
 
     async def _execute_scroll(self, action):
-        """Execute scroll action"""
+        """Execute scroll action."""
         if not self._validate_params(action, ["param.direction", "param.scrollType", "param.distance"]):
             return {"success": False, "message": "Missing parameters for scroll action"}
         direction = action.get("param").get("direction", "down")
         scroll_type = action.get("param").get("scrollType", "once")
         distance = action.get("param").get("distance", None)
-        
+
         success = await self._actions.scroll(direction, scroll_type, distance)
         if success:
             return {"success": True, "message": f"Scrolled {direction} successfully."}
         else:
             return {"success": False, "message": "Scroll action failed."}
-    
+
     async def _execute_keyboard_press(self, action):
-        """Execute keyboard press action"""
+        """Execute keyboard press action."""
         if not self._validate_params(action, ["param.value"]):
             return {"success": False, "message": "Missing param.value for keyboard press action"}
         success = await self._actions.keyboard_press(action.get("param").get("value"))
@@ -144,23 +145,23 @@ class ActionExecutor:
             return {"success": False, "message": "Keyboard press failed."}
 
     async def _execute_falsy(self, action):
-        """Execute falsy condition statement"""
+        """Execute falsy condition statement."""
         return {"success": True, "message": "Falsy condition met."}
 
     async def _execute_check(self, action):
-        """Execute check action"""
+        """Execute check action."""
         return {"success": True, "message": "Check action completed."}
-    
+
     async def _execute_get_new_page(self, action):
-        """Execute get new page action"""
+        """Execute get new page action."""
         success = await self._actions.get_new_page()
         if success:
             return {"success": True, "message": "Successfully switched to new page."}
         else:
             return {"success": False, "message": "Failed to get new page."}
-    
+
     async def _execute_upload(self, action, file_path):
-        """Execute upload action"""
+        """Execute upload action."""
         if not self._validate_params(action, ["locate.id"]):
             return {"success": False, "message": "Missing locate.id for upload action"}
         success = await self._actions.upload_file(action.get("locate").get("id"), file_path)
@@ -170,7 +171,7 @@ class ActionExecutor:
             return {"success": False, "message": "File upload failed."}
 
     async def _execute_select_dropdown(self, action):
-        """Execute select dropdown action"""
+        """Execute select dropdown action."""
         locate = action.get("locate", {})
         dropdown_id = locate.get("dropdown_id")
         option_id = locate.get("option_id")
@@ -201,9 +202,12 @@ class ActionExecutor:
                 # multi-level cascade
                 for level, option_text in enumerate(selection_path):
                     select_result = await self._actions.select_cascade_level(dropdown_id, option_text, level=level)
-                    if not select_result.get('success'):
+                    if not select_result.get("success"):
                         logging.error(f"Failed to select level {level} option: {select_result.get('message')}")
-                        return {"success": False, "message": f"Failed at cascade level {level}: {select_result.get('message')}"}
+                        return {
+                            "success": False,
+                            "message": f"Failed at cascade level {level}: {select_result.get('message')}",
+                        }
                     if level < len(selection_path) - 1:
                         await asyncio.sleep(0.5)
                 logging.info(f"Successfully completed cascade selection: {' -> '.join(selection_path)}")
@@ -214,75 +218,77 @@ class ActionExecutor:
             return {"success": False, "message": f"An exception occurred during dropdown selection: {str(e)}"}
 
     async def _execute_simple_selection(self, element_id, option_text):
-        """Execute simple single-level dropdown selection"""
+        """Execute simple single-level dropdown selection."""
         try:
             # get all options of dropdown
             logging.info(f"Getting dropdown options for element {element_id}")
             options_result = await self._actions.get_dropdown_options(element_id)
-            
-            if not options_result.get('success'):
+
+            if not options_result.get("success"):
                 logging.error(f"Failed to get dropdown options: {options_result.get('message')}")
                 return {"success": False, "message": f"Failed to get dropdown options: {options_result.get('message')}"}
-            
-            options = options_result.get('options', [])
+
+            options = options_result.get("options", [])
             if not options:
                 logging.error("No options found in dropdown")
                 return {"success": False, "message": "No options found in dropdown"}
-            
+
             logging.info(f"Found {len(options)} options in dropdown")
-            
+
             # use default simple decision logic
             def _default_selection_logic(options: List[Dict], criteria: str) -> Optional[str]:
                 criteria_lower = criteria.lower()
-                
+
                 for option in options:
-                    if option['text'].lower() == criteria_lower:
+                    if option["text"].lower() == criteria_lower:
                         logging.info(f"Found exact match: {option['text']}")
-                        return option['text']
-                
+                        return option["text"]
+
                 for option in options:
-                    if criteria_lower in option['text'].lower():
+                    if criteria_lower in option["text"].lower():
                         logging.info(f"Found contains match: {option['text']}")
-                        return option['text']
-                
+                        return option["text"]
+
                 for option in options:
-                    if option['text'].lower() in criteria_lower:
+                    if option["text"].lower() in criteria_lower:
                         logging.info(f"Found partial match: {option['text']}")
-                        return option['text']
-                
+                        return option["text"]
+
                 # if no match, return None
                 logging.warning(f"No match found for criteria: {criteria}")
                 return None
-            
+
             selected_option = _default_selection_logic(options, option_text)
-            
+
             if not selected_option:
                 logging.error(f"Could not decide which option to select based on criteria: {option_text}")
-                available_options = [opt['text'] for opt in options]
+                available_options = [opt["text"] for opt in options]
                 logging.info(f"Available options: {available_options}")
                 return {"success": False, "message": "No matching option found", "available_options": available_options}
-            
+
             logging.info(f"Selected option: {selected_option}")
-            
+
             # execute select operation
             select_result = await self._actions.select_dropdown_option(element_id, selected_option)
-            
-            if select_result.get('success'):
+
+            if select_result.get("success"):
                 logging.info(f"Successfully completed dropdown selection: {selected_option}")
                 return {"success": True, "message": "Option selected successfully"}
             else:
                 logging.error(f"Failed to select option: {selected_option}")
                 return {"success": False, "message": f"Failed to select option: {select_result.get('message')}"}
-                
+
         except Exception as e:
             logging.error(f"Error in simple dropdown selection: {str(e)}")
             return {"success": False, "message": f"An exception occurred: {str(e)}"}
 
     async def _execute_drag(self, action):
-        """Execute drag action"""
+        """Execute drag action."""
         if not self._validate_params(action, ["param.sourceCoordinates", "param.targetCoordinates"]):
             return {"success": False, "message": "Missing coordinates for drag action"}
-        success = await self._actions.drag(action.get("param").get("sourceCoordinates"), action.get("param").get("targetCoordinates"))
+        success = await self._actions.drag(
+            action.get("param").get("sourceCoordinates"), action.get("param").get("targetCoordinates")
+        )
         if success:
             return {"success": True, "message": "Drag action successful."}
         else:

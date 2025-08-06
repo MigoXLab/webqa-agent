@@ -1,17 +1,10 @@
 from .test_structures import (
-    TestType,
-    TestStatus,
+    ParallelTestSession,
     TestConfiguration,
     TestExecutionContext,
     TestResult,
-    ParallelTestSession
+    TestStatus,
+    TestType,
 )
 
-__all__ = [
-    'TestType',
-    'TestStatus', 
-    'TestConfiguration',
-    'TestExecutionContext',
-    'TestResult',
-    'ParallelTestSession'
-] 
+__all__ = ["TestType", "TestStatus", "TestConfiguration", "TestExecutionContext", "TestResult", "ParallelTestSession"]

@@ -39,11 +39,11 @@ RUN ARCH=$(dpkg --print-architecture) && \
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir --default-timeout=300 -r requirements.txt
 
-# 3. 复制Node.js依赖文件并安装 
+# 3. 复制Node.js依赖文件并安装
 COPY package.json /app/
 RUN npm install
 
-# 4. 复制项目文件 
+# 4. 复制项目文件
 COPY . /app
 
 # 更新nuclei模板
@@ -51,4 +51,3 @@ RUN nuclei -ut -v
 
 # 设置运行webqa-agent
 CMD ["python", "webqa-agent.py"]
-

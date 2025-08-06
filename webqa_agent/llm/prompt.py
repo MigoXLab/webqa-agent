@@ -6,6 +6,7 @@
 #
 # Licensed under the MIT License
 
+
 class LLMPrompt:
     planner_system_prompt = """
     ## Role
@@ -26,30 +27,30 @@ class LLMPrompt:
 
     ## Target Identification & Validation
     ### Step-by-step validation:
-    1. **Extract User Target**  
+    1. **Extract User Target**
        - From the instruction, extract the label/description of the intended target.
 
-    2. **Locate Candidate Elements**  
+    2. **Locate Candidate Elements**
        - Match label/text from visible elements.
        - If **duplicates exist**, apply **anchor-based spatial disambiguation**:
          - Use anchor labels, coordinates, and direction (below/above/left/right).
-         - For 'below', validate:  
-           - target.x ≈ anchor.x ±30 pixels  
-           - target.y > anchor.y  
+         - For 'below', validate:
+           - target.x ≈ anchor.x ±30 pixels
+           - target.y > anchor.y
          - Sort by ascending y to get N-th below.
 
-    3. **Final Validation**  
+    3. **Final Validation**
        - Ensure the selected target aligns with user's intent.
        - If validation fails, return:
          `"Planned element does not match the user's expected target."`
 
-    4. **Thought Requirement (Per Action)**  
+    4. **Thought Requirement (Per Action)**
        - Explain how the element was selected.
        - Confirm its match with user intent.
        - Describe how ambiguity was resolved.
 
     ## Anchor Usage Rule
-    Anchors are strictly used for reference during disambiguation.  
+    Anchors are strictly used for reference during disambiguation.
     **NEVER** interact (Tap/Hover/Check) with anchor elements directly.
 
     ## Scroll Behavior Constraints
@@ -86,7 +87,7 @@ class LLMPrompt:
 
     Each action includes `type` and `param`, optionally with `locate`.
 
-        Each action has a 
+        Each action has a
         - type: 'Tap', tap the located element
         * {{ locate: {{ id: string }}, param: null }}
         - type: 'Hover', move mouse over to the located element
@@ -102,15 +103,15 @@ class LLMPrompt:
         * {{ locate: {{ id: string }}, param: null }}
         * use this action when the instruction is a "upload" statement. locate the input element to upload the file.
         - type: 'Scroll', scroll up or down.
-        * {{ 
-            locate: {{ id: string }} | null, 
-            param: {{ 
-                direction: 'down'(default) | 'up' | 'right' | 'left', 
-                scrollType: 'once' (default) | 'untilBottom' | 'untilTop' | 'untilRight' | 'untilLeft', 
-                distance: null | number 
-            }} 
+        * {{
+            locate: {{ id: string }} | null,
+            param: {{
+                direction: 'down'(default) | 'up' | 'right' | 'left',
+                scrollType: 'once' (default) | 'untilBottom' | 'untilTop' | 'untilRight' | 'untilLeft',
+                distance: null | number
             }}
-            * To scroll some specific element, put the element at the center of the region in the `locate` field. If it's a page scroll, put `null` in the `locate` field. 
+            }}
+            * To scroll some specific element, put the element at the center of the region in the `locate` field. If it's a page scroll, put `null` in the `locate` field.
             * `param` is required in this action. If some fields are not specified, use direction `down`, `once` scroll type, and `null` distance.
         - type: 'GetNewPage', get the new page
         * {{ param: null }}
@@ -157,14 +158,14 @@ class LLMPrompt:
 
     planner_output_prompt = """
     ## First, you need to analyze the page dom tree and the screenshot, and complete the test steps.
-        
+
     ### Element Identification Instructions:
     In the pageDescription, you will find elements with the following structure:
     - Each element has an external id (like '1', '2', '3') for easy reference
     - Each element also has an internal id (like 917, 920, 923) which is the actual DOM element identifier
     - When creating actions, use the external id (string) in the locate field
     - Example: if you see element '1' with internal id 917, use "id": "1" in your action
-    
+
     ### Contextual Decision Making:
     - **Crucially, use the `page_structure` (full text content) to understand the context of the interactive elements from `pageDescription`**. For example, if `page_structure` shows "Username:" next to an input field, you know that input field is for the username.
     - If you see error text like "Invalid email format" in `page_structure`, use this information to correct your next action.
@@ -178,9 +179,9 @@ class LLMPrompt:
     - KeyboardPress: Simulate a keyboard key press, such as Enter, Tab, or arrow keys.
     - Drag: Perform a drag-and-drop operation. Moves the mouse from a starting coordinate to a target coordinate, often used for sliders, sorting, or drag-and-drop interfaces. Requires both source and target coordinates.
     - SelectDropdown: Select an option from a dropdown menu which is user's expected option. The dropdown element is the first level of the dropdown menu. IF You can see the dropdown element, you cannot click the dropdown element, you should directly select the option.
-    
+
     Please ensure the output is a valid **JSON** object. Do **not** include any markdown, backticks, or code block indicators.
-        
+
         ### Output **JSON Schema**, **Legal JSON format**:
         {
           "actions": [
@@ -199,9 +200,9 @@ class LLMPrompt:
           } | null,
           "error": string | null // present only if planning failed or validation failed
         }
-        
+
         ---
-        
+
         ### Output Requirements
         - Use `thought` field in every action to explain selection & feasibility.
         - If the task involves matching a user-described target (like "click send button"), you **must validate the target**:
@@ -210,14 +211,14 @@ class LLMPrompt:
         - If an expected element is not found on the page:
           - For imperative instruction: return `error` and empty actions.
           - For tolerant instructions like "If popup exists, close it", return `FalsyConditionStatement` action.
-        
+
         ---
-        
+
         ### Unified Few-shot Examples
-        
+
         #### Example 1: Tap + Sleep + Check (task incomplete)
         "Click send button and wait 50s"
-        
+
         ====================
         {pageDescription}
         ====================
@@ -248,7 +249,7 @@ class LLMPrompt:
           "error": null
         }
         ```
-        
+
         #### Example 2: Scroll + Check (scroll history aware)
         ```json
         {
@@ -268,7 +269,7 @@ class LLMPrompt:
           "error": null
         }
         ```
-        
+
         #### Example 3: 点击首页button，校验跳转新开页
         "Click the button on the homepage and verify that a new page opens"
         ```json
@@ -319,14 +320,14 @@ class LLMPrompt:
           "taskWillBeAccomplished": true
         }
         ```
-        
+
         #### Example: Drag slider
         ```json
         {
           "actions": [
             {
               "type": "Drag",
-              "thought": "currently set at value 0. To change it to 50, we perform a drag action. Calculated taget x for 50 degrees is approximately 300( Give specific calculation formulas ), so drag the slider to 50 by moving from (100, 200) to (300, 200).",
+              "thought": "currently set at value 0. To change it to 50, we perform a drag action. Calculated target x for 50 degrees is approximately 300( Give specific calculation formulas ), so drag the slider to 50 by moving from (100, 200) to (300, 200).",
               "param": {
                 "sourceCoordinates": { "x": 100, "y": 200 },
                 "targetCoordinates": { "x": 300, "y": 200 },
@@ -340,7 +341,7 @@ class LLMPrompt:
           "error": null
         }
         ```
-        
+
         #### Example 5: click AND Select
         "click the select button and select the option 'Option 2' from the dropdown menu and then select the option 'Option 3' from the dropdown menu"
         ATTENTION: dropdown_id is the id of the dropdown container element. option_id is the id of the option element in the expanded dropdown (if available).
@@ -365,7 +366,7 @@ class LLMPrompt:
           "error": null
         }
         ```
-        
+
         #### Example of what NOT to do
         - If the action's `locate` is null and element is **not in the screenshot**, don't continue planning. Instead:
         ```json
@@ -379,9 +380,9 @@ class LLMPrompt:
           "error": "Planned element not visible; task cannot be completed on current page"
         }
         ```
-        
+
         ---
-        
+
         ### Final Notes
         - Plan only for **visible, reachable actions** based on current context.
         - If not all steps can be completed now, push remainder to `furtherPlan`.
@@ -391,14 +392,14 @@ class LLMPrompt:
     """
 
     verification_prompt = """
-      Task instructions: Based on the assertion provided by the user, you need to check final screenshot to determine whether the verification assertion has been completed. 
-      
+      Task instructions: Based on the assertion provided by the user, you need to check final screenshot to determine whether the verification assertion has been completed.
+
       First, you need to understand the user's assertion, and then determine the elements that need to be verified.
-      Second, you need to check Page Structure and the Marker screenshot to determine whether the elements can be determined. 
+      Second, you need to check Page Structure and the Marker screenshot to determine whether the elements can be determined.
       Third, you will give a conclusion based on the screenshot and the assertion.
-      
+
       ### Few-shot Examples
-      
+
       #### Example 1: The assertions provided by the user involve the visible or invisible elements as a basis for judgment.
       the user's assertions: "Verify that InternThinker Streaming Output Completion, if  "stop generating" is not visible, it means the test is passed; if conversation is visible, it means the test is passed.
       ====================
@@ -406,8 +407,8 @@ class LLMPrompt:
       ====================
       1. **Step 1 - Determine the "Stop generating" button**: - Check whether there is a button marked "Stop generating" on the page. - If the button does not exist (i.e., it is not visible), this step is considered to be completed correctly.
       2. **Step 2 - Verify the existence of text information**: - Confirm whether there is a dialog box(that communicates information to the user and prompts them for a response) displayed on the current interface. - Also check whether any text information is output to the screen (i.e., conversation is visible), this step is considered to be completed correctly.
-      
-      Only when both the existence of dialog boxes and text information are met can the entire test process be considered successful. 
+
+      Only when both the existence of dialog boxes and text information are met can the entire test process be considered successful.
 
 
       #### Example 2:  Page Navigation & Filter Result Validation
@@ -416,9 +417,9 @@ class LLMPrompt:
       3. **Step 3**: Recheck whether the expected content is now visible.
         - If found: return `"Validation Passed"`
         - If not found: return `"Validation Failed"`
-    
+
      > Never scroll more than once. Do **not** assume infinite content. Always default to visibility-based validation.
-    
+
       #### Example 3:  Element Presence Verification
       the user's assertions: "Verify X is shown"
       ====================
@@ -428,7 +429,7 @@ class LLMPrompt:
         - Scan visible UI for that element or its textual representation
         - If visible: Passed
         - If not found and no evidence of error: Failed
-    
+
       ---------------
       ### Output Format (Strict JSON):
 
@@ -453,16 +454,16 @@ class LLMPrompt:
             ...
           ]
       }
-      
+
     """
 
     verification_system_prompt = """
     ## Role
       Think of yourself as a premium model( ChatGPT Plus )
       You are a web automation testing verification expert. Verify whether the current page meets the user's test cases and determine if the task is completed. Ensure that the output JSON format does not include any code blocks or backticks.
-      Based on the screenshot and available evidence, determine whether the user has successfully completed the test case. 
+      Based on the screenshot and available evidence, determine whether the user has successfully completed the test case.
       Focus exclusively on verifying the completion of the final output rendering.
-    
+
     ## Notes:
 
       1. Carefully review each **screenshot** to understand the operation steps and their sequence.
@@ -564,10 +565,10 @@ class LLMPrompt:
     # You are a web content quality inspector. You need to carefully read the text content of the webpage and complete the task based on the user's test objective. Please ensure that the output JSON format does not contain any code blocks or backticks.
 
     TEXT_USER_CASES = [
-        f"""内容纠错：仔细检查当前页面上的文本内容，寻找并指出其中存在的英文单词拼写错误及中文错别字。
-        注意事项： 
+        """内容纠错：仔细检查当前页面上的文本内容，寻找并指出其中存在的英文单词拼写错误及中文错别字。
+        注意事项：
         - 请你首先检查是否用户可正常阅读的网站内容。
-        - 请分别列出发现的所有英文拼写错误和中文错别字。 
+        - 请分别列出发现的所有英文拼写错误和中文错别字。
         - 对于每个错误，请提供其所在位置以及正确的书写形式。"""
     ]
     CONTENT_USER_CASES = [
@@ -581,24 +582,24 @@ class LLMPrompt:
         #     1. 仔细检查页面，确认所有关键元素（如按钮、图片、图标等）是否大致完整，并能正常显示或交互。
         #     2. 针对可能因加载不完全、图片模糊等问题，结合页面逻辑和样式提出合理的预期和修正建议。
         #     3. 如果发现问题，请说明问题截图的序号，并具体描述问题位置和表现形式，附带改进建议。"""
-        f"""排版校验：请严格检查截图中是否存在排版问题。
+        """排版校验：请严格检查截图中是否存在排版问题。
 
       【检查标准】
-      1. 文字对齐：标题 / 段落 / 列表是否有明显偏移  
-      2. 元素间距：是否过大 / 过小 / 不均  
-      3. 元素重叠：是否有遮挡、超出容器  
-      4. 响应式断点：布局在视口宽度下是否断裂  
+      1. 文字对齐：标题 / 段落 / 列表是否有明显偏移
+      2. 元素间距：是否过大 / 过小 / 不均
+      3. 元素重叠：是否有遮挡、超出容器
+      4. 响应式断点：布局在视口宽度下是否断裂
       5. 视觉层级：重要信息是否被遮蔽
 
       """,
-        f"""元素缺失：请严格检查截图中是否存在关键元素缺失或显示异常。
+        """元素缺失：请严格检查截图中是否存在关键元素缺失或显示异常。
 
       【检查标准】
-      1. 功能元素：按钮 / 链接 / 输入框  
-      2. 内容元素：图片 / Icon / 文本  
-      3. 导航元素：菜单 / 面包屑  
-      4. 加载失败：裂图、404、字体缺失  
-        """
+      1. 功能元素：按钮 / 链接 / 输入框
+      2. 内容元素：图片 / Icon / 文本
+      3. 导航元素：菜单 / 面包屑
+      4. 加载失败：裂图、404、字体缺失
+        """,
     ]
 
     OUTPUT_FORMAT = """
@@ -611,10 +612,10 @@ class LLMPrompt:
             "element": "<string>", #出现问题的核心元素（示例：标题、按钮、图片、段落等）
             "issue": "<string>", #问题描述（简明准确,请使用文本直接给出具体错误的原因）
             "suggestion": "<string>", #修正 / 预期方案（可多条要点，用 ";" 分隔）
-            "confidence": "<high|medium|low>" #判断置信度，取值 *high* / *medium* / *low* 
+            "confidence": "<high|medium|low>" #判断置信度，取值 *high* / *medium* / *low*
         }
     ]
-    3.  **示例格式**（仅示例，真正输出请替换为实际内容）  
+    3.  **示例格式**（仅示例，真正输出请替换为实际内容）
         ```json
         [
             "summary": "页面存在的问题 1:描述；2:描述",

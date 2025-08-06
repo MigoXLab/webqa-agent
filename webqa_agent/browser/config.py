@@ -13,5 +13,5 @@ DEFAULT_CONFIG = {
     "browser_type": "chromium",
     "viewport": {"width": 1280, "height": 720},
     "headless": True,
-    "language": "en-US"
+    "language": "en-US",
 }
