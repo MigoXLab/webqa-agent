@@ -8,7 +8,7 @@
 (function () {
         window._highlight = window._highlight ?? true;            // RenderHighlight Switch
         window._highlightText = window._highlightText ?? false;   // RenderTextHighlight Switch
-        window._viewportOnly = window._viewportOnly ?? false;                   // Viewport Highlight Only
+        window._viewportOnly = window._viewportOnly ?? false;     // Highlight Viewport Elements
         let idCounter = 1;
         let highlightIndex = 1;
         const elementToId = new WeakMap();
@@ -17,7 +17,7 @@
         const styleCache = new WeakMap();
         const INTERACTIVE_TAGS = new Set(['a', 'button', 'input', 'select', 'textarea', 'summary', 'details', 'label', 'option']);
         const INTERACTIVE_ROLES = new Set(['button', 'link', 'menuitem', 'menuitemradio', 'menuitemcheckbox', 'radio', 'checkbox', 'tab', 'switch', 'slider', 'spinbutton', 'combobox', 'searchbox', 'textbox', 'listbox', 'option', 'scrollbar']);
-        const palette = ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe', '#008080', '#e6beff'];  // highlighting colors
+        const palette = ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe', '#008080', '#e6beff'];  // highlight colors
         const overlayContainer = document.getElementById('__marker_container__') || (() => {  // highlight container
             const c = document.createElement('div');
             c.id = '__marker_container__';
@@ -34,27 +34,60 @@
             return c;
         })();
 
-        // ============================= Extract Element Info =============================
+        // ============================= Element Information Extraction =============================
+        /**
+         * Retrieves a unique identifier for a given HTML element.
+         *
+         * If the element does not already have a 'id' attribute, this function assigns a new,
+         * auto-incrementing ID to it. This ensures that every element can be uniquely identified
+         * during the crawling process.
+         *
+         * @param {HTMLElement} elem The HTML element for which to get the ID.
+         * @returns {number} The unique integer ID of the element.
+         */
         function getElementId(elem) {
-            if (!elementToId.has(elem)) elementToId.set(elem, idCounter++);
+            if (!elementToId.has(elem)) {
+                elementToId.set(elem, idCounter++);
+            }
             return elementToId.get(elem);
         }
 
+        /**
+         * Retrieves the computed CSS style for an element, using a cache to avoid redundant calculations.
+         *
+         * This function fetches the `CSSStyleDeclaration` object for an element. To optimize performance,
+         * it caches the result based on the element's unique ID. Subsequent calls for the same element
+         * will return the cached style object, reducing layout reflows.
+         *
+         * @param {HTMLElement} elem The HTML element to get the style for.
+         * @returns {CSSStyleDeclaration} The computed style object.
+         */
         function getCachedStyle(elem) {
-            let s = styleCache.get(elem);
-            if (!s) {
-                s = window.getComputedStyle(elem);
-                styleCache.set(elem, s);
+            if (!styleCache.has(elem)) {
+                styleCache.set(elem, window.getComputedStyle(elem));
             }
-            return s;
+            return styleCache.get(elem);
         }
 
+        /**
+         * Determines if an element is considered interactive.
+         *
+         * An element is deemed interactive if it meets any of the following criteria:
+         * 1. Is an inherently interactive HTML tag (e.g., <a>, <button>, <input>).
+         * 2. Has an ARIA role that implies interactivity (e.g., 'button', 'link').
+         * 3. Is focusable via a non-negative `tabindex`.
+         * 4. Has specific event listeners attached (e.g., 'click', 'keydown').
+         * 5. Has a 'pointer' cursor style, suggesting it's clickable.
+         * 6. Is content-editable.
+         *
+         * @param {HTMLElement} element The element to evaluate.
+         * @returns {boolean} `true` if the element is interactive, otherwise `false`.
+         */
         function isInteractiveElement(element) {
             if (!element || element.nodeType !== Node.ELEMENT_NODE) {
                 return false;
             }
 
-            // Cache the tagName and style lookups
             const tagName = element.tagName.toLowerCase();
             const style = getCachedStyle(element);
             // const style = window.getComputedStyle(element);
@@ -254,36 +287,36 @@
                 return true;
             }
 
-            // if (element.hasAttribute("aria-expanded") ||
-            //     element.hasAttribute("aria-pressed") ||
-            //     element.hasAttribute("aria-selected") ||
-            //     element.hasAttribute("aria-checked")) {
-            //     return true;
-            // }
 
             // check whether element has event listeners
             try {
                 if (typeof getEventListeners === 'function') {
                     const listeners = getEventListeners(element);
-                    const mouseEvents = ['click', 'mousedown', 'mouseup', 'dblclick', 'ng-click', '@click'];
+                    const mouseEvents = ['click', 'mousedown', 'mouseup', 'dblclick'];
                     for (const eventType of mouseEvents) {
                         if (listeners[eventType] && listeners[eventType].length > 0) {
-                            return true; // Found a mouse interaction listener
+                            return true;
                         }
-                    }
-                } else {
-                    // Fallback: Check common event attributes if getEventListeners is not available
-                    const commonMouseAttrs = ['onclick', 'onmousedown', 'onmouseup', 'ondblclick'];
-                    if (commonMouseAttrs.some(attr => element.hasAttribute(attr))) {
-                        return true;
                     }
                 }
             } catch (e) {
+                // Ignore errors, as this is a best-effort check.
             }
 
-            return false
+            return false;
         }
 
+        /**
+         * Determines if an element represents a distinct interaction boundary.
+         *
+         * An element is considered a distinct interaction boundary if it is interactive itself,
+         * but none of its ancestor elements are. This helps identify the outermost interactive
+         * element in a nested structure, which is often the primary target for user actions.
+         * For example, in `<a><div>Click me</div></a>`, the `<a>` tag is the distinct boundary.
+         *
+         * @param {HTMLElement} element The element to evaluate.
+         * @returns {boolean} `true` if the element is a distinct interaction boundary, otherwise `false`.
+         */
         function isElementDistinctInteraction(element) {
             if (!element || element.nodeType !== Node.ELEMENT_NODE) {
                 return false;
@@ -292,20 +325,17 @@
             const tagName = element.tagName.toLowerCase();
             const role = element.getAttribute('role');
 
-            // Check if it's an iframe - always distinct boundary
+            // An iframe is always a distinct boundary.
             if (tagName === 'iframe') {
                 return true;
             }
 
-            // Check tag name
-            if (INTERACTIVE_TAGS.has(tagName)) {
+            // Standard interactive elements are distinct.
+            if (INTERACTIVE_TAGS.has(tagName) || (role && INTERACTIVE_ROLES.has(role))) {
                 return true;
             }
-            // Check interactive roles
-            if (role && INTERACTIVE_ROLES.has(role)) {
-                return true;
-            }
-            // Check contenteditable
+
+            // Content-editable elements are distinct.
             if (element.isContentEditable || element.getAttribute('contenteditable') === 'true') {
                 return true;
             }
@@ -342,29 +372,37 @@
             return false;
         }
 
+        /**
+         * Validates if an element is a meaningful text container suitable for extraction.
+         *
+         * An element is considered a valid text element if it meets all the following conditions:
+         * 1. It is visible (i.e., not `display: none` or `visibility: hidden`).
+         * 2. It contains non-empty, trimmed text content.
+         * 3. It is not a tag typically used for scripting or non-visual content (e.g., <script>, <style>).
+         * 4. Its dimensions are not trivially small (e.g., less than 3x3 pixels) and not too large.
+         * 5. It is not an interactive element, as those are handled separately.
+         *
+         * @param {HTMLElement} element The element to validate.
+         * @returns {boolean} `true` if the element is a valid text container, otherwise `false`.
+         */
         function isValidTextElement(element) {
             if (!element || element.nodeType !== Node.ELEMENT_NODE) {
                 return false;
             }
 
-            // 缓存 tagName 和 样式
+            const style = getCachedStyle(element);
             const tagName = element.tagName.toLowerCase();
-            const style = getCachedStyle(element); // 或者 window.getComputedStyle(element)
 
-            // 1. 可见性检查
-            if (
-                style.display === 'none' ||
-                style.visibility === 'hidden' ||
-                parseFloat(style.opacity) === 0
-            ) {
+            // 1. Check visibility
+            if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
                 return false;
             }
 
-            // 2. 必须包含非空白文本
+            // 2. non-empty text
             const text = (element.innerText || element.textContent || '').trim();
             if (!text) return false;
 
-            // 3. 排除常见的结构性容器（通常不直接展示用户关心的文本信息）
+            // 3. structural element
             const structuralTags = new Set([
                 'html', 'body', 'section', 'header', 'footer', 'main', 'nav', 'article', 'aside', 'template', 'iframe'
             ]);
@@ -372,20 +410,29 @@
                 return false;
             }
 
-            // 4. 排除“占满大部分视口”的大容器（可能是整体布局或空白区域）
+            // 4. Check the element's area size
             const rect = element.getBoundingClientRect();
             const vw = window.innerWidth, vh = window.innerHeight;
             const areaRatio = (rect.width * rect.height) / (vw * vh);
             if (areaRatio > 0.6) return false;
 
-            // 5. 如果元素本身也是一个可交互元素，就交给 isInteractiveElement 处理，文本信息这里不重复抓取
-            // if (isInteractiveElement(element) && !isElementDistinctInteraction(element)) {
+            // 5. If the element itself is interactive, let isInteractiveElement handle it.
+            //    Avoid duplicate processing of text information here.
             if (isInteractiveElement(element)) return false;
 
-            // 6. 最终判断通过，认为这是有意义的文本信息节点
+            // 6. Final check passed; consider this a meaningful text node.
             return true;
         }
 
+        /**
+         * Checks if an element is the top-most element at its center point.
+         *
+         * This function determines if the given element is the one that would receive a click
+         * at its geometric center. It is useful for filtering out occluded or overlaid elements.
+         *
+         * @param {HTMLElement} elem The element to check.
+         * @returns {boolean} `true` if the element is on top, otherwise `false`.
+         */
         function isTopElement(elem) {
             const rect = elem.getBoundingClientRect();
             if (rect.right < 0 || rect.left > window.innerWidth || rect.bottom < 0 || rect.top > window.innerHeight) {
@@ -394,8 +441,8 @@
             const cx = rect.left + rect.width / 2;
             const cy = rect.top + rect.height / 2;
             try {
-                const topEl = document.elementFromPoint(cx, cy);
-                let curr = topEl;
+                const topElem = document.elementFromPoint(cx, cy);
+                let curr = topElem;
                 while (curr && curr !== document.documentElement) {
                     if (curr === elem) return true;
                     curr = curr.parentElement;
@@ -406,12 +453,31 @@
             }
         }
 
+        /**
+         * Checks if an element is currently visible in the DOM.
+         *
+         * Visibility is determined by the element's dimensions (width and height > 0) and
+         * its CSS properties (`display`, `visibility`, `opacity`).
+         *
+         * @param {HTMLElement} elem The element to check.
+         * @returns {boolean} `true` if the element is visible, otherwise `false`.
+         */
         function isVisible(elem) {
             const r = elem.getBoundingClientRect();
             const style = window.getComputedStyle(elem);
             return r.width > 0 && r.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
         }
 
+        /**
+         * Generates a simplified CSS selector for an element.
+         *
+         * This function creates a selector based on the element's tag name, ID (if available),
+         * and class names. It is not guaranteed to be unique but is useful for providing
+         * a human-readable identifier.
+         *
+         * @param {HTMLElement} elem The element for which to generate a selector.
+         * @returns {string | null} A CSS selector string, or `null` if the element is invalid.
+         */
         function generateSelector(elem) {
             if (!elem) return null;
 
@@ -439,6 +505,16 @@
             return sel;
         }
 
+        /**
+         * Generates a robust XPath for an element.
+         *
+         * This function constructs an XPath by traversing up the DOM tree from the element.
+         * It prefers using an ID if available, otherwise it builds a path based on tag names
+         * and sibling indices, making the XPath stable and unique.
+         *
+         * @param {HTMLElement} elem The element for which to generate the XPath.
+         * @returns {string} The generated XPath string.
+         */
         function generateXPath(elem) {
             if (!(elem instanceof Element)) return '';
             if (elem.id) return `//*[@id=\"${elem.id}\"]`;
@@ -456,6 +532,17 @@
             return '/' + parts.join('/');
         }
 
+        /**
+         * Gathers comprehensive information about a DOM element.
+         *
+         * This function collects a wide range of properties for an element, including its identity,
+         * attributes, layout, visibility, interactivity, and position. This data is used to
+         * build the DOM tree and determine which elements to highlight.
+         *
+         * @param {HTMLElement} elem The element to gather information from.
+         * @param {boolean} isParentHighlighted A flag indicating if an ancestor of this element is highlighted.
+         * @returns {object} An object containing detailed information about the element.
+         */
         function getElementInfo(elem, isParentHighlighted) {
             const r = elem.getBoundingClientRect();
             const sx = window.pageXOffset || document.documentElement.scrollLeft;
@@ -492,6 +579,20 @@
         }
 
         // ============================= Highlight Element =============================
+
+        /**
+         * Determines whether an element should be highlighted based on current settings and its properties.
+         *
+         * This function applies a set of rules to decide if an element qualifies for highlighting.
+         * It checks for visibility, viewport presence, interactivity, and text content based on
+         * the global `_viewportOnly` and `_highlightText` flags. It also prevents highlighting
+         * nested non-distinct elements if a parent is already highlighted.
+         *
+         * @param {object} elemInfo The information object for the element, from `getElementInfo`.
+         * @param {HTMLElement} elemObj The actual DOM element.
+         * @param {boolean} isParentHighlighted `true` if an ancestor of this element is already highlighted.
+         * @returns {boolean} `true` if the element should be highlighted, otherwise `false`.
+         */
         function handleHighlighting(elemInfo, elemObj, isParentHighlighted) {
             function shouldHighlightElem(nodeInfo) {
                 if (window._viewportOnly === true && !nodeInfo.isInViewport) return false;
@@ -526,10 +627,24 @@
             return true;
         }
 
+        /**
+         * Selects a random color from a predefined palette.
+         *
+         * @returns {string} A hexadecimal color string.
+         */
         function randomColor() {
             return palette[Math.floor(Math.random() * palette.length)];
         }
 
+        /**
+         * Renders visual highlights for elements in the processed DOM tree.
+         *
+         * This function iterates through the tree and draws colored boxes and labels on an overlay
+         * for each element that has been marked for highlighting. It clears and redraws the
+         * highlights, making it suitable for dynamic updates on scroll or resize.
+         *
+         * @param {object} tree The root of the element tree to render.
+         */
         function renderHighlights(tree) {
             overlayContainer.textContent = '';
             (function walk(node) {
@@ -587,6 +702,19 @@
         }
 
         // ============================= Build Dom Tree =============================
+
+        /**
+         * Recursively builds a structured tree representing the DOM.
+         *
+         * This is the core function for crawling the DOM. It starts from a given element (usually the body),
+         * gathers information for each node, determines if it should be highlighted, and recursively
+         * processes its children. The resulting tree contains only the elements that are either
+         * highlighted themselves or contain highlighted descendants.
+         *
+         * @param {HTMLElement} elemObj The DOM element to start building the tree from.
+         * @param {boolean} [wasParentHighlighted=false] A flag passed during recursion to indicate if an ancestor was highlighted.
+         * @returns {object | null} A tree node object, or `null` if the element and its descendants are not relevant.
+         */
         function buildTree(elemObj, wasParentHighlighted = false) {
             // 1) get element info
             const elemInfo = getElementInfo(elemObj, wasParentHighlighted);
@@ -614,6 +742,16 @@
         }
 
         // ============================= Main Function =============================
+
+        /**
+         * The main entry point for building and processing the element tree.
+         *
+         * This function initializes the process, calls `buildTree` to construct the DOM representation,
+         * and optionally triggers the rendering of highlights. It also sets up event listeners
+         * to re-render highlights on scroll and resize events to keep them in sync with the layout.
+         *
+         * @returns {[object, object]} A tuple containing the generated DOM tree and the map of highlight indices to element info.
+         */
         window.buildElementTree = function () {
             highlightIndexMap = {};
             const domTree = buildTree(document.body);
