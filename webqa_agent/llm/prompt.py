@@ -593,24 +593,6 @@ class LLMPrompt:
     ]
 
     OUTPUT_FORMAT = """
-基于以下UI问题分析，请为每个问题提供精确的像素坐标：
-{initial_analysis}
-请以JSON格式返回每个问题的坐标，格式如下：
-[
-  {{
-    "id": "问题1",
-    "type": "排版问题",
-    "description": "问题描述",
-    "coordinates": [240, 122, 270, 122],
-    "suggestion": "修复建议"
-  }}
-]
-其中coordinates数组表示[x1, y1, x2, y2]，即：
-- x1: 起始水平位置
-- y1: 垂直位置
-- x2: 结束水平位置
-- y2: 垂直位置
-注意：对于文本或单行元素，y1和y2可能是相同的值。
     Output Requirements
     1. **If no errors are found**: Output only None with no explanations; avoid vague words such as "maybe" or "probably".
     2. **If errors are found**: Output a **JSON array**, each object corresponding to one error in one screenshot; field definitions are as follows
