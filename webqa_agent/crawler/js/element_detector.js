@@ -6,18 +6,19 @@
 // Licensed under the MIT License
 
 (function () {
-        window._highlight = window._highlight ?? true;            // RenderHighlight Switch
-        window._highlightText = window._highlightText ?? false;   // RenderTextHighlight Switch
-        window._viewportOnly = window._viewportOnly ?? false;     // Highlight Viewport Elements
+        window._highlight = window._highlight ?? true;                          // RenderHighlight Switch
+        window._highlightText = window._highlightText ?? false;                 // RenderTextHighlight Switch
+        window._viewportOnly = window._viewportOnly ?? false;                   // Viewport Highlight Only
         let idCounter = 1;
         let highlightIndex = 1;
         const elementToId = new WeakMap();
         const highlightMap = new WeakMap();
-        let highlightIndexMap = new WeakMap();
+        let highlightIdMap = new WeakMap();
         const styleCache = new WeakMap();
+        const _elementHighlightColorMap = new WeakMap();
         const INTERACTIVE_TAGS = new Set(['a', 'button', 'input', 'select', 'textarea', 'summary', 'details', 'label', 'option']);
         const INTERACTIVE_ROLES = new Set(['button', 'link', 'menuitem', 'menuitemradio', 'menuitemcheckbox', 'radio', 'checkbox', 'tab', 'switch', 'slider', 'spinbutton', 'combobox', 'searchbox', 'textbox', 'listbox', 'option', 'scrollbar']);
-        const palette = ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe', '#008080', '#e6beff'];  // highlight colors
+        const palette = ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe', '#008080', '#e6beff'];  // highlighting colors
         const overlayContainer = document.getElementById('__marker_container__') || (() => {  // highlight container
             const c = document.createElement('div');
             c.id = '__marker_container__';
@@ -46,9 +47,7 @@
          * @returns {number} The unique integer ID of the element.
          */
         function getElementId(elem) {
-            if (!elementToId.has(elem)) {
-                elementToId.set(elem, idCounter++);
-            }
+            if (!elementToId.has(elem)) elementToId.set(elem, idCounter++);
             return elementToId.get(elem);
         }
 
@@ -70,6 +69,130 @@
         }
 
         /**
+         * Determines if an element is heuristically interactive based on various signals.
+         *
+         * This function uses heuristic analysis to identify elements that may be interactive
+         * even if they don't have explicit interactive attributes. It checks for:
+         * 1. Interactive attributes (role, tabindex, onclick)
+         * 2. Semantic class names suggesting interactivity
+         * 3. Placement within known interactive containers
+         * 4. Presence of visible children
+         * 5. Avoids top-level body children (likely layout containers)
+         *
+         * @param {HTMLElement} element The element to evaluate for heuristic interactivity.
+         * @returns {boolean} `true` if the element appears to be heuristically interactive, otherwise `false`.
+         */
+        function isHeuristicallyInteractive(element) {
+            if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
+
+            // Skip non-visible elements early for performance
+            if (!isVisible(element)) return false;
+
+            // Check for common attributes that often indicate interactivity
+            const hasInteractiveAttributes =
+                element.hasAttribute('role') ||
+                element.hasAttribute('tabindex') ||
+                element.hasAttribute('onclick') ||
+                typeof element.onclick === 'function';
+
+            // Check for semantic class names suggesting interactivity
+            const hasInteractiveClass = /\b(btn|clickable|menu|item|entry|link)\b/i.test(element.className || '');
+
+            // Determine whether the element is inside a known interactive container
+            const isInKnownContainer = Boolean(
+                element.closest('button,a,[role="button"],.menu,.dropdown,.list,.toolbar')
+            );
+
+            // Ensure the element has at least one visible child (to avoid marking empty wrappers)
+            const hasVisibleChildren = [...element.children].some(isVisible);
+
+            // Avoid highlighting elements whose parent is <body> (top-level wrappers)
+            const isParentBody = element.parentElement && element.parentElement.isSameNode(document.body);
+
+            return (
+                (isInteractiveElement(element) || hasInteractiveAttributes || hasInteractiveClass) &&
+                hasVisibleChildren &&
+                isInKnownContainer &&
+                !isParentBody
+            );
+        }
+
+        /**
+         * Determines if an element represents a distinct interaction boundary.
+         *
+         * An element is considered a distinct interaction boundary if it is interactive itself,
+         * but none of its ancestor elements are. This helps identify the outermost interactive
+         * element in a nested structure, which is often the primary target for user actions.
+         * For example, in `<a><div>Click me</div></a>`, the `<a>` tag is the distinct boundary.
+         *
+         * @param {HTMLElement} element The element to evaluate.
+         * @returns {boolean} `true` if the element is a distinct interaction boundary, otherwise `false`.
+         */
+        function isElementDistinctInteraction(element) {
+            if (!element || element.nodeType !== Node.ELEMENT_NODE) {
+                return false;
+            }
+
+            const tagName = element.tagName.toLowerCase();
+            const role = element.getAttribute('role');
+
+            // Check if it's an iframe - always distinct boundary
+            if (tagName === 'iframe') {
+                return true;
+            }
+
+            // Check tag name
+            if (INTERACTIVE_TAGS.has(tagName)) {
+                return true;
+            }
+            // Check interactive roles
+            if (role && INTERACTIVE_ROLES.has(role)) {
+                return true;
+            }
+            // Check contenteditable
+            if (element.isContentEditable || element.getAttribute('contenteditable') === 'true') {
+                return true;
+            }
+            // Check for common testing/automation attributes
+            if (element.hasAttribute('data-testid') || element.hasAttribute('data-cy') || element.hasAttribute('data-test')) {
+                return true;
+            }
+            // Check for explicit onclick handler (attribute or property)
+            if (element.hasAttribute('onclick') || typeof element.onclick === 'function') {
+                return true;
+            }
+            // Check for other common interaction event listeners
+            try {
+                const getEventListenersForNode = element?.ownerDocument?.defaultView?.getEventListenersForNode || window.getEventListenersForNode;
+                if (typeof getEventListenersForNode === 'function') {
+                    const listeners = getEventListenersForNode(element);
+                    const interactionEvents = ['click', 'mousedown', 'mouseup', 'keydown', 'keyup', 'submit', 'change', 'input', 'focus', 'blur'];
+                    for (const eventType of interactionEvents) {
+                        for (const listener of listeners) {
+                            if (listener.type === eventType) {
+                                return true; // Found a common interaction listener
+                            }
+                        }
+                    }
+                }
+                // Fallback: Check common event attributes if getEventListeners is not available (getEventListenersForNode doesn't work in page.evaluate context)
+                const commonEventAttrs = ['onmousedown', 'onmouseup', 'onkeydown', 'onkeyup', 'onsubmit', 'onchange', 'oninput', 'onfocus', 'onblur'];
+                if (commonEventAttrs.some(attr => element.hasAttribute(attr))) {
+                    return true;
+                }
+            } catch (e) {
+                // console.warn(`Could not check event listeners for ${element.tagName}:`, e);
+                // If checking listeners fails, rely on other checks
+            }
+
+            // if the element is not strictly interactive but appears clickable based on heuristic signals
+            if (isHeuristicallyInteractive(element)) {
+                return true;
+            }
+            return false;
+        }
+
+        /**
          * Determines if an element is considered interactive.
          *
          * An element is deemed interactive if it meets any of the following criteria:
@@ -88,21 +211,10 @@
                 return false;
             }
 
+            // Cache the tagName and style lookups
             const tagName = element.tagName.toLowerCase();
             const style = getCachedStyle(element);
-            // const style = window.getComputedStyle(element);
 
-            if (['textarea', 'i', 'span', 'a', 'input', 'button', 'svg', 'img'].includes(tagName)) {
-                return true;
-            }
-
-            // if (tagName === 'svg' || tagName === 'path' || tagName === 'use') {
-            //     return true;
-            // }
-            //
-            // if (element.closest('button, [role="button"]')) {
-            //     return true;
-            // }
 
             // Define interactive cursors
             const interactiveCursors = new Set([
@@ -155,10 +267,6 @@
                 if (element.tagName.toLowerCase() === "html") return false;
 
                 if (interactiveCursors.has(style.cursor)) return true;
-
-                // if (element.hasAttribute('aria-label') || element.hasAttribute('title')) {
-                //     return true;
-                // }
 
                 return false;
             }
@@ -255,6 +363,8 @@
             const interactiveRoles = new Set([
                 'button',           // Directly clickable element
                 'link',            // Clickable link
+                'menu',            // Menu container (ARIA menus)
+                'menubar',         // Menu bar container
                 'menuitem',        // Clickable menu item
                 'menuitemradio',   // Radio-style menu item (selectable)
                 'menuitemcheckbox', // Checkbox-style menu item (toggleable)
@@ -275,101 +385,49 @@
             // Basic role/attribute checks
             const hasInteractiveRole =
                 interactiveElements.has(tagName) ||
-                interactiveRoles.has(role) ||
-                interactiveRoles.has(ariaRole);
+                (role && interactiveRoles.has(role)) ||
+                (ariaRole && interactiveRoles.has(ariaRole));
 
             if (hasInteractiveRole) return true;
 
-            if (element.onclick !== null ||
-                element.getAttribute("onclick") !== null ||
-                element.hasAttribute("ng-click") ||
-                element.hasAttribute("@click")) {
-                return true;
-            }
 
-
-            // check whether element has event listeners
+            // check whether element has event listeners by window.getEventListeners
             try {
                 if (typeof getEventListeners === 'function') {
                     const listeners = getEventListeners(element);
                     const mouseEvents = ['click', 'mousedown', 'mouseup', 'dblclick'];
                     for (const eventType of mouseEvents) {
                         if (listeners[eventType] && listeners[eventType].length > 0) {
-                            return true;
+                            return true; // Found a mouse interaction listener
                         }
                     }
                 }
-            } catch (e) {
-                // Ignore errors, as this is a best-effort check.
-            }
 
-            return false;
-        }
-
-        /**
-         * Determines if an element represents a distinct interaction boundary.
-         *
-         * An element is considered a distinct interaction boundary if it is interactive itself,
-         * but none of its ancestor elements are. This helps identify the outermost interactive
-         * element in a nested structure, which is often the primary target for user actions.
-         * For example, in `<a><div>Click me</div></a>`, the `<a>` tag is the distinct boundary.
-         *
-         * @param {HTMLElement} element The element to evaluate.
-         * @returns {boolean} `true` if the element is a distinct interaction boundary, otherwise `false`.
-         */
-        function isElementDistinctInteraction(element) {
-            if (!element || element.nodeType !== Node.ELEMENT_NODE) {
-                return false;
-            }
-
-            const tagName = element.tagName.toLowerCase();
-            const role = element.getAttribute('role');
-
-            // An iframe is always a distinct boundary.
-            if (tagName === 'iframe') {
-                return true;
-            }
-
-            // Standard interactive elements are distinct.
-            if (INTERACTIVE_TAGS.has(tagName) || (role && INTERACTIVE_ROLES.has(role))) {
-                return true;
-            }
-
-            // Content-editable elements are distinct.
-            if (element.isContentEditable || element.getAttribute('contenteditable') === 'true') {
-                return true;
-            }
-            // Check for common testing/automation attributes
-            if (element.hasAttribute('data-testid') || element.hasAttribute('data-cy') || element.hasAttribute('data-test')) {
-                return true;
-            }
-            // Check for explicit onclick handler (attribute or property)
-            if (element.hasAttribute('onclick') || typeof element.onclick === 'function') {
-                return true;
-            }
-            // Check for other common interaction event listeners
-            try {
-                const getEventListeners = window.getEventListenersForNode;
-                if (typeof getEventListeners === 'function') {
-                    const listeners = getEventListeners(element);
-                    const interactionEvents = ['mousedown', 'mouseup', 'keydown', 'keyup', 'submit', 'change', 'input', 'focus', 'blur'];
+                const getEventListenersForNode = element?.ownerDocument?.defaultView?.getEventListenersForNode || window.getEventListenersForNode;
+                if (typeof getEventListenersForNode === 'function') {
+                    const listeners = getEventListenersForNode(element);
+                    const interactionEvents = ['click', 'mousedown', 'mouseup', 'keydown', 'keyup', 'submit', 'change', 'input', 'focus', 'blur'];
                     for (const eventType of interactionEvents) {
-                        if (listeners[eventType] && listeners[eventType].length > 0) {
-                            return true; // Found a common interaction listener
+                        for (const listener of listeners) {
+                            if (listener.type === eventType) {
+                                return true; // Found a common interaction listener
+                            }
                         }
                     }
-                } else {
-                    // Fallback: Check common event attributes if getEventListeners is not available
-                    const commonEventAttrs = ['onmousedown', 'onmouseup', 'onkeydown', 'onkeyup', 'onsubmit', 'onchange', 'oninput', 'onfocus', 'onblur'];
-                    if (commonEventAttrs.some(attr => element.hasAttribute(attr))) {
+                }
+                // Fallback: Check common event attributes if getEventListeners is not available (getEventListeners doesn't work in page.evaluate context)
+                const commonMouseAttrs = ['onclick', 'onmousedown', 'onmouseup', 'ondblclick'];
+                for (const attr of commonMouseAttrs) {
+                    if (element.hasAttribute(attr) || typeof element[attr] === 'function') {
                         return true;
                     }
                 }
             } catch (e) {
-
+                // console.warn(`Could not check event listeners for ${element.tagName}:`, e);
+                // If checking listeners fails, rely on other checks
             }
 
-            return false;
+            return false
         }
 
         /**
@@ -390,19 +448,24 @@
                 return false;
             }
 
-            const style = getCachedStyle(element);
+            // 缓存 tagName 和 样式
             const tagName = element.tagName.toLowerCase();
+            const style = getCachedStyle(element); // 或者 window.getComputedStyle(element)
 
-            // 1. Check visibility
-            if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+            // 1. 可见性检查
+            if (
+                style.display === 'none' ||
+                style.visibility === 'hidden' ||
+                parseFloat(style.opacity) === 0
+            ) {
                 return false;
             }
 
-            // 2. non-empty text
+            // 2. 必须包含非空白文本
             const text = (element.innerText || element.textContent || '').trim();
             if (!text) return false;
 
-            // 3. structural element
+            // 3. 排除常见的结构性容器（通常不直接展示用户关心的文本信息）
             const structuralTags = new Set([
                 'html', 'body', 'section', 'header', 'footer', 'main', 'nav', 'article', 'aside', 'template', 'iframe'
             ]);
@@ -410,17 +473,17 @@
                 return false;
             }
 
-            // 4. Check the element's area size
+            // 4. 排除“占满大部分视口”的大容器（可能是整体布局或空白区域）
             const rect = element.getBoundingClientRect();
             const vw = window.innerWidth, vh = window.innerHeight;
             const areaRatio = (rect.width * rect.height) / (vw * vh);
-            if (areaRatio > 0.6) return false;
+            if (areaRatio > 0.6) return false;  // 按需调整阈值
 
-            // 5. If the element itself is interactive, let isInteractiveElement handle it.
-            //    Avoid duplicate processing of text information here.
+            // 5. 如果元素本身也是一个可交互元素，就交给 isInteractiveElement 处理，文本信息这里不重复抓取
+            // if (isInteractiveElement(element) && !isElementDistinctInteraction(element)) {
             if (isInteractiveElement(element)) return false;
 
-            // 6. Final check passed; consider this a meaningful text node.
+            // 6. 最终判断通过，认为这是有意义的文本信息节点
             return true;
         }
 
@@ -430,27 +493,98 @@
          * This function determines if the given element is the one that would receive a click
          * at its geometric center. It is useful for filtering out occluded or overlaid elements.
          *
-         * @param {HTMLElement} elem The element to check.
+         * @param {HTMLElement} element The element to check.
          * @returns {boolean} `true` if the element is on top, otherwise `false`.
          */
-        function isTopElement(elem) {
-            const rect = elem.getBoundingClientRect();
-            if (rect.right < 0 || rect.left > window.innerWidth || rect.bottom < 0 || rect.top > window.innerHeight) {
+        function isTopElement(element) {
+            if (!window._viewportOnly) {
                 return true;
             }
-            const cx = rect.left + rect.width / 2;
-            const cy = rect.top + rect.height / 2;
-            try {
-                const topElem = document.elementFromPoint(cx, cy);
-                let curr = topElem;
-                while (curr && curr !== document.documentElement) {
-                    if (curr === elem) return true;
-                    curr = curr.parentElement;
+            const viewportExpansion = 0;
+
+            const rects = element.getClientRects(element); // Replace element.getClientRects()
+
+            if (!rects || rects.length === 0) {
+                return false; // No geometry, cannot be top
+            }
+
+            let isAnyRectInViewport = false;
+            for (const rect of rects) {
+                // Use the same logic as isInExpandedViewport check
+                if (rect.width > 0 && rect.height > 0 && !( // Only check non-empty rects
+                    rect.bottom < -viewportExpansion ||
+                    rect.top > window.innerHeight + viewportExpansion ||
+                    rect.right < -viewportExpansion ||
+                    rect.left > window.innerWidth + viewportExpansion
+                )) {
+                    isAnyRectInViewport = true;
+                    break;
                 }
-                return false;
-            } catch {
+            }
+
+            if (!isAnyRectInViewport) {
+                return false; // All rects are outside the viewport area
+            }
+
+
+            // Find the correct document context and root element
+            let doc = element.ownerDocument;
+
+            // If we're in an iframe, elements are considered top by default
+            if (doc !== window.document) {
                 return true;
             }
+
+            // For shadow DOM, we need to check within its own root context
+            const shadowRoot = element.getRootNode();
+            if (shadowRoot instanceof ShadowRoot) {
+                const centerX = rects[Math.floor(rects.length / 2)].left + rects[Math.floor(rects.length / 2)].width / 2;
+                const centerY = rects[Math.floor(rects.length / 2)].top + rects[Math.floor(rects.length / 2)].height / 2;
+
+                try {
+                    const topEl = shadowRoot.elementFromPoint(centerX, centerY);
+                    if (!topEl) return false;
+
+                    let current = topEl;
+                    while (current && current !== shadowRoot) {
+                        if (current === element) return true;
+                        current = current.parentElement;
+                    }
+                    return false;
+                } catch (e) {
+                    return true;
+                }
+            }
+
+            const margin = 10
+            const rect = rects[Math.floor(rects.length / 2)];
+
+            // For elements in viewport, check if they're topmost. Do the check in the
+            // center of the element and at the corners to ensure we catch more cases.
+            const checkPoints = [
+                // Initially only this was used, but it was not enough
+                {x: rect.left + rect.width / 2, y: rect.top + rect.height / 2},
+                {x: rect.left + margin, y: rect.top + margin},        // top left
+                {x: rect.right - margin, y: rect.top + margin},    // top right
+                {x: rect.left + margin, y: rect.bottom - margin},  // bottom left
+                {x: rect.right - margin, y: rect.bottom - margin},    // bottom right
+            ];
+
+            return checkPoints.some(({x, y}) => {
+                try {
+                    const topEl = document.elementFromPoint(x, y);
+                    if (!topEl) return false;
+
+                    let current = topEl;
+                    while (current && current !== document.documentElement) {
+                        if (current === element) return true;
+                        current = current.parentElement;
+                    }
+                    return false;
+                } catch (e) {
+                    return true;
+                }
+            });
         }
 
         /**
@@ -459,13 +593,17 @@
          * Visibility is determined by the element's dimensions (width and height > 0) and
          * its CSS properties (`display`, `visibility`, `opacity`).
          *
-         * @param {HTMLElement} elem The element to check.
+         * @param {HTMLElement} element The element to check.
          * @returns {boolean} `true` if the element is visible, otherwise `false`.
          */
-        function isVisible(elem) {
-            const r = elem.getBoundingClientRect();
-            const style = window.getComputedStyle(elem);
-            return r.width > 0 && r.height > 0 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+        function isVisible(element) {
+            const style = getComputedStyle(element);
+            return (
+                element.offsetWidth > 0 &&
+                element.offsetHeight > 0 &&
+                style?.visibility !== "hidden" &&
+                style?.display !== "none"
+            );
         }
 
         /**
@@ -579,6 +717,14 @@
         }
 
         // ============================= Highlight Element =============================
+        /**
+         * Selects a random color from a predefined palette.
+         *
+         * @returns {string} A hexadecimal color string.
+         */
+        function randomColor() {
+            return palette[Math.floor(Math.random() * palette.length)];
+        }
 
         /**
          * Determines whether an element should be highlighted based on current settings and its properties.
@@ -595,7 +741,10 @@
          */
         function handleHighlighting(elemInfo, elemObj, isParentHighlighted) {
             function shouldHighlightElem(nodeInfo) {
-                if (window._viewportOnly === true && !nodeInfo.isInViewport) return false;
+                const role = elemObj.getAttribute('role');
+                const isMenuContainer = role === 'menu' || role === 'menubar' || role === 'listbox';
+                if (isMenuContainer) return true;
+                // if (window._viewportOnly === true && !nodeInfo.isInViewport) return false;
 
                 if (window._highlightText) {
                     return nodeInfo.isVisible && nodeInfo.isTopElement && nodeInfo.isValidText;
@@ -604,18 +753,21 @@
                 }
             }
 
-
-            // initial filter
+            // 1) basic filter
             if (!shouldHighlightElem(elemInfo)) return false;
 
-            // skip if parent is highlighted and is not distinct interaction
             if (window._highlightText) {
                 if (isParentHighlighted && !elemInfo.isInteractive) return false
             } else {
                 if (isParentHighlighted && !isElementDistinctInteraction(elemObj)) return false;
             }
 
-            // set highlight index
+            // 2) skip if parent is highlighted and is not distinct interaction
+            if (isParentHighlighted && !isElementDistinctInteraction(elemObj)) return false;
+
+            // 3) (optional) highlight only within viewport
+            // if (!elemInfo.isInViewport && elemInfo.viewportExpansion !== -1) return false;
+
             if (highlightMap.has(elemObj)) {
                 elemInfo.highlightIndex = highlightMap.get(elemObj);
             } else {
@@ -625,15 +777,6 @@
             }
 
             return true;
-        }
-
-        /**
-         * Selects a random color from a predefined palette.
-         *
-         * @returns {string} A hexadecimal color string.
-         */
-        function randomColor() {
-            return palette[Math.floor(Math.random() * palette.length)];
         }
 
         /**
@@ -650,15 +793,21 @@
             (function walk(node) {
                 if (!node) return;
 
-                // try to highlight if this layer has real dom node
                 if (node.node) {
                     const info = node.node;
                     const elem = info.node;
-                    Array.from(elem.getClientRects()).forEach(r => {
-                        if (r.width < 2 || r.height < 2) return;
-                        const color = randomColor();
+                    const rects = Array.from(elem.getClientRects()).filter(r => r.width >= 2 && r.height >= 2);
+                    if (rects.length === 0) return;
 
-                        // draw box
+                    // 1. 颜色：每个元素固定一个 color
+                    let color = _elementHighlightColorMap.get(elem);
+                    if (!color) {
+                        color = randomColor();
+                        _elementHighlightColorMap.set(elem, color);
+                    }
+
+                    // 2. 画每个 rect 的 box（保持每行/多 rect 视觉）
+                    rects.forEach(r => {
                         const box = document.createElement('div');
                         Object.assign(box.style, {
                             position: 'fixed',
@@ -671,38 +820,77 @@
                             pointerEvents: 'none'
                         });
                         overlayContainer.appendChild(box);
-
-                        // draw label
-                        const label = document.createElement('div');
-                        label.textContent = info.highlightIndex;
-                        Object.assign(label.style, {
-                            position: 'fixed',
-                            backgroundColor: color,
-                            color: '#fff',
-                            fontSize: '12px',
-                            padding: '2px 4px',
-                            borderRadius: '3px',
-                            pointerEvents: 'none'
-                        });
-                        overlayContainer.appendChild(label);
-                        const lr = label.getBoundingClientRect();
-                        let lx = r.left - lr.width - 5;
-                        if (lx < 0) lx = r.left + r.width + 5;
-                        const ly = r.top + (r.height - lr.height) / 2;
-                        label.style.left = `${lx}px`;
-                        label.style.top = `${ly}px`;
                     });
 
+                    // 3. 计算 union 用作 fallback 和外部定位参考
+                    const union = rects.reduce((acc, r) => {
+                        if (!acc) {
+                            return {
+                                top: r.top,
+                                left: r.left,
+                                right: r.right,
+                                bottom: r.bottom
+                            };
+                        }
+                        return {
+                            top: Math.min(acc.top, r.top),
+                            left: Math.min(acc.left, r.left),
+                            right: Math.max(acc.right, r.right),
+                            bottom: Math.max(acc.bottom, r.bottom)
+                        };
+                    }, null);
+                    if (!union) return;
+
+                    // 4. label 创建（隐藏先测量）
+                    const label = document.createElement('div');
+                    label.textContent = info.highlightIndex;
+                    Object.assign(label.style, {
+                        position: 'fixed',
+                        backgroundColor: color,
+                        color: '#fff',
+                        fontSize: '10px',
+                        padding: '1px 2px',
+                        borderRadius: '3px',
+                        pointerEvents: 'none',
+                        visibility: 'hidden',
+                        whiteSpace: 'nowrap',
+                        boxSizing: 'border-box'
+                    });
+                    overlayContainer.appendChild(label);
+                    const labelRect = label.getBoundingClientRect();
+
+                    // 5. 定位：优先放在第一个 rect 内右上角，fallback 逻辑参考 index.js
+                    const firstRect = rects[0];
+                    let labelTop = firstRect.top + 2; // 内部顶部略下
+                    let labelLeft = firstRect.left + firstRect.width - labelRect.width - 2; // 右对齐
+
+                    // 如果放不下（第一个 rect 太小），放在 rect 上方右对齐
+                    if (firstRect.width < labelRect.width + 4 || firstRect.height < labelRect.height + 4) {
+                        labelTop = firstRect.top - labelRect.height - 2;
+                        labelLeft = firstRect.left + firstRect.width - labelRect.width - 2;
+                    }
+
+                    // 最终兜底：如果上面仍然溢出或者在非常拥挤场景，可以再 fallback 到 union 的左上内部
+                    if (labelLeft < 0 || labelTop < 0 || labelLeft + labelRect.width > window.innerWidth) {
+                        // union 内左上
+                        labelLeft = union.left + 2;
+                        labelTop = union.top + 2;
+                    }
+
+                    // Clamp 到 viewport
+                    labelTop = Math.max(0, Math.min(labelTop, window.innerHeight - labelRect.height));
+                    labelLeft = Math.max(0, Math.min(labelLeft, window.innerWidth - labelRect.width));
+
+                    label.style.left = `${labelLeft}px`;
+                    label.style.top = `${labelTop}px`;
+                    label.style.visibility = 'visible';
                 }
 
-                // continue to travel child node
                 node.children.forEach(walk);
-
             })(tree, false);
         }
 
         // ============================= Build Dom Tree =============================
-
         /**
          * Recursively builds a structured tree representing the DOM.
          *
@@ -732,17 +920,16 @@
 
             // 4) highlight filter
             if (isCurNodeHighlighted) {
-                highlightIndexMap[elemInfo.highlightIndex] = elemInfo;     // map highlightIndex to element info
-                return {node: elemInfo, children};                      // highlightable node
+                highlightIdMap[elemInfo.highlightIndex] = elemInfo;     // map highlightIndex to element info
+                return {node: elemInfo, children};                      // keep info if is highlightable
             } else if (children.length > 0) {
-                return {node: null, children};
+                return {node: null, children};                          // child node is highlightable
             } else {
-                return null;
+                return null;                                            // skip
             }
         }
 
         // ============================= Main Function =============================
-
         /**
          * The main entry point for building and processing the element tree.
          *
@@ -753,16 +940,15 @@
          * @returns {[object, object]} A tuple containing the generated DOM tree and the map of highlight indices to element info.
          */
         window.buildElementTree = function () {
-            highlightIndexMap = {};
-            const domTree = buildTree(document.body);
+            highlightIdMap = {};
+            const tree = buildTree(document.body);
 
             if (window._highlight) {
-                renderHighlights(domTree);
-                window.addEventListener('scroll', () => renderHighlights(domTree), {passive: true, capture: true});
-                window.addEventListener('resize', () => renderHighlights(domTree));
+                renderHighlights(tree);
+                window.addEventListener('scroll', () => renderHighlights(tree), {passive: true, capture: true});
+                window.addEventListener('resize', () => renderHighlights(tree));
             }
-
-            return [domTree, highlightIndexMap];
+            return [tree, highlightIdMap];
         }
     }
 )();
