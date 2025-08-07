@@ -19,7 +19,7 @@ class ResultAggregator:
         Returns:
             Aggregated results dictionary
         """
-        logging.info(f"Aggregating results for session: {test_session.session_id}")
+        logging.debug(f"Aggregating results for session: {test_session.session_id}")
         issues = []
         error_message = await self._get_error_message(test_session)
         # Generate issue list (LLM powered when possible)
@@ -44,7 +44,7 @@ class ResultAggregator:
         )
         critical_sub_tests = total_sub_tests - passed_sub_tests  # 未通过即视为关键问题
         
-        logging.info(f"Debug: total_sub_tests={total_sub_tests}, passed_sub_tests={passed_sub_tests}, critical_sub_tests={critical_sub_tests}")
+        logging.debug(f"Debug: total_sub_tests={total_sub_tests}, passed_sub_tests={passed_sub_tests}, critical_sub_tests={critical_sub_tests}")
 
         # Build content for executive summary tab
         executive_content = {
@@ -107,7 +107,7 @@ class ResultAggregator:
                 logging.error(f"Failed to initialise LLM, falling back to heuristic issue extraction: {e}")
                 use_llm = False
 
-        logging.info(f"LLM 总结测试结果中...")
+        logging.debug(f"LLM 总结测试结果中...")
         # Iterate over all tests and their sub-tests
         for test_result in test_session.test_results.values():
             for sub in test_result.sub_tests or []:

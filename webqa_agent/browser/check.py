@@ -181,7 +181,7 @@ class NetworkCheck:
                 if not response:
                     # logging.warning(f"No response object for request: {request.url}")
                     return
-                # logging.info(f"Response object for request: {request.url}")
+                # logging.debug(f"Response object for request: {request.url}")
                 for req in self.network_messages["requests"]:
                     if req["url"] == request.url:
                         req["completed"] = True

@@ -12,7 +12,7 @@ from webqa_agent.data.test_structures import SubTestReport, SubTestResult, TestS
 
 class WebAccessibilityTest:
     async def run(self, url: str, sub_links: list) -> SubTestResult:
-        logging.info(f"Starting combined HTTPS and status check for {url}")
+        logging.debug(f"Starting combined HTTPS and status check for {url}")
         result = SubTestResult(name="可访问性检查")
 
         try:
@@ -143,7 +143,7 @@ class WebAccessibilityTest:
         try:
             response = await loop.run_in_executor(None, _sync_get)
             status_code = response.status_code
-            logging.info(f"Page {url} returned status {status_code}")
+            logging.debug(f"Page {url} returned status {status_code}")
             return status_code
         except requests.RequestException as e:
             error_message = f"Failed to load page {url}: {str(e)}"

@@ -88,7 +88,7 @@ class UITester:
         start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         try:
-            logging.info(f"Executing AI instruction: {test_step}")
+            logging.debug(f"Executing AI instruction: {test_step}")
 
             # Crawl current page state
             dp = DeepCrawler(self.page)
@@ -107,7 +107,7 @@ class UITester:
             # Generate plan
             plan_json = await self._generate_plan(LLMPrompt.planner_system_prompt, user_prompt, marker_screenshot)
 
-            logging.info(f"Generated plan: {plan_json}")
+            logging.debug(f"Generated plan: {plan_json}")
 
             # Execute plan
             execution_steps, execution_result = await self._execute_plan(test_step, plan_json, file_path)
@@ -181,7 +181,7 @@ class UITester:
         start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         try:
-            logging.info(f"Executing AI assertion: {assertion}")
+            logging.debug(f"Executing AI assertion: {assertion}")
 
             # Crawl current page
             dp = DeepCrawler(self.page)
@@ -339,7 +339,7 @@ class UITester:
 
         for index, action in enumerate(plan_json.get("actions", []), 1):
             action_desc = f"{action.get('type', 'Unknown')}"
-            logging.info(f"Executing step {index}/{action_count}: {action_desc}")
+            logging.debug(f"Executing step {index}/{action_count}: {action_desc}")
 
             try:
                 # Execute action
@@ -387,7 +387,7 @@ class UITester:
                 failure_result = {"success": False, "message": f"Exception occurred: {str(e)}", "screenshot": None}
                 return execute_results, failure_result
 
-        logging.info("All actions executed successfully")
+        logging.debug("All actions executed successfully")
         post_action_ss = await self._actions.b64_page_screenshot(file_name="final_success")
         return execute_results, {
             "success": True,
@@ -463,7 +463,7 @@ class UITester:
         }
         self.current_case_steps = []
         self.step_counter = 0  # Reset step counter
-        logging.info(f"Started tracking case: {case_name} (step counter reset)")
+        logging.debug(f"Started tracking case: {case_name} (step counter reset)")
 
     def add_step_data(self, step_data: Dict[str, Any], step_type: str = "action"):
         """Add step data to current case."""
@@ -507,7 +507,7 @@ class UITester:
 
         self.current_case_steps.append(formatted_step)
         self.current_case_data["steps"].append(formatted_step)
-        logging.info(f"Added step {formatted_step['id']} to case {self.current_test_name}")
+        logging.debug(f"Added step {formatted_step['id']} to case {self.current_test_name}")
 
     def finish_case(self, final_status: str = "completed", final_summary: Optional[str] = None):
         """Finish current case and save data."""
@@ -534,10 +534,10 @@ class UITester:
         # if monitoring_data:
         #     if "network" in monitoring_data:
         #         self.current_case_data["messages"]["network"] = monitoring_data["network"]
-        #         logging.info(f"Added network monitoring data for case '{case_name}'")
+        #         logging.debug(f"Added network monitoring data for case '{case_name}'")
         #     if "console" in monitoring_data:
         #         self.current_case_data["messages"]["console"] = monitoring_data["console"]
-        #         logging.info(f"Added console monitoring data for case '{case_name}'")
+        #         logging.debug(f"Added console monitoring data for case '{case_name}'")
 
         # Verify steps data
         stored_steps = self.current_case_data.get("steps", [])
@@ -548,7 +548,7 @@ class UITester:
 
         # Save to all cases data
         self.all_cases_data.append(self.current_case_data.copy())
-        logging.info(
+        logging.debug(
             f"Finished case: '{case_name}' with status: {final_status}, {steps_count} steps, total cases: {len(self.all_cases_data)}"
         )
 
@@ -595,11 +595,11 @@ class UITester:
             case_steps = case.get("steps", [])
             case_name = case.get("name", f"Case_{i}")
             total_steps += len(case_steps)
-            logging.info(
+            logging.debug(
                 f"Report validation - Case '{case_name}': {len(case_steps)} steps, status: {case.get('status', 'unknown')}"
             )
 
-        logging.info(f"Report generation - Total cases: {len(self.all_cases_data)}, Total steps: {total_steps}")
+        logging.debug(f"Report generation - Total cases: {len(self.all_cases_data)}, Total steps: {total_steps}")
 
         # Calculate overall test time
         start_times = [case.get("start_time") for case in self.all_cases_data if case.get("start_time")]

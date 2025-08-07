@@ -51,7 +51,7 @@ class BrowserSession:
         if self._is_closed or not self.driver:
             raise RuntimeError("Browser session not initialized or closed")
 
-        logging.info(f"Session {self.session_id} navigating to: {url}")
+        logging.debug(f"Session {self.session_id} navigating to: {url}")
         kwargs.setdefault("timeout", 60000)
         kwargs.setdefault("wait_until", "domcontentloaded")
 
@@ -74,7 +74,7 @@ class BrowserSession:
                     raise ValueError("Parsed cookies is not a list")
 
                 await page.context.add_cookies(cookie_list)
-                logging.info("Cookies added success")
+                logging.debug("Cookies added success")
             except Exception as e:
                 logging.error(f"Failed to add cookies: {e}")
 
@@ -124,10 +124,10 @@ class BrowserSession:
             if self._is_closed:
                 return
 
-            logging.info(f"Closing browser session {self.session_id}")
+            logging.debug(f"Closing browser session {self.session_id}")
             self._is_closed = True
             await self._cleanup()
-            logging.info(f"Browser session {self.session_id} closed")
+            logging.debug(f"Browser session {self.session_id} closed")
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -159,7 +159,7 @@ class BrowserSessionManager:
         async with self._lock:
             self.sessions[session.session_id] = session
 
-        logging.info(f"Created browser session: {session.session_id}")
+        logging.debug(f"Created browser session: {session.session_id}")
         return session
 
     async def get_session(self, session_id: str) -> Optional[BrowserSession]:
@@ -173,7 +173,7 @@ class BrowserSessionManager:
             session = self.sessions.pop(session_id, None)
             if session:
                 await session.close()
-                logging.info(f"Closed session: {session_id}")
+                logging.debug(f"Closed session: {session_id}")
 
     async def close_all_sessions(self):
         """Close all sessions."""
@@ -184,7 +184,7 @@ class BrowserSessionManager:
         # Close sessions in parallel
         if sessions:
             await asyncio.gather(*[session.close() for session in sessions], return_exceptions=True)
-            logging.info(f"Closed {len(sessions)} browser sessions")
+            logging.debug(f"Closed {len(sessions)} browser sessions")
 
     def list_sessions(self) -> Dict[str, Dict[str, Any]]:
         """List all active sessions."""

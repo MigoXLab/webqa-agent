@@ -22,7 +22,7 @@ from webqa_agent.testers.langgraph.state.schemas import MainGraphState
 
 async def setup_session(state: MainGraphState) -> Dict[str, Any]:
     """Uses the provided UITester instance to start the browser session."""
-    logging.info("Setting up browser session...")
+    logging.debug("Setting up browser session...")
     ui_tester = state["ui_tester_instance"]
     await ui_tester.start_session(state["url"])
     page = await ui_tester.get_current_page()
@@ -41,11 +41,11 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
     is_replan = state.get("is_replan", False)
 
     if is_replan:
-        logging.info("Appending replanned test cases to the existing plan.")
+        logging.debug("Appending replanned test cases to the existing plan.")
         existing_cases = state.get("test_cases", [])
         new_cases = state.get("replanned_cases", [])
         replan_count = state.get("replan_count", 0) + 1
-        logging.info(f"Replan attempt #{replan_count}.")
+        logging.debug(f"Replan attempt #{replan_count}.")
 
         # Add metadata to new cases
         for case in new_cases:
@@ -58,7 +58,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
         current_index = state["current_test_case_index"]
         updated_cases = existing_cases[:current_index] + new_cases + existing_cases[current_index:]
 
-        logging.info(
+        logging.debug(
             f"Inserted {len(new_cases)} new cases at index {current_index}. Total cases are now {len(updated_cases)}."
         )
 
@@ -70,7 +70,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             cases_path = os.path.join(report_dir, "cases.json")
             with open(cases_path, "w", encoding="utf-8") as f:
                 json.dump(updated_cases, f, ensure_ascii=False, indent=4)
-            logging.info(f"Successfully saved updated test cases (including replanned cases) to {cases_path}")
+            logging.debug(f"Successfully saved updated test cases (including replanned cases) to {cases_path}")
         except Exception as e:
             logging.error(f"Failed to save updated test cases to file: {e}")
 
@@ -78,7 +78,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
         return {"test_cases": updated_cases, "is_replan": False, "replan_count": replan_count, "replanned_cases": []}
 
     # If not a replan, proceed with the original logic
-    logging.info("Generating initial test plan.")
+    logging.debug("Generating initial test plan.")
     ui_tester = state["ui_tester_instance"]
 
     page = await ui_tester.get_current_page()
@@ -111,7 +111,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
         remaining_objectives=state.get("remaining_objectives"),
     )
 
-    logging.info("Generating initial test plan - Sending request to LLM...")
+    logging.debug("Generating initial test plan - Sending request to LLM...")
     start_time = datetime.datetime.now()
 
     response = await ui_tester.llm.get_llm_response(
@@ -120,7 +120,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
 
     end_time = datetime.datetime.now()
     duration = (end_time - start_time).total_seconds()
-    logging.info(f"LLM planning request completed in {duration:.2f} seconds")
+    logging.debug(f"LLM planning request completed in {duration:.2f} seconds")
 
     try:
         # Extract only the JSON part of the response, ignoring the scratchpad
@@ -164,11 +164,11 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             cases_path = os.path.join(report_dir, "cases.json")
             with open(cases_path, "w", encoding="utf-8") as f:
                 json.dump(test_cases, f, ensure_ascii=False, indent=4)
-            logging.info(f"Successfully saved initial test cases to {cases_path}")
+            logging.debug(f"Successfully saved initial test cases to {cases_path}")
         except Exception as e:
             logging.error(f"Failed to save initial test cases to file: {e}")
 
-        logging.info(f"Generated {len(test_cases)} test cases.")
+        logging.debug(f"Generated {len(test_cases)} test cases.")
         # Ensure the current_test_case_index is initialized if not present
         if "current_test_case_index" not in state:
             return {"test_cases": test_cases, "current_test_case_index": 0}
@@ -184,13 +184,13 @@ def should_start_cases(state: MainGraphState) -> str:
     If so, it routes to a node that will start the sequential execution loop.
     """
     if state.get("generate_only"):
-        logging.info("'generate_only' is True, ending process after planning.")
+        logging.debug("'generate_only' is True, ending process after planning.")
         return "end"
     if state.get("test_cases"):
-        logging.info("Test cases found, starting sequential execution loop.")
+        logging.debug("Test cases found, starting sequential execution loop.")
         return "get_next_test_case"
     else:
-        logging.info("No test cases generated, finishing up.")
+        logging.debug("No test cases generated, finishing up.")
         return "end"
 
 
@@ -199,7 +199,7 @@ async def get_next_test_case(state: MainGraphState) -> dict[str, Any]:
     index = state["current_test_case_index"]
     case = state["test_cases"][index]
     case_name = case.get("name")
-    logging.info(f"Preparing to execute test case #{index + 1}: {case_name}")
+    logging.debug(f"Preparing to execute test case #{index + 1}: {case_name}")
 
     return {"current_case": case}
 
@@ -207,12 +207,12 @@ async def get_next_test_case(state: MainGraphState) -> dict[str, Any]:
 async def reflect_and_replan(state: MainGraphState) -> dict:
     """Analyzes execution, increments index, and decides on the next strategic
     move."""
-    logging.info("=== Starting Reflection and Replanning Analysis ===")
+    logging.debug("=== Starting Reflection and Replanning Analysis ===")
 
     # CRITICAL: Increment the test case index here to ensure progress
     # This guarantees that whether we continue, replan, or finish, we are always moving forward.
     new_index = state["current_test_case_index"] + 1
-    logging.info(
+    logging.debug(
         f"Test case #{state['current_test_case_index'] + 1} has been processed. Incrementing index to {new_index}."
     )
     update = {"current_test_case_index": new_index}
@@ -234,31 +234,31 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
     completed_cases = state.get("completed_cases", [])
     test_cases = state.get("test_cases", [])
 
-    logging.info("State Analysis:")
-    logging.info(f"  - Total planned test cases: {len(test_cases)}")
-    logging.info(f"  - Completed test cases: {len(completed_cases)}")
+    logging.debug("State Analysis:")
+    logging.debug(f"  - Total planned test cases: {len(test_cases)}")
+    logging.debug(f"  - Completed test cases: {len(completed_cases)}")
     # Use the length of completed_cases for a more accurate progress count
-    logging.info(f"  - Current progress: {len(completed_cases)} / {len(test_cases)} cases completed.")
+    logging.debug(f"  - Current progress: {len(completed_cases)} / {len(test_cases)} cases completed.")
 
     # 分析最后完成的测试用例
     if completed_cases:
         last_case = completed_cases[-1]
-        logging.info(f"  - Last completed case: {last_case.get('case_name', 'Unknown')}")
-        logging.info(f"  - Last case status: {last_case.get('status', 'Unknown')}")
+        logging.debug(f"  - Last completed case: {last_case.get('case_name', 'Unknown')}")
+        logging.debug(f"  - Last case status: {last_case.get('status', 'Unknown')}")
     else:
-        logging.info("  - No completed cases yet")
+        logging.debug("  - No completed cases yet")
 
     # 分析进度情况
     if len(completed_cases) < len(test_cases):
         remaining_cases = len(test_cases) - len(completed_cases)
-        logging.info(f"  - Remaining test cases to execute: {remaining_cases}")
+        logging.debug(f"  - Remaining test cases to execute: {remaining_cases}")
         # The next case is determined by the number of completed cases, not the old index
         next_case_index = len(completed_cases)
         if next_case_index < len(test_cases):
             next_case = test_cases[next_case_index]
-            logging.info(f"  - Next planned case: {next_case.get('name', 'Unknown')}")
+            logging.debug(f"  - Next planned case: {next_case.get('name', 'Unknown')}")
     else:
-        logging.info("  - All planned test cases appear to be completed")
+        logging.debug("  - All planned test cases appear to be completed")
 
     ui_tester = state["ui_tester_instance"]
 
@@ -266,7 +266,7 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
     page = await ui_tester.get_current_page()
 
     # Use DeepCrawler to get interactive elements mapping and highlighted screenshot
-    logging.info("Using DeepCrawler to obtain visual element mapping for reflection analysis")
+    logging.debug("Using DeepCrawler to obtain visual element mapping for reflection analysis")
     dp = DeepCrawler(page)
     _, page_content_summary = await dp.crawl(highlight=True, viewport_only=True)
     screenshot = await ui_tester._actions.b64_page_screenshot(file_name="reflection", save_to_log=False, full_page=False)
@@ -275,7 +275,7 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
     page_structure = dp.get_text()
     logging.debug(f"----- reflection ---- Page structure: {page_structure}")
 
-    logging.info(f"Reflection analysis enhanced with {len(page_content_summary)} interactive elements")
+    logging.debug(f"Reflection analysis enhanced with {len(page_content_summary)} interactive elements")
 
     # 使用新的反思提示词函数，传入page_content_summary
     system_prompt, user_prompt = get_reflection_prompt(
@@ -286,7 +286,7 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
         page_content_summary=page_content_summary,
     )
 
-    logging.info("Sending reflection request to LLM (this may take a moment)...")
+    logging.debug("Sending reflection request to LLM (this may take a moment)...")
     start_time = datetime.datetime.now()
 
     response_str = await ui_tester.llm.get_llm_response(
@@ -295,8 +295,8 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
 
     end_time = datetime.datetime.now()
     duration = (end_time - start_time).total_seconds()
-    logging.info(f"LLM reflection request completed in {duration:.2f} seconds")
-    logging.info(f"Raw LLM response length: {len(response_str)} characters")
+    logging.debug(f"LLM reflection request completed in {duration:.2f} seconds")
+    logging.debug(f"Raw LLM response length: {len(response_str)} characters")
     logging.debug(f"Raw LLM response preview: {response_str[:500]}...")
 
     try:
@@ -305,20 +305,20 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
         reasoning = decision_data.get("reasoning", "No reasoning provided")
         new_plan = decision_data.get("new_plan")
 
-        logging.info(f"Parsed reflection decision: {decision}")
-        logging.info(f"Decision reasoning: {reasoning}")
+        logging.debug(f"Parsed reflection decision: {decision}")
+        logging.debug(f"Decision reasoning: {reasoning}")
 
         update["reflection_history"] = [decision_data]
 
         if decision == "REPLAN" and new_plan:
-            logging.info(f"REPLAN decision confirmed. New plan has {len(new_plan)} cases.")
-            logging.info("Setting is_replan flag and storing new cases. The plan will be updated in the next cycle.")
+            logging.debug(f"REPLAN decision confirmed. New plan has {len(new_plan)} cases.")
+            logging.debug("Setting is_replan flag and storing new cases. The plan will be updated in the next cycle.")
             # Set the replan flag and store the new cases. Do NOT modify the main list here.
             update["is_replan"] = True
             update["replanned_cases"] = new_plan
 
             for i, case in enumerate(new_plan):
-                logging.info(f"  New case {i + 1}: {case.get('name', 'Unnamed')}")
+                logging.debug(f"  New case {i + 1}: {case.get('name', 'Unnamed')}")
         else:
             if decision == "REPLAN":
                 logging.warning("REPLAN decision made but no new_plan provided. Treating as CONTINUE.")
@@ -331,7 +331,7 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
                     }
                 ]
 
-        logging.info("=== Reflection Analysis Complete ===")
+        logging.debug("=== Reflection Analysis Complete ===")
         return update
 
     except json.JSONDecodeError as e:
@@ -343,7 +343,7 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
             "reasoning": f"Failed to parse LLM response due to JSON decode error: {str(e)}",
             "new_plan": [],
         }
-        logging.info("Using fallback decision: CONTINUE")
+        logging.debug("Using fallback decision: CONTINUE")
         update["reflection_history"] = [fallback_decision]
         return update
 
@@ -363,18 +363,18 @@ async def execute_single_case(state: MainGraphState) -> dict:
 
     # Conditionally reset the session based on the test case flag
     if case.get("reset_session", False):
-        logging.info(f"Resetting session: navigation to {case.get('url')}.")
+        logging.debug(f"Resetting session: navigation to {case.get('url')}.")
         await ui_tester_instance.start_session(case.get("url"))
         page = await ui_tester_instance.get_current_page()
         action_handler = ActionHandler()
         await action_handler.go_to_page(page, state["url"], cookies=state["cookies"])
-        logging.info("Navigation was performed as part of session reset.")
+        logging.debug("Navigation was performed as part of session reset.")
     else:
         await ui_tester_instance.start_session(case.get("url"))
         page = await ui_tester_instance.get_current_page()
         action_handler = ActionHandler()
         await action_handler.go_to_page(page, state["url"], cookies=state["cookies"])
-        logging.info("Continuing with the existing session state.")
+        logging.debug("Continuing with the existing session state.")
 
     # Invoke the agent worker for the single case
     # Pass the current completed cases to the worker so it can append
@@ -407,10 +407,10 @@ def should_replan_or_continue(state: MainGraphState) -> str:
     current_index = state.get("current_test_case_index", 0)
 
     # 详细的状态日志
-    logging.info("=== Decision Context Analysis ===")
-    logging.info(f"Completed cases count: {completed_count}")
-    logging.info(f"Total planned cases: {total_planned}")
-    logging.info(f"Current test case index (for loop control): {current_index}")
+    logging.debug("=== Decision Context Analysis ===")
+    logging.debug(f"Completed cases count: {completed_count}")
+    logging.debug(f"Total planned cases: {total_planned}")
+    logging.debug(f"Current test case index (for loop control): {current_index}")
 
     # The primary condition for finishing should be the reflection decision itself.
     reflection_history = state.get("reflection_history", [])
@@ -427,44 +427,44 @@ def should_replan_or_continue(state: MainGraphState) -> str:
     reasoning = last_reflection.get("reasoning", "No reasoning provided")
 
     # 详细的决策日志
-    logging.info(f"Reflection decision: {decision}")
-    logging.info(f"Reflection reasoning: {reasoning}")
+    logging.debug(f"Reflection decision: {decision}")
+    logging.debug(f"Reflection reasoning: {reasoning}")
 
     if decision == "FINISH":
-        logging.info("Reflection resulted in FINISH. Aggregating results.")
+        logging.debug("Reflection resulted in FINISH. Aggregating results.")
         return "aggregate_results"
 
     if decision == "REPLAN":
-        logging.info("Reflection resulted in REPLAN. Routing back to the planner to append new cases.")
+        logging.debug("Reflection resulted in REPLAN. Routing back to the planner to append new cases.")
         return "plan_test_cases"
 
     # For 'CONTINUE' decision, we check if we've run out of cases.
     # This is the main safeguard against loops.
     # NOTE: The index was already incremented inside reflect_and_replan
     if state["current_test_case_index"] >= total_planned:
-        logging.info("All planned test cases have been completed. Aggregating results.")
+        logging.debug("All planned test cases have been completed. Aggregating results.")
         return "aggregate_results"
 
     # If we are here, it means decision is CONTINUE and there are more cases to run.
-    logging.info("Reflection resulted in CONTINUE. Moving to the next test case.")
+    logging.debug("Reflection resulted in CONTINUE. Moving to the next test case.")
     return "get_next_test_case"
 
 
 async def aggregate_results(state: MainGraphState) -> Dict[str, Dict[str, Any]]:
     """Aggregates the results from all test case workers."""
-    logging.info("Aggregating test results...")
+    logging.debug("Aggregating test results...")
     total_cases = len(state.get("test_cases", []))
     summary = {
         "total_cases": total_cases,
         "completed_summary": state["completed_cases"],
     }
-    logging.info(f"Final summary: {json.dumps(summary, indent=2)}")
+    logging.debug(f"Final summary: {json.dumps(summary, indent=2)}")
     return {"final_report": summary}
 
 
 async def cleanup_session(state: MainGraphState) -> Dict:
     """Closes the browser session."""
-    logging.info("Cleaning up browser session...")
+    logging.debug("Cleaning up browser session...")
     ui_tester = state["ui_tester_instance"]
     if ui_tester:
         browser_results = await ui_tester.end_session()

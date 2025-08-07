@@ -29,11 +29,11 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     case_name = case.get("name", "Unnamed Test Case")
     completed_cases = state.get("completed_cases", [])
 
-    logging.info(f"=== Starting Agent Worker for Test Case: {case_name} ===")
-    logging.info(f"Test case objective: {case.get('objective', 'Not specified')}")
-    logging.info(f"Test case steps count: {len(case.get('steps', []))}")
-    logging.info(f"Preamble actions count: {len(case.get('preamble_actions', []))}")
-    logging.info(f"Previously completed cases: {len(completed_cases)}")
+    logging.debug(f"=== Starting Agent Worker for Test Case: {case_name} ===")
+    logging.debug(f"Test case objective: {case.get('objective', 'Not specified')}")
+    logging.debug(f"Test case steps count: {len(case.get('steps', []))}")
+    logging.debug(f"Preamble actions count: {len(case.get('preamble_actions', []))}")
+    logging.debug(f"Previously completed cases: {len(completed_cases)}")
 
     ui_tester_instance = config["configurable"]["ui_tester_instance"]
 
@@ -52,14 +52,14 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         base_url=llm_config.get("base_url"),
         temperature=0.1,
     )
-    logging.info(f"LLM configured: {llm_config.get('model')} at {llm_config.get('base_url')}")
+    logging.debug(f"LLM configured: {llm_config.get('model')} at {llm_config.get('base_url')}")
 
     # Instantiate the custom tool with the ui_tester_instance
     tools = [
         UITool(ui_tester_instance=ui_tester_instance),
         UIAssertTool(ui_tester_instance=ui_tester_instance),
     ]
-    logging.info(f"Tools initialized: {[tool.name for tool in tools]}")
+    logging.debug(f"Tools initialized: {[tool.name for tool in tools]}")
 
     # The prompt now includes the system message
     prompt = ChatPromptTemplate.from_messages(
@@ -73,12 +73,12 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     # Create the agent
     agent = create_tool_calling_agent(llm, tools, prompt)
     agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, max_iterations=5)
-    logging.info("AgentExecutor created successfully")
+    logging.debug("AgentExecutor created successfully")
 
     # --- Execute Preamble Actions to Restore State ---
     preamble_actions = case.get("preamble_actions", [])
     if preamble_actions:
-        logging.info(f"=== Executing {len(preamble_actions)} Preamble Actions ===")
+        logging.debug(f"=== Executing {len(preamble_actions)} Preamble Actions ===")
         preamble_messages: list[BaseMessage] = [
             HumanMessage(
                 content="The test has started. Before the main test steps, I need to perform some setup actions to restore the UI state. Please execute the first preamble action."
@@ -149,7 +149,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
                     # 基础标准化匹配
                     if current_normalized == target_normalized:
-                        logging.info("Skipping preamble navigation action - already on target page (normalized match)")
+                        logging.debug("Skipping preamble navigation action - already on target page (normalized match)")
                         continue
 
                     # 更灵活的域名路径匹配
@@ -167,7 +167,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         or current_path == ""
                         and target_path == "/"
                     ):
-                        logging.info(
+                        logging.debug(
                             f"Skipping preamble navigation action - domain and path match detected ({current_domain}{current_path})"
                         )
                         continue
@@ -175,14 +175,14 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 except Exception as e:
                     logging.warning(f"Could not check current URL for preamble action: {e}, proceeding with execution")
 
-            logging.info(f"Executing preamble action {i+1}/{len(preamble_actions)}: {instruction_to_execute}")
+            logging.debug(f"Executing preamble action {i+1}/{len(preamble_actions)}: {instruction_to_execute}")
             preamble_messages.append(
                 HumanMessage(content=f"Now, execute this preamble action: {instruction_to_execute}")
             )
 
             try:
                 # Use a simple invoke, as preamble steps should be straightforward
-                logging.info(f"Executing preamble action {i+1} - Calling Agent...")
+                logging.debug(f"Executing preamble action {i+1} - Calling Agent...")
                 start_time = datetime.datetime.now()
 
                 result = await agent_executor.ainvoke({"messages": preamble_messages})
@@ -192,7 +192,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 duration = (end_time - start_time).total_seconds()
 
                 tool_output = result.get("output", "")
-                logging.info(f"Preamble action {i+1} completed in {duration:.2f} seconds")
+                logging.debug(f"Preamble action {i+1} completed in {duration:.2f} seconds")
                 logging.debug(f"Preamble action {i+1} result: {tool_output[:200]}...")
                 preamble_messages.append(AIMessage(content=tool_output))
 
@@ -202,17 +202,17 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     logging.error(f"Preamble action {i+1} failed, aborting test case")
                     return {"case_result": case_result, "current_case_steps": []}
 
-                logging.info(f"Preamble action {i+1} completed successfully")
+                logging.debug(f"Preamble action {i+1} completed successfully")
             except Exception as e:
                 logging.error(f"Exception during preamble action {i+1}: {str(e)}")
                 final_summary = f"FINAL_SUMMARY: Preamble action '{instruction_to_execute}' raised exception: {str(e)}"
                 case_result = {"case_name": case_name, "final_summary": final_summary, "status": "failed"}
                 return {"case_result": case_result, "current_case_steps": []}
 
-        logging.info("=== All Preamble Actions Completed Successfully ===")
+        logging.debug("=== All Preamble Actions Completed Successfully ===")
 
     # --- Main Execution Loop ---
-    logging.info("=== Starting Main Test Steps Execution ===")
+    logging.debug("=== Starting Main Test Steps Execution ===")
     messages: list[BaseMessage] = [
         HumanMessage(
             content="The test has started. I will provide you with one instruction at a time. Please execute the action or assertion described in each instruction."
@@ -225,8 +225,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         instruction_to_execute = step.get("action") or step.get("verify")
         step_type = "Action" if step.get("action") else "Assertion"
 
-        logging.info(f"=== Executing Step {i+1}/{total_steps} ({step_type}) ===")
-        logging.info(f"Step instruction: {instruction_to_execute}")
+        logging.debug(f"=== Executing Step {i+1}/{total_steps} ({step_type}) ===")
+        logging.debug(f"Step instruction: {instruction_to_execute}")
 
         # Define instruction templates for variation
         instruction_templates = [
@@ -247,7 +247,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             file_name="agent_step_vision", save_to_log=False
         )
         await dp.remove_marker()
-        logging.info("Generated highlighted screenshot for the agent.")
+        logging.debug("Generated highlighted screenshot for the agent.")
         # ------------------------------------
 
         # Create a new message with the current step's instruction and visual context
@@ -286,15 +286,15 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         tool_choice = None
         if step_type == "Action":
             tool_choice = {"type": "function", "function": {"name": "execute_ui_action"}}
-            logging.info("Forcing tool choice: execute_ui_action")
+            logging.debug("Forcing tool choice: execute_ui_action")
         elif step_type == "Assertion":
             tool_choice = {"type": "function", "function": {"name": "execute_ui_assertion"}}
-            logging.info("Forcing tool choice: execute_ui_assertion")
+            logging.debug("Forcing tool choice: execute_ui_assertion")
         # -------------------------
 
         try:
             # The agent's history includes all prior messages
-            logging.info(f"Step {i+1} - Calling Agent to execute {step_type}...")
+            logging.debug(f"Step {i+1} - Calling Agent to execute {step_type}...")
             start_time = datetime.datetime.now()
 
             result = await agent_executor.ainvoke(
@@ -308,7 +308,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             messages = result.get("messages", [])
             tool_output = result.get("output", "")
 
-            logging.info(f"Step {i+1} {step_type} completed in {duration:.2f} seconds")
+            logging.debug(f"Step {i+1} {step_type} completed in {duration:.2f} seconds")
             logging.debug(f"Step {i+1} tool output: {tool_output}")
             messages.append(AIMessage(content=tool_output))
 
@@ -318,7 +318,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 logging.error(f"Step {i+1} failed due to max iterations.")
                 break
 
-            logging.info(f"Step {i+1} completed successfully.")
+            logging.debug(f"Step {i+1} completed successfully.")
 
         except Exception as e:
             logging.error(f"Exception during step {i+1} execution: {str(e)}")
@@ -343,7 +343,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
     # Determine test case status
     status = "passed" if "success" in final_summary.lower() or "passed" in final_summary.lower() else "failed"
-    logging.info(f"Test case '{case_name}' final status: {status}")
+    logging.debug(f"Test case '{case_name}' final status: {status}")
 
     case_result = {
         "case_name": case_name,
@@ -351,7 +351,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         "status": status,
     }
 
-    logging.info(f"=== Agent Worker Completed for {case_name}. ===")
+    logging.debug(f"=== Agent Worker Completed for {case_name}. ===")
 
     # Return only the result of the current case
     return {"case_result": case_result}

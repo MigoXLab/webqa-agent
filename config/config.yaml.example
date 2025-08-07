@@ -24,3 +24,6 @@ browser_config:
   headless: False  # Docker环境会自动覆盖为True
   language: zh-CN
   cookies: []
+
+log:
+  level: info

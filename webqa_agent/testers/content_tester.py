@@ -51,7 +51,7 @@ class PageTextTest:
                 result.messages = {"page": "页面白屏，没有任何可见内容"}
                 return result
 
-            logging.info("page is not blank, start crawling page content")
+            logging.debug("page is not blank, start crawling page content")
 
             # 获取页面文本内容
             page_text = html2text(await page.content())
@@ -124,7 +124,7 @@ class PageContentTest:
         """
         test_name = f"网页内容检查_{page.viewport_size['width']}x{page.viewport_size['height']}"
         result = SubTestResult(name=test_name)
-        logging.info(
+        logging.debug(
             f"Testing with browser configuration: {page.viewport_size['width']}x{page.viewport_size['height']}"
         )
 
@@ -161,7 +161,7 @@ class PageContentTest:
                     except Exception:
                         try:
                             parsed = ast.literal_eval(test_page_content)
-                            logging.info(f"Parsed LLM output: {parsed}")
+                            logging.debug(f"Parsed LLM output: {parsed}")
                         except Exception:
                             logging.warning("Unable to parse LLM output as JSON, keep raw text")
                             parsed = None
@@ -288,7 +288,7 @@ class PageButtonTest:
                 for i, element in enumerate(clickable_elements):
                     # Run single test with the provided browser configuration
                     element_text = element.get("selector", "Unknown")
-                    logging.info(f"Testing clickable element {i + 1}: {element_text}")
+                    logging.debug(f"Testing clickable element {i + 1}: {element_text}")
 
                     try:
                         current_url = page.url

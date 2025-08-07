@@ -353,7 +353,8 @@ async def run_tests(cfg):
     try:
         parallel_mode = ParallelMode([], max_concurrent_tests=2)  # 依据实际调整
         results, report_path, html_report_path = await parallel_mode.run(
-            url=target_url, llm_config=llm_config, test_configurations=test_configurations
+            url=target_url, llm_config=llm_config, test_configurations=test_configurations,
+            log_cfg=cfg.get("log", {"level": "info"})
         )
         if html_report_path:
             print("html报告路径: ", html_report_path)

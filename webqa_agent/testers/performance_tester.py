@@ -30,12 +30,12 @@ class LighthouseMetricsTest:
             if process.returncode != 0:
                 raise Exception("Node.js is not installed. Please install Node.js to run Lighthouse tests.")
 
-            logging.info(f"Node.js version: {stdout.decode().strip()}")
+            logging.debug(f"Node.js version: {stdout.decode().strip()}")
 
             # If browser configuration is provided, use its viewport settings
             if browser_config and browser_config.get("viewport"):
                 viewport = browser_config.get("viewport")
-                logging.info(f"Using custom viewport for Lighthouse: {viewport}")
+                logging.debug(f"Using custom viewport for Lighthouse: {viewport}")
             else:
                 from webqa_agent.browser.config import DEFAULT_CONFIG
 
@@ -76,7 +76,7 @@ class LighthouseMetricsTest:
         """
         # Get project root directory
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
-        logging.info(f"{project_root}")
+        logging.debug(f"{project_root}")
 
         # Use the provided viewport or default value
         if viewport is None:
@@ -272,7 +272,7 @@ class LighthouseMetricsTest:
 
             try:
                 # Run the Node.js script
-                logging.info("Running Lighthouse via Node.js")
+                logging.debug("Running Lighthouse via Node.js")
                 process = await asyncio.create_subprocess_exec(
                     "node", js_file_path, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
@@ -546,7 +546,7 @@ class LighthouseMetricsTest:
                 "seo_issues": seo_issues,
             },
         }
-        logging.info(f"Lighthouse result: {result}")
+        logging.debug(f"Lighthouse result: {result}")
         return result
 
     @staticmethod
