@@ -361,12 +361,8 @@ async def execute_single_case(state: MainGraphState) -> dict:
         await ui_tester_instance.start_session(case.get("url"))
         page = await ui_tester_instance.get_current_page()
         action_handler = ActionHandler()
-        # 使用智能导航，避免重复导航
-        navigation_performed = await action_handler.smart_navigate_to_page(page, state["url"], cookies=state["cookies"])
-        if navigation_performed:
-            logging.info("Navigation was performed as part of session reset.")
-        else:
-            logging.info("Skipped navigation - already on target page.")
+        await action_handler.go_to_page(page, state["url"], cookies=state["cookies"])
+        logging.info("Navigation was performed as part of session reset.")
     else:
         logging.info("Continuing with the existing session state.")
 

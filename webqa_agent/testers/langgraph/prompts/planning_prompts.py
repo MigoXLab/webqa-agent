@@ -33,7 +33,7 @@ def get_test_case_planning_prompt(
         if business_objectives and business_objectives.strip():
             role_and_objective = """
 ## Role
-You are a Senior QA Test Architect with expertise in requirement analysis and targeted test design. Your responsibility is to analyze business objectives and generate precise test cases that directly address specified requirements.
+You are a Senior QA Testing Professional with expertise in requirement analysis and targeted test design. Your responsibility is to analyze business objectives and generate precise test cases that directly address specified requirements.
 
 ## Primary Objective
 Analyze the provided business objectives and generate a focused test plan that validates specific requirements, user scenarios, or functionality as explicitly requested. Apply intent recognition to understand the scope and depth of testing needed based on the business objectives.
@@ -65,7 +65,7 @@ Analyze the provided business objectives and generate a focused test plan that v
         else:
             role_and_objective = """
 ## Role
-You are a Senior QA Test Architect with expertise in comprehensive web application testing. Your responsibility is to design complete test suites that ensure software quality through systematic validation of all functional requirements, user workflows, and quality assurance requirements.
+You are a Senior QA Testing Professional with expertise in comprehensive web application testing. Your responsibility is to design complete test suites that ensure software quality through systematic validation of all functional requirements, user workflows, and quality assurance requirements.
 
 ## Primary Objective
 Analyze the target web application and generate a complete test plan that provides thorough coverage of all core functionalities, user scenarios, and quality assurance requirements. Apply established QA methodologies including equivalence partitioning, boundary value analysis, and risk-based testing prioritization.
@@ -91,7 +91,7 @@ Analyze the target web application and generate a complete test plan that provid
         # 重新规划模式
         role_and_objective = """
 ## Role
-You are a Senior QA Test Architect performing dynamic test plan revision based on execution results and changing requirements.
+You are a Senior QA Testing Professional performing dynamic test plan revision based on execution results and changing requirements.
 
 ## Primary Objective
 Based on the execution history, reflection analysis, and current application state, generate a revised test plan that addresses remaining coverage gaps while building upon successful test outcomes. Ensure the new plan provides logical continuation from completed test activities.
@@ -161,7 +161,6 @@ Perform comprehensive analysis within an `<analysis_scratchpad>` section using t
 - **Functional Coverage**: Ensure all business requirements are testable
 - **UI Coverage**: Validate all interactive elements and their states
 - **Data Coverage**: Test with various data types, formats, and boundary conditions
-- **Browser/Platform Coverage**: Consider cross-platform compatibility requirements
 
 #### 1.4 Risk Assessment & Prioritization
 - **High-Risk Areas**: Identify critical business functions and failure-prone components
@@ -225,7 +224,6 @@ Each test case must include these standardized components:
 - **Test Isolation**: Each test case should be independent and repeatable
 - **State Management**: Clear definition of required initial conditions
 - **Cleanup Strategy**: Proper test data and session cleanup procedures
-- **Cross-browser Compatibility**: Consider different browser behaviors and standards
 
 ## Test Scenario Templates & Patterns
 
@@ -505,8 +503,7 @@ Each test case must include these standardized components:
     {{"verify": "Verify page title and content match navigation selection"}},
     {{"action": "Click on breadcrumb navigation item"}},
     {{"verify": "Verify navigation to parent or ancestor page"}},
-    {{"action": "Use browser back and forward buttons"}},
-    {{"verify": "Verify proper navigation history management"}},
+    {{"action": "Verify proper navigation history management"}},
     {{"action": "Test direct URL access to internal pages"}},
     {{"verify": "Verify proper access control and content display"}}
   ],
@@ -514,7 +511,7 @@ Each test case must include these standardized components:
   "success_criteria": [
     "Navigation elements function correctly",
     "URL routing matches page content",
-    "Browser navigation is properly handled",
+    "Navigation history is properly handled",
     "Breadcrumbs provide accurate navigation path"
   ]
 }}
@@ -603,7 +600,7 @@ Your response must follow this exact structure:
 [Analysis of primary and alternative user paths, error scenarios]
 
 **3. Test Coverage Planning:**
-[Coverage strategy across functional, UI, data, and platform dimensions]
+[Coverage strategy across functional, UI, and data dimensions]
 
 **4. Risk Assessment & Prioritization:**
 [Risk analysis and priority assignment rationale]
@@ -717,7 +714,7 @@ def get_reflection_prompt(
 
     prompt = f"""
 ## Role
-You are a Senior QA Test Manager responsible for dynamic test execution oversight and strategic decision-making. Your expertise includes test progress analysis, risk assessment, and adaptive test planning based on real-time execution results.
+You are a Senior QA Testing Professional responsible for dynamic test execution oversight and strategic decision-making. Your expertise includes test progress analysis, risk assessment, and adaptive test planning based on real-time execution results.
 
 ## Mission
 Analyze current test execution status, evaluate progress against the original testing mode and objectives, and make informed strategic decisions about test continuation, plan revision, or test completion based on comprehensive coverage analysis and risk assessment.
@@ -796,7 +793,7 @@ IF (len(completed_cases) < len(current_plan)
 
 **Plan Effectiveness Analysis**:
 - **Test Case Relevance**: Do remaining tests address current objectives?
-- **Test Environment Alignment**: Are tests compatible with current application state?
+- **Test Environment Alignment**: Are tests aligned with current application state?
 - **Execution Feasibility**: Can remaining tests be executed without modification?
 
 **Decision Logic**:
