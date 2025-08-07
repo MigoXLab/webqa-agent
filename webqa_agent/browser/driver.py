@@ -16,7 +16,7 @@ class Driver:
         Args:
             browser_config (dict, optional): Browser configuration options.
         """
-        logging.info(f"Driver.getInstance called with browser_config: {browser_config}")
+        logging.debug(f"Driver.getInstance called with browser_config: {browser_config}")
 
         # Always create a *new* Driver instance – singleton restriction removed to
         # allow multiple browsers to run in parallel.  Keeping the public API
@@ -52,7 +52,7 @@ class Driver:
             None
         """
         try:
-            # logging.info(f"Driver create_browser called with browser_config: {browser_config}")
+            # logging.debug(f"Driver create_browser called with browser_config: {browser_config}")
 
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
@@ -113,9 +113,9 @@ class Driver:
         """
         try:
             pages = self.context.pages
-            logging.info(f"page number: {len(pages)}")
+            logging.debug(f"page number: {len(pages)}")
             if len(pages) > 1:
-                logging.info("New page detected.")
+                logging.debug("New page detected.")
                 self.page = pages[-1]
                 return self.page
             else:
@@ -131,7 +131,7 @@ class Driver:
                 await self.browser.close()
                 await self.playwright.stop()
                 self._is_closed = True  # mark closed
-                logging.info("Browser instance closed successfully.")
+                logging.debug("Browser instance closed successfully.")
         except Exception as e:
             logging.error("Failed to close browser instance.", exc_info=True)
             raise

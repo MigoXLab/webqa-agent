@@ -40,7 +40,7 @@ class ActionExecutor:
                 return False
 
             # Execute the action
-            logging.info(f"Executing action: {action_type}")
+            logging.debug(f"Executing action: {action_type}")
             return await execute_func(action)
 
         except Exception as e:
@@ -192,7 +192,7 @@ class ActionExecutor:
         try:
             # choose option_id directly
             if option_id is not None and len(selection_path) == 1:
-                logging.info(f"Directly clicking option_id {option_id} for dropdown_id {dropdown_id}")
+                logging.debug(f"Directly clicking option_id {option_id} for dropdown_id {dropdown_id}")
                 return await self._actions.select_dropdown_option(dropdown_id, selection_path[0], option_id=option_id)
 
             # multi-level cascade or no option_id, use original logic
@@ -210,7 +210,7 @@ class ActionExecutor:
                         }
                     if level < len(selection_path) - 1:
                         await asyncio.sleep(0.5)
-                logging.info(f"Successfully completed cascade selection: {' -> '.join(selection_path)}")
+                logging.debug(f"Successfully completed cascade selection: {' -> '.join(selection_path)}")
                 return {"success": True, "message": "Cascade selection completed successfully"}
 
         except Exception as e:
@@ -221,7 +221,7 @@ class ActionExecutor:
         """Execute simple single-level dropdown selection."""
         try:
             # get all options of dropdown
-            logging.info(f"Getting dropdown options for element {element_id}")
+            logging.debug(f"Getting dropdown options for element {element_id}")
             options_result = await self._actions.get_dropdown_options(element_id)
 
             if not options_result.get("success"):
@@ -233,7 +233,7 @@ class ActionExecutor:
                 logging.error("No options found in dropdown")
                 return {"success": False, "message": "No options found in dropdown"}
 
-            logging.info(f"Found {len(options)} options in dropdown")
+            logging.debug(f"Found {len(options)} options in dropdown")
 
             # use default simple decision logic
             def _default_selection_logic(options: List[Dict], criteria: str) -> Optional[str]:
@@ -241,17 +241,17 @@ class ActionExecutor:
 
                 for option in options:
                     if option["text"].lower() == criteria_lower:
-                        logging.info(f"Found exact match: {option['text']}")
+                        logging.debug(f"Found exact match: {option['text']}")
                         return option["text"]
 
                 for option in options:
                     if criteria_lower in option["text"].lower():
-                        logging.info(f"Found contains match: {option['text']}")
+                        logging.debug(f"Found contains match: {option['text']}")
                         return option["text"]
 
                 for option in options:
                     if option["text"].lower() in criteria_lower:
-                        logging.info(f"Found partial match: {option['text']}")
+                        logging.debug(f"Found partial match: {option['text']}")
                         return option["text"]
 
                 # if no match, return None
@@ -263,16 +263,16 @@ class ActionExecutor:
             if not selected_option:
                 logging.error(f"Could not decide which option to select based on criteria: {option_text}")
                 available_options = [opt["text"] for opt in options]
-                logging.info(f"Available options: {available_options}")
+                logging.debug(f"Available options: {available_options}")
                 return {"success": False, "message": "No matching option found", "available_options": available_options}
 
-            logging.info(f"Selected option: {selected_option}")
+            logging.debug(f"Selected option: {selected_option}")
 
             # execute select operation
             select_result = await self._actions.select_dropdown_option(element_id, selected_option)
 
             if select_result.get("success"):
-                logging.info(f"Successfully completed dropdown selection: {selected_option}")
+                logging.debug(f"Successfully completed dropdown selection: {selected_option}")
                 return {"success": True, "message": "Option selected successfully"}
             else:
                 logging.error(f"Failed to select option: {selected_option}")

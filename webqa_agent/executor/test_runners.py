@@ -17,6 +17,7 @@ from webqa_agent.testers import (
     PageTextTest,
     WebAccessibilityTest,
 )
+from webqa_agent.utils import Display
 
 
 class BaseTestRunner(ABC):
@@ -38,188 +39,189 @@ class UIAgentLangGraphRunner(BaseTestRunner):
     ) -> TestResult:
         """Run UIAgent LangGraph test using LangGraph workflow with
         ParallelUITester."""
+        
+        with Display.display(test_config.test_name):
+            from webqa_agent.testers.langgraph.graph import app as graph_app
+            from webqa_agent.testers.ui_tester import UITester
 
-        from webqa_agent.testers.langgraph.graph import app as graph_app
-        from webqa_agent.testers.ui_tester import UITester
+            logging.debug(f"Running UIAgent LangGraph test: {test_config.test_name}")
 
-        logging.info(f"Running UIAgent LangGraph test: {test_config.test_name}")
+            result = TestResult(
+                test_id=test_config.test_id,
+                test_type=test_config.test_type,
+                test_name=test_config.test_name,
+                status=TestStatus.RUNNING,
+                category=get_category_for_test_type(test_config.test_type),
+            )
 
-        result = TestResult(
-            test_id=test_config.test_id,
-            test_type=test_config.test_type,
-            test_name=test_config.test_name,
-            status=TestStatus.RUNNING,
-            category=get_category_for_test_type(test_config.test_type),
-        )
+            parallel_tester: UITester | None = None
+            try:
+                parallel_tester = UITester(llm_config=llm_config, browser_session=session)
+                await parallel_tester.initialize()
 
-        parallel_tester: UITester | None = None
-        try:
-            parallel_tester = UITester(llm_config=llm_config, browser_session=session)
-            await parallel_tester.initialize()
+                business_objectives = test_config.test_specific_config.get("business_objectives", "")
+                logging.debug(f"AI 智能测试业务目标: {business_objectives}")
 
-            business_objectives = test_config.test_specific_config.get("business_objectives", "")
-            logging.info(f"AI 智能测试业务目标: {business_objectives}")
+                cookies = test_config.test_specific_config.get("cookies")
 
-            cookies = test_config.test_specific_config.get("cookies")
+                initial_state = {
+                    "url": target_url,
+                    "business_objectives": business_objectives,
+                    "cookies": cookies,
+                    "completed_cases": [],
+                    "reflection_history": [],
+                    "remaining_objectives": business_objectives,
+                    "ui_tester_instance": parallel_tester,
+                    "current_test_case_index": 0,
+                }
 
-            initial_state = {
-                "url": target_url,
-                "business_objectives": business_objectives,
-                "cookies": cookies,
-                "completed_cases": [],
-                "reflection_history": [],
-                "remaining_objectives": business_objectives,
-                "ui_tester_instance": parallel_tester,
-                "current_test_case_index": 0,
-            }
+                graph_config = {"configurable": {"ui_tester_instance": parallel_tester}, "recursion_limit": 100}
 
-            graph_config = {"configurable": {"ui_tester_instance": parallel_tester}, "recursion_limit": 100}
+                # Mapping from case name to status obtained from LangGraph aggregate_results
+                graph_case_status_map: Dict[str, str] = {}
 
-            # Mapping from case name to status obtained from LangGraph aggregate_results
-            graph_case_status_map: Dict[str, str] = {}
+                # 执行LangGraph工作流
+                graph_completed = False
+                async for event in graph_app.astream(initial_state, config=graph_config):
+                    # Each event is a dict where keys are node names and values are their outputs
+                    for node_name, node_output in event.items():
+                        if node_name == "aggregate_results":
+                            # Capture final report to retrieve authoritative case statuses
+                            final_report = node_output.get("final_report", {})
+                            for idx, case_res in enumerate(final_report.get("completed_summary", [])):
+                                case_name = case_res.get("case_name") or case_res.get("name") or f"Case_{idx + 1}"
+                                graph_case_status_map[case_name] = case_res.get("status", "failed").lower()
 
-            # 执行LangGraph工作流
-            graph_completed = False
-            async for event in graph_app.astream(initial_state, config=graph_config):
-                # Each event is a dict where keys are node names and values are their outputs
-                for node_name, node_output in event.items():
-                    if node_name == "aggregate_results":
-                        # Capture final report to retrieve authoritative case statuses
-                        final_report = node_output.get("final_report", {})
-                        for idx, case_res in enumerate(final_report.get("completed_summary", [])):
-                            case_name = case_res.get("case_name") or case_res.get("name") or f"Case_{idx + 1}"
-                            graph_case_status_map[case_name] = case_res.get("status", "failed").lower()
+                        if node_name == "__end__":
+                            logging.debug("Graph execution completed successfully")
+                            graph_completed = True
+                            break
+                        else:
+                            logging.debug(f"Node '{node_name}' completed")
 
-                    if node_name == "__end__":
-                        logging.info("Graph execution completed successfully")
-                        graph_completed = True
+                    # Break out of the outer loop if we found __end__
+                    if graph_completed:
                         break
-                    else:
-                        logging.debug(f"Node '{node_name}' completed")
 
-                # Break out of the outer loop if we found __end__
-                if graph_completed:
-                    break
+                # === 使用UITester的新数据存储机制 ===
+                sub_tests = []
+                runner_format_report = {}
 
-            # === 使用UITester的新数据存储机制 ===
-            sub_tests = []
-            runner_format_report = {}
-
-            if parallel_tester:
-                # 生成符合runner标准格式的完整报告
-                test_name = f"UI Agent Test - {target_url}"
-                runner_format_report = parallel_tester.generate_runner_format_report(
-                    test_id=test_config.test_id, test_name=test_name
-                )
-
-                sub_tests_data = runner_format_report.get("sub_tests", [])
-                logging.info(f"Generated runner format report with {len(sub_tests_data)} cases")
-
-                if not sub_tests_data:
-                    logging.warning("No sub_tests data found in runner format report")
-
-                # 将runner格式的sub_tests转换为TestResult.SubTestResult
-                for i, case in enumerate(sub_tests_data):
-                    case_name = case.get("name", f"Unnamed test case - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                    case_steps = case.get("steps", [])
-
-                    # 验证case数据完整性
-                    logging.info(f"Processing case {i + 1}: '{case_name}' with {len(case_steps)} steps")
-                    if not case_steps:
-                        logging.warning(f"Case '{case_name}' has no steps data")
-
-                    # Prefer status from graph aggregation if available
-                    sub_status = graph_case_status_map.get(case_name, case.get("status", "failed")).lower()
-                    status_mapping = {
-                        "pending": TestStatus.PENDING,
-                        "running": TestStatus.RUNNING,
-                        "passed": TestStatus.PASSED,
-                        "completed": TestStatus.PASSED,
-                        "failed": TestStatus.FAILED,
-                        "cancelled": TestStatus.CANCELLED,
-                    }
-                    status_enum = status_mapping.get(sub_status, TestStatus.FAILED)
-
-                    sub_tests.append(
-                        SubTestResult(
-                            name=case_name,
-                            status=status_enum,
-                            metrics={},
-                            steps=case_steps,
-                            messages=case.get("messages", {}),
-                            start_time=case.get("start_time"),
-                            end_time=case.get("end_time"),
-                            final_summary=case.get("final_summary", ""),
-                            report=case.get("report", []),
-                        )
+                if parallel_tester:
+                    # 生成符合runner标准格式的完整报告
+                    test_name = f"UI Agent Test - {target_url}"
+                    runner_format_report = parallel_tester.generate_runner_format_report(
+                        test_id=test_config.test_id, test_name=test_name
                     )
 
-                result.sub_tests = sub_tests
+                    sub_tests_data = runner_format_report.get("sub_tests", [])
+                    logging.debug(f"Generated runner format report with {len(sub_tests_data)} cases")
 
-                # 从runner格式报告提取汇总指标
-                results_data = runner_format_report.get("results", {})
-                result.add_metric("test_case_count", results_data.get("total_cases", 0))
-                result.add_metric("passed_test_cases", results_data.get("passed_cases", 0))
-                result.add_metric("failed_test_cases", results_data.get("failed_cases", 0))
-                result.add_metric("total_steps", results_data.get("total_steps", 0))
-                result.add_metric("success_rate", results_data.get("success_rate", 0))
+                    if not sub_tests_data:
+                        logging.warning("No sub_tests data found in runner format report")
 
-                # 从每个case的messages中提取网络和控制台数据并汇总
-                total_failed_requests = 0
-                total_requests = 0
-                total_console_errors = 0
+                    # 将runner格式的sub_tests转换为TestResult.SubTestResult
+                    for i, case in enumerate(sub_tests_data):
+                        case_name = case.get("name", f"Unnamed test case - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                        case_steps = case.get("steps", [])
 
-                for case in runner_format_report.get("sub_tests", []):
-                    case_messages = case.get("messages", {})
-                    if isinstance(case_messages, dict):
-                        network_data = case_messages.get("network", {})
-                        if isinstance(network_data, dict):
-                            failed_requests = network_data.get("failed_requests", [])
-                            responses = network_data.get("responses", [])
-                            total_failed_requests += len(failed_requests)
-                            total_requests += len(responses)
+                        # 验证case数据完整性
+                        logging.debug(f"Processing case {i + 1}: '{case_name}' with {len(case_steps)} steps")
+                        if not case_steps:
+                            logging.warning(f"Case '{case_name}' has no steps data")
 
-                        console_data = case_messages.get("console", [])
-                        if isinstance(console_data, list):
-                            total_console_errors += len(console_data)
+                        # Prefer status from graph aggregation if available
+                        sub_status = graph_case_status_map.get(case_name, case.get("status", "failed")).lower()
+                        status_mapping = {
+                            "pending": TestStatus.PENDING,
+                            "running": TestStatus.RUNNING,
+                            "passed": TestStatus.PASSED,
+                            "completed": TestStatus.PASSED,
+                            "failed": TestStatus.FAILED,
+                            "cancelled": TestStatus.CANCELLED,
+                        }
+                        status_enum = status_mapping.get(sub_status, TestStatus.FAILED)
 
-                result.add_metric("network_failed_requests_count", total_failed_requests)
-                result.add_metric("network_total_requests_count", total_requests)
-                result.add_metric("console_error_count", total_console_errors)
+                        sub_tests.append(
+                            SubTestResult(
+                                name=case_name,
+                                status=status_enum,
+                                metrics={},
+                                steps=case_steps,
+                                messages=case.get("messages", {}),
+                                start_time=case.get("start_time"),
+                                end_time=case.get("end_time"),
+                                final_summary=case.get("final_summary", ""),
+                                report=case.get("report", []),
+                            )
+                        )
 
-                # 设置整体状态
-                runner_status = runner_format_report.get("status", "failed")
-                if runner_status == "completed":
-                    result.status = TestStatus.PASSED
+                    result.sub_tests = sub_tests
+
+                    # 从runner格式报告提取汇总指标
+                    results_data = runner_format_report.get("results", {})
+                    result.add_metric("test_case_count", results_data.get("total_cases", 0))
+                    result.add_metric("passed_test_cases", results_data.get("passed_cases", 0))
+                    result.add_metric("failed_test_cases", results_data.get("failed_cases", 0))
+                    result.add_metric("total_steps", results_data.get("total_steps", 0))
+                    result.add_metric("success_rate", results_data.get("success_rate", 0))
+
+                    # 从每个case的messages中提取网络和控制台数据并汇总
+                    total_failed_requests = 0
+                    total_requests = 0
+                    total_console_errors = 0
+
+                    for case in runner_format_report.get("sub_tests", []):
+                        case_messages = case.get("messages", {})
+                        if isinstance(case_messages, dict):
+                            network_data = case_messages.get("network", {})
+                            if isinstance(network_data, dict):
+                                failed_requests = network_data.get("failed_requests", [])
+                                responses = network_data.get("responses", [])
+                                total_failed_requests += len(failed_requests)
+                                total_requests += len(responses)
+
+                            console_data = case_messages.get("console", [])
+                            if isinstance(console_data, list):
+                                total_console_errors += len(console_data)
+
+                    result.add_metric("network_failed_requests_count", total_failed_requests)
+                    result.add_metric("network_total_requests_count", total_requests)
+                    result.add_metric("console_error_count", total_console_errors)
+
+                    # 设置整体状态
+                    runner_status = runner_format_report.get("status", "failed")
+                    if runner_status == "completed":
+                        result.status = TestStatus.PASSED
+                    else:
+                        result.status = TestStatus.FAILED
+                        result.error_message = runner_format_report.get("error_message", "Test execution failed")
+
                 else:
+                    logging.error("No UITester instance available for data extraction")
                     result.status = TestStatus.FAILED
-                    result.error_message = runner_format_report.get("error_message", "Test execution failed")
+                    result.error_message = "No test cases were executed or results were not available"
 
-            else:
-                logging.error("No UITester instance available for data extraction")
+                logging.debug(f"UIAgent LangGraph test completed via LangGraph workflow: {test_config.test_name}")
+
+            except Exception as e:
+                error_msg = f"UIAgent LangGraph test failed: {str(e)}"
                 result.status = TestStatus.FAILED
-                result.error_message = "No test cases were executed or results were not available"
+                result.error_message = error_msg
+                logging.error(error_msg)
+                raise
 
-            logging.info(f"UIAgent LangGraph test completed via LangGraph workflow: {test_config.test_name}")
+            finally:
+                # Cleanup parallel tester
+                if parallel_tester:
+                    try:
+                        # UITester现在已经自动管理监控数据，只需要清理资源
+                        await parallel_tester.cleanup()
+                        logging.debug("UITester cleanup completed")
+                    except Exception as e:
+                        logging.error(f"Error cleaning up UITester: {e}")
 
-        except Exception as e:
-            error_msg = f"UIAgent LangGraph test failed: {str(e)}"
-            result.status = TestStatus.FAILED
-            result.error_message = error_msg
-            logging.error(error_msg)
-            raise
-
-        finally:
-            # Cleanup parallel tester
-            if parallel_tester:
-                try:
-                    # UITester现在已经自动管理监控数据，只需要清理资源
-                    await parallel_tester.cleanup()
-                    logging.info("UITester cleanup completed")
-                except Exception as e:
-                    logging.error(f"Error cleaning up UITester: {e}")
-
-        return result
+            return result
 
 
 class UXTestRunner(BaseTestRunner):
@@ -231,54 +233,55 @@ class UXTestRunner(BaseTestRunner):
     ) -> TestResult:
         """Run UX tests with enhanced screenshot and data collection."""
 
-        logging.info(f"Running UX test: {test_config.test_name}")
+        logging.debug(f"Running UX test: {test_config.test_name}")
+        
+        with Display.display(test_config.test_name):
+            result = TestResult(
+                test_id=test_config.test_id,
+                test_type=test_config.test_type,
+                test_name=test_config.test_name,
+                status=TestStatus.RUNNING,
+                category=get_category_for_test_type(test_config.test_type),
+            )
 
-        result = TestResult(
-            test_id=test_config.test_id,
-            test_type=test_config.test_type,
-            test_name=test_config.test_name,
-            status=TestStatus.RUNNING,
-            category=get_category_for_test_type(test_config.test_type),
-        )
+            try:
+                page = session.get_page()
 
-        try:
-            page = session.get_page()
+                text_test = PageTextTest(llm_config)
+                text_result: SubTestResult = await text_test.run(page=page)
 
-            text_test = PageTextTest(llm_config)
-            text_result: SubTestResult = await text_test.run(page=page)
+                # Run ParallelPageContentTest
+                content_test = PageContentTest(llm_config)
+                content_result: SubTestResult = await content_test.run(page=page)
 
-            # Run ParallelPageContentTest
-            content_test = PageContentTest(llm_config)
-            content_result: SubTestResult = await content_test.run(page=page)
+                result.sub_tests = [content_result, text_result]
 
-            result.sub_tests = [content_result, text_result]
+                # Extract metrics
+                content_status = content_result.status
+                text_status = text_result.status
 
-            # Extract metrics
-            content_status = content_result.status
-            text_status = text_result.status
+                # Determine overall status
+                if text_status == "passed" and content_status == "passed":
+                    result.status = TestStatus.PASSED
+                else:
+                    result.status = TestStatus.FAILED
 
-            # Determine overall status
-            if text_status == "passed" and content_status == "passed":
-                result.status = TestStatus.PASSED
-            else:
+                    # Collect errors from both tests
+                    errors = [r.messages["page"] for r in [text_result, content_result] if "page" in r.messages]
+
+                    if errors:
+                        result.error_message = "; ".join(errors)
+
+                logging.debug(f"UX test completed: {test_config.test_name}")
+
+            except Exception as e:
+                error_msg = f"UX test failed: {str(e)}"
                 result.status = TestStatus.FAILED
+                result.error_message = error_msg
+                logging.error(error_msg)
+                raise
 
-                # Collect errors from both tests
-                errors = [r.messages["page"] for r in [text_result, content_result] if "page" in r.messages]
-
-                if errors:
-                    result.error_message = "; ".join(errors)
-
-            logging.info(f"UX test completed: {test_config.test_name}")
-
-        except Exception as e:
-            error_msg = f"UX test failed: {str(e)}"
-            result.status = TestStatus.FAILED
-            result.error_message = error_msg
-            logging.error(error_msg)
-            raise
-
-        return result
+            return result
 
 
 class LighthouseTestRunner(BaseTestRunner):
@@ -288,42 +291,43 @@ class LighthouseTestRunner(BaseTestRunner):
         self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
     ) -> TestResult:
         """Run  tests."""
-        logging.info(f"Running Lighthouse test: {test_config.test_name}")
+        logging.debug(f"Running Lighthouse test: {test_config.test_name}")
+        
+        with Display.display(test_config.test_name):
+            result = TestResult(
+                test_id=test_config.test_id,
+                test_type=test_config.test_type,
+                test_name=test_config.test_name,
+                status=TestStatus.RUNNING,
+                category=get_category_for_test_type(test_config.test_type),
+            )
 
-        result = TestResult(
-            test_id=test_config.test_id,
-            test_type=test_config.test_type,
-            test_name=test_config.test_name,
-            status=TestStatus.RUNNING,
-            category=get_category_for_test_type(test_config.test_type),
-        )
+            try:
+                browser_config = session.browser_config
 
-        try:
-            browser_config = session.browser_config
+                # Only run Lighthouse on Chromium browsers
+                if browser_config.get("browser_type") != "chromium":
+                    logging.warning("Lighthouse tests require Chromium browser, skipping")
+                    result.status = TestStatus.INCOMPLETED
+                    result.results = {"skipped": "Lighthouse requires Chromium browser"}
+                    return result
 
-            # Only run Lighthouse on Chromium browsers
-            if browser_config.get("browser_type") != "chromium":
-                logging.warning("Lighthouse tests require Chromium browser, skipping")
-                result.status = TestStatus.INCOMPLETED
-                result.results = {"skipped": "Lighthouse requires Chromium browser"}
-                return result
+                # Run Lighthouse test
+                lighthouse_test = LighthouseMetricsTest()
+                lighthouse_results: SubTestResult = await lighthouse_test.run(target_url, browser_config=browser_config)
 
-            # Run Lighthouse test
-            lighthouse_test = LighthouseMetricsTest()
-            lighthouse_results: SubTestResult = await lighthouse_test.run(target_url, browser_config=browser_config)
+                result.sub_tests = [lighthouse_results]
+                result.status = lighthouse_results.status
+                logging.debug(f"Lighthouse test completed: {test_config.test_name}")
 
-            result.sub_tests = [lighthouse_results]
-            result.status = lighthouse_results.status
-            logging.info(f"Lighthouse test completed: {test_config.test_name}")
+            except Exception as e:
+                error_msg = f"Lighthouse test failed: {str(e)}"
+                result.status = TestStatus.FAILED
+                result.error_message = error_msg
+                logging.error(error_msg)
+                raise
 
-        except Exception as e:
-            error_msg = f"Lighthouse test failed: {str(e)}"
-            result.status = TestStatus.FAILED
-            result.error_message = error_msg
-            logging.error(error_msg)
-            raise
-
-        return result
+            return result
 
 
 class ButtonTestRunner(BaseTestRunner):
@@ -332,51 +336,52 @@ class ButtonTestRunner(BaseTestRunner):
     async def run_test(
         self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
     ) -> TestResult:
-        logging.info(f"Running Button test: {test_config.test_name}")
-
-        result = TestResult(
-            test_id=test_config.test_id,
-            test_type=test_config.test_type,
-            test_name=test_config.test_name,
-            status=TestStatus.RUNNING,
-            category=get_category_for_test_type(test_config.test_type),
-        )
-
-        try:
-            page = session.get_page()
-            browser_config = session.browser_config
-
-            # Discover clickable elements via crawler
-            from webqa_agent.crawler.crawl import CrawlHandler
-
-            crawler = CrawlHandler(target_url)
-            clickable_elements = await crawler.clickable_elements_detection(page)
-            logging.info(f"Clickable elements number: {len(clickable_elements)}")
-            if len(clickable_elements) > 50:
-                clickable_elements = clickable_elements[:50]
-                logging.warning(f"Clickable elements number is too large, only keep the first 50")
-
-            button_test = PageButtonTest()
-            button_test_result = await button_test.run(
-                target_url, page=page, clickable_elements=clickable_elements, browser_config=browser_config
+        logging.debug(f"Running Button test: {test_config.test_name}")
+        
+        with Display.display(test_config.test_name):
+            result = TestResult(
+                test_id=test_config.test_id,
+                test_type=test_config.test_type,
+                test_name=test_config.test_name,
+                status=TestStatus.RUNNING,
+                category=get_category_for_test_type(test_config.test_type),
             )
 
-            # Second subtest: each clickable result? keep detailed reports if needed; here we only include traverse test
-            result.sub_tests = [button_test_result]
+            try:
+                page = session.get_page()
+                browser_config = session.browser_config
 
-            # Overall metrics/status
-            result.status = button_test_result.status
+                # Discover clickable elements via crawler
+                from webqa_agent.crawler.crawl import CrawlHandler
 
-            logging.info(f"Button test completed: {test_config.test_name}")
+                crawler = CrawlHandler(target_url)
+                clickable_elements = await crawler.clickable_elements_detection(page)
+                logging.debug(f"Clickable elements number: {len(clickable_elements)}")
+                if len(clickable_elements) > 50:
+                    clickable_elements = clickable_elements[:50]
+                    logging.warning(f"Clickable elements number is too large, only keep the first 50")
 
-        except Exception as e:
-            error_msg = f"Button test failed: {str(e)}"
-            result.status = TestStatus.FAILED
-            result.error_message = error_msg
-            logging.error(error_msg)
-            raise
+                button_test = PageButtonTest()
+                button_test_result = await button_test.run(
+                    target_url, page=page, clickable_elements=clickable_elements, browser_config=browser_config
+                )
 
-        return result
+                # Second subtest: each clickable result? keep detailed reports if needed; here we only include traverse test
+                result.sub_tests = [button_test_result]
+
+                # Overall metrics/status
+                result.status = button_test_result.status
+
+                logging.debug(f"Button test completed: {test_config.test_name}")
+
+            except Exception as e:
+                error_msg = f"Button test failed: {str(e)}"
+                result.status = TestStatus.FAILED
+                result.error_message = error_msg
+                logging.error(error_msg)
+                raise
+
+            return result
 
 
 class WebBasicCheckRunner(BaseTestRunner):
@@ -386,41 +391,42 @@ class WebBasicCheckRunner(BaseTestRunner):
         self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
     ) -> TestResult:
         """Run Web Basic Check tests."""
-        logging.info(f"Running Web Basic Check test: {test_config.test_name}")
+        logging.debug(f"Running Web Basic Check test: {test_config.test_name}")
+        
+        with Display.display(test_config.test_name):
+            result = TestResult(
+                test_id=test_config.test_id,
+                test_type=test_config.test_type,
+                test_name=test_config.test_name,
+                status=TestStatus.RUNNING,
+                category=get_category_for_test_type(test_config.test_type),
+            )
 
-        result = TestResult(
-            test_id=test_config.test_id,
-            test_type=test_config.test_type,
-            test_name=test_config.test_name,
-            status=TestStatus.RUNNING,
-            category=get_category_for_test_type(test_config.test_type),
-        )
+            try:
+                page = session.get_page()
 
-        try:
-            page = session.get_page()
+                # Discover page elements
+                from webqa_agent.crawler.crawl import CrawlHandler
 
-            # Discover page elements
-            from webqa_agent.crawler.crawl import CrawlHandler
+                crawler = CrawlHandler(target_url)
+                links = await crawler.extract_links(page)
 
-            crawler = CrawlHandler(target_url)
-            links = await crawler.extract_links(page)
+                # WebAccessibilityTest
+                accessibility_test = WebAccessibilityTest()
+                accessibility_result = await accessibility_test.run(target_url, links)
 
-            # WebAccessibilityTest
-            accessibility_test = WebAccessibilityTest()
-            accessibility_result = await accessibility_test.run(target_url, links)
+                result.sub_tests = [accessibility_result]
+                result.status = accessibility_result.status
+                logging.debug(f"Web Basic Check test completed: {test_config.test_name}")
 
-            result.sub_tests = [accessibility_result]
-            result.status = accessibility_result.status
-            logging.info(f"Web Basic Check test completed: {test_config.test_name}")
+            except Exception as e:
+                error_msg = f"Web Basic Check test failed: {str(e)}"
+                result.status = TestStatus.FAILED
+                result.error_message = error_msg
+                logging.error(error_msg)
+                raise
 
-        except Exception as e:
-            error_msg = f"Web Basic Check test failed: {str(e)}"
-            result.status = TestStatus.FAILED
-            result.error_message = error_msg
-            logging.error(error_msg)
-            raise
-
-        return result
+            return result
 
 
 class SecurityTestRunner(BaseTestRunner):
@@ -452,180 +458,181 @@ class SecurityTestRunner(BaseTestRunner):
         self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
     ) -> TestResult:
         """Run Security tests using Nuclei scanning."""
-        logging.info(f"Running Security test: {test_config.test_name}")
+        logging.debug(f"Running Security test: {test_config.test_name}")
+        
+        with Display.display(test_config.test_name):
+            result = TestResult(
+                test_id=test_config.test_id,
+                test_type=test_config.test_type,
+                test_name=test_config.test_name,
+                status=TestStatus.RUNNING,
+                category=get_category_for_test_type(test_config.test_type),
+            )
 
-        result = TestResult(
-            test_id=test_config.test_id,
-            test_type=test_config.test_type,
-            test_name=test_config.test_name,
-            status=TestStatus.RUNNING,
-            category=get_category_for_test_type(test_config.test_type),
-        )
-
-        try:
-            # 安全测试不需要浏览器会话，使用Nuclei进行独立扫描
-            logging.info("Security test running independently of browser session")
-
-            # 检查nuclei是否安装
-            nuclei_available = await self._check_nuclei_available()
-
-            if not nuclei_available:
-                result.status = TestStatus.FAILED
-                result.error_message = "Nuclei tool not found. Please install nuclei: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"
-                return result
-
-            # 执行安全扫描
-            scan_results = await self._run_security_scan(target_url, test_config)
-
-            # 处理扫描结果
-            findings = await self._process_scan_results(scan_results)
-
-            # 生成子测试结果
-            sub_tests = []
-
-            # 按严重程度分类结果
-            severity_counts = {}
-            finding_details = []
-
-            for finding in findings:
-                severity = finding.get("info", {}).get("severity", "unknown")
-                severity_counts[severity] = severity_counts.get(severity, 0) + 1
-                finding_details.append(
-                    {
-                        "template_id": finding.get("template-id", "unknown"),
-                        "name": finding.get("info", {}).get("name", "Unknown"),
-                        "severity": severity,
-                        "description": finding.get("info", {}).get("description", ""),
-                        "matched_at": finding.get("matched-at", ""),
-                        "extracted_results": finding.get("extracted-results", []),
-                    }
-                )
-
-            # 创建按严重程度的子测试
-            for severity in ["critical", "high", "medium", "low", "info"]:
-                count = severity_counts.get(severity, 0)
-
-                # 获取该严重程度的具体发现
-                severity_findings = [f for f in finding_details if f.get("severity") == severity]
-
-                # 构建报告内容
-                if count == 0:
-                    issues_text = f"未发现{severity.upper()}级别安全问题"
-                else:
-                    # 取前3个问题的名称作为示例
-                    sample_issues = [f["name"] for f in severity_findings[:3]]
-                    issues_text = f"发现{count}个{severity.upper()}级别安全问题"
-                    if sample_issues:
-                        issues_text += f"：{', '.join(sample_issues)}"
-                        if count > 3:
-                            issues_text += f" 等{count}个问题"
-
-                sub_tests.append(
-                    SubTestResult(
-                        name=f"{severity.upper()}级别安全问题扫描",
-                        status=TestStatus.PASSED,
-                        metrics={"findings_count": count},
-                        report=[SubTestReport(title=f"{severity.upper()}级别安全漏洞扫描", issues=issues_text)],
-                    )
-                )
-
-            # 创建扫描类型的子测试
-            for scan_type, description in {**self.SCAN_TAGS, **self.PROTOCOL_SCANS}.items():
-                type_findings = [f for f in finding_details if scan_type in f.get("template_id", "").lower()]
-                type_count = len(type_findings)
-
-                # 构建扫描类型报告内容
-                if type_count == 0:
-                    issues_text = f"{description}：未发现相关安全问题"
-                else:
-                    # 按严重程度统计该类型的发现
-                    type_severity_counts = {}
-                    for finding in type_findings:
-                        severity = finding.get("severity", "unknown")
-                        type_severity_counts[severity] = type_severity_counts.get(severity, 0) + 1
-
-                    severity_summary = []
-                    for sev in ["critical", "high", "medium", "low", "info"]:
-                        if type_severity_counts.get(sev, 0) > 0:
-                            severity_summary.append(f"{sev.upper()}级{type_severity_counts[sev]}个")
-
-                    issues_text = f"{description}：发现{type_count}个问题"
-                    if severity_summary:
-                        issues_text += f"（{', '.join(severity_summary)}）"
-
-                    # 添加具体问题示例（最多3个）
-                    if type_findings:
-                        sample_names = [f["name"] for f in type_findings[:2]]
-                        if sample_names:
-                            issues_text += f"，包括：{', '.join(sample_names)}"
-                            if type_count > 2:
-                                issues_text += " 等"
-                
-                combined_reports = []
-                if not finding_details:
-                    # No security issues found
-                    combined_reports.append(SubTestReport(title="安全检查", issues="无发现问题"))
-                else:
-                    for fd in finding_details:
-                        title = f"[{fd.get('severity', 'unknown').upper()}] {fd.get('name')}"
-                        details_parts = []
-                        if fd.get('description'):
-                            details_parts.append(fd['description'])
-                        if fd.get('matched_at'):
-                            details_parts.append(f"Matched at: {fd['matched_at']}")
-                        if fd.get('extracted_results'):
-                            details_parts.append(f"Extracted: {', '.join(map(str, fd['extracted_results']))}")
-                        issues_text = " | ".join(details_parts) if details_parts else "No further details."
-                        combined_reports.append(SubTestReport(title=title, issues=issues_text))
-                
-                sub_tests = [
-                    SubTestResult(
-                        name="nuclei检查",
-                        status=TestStatus.PASSED,
-                        metrics={
-                            "total_findings": len(finding_details),
-                            **severity_counts
-                        },
-                        report=combined_reports
-                    )
-                ]
-                
-                result.sub_tests = sub_tests
-            result.status = TestStatus.PASSED
-
-            # 添加总体指标
-            total_findings = len(findings)
-            critical_findings = severity_counts.get("critical", 0)
-            high_findings = severity_counts.get("high", 0)
-
-            result.add_metric("total_findings", total_findings)
-            result.add_metric("critical_findings", critical_findings)
-            result.add_metric("high_findings", high_findings)
-            result.add_metric("security_score", max(0, 100 - (critical_findings * 20 + high_findings * 10)))
-
-            # 添加详细结果
-            result.add_data("security_findings", finding_details)
-            result.add_data("severity_summary", severity_counts)
-
-            # 清理临时文件
-            await self._cleanup_temp_files(scan_results.get("output_path"))
-
-            logging.info(f"Security test completed: {test_config.test_name}, found {total_findings} issues")
-
-        except Exception as e:
-            error_msg = f"Security test failed: {str(e)}"
-            logging.error(error_msg)
-            result.status = TestStatus.FAILED
-            result.error_message = error_msg
-
-            # 即使失败也要清理临时文件
             try:
-                scan_results = locals().get("scan_results", {})
-                await self._cleanup_temp_files(scan_results.get("output_path"))
-            except:
-                pass
+                # 安全测试不需要浏览器会话，使用Nuclei进行独立扫描
+                logging.debug("Security test running independently of browser session")
 
-        return result
+                # 检查nuclei是否安装
+                nuclei_available = await self._check_nuclei_available()
+
+                if not nuclei_available:
+                    result.status = TestStatus.FAILED
+                    result.error_message = "Nuclei tool not found. Please install nuclei: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"
+                    return result
+
+                # 执行安全扫描
+                scan_results = await self._run_security_scan(target_url, test_config)
+
+                # 处理扫描结果
+                findings = await self._process_scan_results(scan_results)
+
+                # 生成子测试结果
+                sub_tests = []
+
+                # 按严重程度分类结果
+                severity_counts = {}
+                finding_details = []
+
+                for finding in findings:
+                    severity = finding.get("info", {}).get("severity", "unknown")
+                    severity_counts[severity] = severity_counts.get(severity, 0) + 1
+                    finding_details.append(
+                        {
+                            "template_id": finding.get("template-id", "unknown"),
+                            "name": finding.get("info", {}).get("name", "Unknown"),
+                            "severity": severity,
+                            "description": finding.get("info", {}).get("description", ""),
+                            "matched_at": finding.get("matched-at", ""),
+                            "extracted_results": finding.get("extracted-results", []),
+                        }
+                    )
+
+                # 创建按严重程度的子测试
+                for severity in ["critical", "high", "medium", "low", "info"]:
+                    count = severity_counts.get(severity, 0)
+
+                    # 获取该严重程度的具体发现
+                    severity_findings = [f for f in finding_details if f.get("severity") == severity]
+
+                    # 构建报告内容
+                    if count == 0:
+                        issues_text = f"未发现{severity.upper()}级别安全问题"
+                    else:
+                        # 取前3个问题的名称作为示例
+                        sample_issues = [f["name"] for f in severity_findings[:3]]
+                        issues_text = f"发现{count}个{severity.upper()}级别安全问题"
+                        if sample_issues:
+                            issues_text += f"：{', '.join(sample_issues)}"
+                            if count > 3:
+                                issues_text += f" 等{count}个问题"
+
+                    sub_tests.append(
+                        SubTestResult(
+                            name=f"{severity.upper()}级别安全问题扫描",
+                            status=TestStatus.PASSED,
+                            metrics={"findings_count": count},
+                            report=[SubTestReport(title=f"{severity.upper()}级别安全漏洞扫描", issues=issues_text)],
+                        )
+                    )
+
+                # 创建扫描类型的子测试
+                for scan_type, description in {**self.SCAN_TAGS, **self.PROTOCOL_SCANS}.items():
+                    type_findings = [f for f in finding_details if scan_type in f.get("template_id", "").lower()]
+                    type_count = len(type_findings)
+
+                    # 构建扫描类型报告内容
+                    if type_count == 0:
+                        issues_text = f"{description}：未发现相关安全问题"
+                    else:
+                        # 按严重程度统计该类型的发现
+                        type_severity_counts = {}
+                        for finding in type_findings:
+                            severity = finding.get("severity", "unknown")
+                            type_severity_counts[severity] = type_severity_counts.get(severity, 0) + 1
+
+                        severity_summary = []
+                        for sev in ["critical", "high", "medium", "low", "info"]:
+                            if type_severity_counts.get(sev, 0) > 0:
+                                severity_summary.append(f"{sev.upper()}级{type_severity_counts[sev]}个")
+
+                        issues_text = f"{description}：发现{type_count}个问题"
+                        if severity_summary:
+                            issues_text += f"（{', '.join(severity_summary)}）"
+
+                        # 添加具体问题示例（最多3个）
+                        if type_findings:
+                            sample_names = [f["name"] for f in type_findings[:2]]
+                            if sample_names:
+                                issues_text += f"，包括：{', '.join(sample_names)}"
+                                if type_count > 2:
+                                    issues_text += " 等"
+
+                    combined_reports = []
+                    if not finding_details:
+                        # No security issues found
+                        combined_reports.append(SubTestReport(title="安全检查", issues="无发现问题"))
+                    else:
+                        for fd in finding_details:
+                            title = f"[{fd.get('severity', 'unknown').upper()}] {fd.get('name')}"
+                            details_parts = []
+                            if fd.get('description'):
+                                details_parts.append(fd['description'])
+                            if fd.get('matched_at'):
+                                details_parts.append(f"Matched at: {fd['matched_at']}")
+                            if fd.get('extracted_results'):
+                                details_parts.append(f"Extracted: {', '.join(map(str, fd['extracted_results']))}")
+                            issues_text = " | ".join(details_parts) if details_parts else "No further details."
+                            combined_reports.append(SubTestReport(title=title, issues=issues_text))
+
+                    sub_tests = [
+                        SubTestResult(
+                            name="nuclei检查",
+                            status=TestStatus.PASSED,
+                            metrics={
+                                "total_findings": len(finding_details),
+                                **severity_counts
+                            },
+                            report=combined_reports
+                        )
+                    ]
+
+                    result.sub_tests = sub_tests
+                result.status = TestStatus.PASSED
+
+                # 添加总体指标
+                total_findings = len(findings)
+                critical_findings = severity_counts.get("critical", 0)
+                high_findings = severity_counts.get("high", 0)
+
+                result.add_metric("total_findings", total_findings)
+                result.add_metric("critical_findings", critical_findings)
+                result.add_metric("high_findings", high_findings)
+                result.add_metric("security_score", max(0, 100 - (critical_findings * 20 + high_findings * 10)))
+
+                # 添加详细结果
+                result.add_data("security_findings", finding_details)
+                result.add_data("severity_summary", severity_counts)
+
+                # 清理临时文件
+                await self._cleanup_temp_files(scan_results.get("output_path"))
+
+                logging.debug(f"Security test completed: {test_config.test_name}, found {total_findings} issues")
+
+            except Exception as e:
+                error_msg = f"Security test failed: {str(e)}"
+                logging.error(error_msg)
+                result.status = TestStatus.FAILED
+                result.error_message = error_msg
+
+                # 即使失败也要清理临时文件
+                try:
+                    scan_results = locals().get("scan_results", {})
+                    await self._cleanup_temp_files(scan_results.get("output_path"))
+                except:
+                    pass
+
+            return result
 
     async def _check_nuclei_available(self) -> bool:
         """检查nuclei工具是否可用."""
@@ -677,7 +684,7 @@ class SecurityTestRunner(BaseTestRunner):
                 tasks.append(task)
 
         # 并行执行所有扫描
-        logging.info(f"Start {len(tasks)} security scan tasks...")
+        logging.debug(f"Start {len(tasks)} security scan tasks...")
         scan_results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # 处理结果

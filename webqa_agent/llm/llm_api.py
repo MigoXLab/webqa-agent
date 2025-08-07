@@ -98,11 +98,11 @@ class LLMAPI:
                 # Check if response starts with ```json and ends with ```
                 if response.startswith("```json") and response.endswith("```"):
                     # Remove the markers and return the content
-                    logging.info("Cleaning response: Removing ```json``` markers")
+                    logging.debug("Cleaning response: Removing ```json``` markers")
                     return response[7:-3].strip()
                 # Check if it just has ``` without json specification
                 elif response.startswith("```") and response.endswith("```"):
-                    logging.info("Cleaning response: Removing ``` markers")
+                    logging.debug("Cleaning response: Removing ``` markers")
                     return response[3:-3].strip()
 
                 # Encode response as UTF-8

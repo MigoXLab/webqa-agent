@@ -57,7 +57,7 @@ class ActionHandler:
         try:
             # Get current page URL
             current_url = page.url
-            logging.info(f"Smart navigation check - Current URL: {current_url}, Target URL: {url}")
+            logging.debug(f"Smart navigation check - Current URL: {current_url}, Target URL: {url}")
 
             # Enhanced URL normalization function to handle various domain variations
             def normalize_url(u):
@@ -83,10 +83,10 @@ class ActionHandler:
             current_normalized = normalize_url(current_url)
             target_normalized = normalize_url(url)
 
-            logging.info(f"Normalized URLs - Current: {current_normalized}, Target: {target_normalized}")
+            logging.debug(f"Normalized URLs - Current: {current_normalized}, Target: {target_normalized}")
 
             if current_normalized == target_normalized:
-                logging.info("Already on target page (normalized match), skipping navigation")
+                logging.debug("Already on target page (normalized match), skipping navigation")
                 return False
 
             # More flexible URL matching: if domain is same and path is similar, also consider as match
@@ -126,19 +126,19 @@ class ActionHandler:
                 or current_path == ""
                 and target_path == "/"
             ):
-                logging.info(f"Domain and path match detected ({current_domain}{current_path}), skipping navigation")
+                logging.debug(f"Domain and path match detected ({current_domain}{current_path}), skipping navigation")
                 return False
 
             # Check if page is still valid
             try:
                 await page.title()  # Simple check if page responds
-                logging.info(f"Page is responsive, proceeding with navigation from {current_url} to {url}")
+                logging.debug(f"Page is responsive, proceeding with navigation from {current_url} to {url}")
             except Exception as e:
                 logging.warning(f"Page check failed: {e}, forcing navigation")
 
             # Need to perform navigation
             await self.go_to_page(page, url, cookies)
-            logging.info(f"Successfully navigated to {url}")
+            logging.debug(f"Successfully navigated to {url}")
             return True
 
         except Exception as e:
@@ -155,7 +155,7 @@ class ActionHandler:
         if self.page:
             try:
                 await self.page.close()
-                logging.info("Page closed successfully")
+                logging.debug("Page closed successfully")
             except Exception as e:
                 logging.error(f"Error closing page: {e}")
 
@@ -173,7 +173,7 @@ class ActionHandler:
         Returns:
             bool: Whether scroll operation was performed
         """
-        logging.info("Start scrolling page")
+        logging.debug("Start scrolling page")
 
         async def perform_scroll():  # Execute scroll operation
             if direction == "up":
@@ -183,7 +183,7 @@ class ActionHandler:
 
         if not distance:
             distance = int(await self.page.evaluate("window.innerHeight") / 2)
-            logging.info(f"Scrolling distance: {distance}")
+            logging.debug(f"Scrolling distance: {distance}")
 
         if scrollType == "once":
             await perform_scroll()
@@ -199,13 +199,13 @@ class ActionHandler:
 
                 # Check if page is scrolled to the bottom
                 if current_scroll == prev_scroll:
-                    logging.info("No further scroll possible, reached the bottom.")
+                    logging.debug("No further scroll possible, reached the bottom.")
                     break
 
                 # Until bottom
                 if current_scroll + distance >= current_scroll_height:
                     distance = current_scroll_height - current_scroll
-                    logging.info(f"Adjusting last scroll distance to {distance}")
+                    logging.debug(f"Adjusting last scroll distance to {distance}")
 
                 prev_scroll = current_scroll
                 await perform_scroll()
@@ -230,7 +230,7 @@ class ActionHandler:
                 logging.error(f"Element with id {id} not found in buffer for click action.")
                 return False
 
-            logging.info(
+            logging.debug(
                 f"Attempting to click element: id={id}, tagName='{element.get('tagName')}', innerText='{element.get('innerText', '').strip()[:50]}', selector='{element.get('selector')}'"
             )
 
@@ -246,7 +246,7 @@ class ActionHandler:
         y = element.get("center_y")
         try:
             if x is not None and y is not None:
-                logging.info(f"mouse click at element {id}, coordinate=({x}, {y})")
+                logging.debug(f"mouse click at element {id}, coordinate=({x}, {y})")
                 try:
                     await self.page.mouse.click(x, y)
                 except Exception as e:
@@ -265,7 +265,7 @@ class ActionHandler:
             logging.error(f"Element with id {id} not found in buffer for hover action.")
             return False
 
-        logging.info(
+        logging.debug(
             f"Attempting to hover over element: id={id}, tagName='{element.get('tagName')}', innerText='{element.get('innerText', '').strip()[:50]}', selector='{element.get('selector')}'"
         )
 
@@ -275,7 +275,7 @@ class ActionHandler:
         y = element.get("center_y")
         if x is not None and y is not None:
             y = y - scroll_y
-            logging.info(f"mouse hover at ({x}, {y})")
+            logging.debug(f"mouse hover at ({x}, {y})")
             await self.page.mouse.move(x, y)
             await asyncio.sleep(0.5)
             return True
@@ -292,9 +292,9 @@ class ActionHandler:
         Returns:
             bool: True if success, False if failed
         """
-        logging.info(f"wait for {timeMs} milliseconds")
+        logging.debug(f"wait for {timeMs} milliseconds")
         await asyncio.sleep(timeMs / 1000)
-        logging.info(f"wait for {timeMs} milliseconds done")
+        logging.debug(f"wait for {timeMs} milliseconds done")
         return True
 
     async def type(self, id, text, clear_before_type: bool = False) -> bool:
@@ -306,7 +306,7 @@ class ActionHandler:
                 logging.error(f"Element with id {id} not found in buffer for type action.")
                 return False
 
-            logging.info(
+            logging.debug(
                 f"Attempting to type into element: id={id}, tagName='{element.get('tagName')}', innerText='{element.get('innerText', '').strip()[:50]}', selector='{element.get('selector')}', clear_before_type={clear_before_type}"
             )
 
@@ -332,7 +332,7 @@ class ActionHandler:
                 try:
                     # Try using CSS selector
                     await self.page.locator(selector).fill(text)
-                    logging.info(f"Typed '{text}' into element {id} using CSS selector: {selector}")
+                    logging.debug(f"Typed '{text}' into element {id} using CSS selector: {selector}")
                 except Exception as css_error:
                     logging.warning(f"CSS selector type failed for element {id}: {css_error}")
                     # CSS selector failed, try XPath
@@ -340,7 +340,7 @@ class ActionHandler:
                     if xpath:
                         try:
                             await self.page.locator(f"xpath={xpath}").fill(text)
-                            logging.info(f"Typed '{text}' into element {id} using XPath fallback: {xpath}")
+                            logging.debug(f"Typed '{text}' into element {id} using XPath fallback: {xpath}")
                         except Exception as xpath_error:
                             logging.error(f"Both CSS and XPath type failed for element {id}. CSS error: {css_error}, XPath error: {xpath_error}")
                             return False
@@ -354,7 +354,7 @@ class ActionHandler:
                 if xpath:
                     try:
                         await self.page.locator(f"xpath={xpath}").fill(text)
-                        logging.info(f"Typed '{text}' into element {id} using XPath: {xpath}")
+                        logging.debug(f"Typed '{text}' into element {id} using XPath: {xpath}")
                     except Exception as xpath_error:
                         logging.error(f"XPath type failed for element {id}: {xpath_error}")
                         return False
@@ -420,7 +420,7 @@ class ActionHandler:
                 logging.error(f"Element with id {id} not found in buffer for clear action.")
                 return False
 
-            logging.info(
+            logging.debug(
                 f"Attempting to clear element: id={id}, tagName='{element_to_clear.get('tagName')}', innerText='{element_to_clear.get('innerText', '').strip()[:50]}', selector='{element_to_clear.get('selector')}'"
             )
 
@@ -441,7 +441,7 @@ class ActionHandler:
                 try:
                     # Try using CSS selector
                     await self.page.locator(selector).fill("")
-                    logging.info(f"Cleared input for element {id} using CSS selector: {selector}")
+                    logging.debug(f"Cleared input for element {id} using CSS selector: {selector}")
                 except Exception as css_error:
                     logging.warning(f"CSS selector clear failed for element {id}: {css_error}")
                     # CSS selector failed, try XPath
@@ -449,7 +449,7 @@ class ActionHandler:
                     if xpath:
                         try:
                             await self.page.locator(f"xpath={xpath}").fill("")
-                            logging.info(f"Cleared input for element {id} using XPath fallback: {xpath}")
+                            logging.debug(f"Cleared input for element {id} using XPath fallback: {xpath}")
                         except Exception as xpath_error:
                             logging.error(f"Both CSS and XPath clear failed for element {id}. CSS error: {css_error}, XPath error: {xpath_error}")
                             return False
@@ -463,7 +463,7 @@ class ActionHandler:
                 if xpath:
                     try:
                         await self.page.locator(f"xpath={xpath}").fill("")
-                        logging.info(f"Cleared input for element {id} using XPath: {xpath}")
+                        logging.debug(f"Cleared input for element {id} using XPath: {xpath}")
                     except Exception as xpath_error:
                         logging.error(f"XPath clear failed for element {id}: {xpath_error}")
                         return False
@@ -532,7 +532,7 @@ class ActionHandler:
         """
         try:
             await page.wait_for_load_state(timeout=120000)
-            logging.info("Page is fully loaded, agent is about to take screenshots")
+            logging.debug("Page is fully loaded, agent is about to take screenshots")
 
             # Directly capture screenshot as binary data
             if file_path:
@@ -559,7 +559,7 @@ class ActionHandler:
         """Navigate back to the previous page."""
         try:
             await self.page.go_back()
-            logging.info("Navigated back to the previous page.")
+            logging.debug("Navigated back to the previous page.")
             return True
         except Exception as e:
             logging.error(f"Failed to navigate back: {e}")
@@ -646,17 +646,17 @@ class ActionHandler:
                 return False
 
             # Find compatible input elements
-            logging.info(f"file_inputs: {file_inputs}")
+            logging.debug(f"file_inputs: {file_inputs}")
             compatible_inputs = [input_elem for input_elem in file_inputs if input_elem.get("acceptsFile")]
 
             # If compatible input elements are found, use the first one, otherwise fallback to the first available
-            logging.info(f"compatible_inputs: {compatible_inputs}")
+            logging.debug(f"compatible_inputs: {compatible_inputs}")
             selected_input = compatible_inputs[0] if compatible_inputs else file_inputs[0]
-            logging.info(f"selected_input: {selected_input}")
+            logging.debug(f"selected_input: {selected_input}")
 
             # Upload files (support batch)
             selector = selected_input.get("selector")
-            logging.info(f"Uploading files {valid_file_paths} to: {selector}")
+            logging.debug(f"Uploading files {valid_file_paths} to: {selector}")
             await self.page.set_input_files(selector, valid_file_paths)
 
             await asyncio.sleep(1)
@@ -860,7 +860,7 @@ class ActionHandler:
             result = await self.page.evaluate(js_code, element)
 
             if result.get("success"):
-                logging.info(f"Found {len(result['options'])} options in {result.get('selector_type')} dropdown")
+                logging.debug(f"Found {len(result['options'])} options in {result.get('selector_type')} dropdown")
                 return {
                     "success": True,
                     "options": result["options"],
@@ -891,7 +891,7 @@ class ActionHandler:
                 x = element.get("center_x")
                 y = element.get("center_y")
                 await self.page.mouse.click(x, y)
-                logging.info(f"Clicked option_id {option_id} ({option_text}) directly.")
+                logging.debug(f"Clicked option_id {option_id} ({option_text}) directly.")
                 return {
                     "success": True,
                     "message": f"Clicked dropdown option '{option_text}' directly.",
@@ -1156,7 +1156,7 @@ class ActionHandler:
             result = await self.page.evaluate(js_code, {"elementData": element, "targetText": option_text})
 
             if result.get("success"):
-                logging.info(f"Successfully selected {result.get('selector_type')} option: {option_text}")
+                logging.debug(f"Successfully selected {result.get('selector_type')} option: {option_text}")
                 return {
                     "success": True,
                     "message": result["message"],
@@ -1315,7 +1315,7 @@ class ActionHandler:
             )
 
             if result.get("success"):
-                logging.info(f"Successfully selected level {level} option: {option_text}")
+                logging.debug(f"Successfully selected level {level} option: {option_text}")
                 return {
                     "success": True,
                     "message": result["message"],
@@ -1364,7 +1364,7 @@ class ActionHandler:
             await self.page.mouse.up()
             await asyncio.sleep(0.2)
 
-            logging.info(f"Drag completed from ({source_x}, {source_y}) to ({target_x}, {target_y})")
+            logging.debug(f"Drag completed from ({source_x}, {source_y}) to ({target_x}, {target_y})")
             return True
 
         except Exception as e:

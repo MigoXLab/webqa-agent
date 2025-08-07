@@ -51,7 +51,7 @@ class ParallelTestExecutor:
         Returns:
             Updated session with results
         """
-        logging.info(f"Starting parallel test execution for session: {test_session.session_id}")
+        logging.debug(f"Starting parallel test execution for session: {test_session.session_id}")
         test_session.start_session()
 
         try:
@@ -86,7 +86,7 @@ class ParallelTestExecutor:
         execution_batches = self._resolve_test_dependencies(enabled_tests)
 
         for batch_idx, test_batch in enumerate(execution_batches):
-            logging.info(f"Executing batch {batch_idx + 1}/{len(execution_batches)} with {len(test_batch)} tests")
+            logging.debug(f"Executing batch {batch_idx + 1}/{len(execution_batches)} with {len(test_batch)} tests")
 
             # Create semaphore for this batch
             semaphore = asyncio.Semaphore(min(self.max_concurrent_tests, len(test_batch)))
@@ -153,7 +153,7 @@ class ParallelTestExecutor:
                 for test_config in test_batch:
                     self.running_tests.pop(test_config.test_id, None)
 
-            logging.info(f"Batch {batch_idx + 1} completed")
+            logging.debug(f"Batch {batch_idx + 1} completed")
             if cancelled_in_batch:
                 # Propagate cancellation after processing.
                 raise asyncio.CancelledError()
@@ -167,7 +167,7 @@ class ParallelTestExecutor:
             test_context = test_session.test_contexts[test_config.test_id]
             test_context.start_execution()
 
-            logging.info(f"Starting test: {test_config.test_name} ({test_config.test_type.value})")
+            logging.debug(f"Starting test: {test_config.test_name} ({test_config.test_type.value})")
 
             try:
                 if test_config.test_type in [
@@ -217,7 +217,7 @@ class ParallelTestExecutor:
                 result.end_time = test_context.end_time
                 result.duration = test_context.duration
 
-                logging.info(f"Test completed successfully: {test_config.test_name}")
+                logging.debug(f"Test completed successfully: {test_config.test_name}")
                 return result
 
             except Exception as e:
@@ -297,7 +297,7 @@ class ParallelTestExecutor:
         if test_id in self.running_tests:
             task = self.running_tests[test_id]
             task.cancel()
-            logging.info(f"Test cancelled: {test_id}")
+            logging.debug(f"Test cancelled: {test_id}")
 
     async def cancel_all_tests(self):
         """Cancel all running tests."""
@@ -305,7 +305,7 @@ class ParallelTestExecutor:
             await self.cancel_test(test_id)
 
         await self.session_manager.close_all_sessions()
-        logging.info("All tests cancelled")
+        logging.debug("All tests cancelled")
 
     def get_running_tests(self) -> List[str]:
         """Get list of currently running test IDs."""
@@ -342,8 +342,8 @@ class ParallelTestExecutor:
         )
         test_session.html_report_path = html_path
 
-        logging.info(f"Report generated: {report_path}")
-        logging.info(f"HTML report generated: {html_path}")
+        logging.debug(f"Report generated: {report_path}")
+        logging.debug(f"HTML report generated: {html_path}")
 
         # Mark session as completed if not already done
         if test_session.end_time is None:

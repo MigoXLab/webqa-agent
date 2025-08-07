@@ -98,7 +98,7 @@ class ClickHandler:
         xpath = element_info.get("xpath")
         click_success = False
 
-        logging.info(f"Clicking element: {element_info}")
+        logging.debug(f"Clicking element: {element_info}")
 
         context = page.context
         new_page = None
@@ -106,7 +106,7 @@ class ClickHandler:
         def handle_new_page(page_obj):
             nonlocal new_page
             new_page = page_obj
-            logging.info(f"New page detected: {page_obj.url}")
+            logging.debug(f"New page detected: {page_obj.url}")
 
         context.on("page", handle_new_page)
 
@@ -126,7 +126,7 @@ class ClickHandler:
                         file_name=f"element_{element_index}_new_page"
                     )
                     click_result["new_page_screenshot"] = screenshot_b64
-                    logging.info("New page screenshot saved")
+                    logging.debug("New page screenshot saved")
 
                 except Exception as e:
                     click_result["error"] = f"Failed to handle new page: {e}"
@@ -138,7 +138,7 @@ class ClickHandler:
                     file_name=f"element_{element_index}_after_click"
                 )
                 click_result["screenshot_after"] = screenshot_b64
-                logging.info("After click screenshot saved")
+                logging.debug("After click screenshot saved")
 
         else:
             click_result["error"] = f"Failed to click element with all strategies. Element: '{element_info}'"
@@ -160,7 +160,7 @@ class ClickHandler:
                 await self._scroll_into_view_safely(page, locator_str)
                 await page.click(locator_str, timeout=click_timeout)
                 click_result["click_method"] = locator_str
-                logging.info(f"Successfully clicked using xpath: {xpath}")
+                logging.debug(f"Successfully clicked using xpath: {xpath}")
                 return True
             except Exception as e:
                 logging.debug(f"XPath click failed: {e}")
@@ -171,7 +171,7 @@ class ClickHandler:
                 await self._scroll_into_view_safely(page, selector)
                 await page.click(selector, timeout=click_timeout)
                 click_result["click_method"] = selector
-                logging.info(f"Successfully clicked using selector: {selector}")
+                logging.debug(f"Successfully clicked using selector: {selector}")
                 return True
             except Exception as e:
                 logging.debug(f"Selector click failed: {e}")
@@ -194,7 +194,7 @@ class ClickHandler:
             if element_handle:
                 await page.evaluate("el => el.click()", element_handle)
                 click_result["click_method"] = f"js_evaluate_click:{selector or xpath}"
-                logging.info("Successfully clicked using JS evaluate")
+                logging.debug("Successfully clicked using JS evaluate")
                 return True
             else:
                 click_result["error"] = "No element handle found for JS click"
@@ -220,7 +220,7 @@ class ClickHandler:
                 logging.debug("No popup detected, skipping close operation")
                 return
 
-            logging.info("Popup detected, attempting to close...")
+            logging.debug("Popup detected, attempting to close...")
 
             close_selectors = [
                 '[data-dismiss="modal"]',
@@ -252,7 +252,7 @@ class ClickHandler:
                         is_visible = await element.is_visible()
                         if is_visible:
                             await element.click(timeout=2000)
-                            logging.info(f"Closed popup using selector: {selector}")
+                            logging.debug(f"Closed popup using selector: {selector}")
                             popup_closed = True
                             await asyncio.sleep(0.3)  # Wait for close animation
                             break
@@ -262,7 +262,7 @@ class ClickHandler:
             if not popup_closed:
                 try:
                     await page.keyboard.press("Escape")
-                    logging.info("Attempted to close popup with ESC key")
+                    logging.debug("Attempted to close popup with ESC key")
                     await asyncio.sleep(0.3)
                 except Exception:
                     pass

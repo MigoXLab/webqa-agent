@@ -33,7 +33,7 @@ class UITool(BaseTool):
             include_screenshot: 是否包含截图
             viewport_only: 是否只获取视窗内容，默认True（用于错误检测场景）
         """
-        logging.info(f"Retrieving page context for analysis (viewport_only={viewport_only})")
+        logging.debug(f"Retrieving page context for analysis (viewport_only={viewport_only})")
         page = self.ui_tester_instance.driver.get_page()
         dp = DeepCrawler(page)
         await dp.crawl(highlight=True, highlight_text=True, viewport_only=viewport_only)
@@ -41,7 +41,7 @@ class UITool(BaseTool):
 
         screenshot = None
         if include_screenshot:
-            logging.info("Capturing post-action screenshot")
+            logging.debug("Capturing post-action screenshot")
             screenshot = await self.ui_tester_instance._actions.b64_page_screenshot(
                 file_name="check_ui_error", save_to_log=False, full_page=not viewport_only
             )
@@ -54,8 +54,8 @@ class UITool(BaseTool):
         self, action: str, target: str, value: Optional[str], intent: str, page_structure: str, screenshot: str
     ) -> Dict[str, Any]:
         """Uses an LLM to check for a UI validation error after an action."""
-        logging.info(f"Starting UI error detection for action: {action} on {target}")
-        logging.info(f"Error detection intent: {intent}")
+        logging.debug(f"Starting UI error detection for action: {action} on {target}")
+        logging.debug(f"Error detection intent: {intent}")
 
         prompt = get_error_detection_prompt()
         llm_input = (
@@ -72,7 +72,7 @@ class UITool(BaseTool):
         # Use the same LLM instance from the ui_tester
         llm = self.ui_tester_instance.llm
         try:
-            logging.info("Starting UI error detection - Sending request to LLM...")
+            logging.debug("Starting UI error detection - Sending request to LLM...")
             start_time = datetime.datetime.now()
 
             response_str = await llm.get_llm_response(system_prompt=prompt, prompt=llm_input, images=screenshot)
@@ -80,18 +80,18 @@ class UITool(BaseTool):
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()
 
-            logging.info(f"UI error detection completed in {duration:.2f} seconds")
+            logging.debug(f"UI error detection completed in {duration:.2f} seconds")
             logging.debug(f"Error detection response: {response_str[:500]}...")
 
             result = json.loads(response_str)
             error_detected = result.get("error_detected", False)
             error_message = result.get("error_message", "")
 
-            logging.info(f"Error detection result: {'ERROR' if error_detected else 'NO ERROR'}")
+            logging.debug(f"Error detection result: {'ERROR' if error_detected else 'NO ERROR'}")
             if error_detected:
                 logging.warning(f"UI error detected: {error_message}")
             else:
-                logging.info("No UI validation errors detected")
+                logging.debug("No UI validation errors detected")
 
             return result
 
@@ -127,18 +127,18 @@ class UITool(BaseTool):
             logging.error(error_msg)
             return f"[FAILURE] Error: {error_msg}"
 
-        logging.info(f"=== Executing UI Action: {action} ===")
-        logging.info(f"Target: {target}")
-        logging.info(f"Value: {value}")
-        logging.info(f"Description: {description}")
-        logging.info(f"Clear before type: {clear_before_type}")
+        logging.debug(f"=== Executing UI Action: {action} ===")
+        logging.debug(f"Target: {target}")
+        logging.debug(f"Value: {value}")
+        logging.debug(f"Description: {description}")
+        logging.debug(f"Clear before type: {clear_before_type}")
 
         # Build the instruction for ui_tester.action()
         instruction_parts = []
 
         if description:
             instruction_parts.append(description)
-            logging.info(f"Using custom description: {description}")
+            logging.debug(f"Using custom description: {description}")
 
         # Build the action phrase
         if action.lower() == "click":
@@ -146,7 +146,7 @@ class UITool(BaseTool):
         elif action.lower() == "type":
             if clear_before_type:
                 action_phrase = f"Clear the {target} field and then type '{value}'"
-                logging.info("Using clear-before-type strategy")
+                logging.debug("Using clear-before-type strategy")
             else:
                 action_phrase = f"Type '{value}' in the {target}"
         elif action.lower() == "selectdropdown":
@@ -166,10 +166,10 @@ class UITool(BaseTool):
             instruction_parts.append(action_phrase)
 
         instruction = " - ".join(instruction_parts)
-        logging.info(f"Built instruction for UITester: {instruction}")
+        logging.debug(f"Built instruction for UITester: {instruction}")
 
         try:
-            logging.info(f"Executing UI action: {instruction}")
+            logging.debug(f"Executing UI action: {instruction}")
             start_time = datetime.datetime.now()
 
             execution_steps, result = await self.ui_tester_instance.action(instruction)
@@ -177,7 +177,7 @@ class UITool(BaseTool):
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()
 
-            logging.info(f"UI action completed in {duration:.2f} seconds")
+            logging.debug(f"UI action completed in {duration:.2f} seconds")
             logging.debug(f"UI action result type: {type(result)}")
 
             # First, check for a hard failure from the action executor
@@ -193,7 +193,7 @@ class UITool(BaseTool):
                     logging.warning(f"Action failed: {result.get('message', 'No details')}")
                 return f"[FAILURE] {error_message}"
 
-            logging.info("Action execution successful, retrieving page context")
+            logging.debug("Action execution successful, retrieving page context")
             page_structure, screenshot = await self.get_full_page_context(include_screenshot=True)
 
             if not isinstance(result, dict):
@@ -202,7 +202,7 @@ class UITool(BaseTool):
                 return f"[FAILURE] Error: {error_msg}"
 
             # --- Enhanced LLM-based UI Error Detection ---
-            logging.info("Starting enhanced UI error detection")
+            logging.debug("Starting enhanced UI error detection")
             error_check_result = await self._check_for_ui_error(
                 action, target, value, description or f"{action} {target}", page_structure, screenshot
             )
@@ -213,7 +213,7 @@ class UITool(BaseTool):
                 reasoning = error_check_result.get("reasoning", "")
 
                 logging.warning(f"UI validation error detected: {error_msg}")
-                logging.info(f"Error reasoning: {reasoning}")
+                logging.debug(f"Error reasoning: {reasoning}")
 
                 # Format as expected by execution agent
                 failure_response = f"[FAILURE] Action '{action}' on '{target}' appeared to succeed, but a validation error was detected on the page. You MUST resolve this before proceeding."
@@ -226,11 +226,11 @@ class UITool(BaseTool):
                 context_preview = page_structure[:2000] + "..." if len(page_structure) > 2000 else page_structure
                 failure_response += f"\n\nPage Context Preview:\n{context_preview}"
 
-                logging.info("Returning failure response due to UI validation error")
+                logging.debug("Returning failure response due to UI validation error")
                 return failure_response
 
             # --- Success Response with Context ---
-            logging.info("Action completed successfully with no validation errors")
+            logging.debug("Action completed successfully with no validation errors")
             success_response = f"[SUCCESS] Action '{action}' on '{target}' completed successfully."
             if description:
                 success_response += f" ({description})"
@@ -238,13 +238,13 @@ class UITool(BaseTool):
             # Add contextual information about the current page state
             if result.get("message"):
                 success_response += f" Status: {result['message']}"
-                logging.info(f"Action status message: {result['message']}")
+                logging.debug(f"Action status message: {result['message']}")
 
             # Include essential page structure information for next step planning
             context_preview = page_structure[:1500] + "..." if len(page_structure) > 1500 else page_structure
             success_response += f"\n\nCurrent Page State:\n{context_preview}"
 
-            logging.info("Returning success response with page context")
+            logging.debug("Returning success response with page context")
             return success_response
 
         except Exception as e:
@@ -270,7 +270,7 @@ class UIAssertTool(BaseTool):
         if not self.ui_tester_instance:
             return "[FAILURE] Error: UITester instance not provided for assertion."
 
-        logging.info(f"Executing UI assertion: {assertion}")
+        logging.debug(f"Executing UI assertion: {assertion}")
 
         try:
             execution_steps, result = await self.ui_tester_instance.verify(assertion)
