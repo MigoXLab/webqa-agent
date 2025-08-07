@@ -84,7 +84,7 @@ class Driver:
 
         except Exception as e:
             logging.error("Failed to create browser instance.", exc_info=True)
-            raise e
+            raise
 
     def get_context(self):
         try:
@@ -134,4 +134,4 @@ class Driver:
                 logging.info("Browser instance closed successfully.")
         except Exception as e:
             logging.error("Failed to close browser instance.", exc_info=True)
-            raise e
+            raise

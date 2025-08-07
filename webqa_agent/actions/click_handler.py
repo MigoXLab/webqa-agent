@@ -118,7 +118,7 @@ class ClickHandler:
             if new_page:
                 click_result["has_new_page"] = True
                 try:
-                    await new_page.wait_for_load_state("networkidle", timeout=10000)
+                    await new_page.wait_for_load_state("networkidle", timeout=30000)
 
                     new_page_action_handler = ActionHandler()
                     new_page_action_handler.page = new_page
@@ -132,7 +132,7 @@ class ClickHandler:
                     click_result["error"] = f"Failed to handle new page: {e}"
                     logging.warning(f"Failed to handle new page: {e}")
 
-                await page.wait_for_load_state("domcontentloaded", timeout=10000)
+                await page.wait_for_load_state("networkidle", timeout=30000)
             else:
                 screenshot_b64 = await action_handler.b64_page_screenshot(
                     file_name=f"element_{element_index}_after_click"

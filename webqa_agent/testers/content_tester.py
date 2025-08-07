@@ -89,7 +89,8 @@ class PageTextTest:
             logging.error(error_message)
             result.status = TestStatus.FAILED
             result.messages = {"page": str(e)}
-
+            raise
+        
         return result
 
     @staticmethod
@@ -231,6 +232,7 @@ class PageContentTest:
             logging.error(error_message)
             result.status = TestStatus.FAILED
             result.messages = {"page": str(e)}
+            raise
 
         return result
 
@@ -292,7 +294,6 @@ class PageButtonTest:
                         current_url = page.url
                         if current_url != url:
                             await page.goto(url)
-                            await page.wait_for_load_state("networkidle", timeout=30000)
                             await asyncio.sleep(0.5)  # Wait for page to stabilize
 
                         screenshots = []
@@ -346,6 +347,7 @@ class PageButtonTest:
             error_message = f"PageButtonTest error: {str(e)}"
             logging.error(error_message)
             status = TestStatus.FAILED
+            raise
 
         result.status = status
         result.steps = sub_test_results

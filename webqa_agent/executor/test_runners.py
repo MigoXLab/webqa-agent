@@ -207,7 +207,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
             result.status = TestStatus.FAILED
             result.error_message = error_msg
             logging.error(error_msg)
-            raise e
+            raise
 
         finally:
             # Cleanup parallel tester
@@ -276,7 +276,7 @@ class UXTestRunner(BaseTestRunner):
             result.status = TestStatus.FAILED
             result.error_message = error_msg
             logging.error(error_msg)
-            raise e
+            raise
 
         return result
 
@@ -321,7 +321,7 @@ class LighthouseTestRunner(BaseTestRunner):
             result.status = TestStatus.FAILED
             result.error_message = error_msg
             logging.error(error_msg)
-            raise e
+            raise
 
         return result
 
@@ -374,7 +374,7 @@ class ButtonTestRunner(BaseTestRunner):
             result.status = TestStatus.FAILED
             result.error_message = error_msg
             logging.error(error_msg)
-            raise e
+            raise
 
         return result
 
@@ -418,7 +418,7 @@ class WebBasicCheckRunner(BaseTestRunner):
             result.status = TestStatus.FAILED
             result.error_message = error_msg
             logging.error(error_msg)
-            raise e
+            raise
 
         return result
 

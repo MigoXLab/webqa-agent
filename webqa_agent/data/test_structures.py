@@ -261,8 +261,8 @@ class ParallelTestSession(BaseModel):
         return {
             "session_id": self.session_id,
             "target_url": self.target_url,
-            "start_time": self.start_time.isoformat() if self.start_time else None,
-            "end_time": self.end_time.isoformat() if self.end_time else None,
+            "start_time": self.start_time.replace(microsecond=0).isoformat() if self.start_time else None,
+            "end_time": self.end_time.replace(microsecond=0).isoformat() if self.end_time else None,
         }
 
     def to_dict(self) -> Dict[str, Any]:
