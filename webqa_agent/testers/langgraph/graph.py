@@ -109,7 +109,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
     start_time = datetime.datetime.now()
 
     response = await ui_tester.llm.get_llm_response(
-        system_prompt="You are a test planning expert.", prompt=prompt, images=screenshot
+        system_prompt="You are a test planning expert.", prompt=prompt, images=screenshot, temperature=0.1
     )
 
     end_time = datetime.datetime.now()
@@ -284,7 +284,7 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
     start_time = datetime.datetime.now()
 
     response_str = await ui_tester.llm.get_llm_response(
-        system_prompt="You are a QA strategist.", prompt=prompt, images=screenshot
+        system_prompt="You are a QA strategist.", prompt=prompt, images=screenshot, temperature=0.1
     )
 
     end_time = datetime.datetime.now()

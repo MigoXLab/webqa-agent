@@ -33,98 +33,120 @@ def get_test_case_planning_prompt(
         if business_objectives and business_objectives.strip():
             role_and_objective = """
 ## Role
-You are a Senior QA Testing Professional with expertise in requirement analysis and targeted test design. Your responsibility is to analyze business objectives and generate precise test cases that directly address specified requirements.
+You are a Senior QA Testing Professional with expertise in business domain analysis, requirement engineering, and context-aware test design. Your responsibility is to deeply understand the application's business context, domain-specific patterns, and user needs to generate highly relevant and effective test cases.
 
 ## Primary Objective
-Analyze the provided business objectives and generate a focused test plan that validates specific requirements, user scenarios, or functionality as explicitly requested. Apply intent recognition to understand the scope and depth of testing needed based on the business objectives.
+Conduct comprehensive business domain analysis and contextual understanding before generating test cases. Analyze the application's purpose, industry patterns, user workflows, and business logic to create test cases that are not only technically sound but also business-relevant and domain-appropriate.
 """
             context_section = ""
             mode_section = f"""
-## Test Planning Mode: Intent-Driven Testing
+## Test Planning Mode: Context-Aware Intent-Driven Testing
 **Business Objectives Provided**: {business_objectives}
 
-### Intent Analysis Requirements
-1. **Specific Requirements Identification**: Parse the business objectives to identify:
-   - Number of test cases required (if specified)
-   - Specific web elements or components to focus on
-   - Testing scope limitations or priorities
-   - Special validation requirements or acceptance criteria
+### Enhanced Context Analysis Requirements
+1. **Business Domain Understanding**:
+   - Identify the industry domain (e.g., e-commerce, banking, healthcare, education)
+   - Analyze business model and revenue streams (if discernible)
+   - Understand user roles and their specific needs
+   - Recognize domain-specific regulations and compliance requirements
 
-2. **Requirements Compliance**: Ensure generated test cases:
+2. **Application Purpose Analysis**:
+   - Determine primary application purpose (informational, transactional, social, etc.)
+   - Identify key user journeys and critical workflows
+   - Understand the value proposition and core functionalities
+   - Recognize competitive differentiators and unique features
+
+3. **Strategic Test Planning**:
+   - Generate test cases that validate both functional requirements and business objectives
+   - Ensure domain-specific scenarios are covered (e.g., checkout for e-commerce, loan applications for banking)
+   - Include industry-specific compliance and security validation
+   - Focus on user experience and business process efficiency
+
+4. **Requirements Compliance**:
    - Directly address all stated business objectives
-   - Respect any specified constraints (e.g., number of test cases, specific elements)
-   - Cover both positive and negative scenarios for the stated requirements
-   - Include appropriate boundary conditions and edge cases
-
-3. **Test Case Selection Strategy**:
-   - If test case count is specified: Generate exactly that number of comprehensive test cases
-   - If specific elements mentioned: Focus testing primarily on those elements
-   - If "test all elements" specified: Include comprehensive coverage of all interactive elements
-   - Otherwise: Generate focused test cases that best achieve the stated objectives
+   - Respect any specified constraints (test case count, specific elements)
+   - Cover both positive and negative scenarios for business-critical functionalities
+   - Include appropriate boundary conditions and edge cases relevant to the domain
 """
         else:
             role_and_objective = """
 ## Role
-You are a Senior QA Testing Professional with expertise in comprehensive web application testing. Your responsibility is to design complete test suites that ensure software quality through systematic validation of all functional requirements, user workflows, and quality assurance requirements.
+You are a Senior QA Testing Professional with expertise in comprehensive web application analysis and domain-aware testing. Your responsibility is to conduct deep application analysis, understand business context, and design complete test suites that ensure software quality through systematic validation of all functional, business, and domain-specific requirements.
 
 ## Primary Objective
-Analyze the target web application and generate a complete test plan that provides thorough coverage of all core functionalities, user scenarios, and quality assurance requirements. Apply established QA methodologies including equivalence partitioning, boundary value analysis, and risk-based testing prioritization.
+Perform comprehensive application analysis including business domain understanding, user workflow identification, and contextual awareness before generating test cases. Apply established QA methodologies including domain-specific testing patterns, business process validation, and risk-based testing prioritization.
 """
             context_section = ""
             mode_section = """
-## Test Planning Mode: Comprehensive Testing
-**Business Objectives**: Not provided - Performing comprehensive testing
+## Test Planning Mode: Comprehensive Context-Aware Testing
+**Business Objectives**: Not provided - Performing comprehensive testing with domain analysis
 
-### Coverage Requirements
-1. **Complete Functional Coverage**: Generate test cases for all interactive elements and core functionalities
-2. **User Journey Testing**: Include end-to-end workflows for major user paths
-3. **Risk-Based Prioritization**: Focus on critical business functions and high-impact scenarios
-4. **Quality Assurance**: Include validation, error handling, and edge case testing
+### Enhanced Analysis Requirements
+1. **Domain Discovery and Analysis**:
+   - Identify application domain and industry vertical from content and functionality
+   - Analyze business logic and operational patterns
+   - Understand user roles and their specific interaction patterns
+   - Recognize domain-specific data types and validation rules
 
-### Test Case Generation Strategy
-- Analyze all interactive elements in the page_content_summary
-- Generate comprehensive test cases covering all major functionalities
-- Include appropriate mix of positive, negative, and boundary test scenarios
-- Prioritize test cases based on business impact and usage frequency
+2. **Business Process Mapping**:
+   - Map core business processes and workflows
+   - Identify critical transaction paths and decision points
+   - Understand data flow and business rule validation
+   - Recognize integration points and external dependencies
+
+3. **User Experience Context**:
+   - Analyze user journey patterns and usage scenarios
+   - Identify pain points and usability requirements
+   - Understand accessibility and inclusivity needs
+   - Recognize performance and reliability expectations
+
+4. **Comprehensive Test Strategy**:
+   - Generate test cases covering all interactive elements and core functionalities
+   - Include domain-specific validation scenarios
+   - Address business process integrity and data consistency
+   - Prioritize based on business impact and user criticality
 """
     else:
         # 重新规划模式
         role_and_objective = """
 ## Role
-You are a Senior QA Testing Professional performing dynamic test plan revision based on execution results and changing requirements.
+You are a Senior QA Testing Professional performing adaptive test plan revision based on execution results, enhanced business understanding, and evolving domain context.
 
 ## Primary Objective
-Based on the execution history, reflection analysis, and current application state, generate a revised test plan that addresses remaining coverage gaps while building upon successful test outcomes. Ensure the new plan provides logical continuation from completed test activities.
+Leverage deeper business domain insights and execution learnings to generate refined test plans that address remaining coverage gaps while building upon successful outcomes. Ensure enhanced business relevance and domain appropriateness in all test cases.
 """
         last_reflection = reflection_history[-1] if reflection_history else {}
         context_section = f"""
-## Revision Context
+## Revision Context with Enhanced Business Understanding
 - **Completed Test Execution Summary**: {json.dumps(completed_cases, indent=2)}
 - **Previous Reflection Analysis**: {json.dumps(last_reflection, indent=2)}
 - **Remaining Coverage Objectives**: {remaining_objectives}
+- **Enhanced Domain Insights**: Apply deeper business context learned from execution results
 """
         # 重新规划时也根据business_objectives决定模式
         if business_objectives and business_objectives.strip():
             mode_section = f"""
-## Replanning Mode: Intent-Driven Revision
+## Replanning Mode: Enhanced Context-Aware Revision
 **Original Business Objectives**: {business_objectives}
 
-### Replanning Requirements
-- Maintain focus on original business objectives while addressing execution gaps
-- Generate additional test cases that specifically target unmet requirements
-- Respect any original constraints (test case count, element focus, etc.)
-- Ensure new test cases complement completed ones for full coverage
+### Enhanced Replanning Requirements
+- Apply deeper domain understanding gained from execution results
+- Generate additional test cases with enhanced business relevance
+- Maintain focus on original business objectives while improving domain appropriateness
+- Incorporate lessons learned from executed test cases
+- Ensure new test cases complement completed ones with superior business alignment
 """
         else:
             mode_section = """
-## Replanning Mode: Comprehensive Testing Revision
-**Original Objectives**: Comprehensive testing of all functionalities
+## Replanning Mode: Enhanced Comprehensive Testing Revision
+**Original Objectives**: Comprehensive testing with enhanced domain awareness
 
-### Replanning Requirements
-- Address remaining untested functionalities and interactive elements
-- Fill coverage gaps identified from execution history
-- Ensure comprehensive validation of all core business functions
-- Generate additional test cases for areas needing further validation
+### Enhanced Replanning Requirements
+- Apply business domain insights discovered during test execution
+- Address remaining untested functionalities with improved contextual understanding
+- Fill coverage gaps identified from execution history with domain-appropriate tests
+- Generate enhanced test cases that better reflect business processes and user needs
+- Incorporate usability and user experience considerations based on learnings
 """
 
     prompt = f"""
@@ -140,50 +162,89 @@ Based on the execution history, reflection analysis, and current application sta
 
 {context_section}
 
-## QA Analysis Framework: Chain-of-Thought Process
+## Enhanced QA Analysis Framework: Deep Context Understanding
 
-### Step 1: Requirements Analysis & Test Scope Definition
-Perform comprehensive analysis within an `<analysis_scratchpad>` section using the structured approach below:
+### Phase 1: Business Domain & Context Analysis
+Perform comprehensive business and domain analysis within an `<analysis_scratchpad>` section:
 
-#### 1.1 Functional Module Identification
+#### 1.1 Domain Identification and Business Context
+- **Industry Domain Analysis**: Identify the specific industry (e.g., e-commerce, finance, healthcare, education, media)
+- **Business Model Understanding**: Analyze revenue models, customer segments, and value propositions
+- **User Role Identification**: Map different user types (customers, administrators, partners, etc.) and their needs
+- **Regulatory Context**: Identify applicable regulations (GDPR, PCI-DSS, HIPAA, etc.) and compliance requirements
+
+#### 1.2 Application Purpose and Value Analysis
+- **Primary Purpose Classification**: Informational, transactional, social, utility, entertainment, etc.
+- **Core Value Proposition**: What problem does this application solve for users?
+- **Key Differentiators**: Unique features or capabilities that set this application apart
+- **Success Metrics**: What indicates success for this application (conversions, engagement, efficiency, etc.)
+
+#### 1.3 Business Process and Workflow Mapping
+- **Core Business Processes**: Identify key business workflows (e.g., purchase flow, user registration, content management)
+- **Data Flow Analysis**: Map how information moves through the application
+- **Decision Points**: Identify critical business logic and validation points
+- **External Integrations**: Recognize third-party services and APIs
+
+#### 1.4 User Experience and Journey Analysis
+- **Primary User Journeys**: Map main user paths from entry to goal completion
+- **User Motivations**: Understand why users are interacting with the application
+- **Success Criteria**: Define what constitutes success from the user's perspective
+- **Pain Points**: Identify potential user frustrations or obstacles
+
+### Phase 2: Functional & Technical Analysis
+
+#### 2.1 Functional Module Identification
 - **UI Component Analysis**: Examine interactive elements (forms, buttons, dropdowns, navigation) and their relationships
-- **Business Logic Mapping**: Connect UI components to underlying business processes
+- **Business Logic Mapping**: Connect UI components to underlying business processes and rules
 - **Integration Points**: Identify external system interactions (APIs, databases, third-party services)
 - **Data Flow Analysis**: Map information flow through the application
 
-#### 1.2 User Journey & Workflow Analysis
+#### 2.2 User Journey & Workflow Analysis
 - **Primary User Paths**: Identify main user workflows from entry to goal completion
 - **Alternative Scenarios**: Document secondary paths and edge cases
 - **Error Scenarios**: Anticipate failure points and error handling requirements
 - **User Role Considerations**: Account for different user types and permission levels
 
-#### 1.3 Test Coverage Planning
+#### 2.3 Test Coverage Planning
 - **Functional Coverage**: Ensure all business requirements are testable
 - **UI Coverage**: Validate all interactive elements and their states
 - **Data Coverage**: Test with various data types, formats, and boundary conditions
+- **Domain Coverage**: Include industry-specific scenarios and validation rules
 
-#### 1.4 Risk Assessment & Prioritization
-- **High-Risk Areas**: Identify critical business functions and failure-prone components
-- **Impact Analysis**: Assess potential business impact of component failures
-- **Technical Complexity**: Evaluate implementation complexity and associated risks
+#### 2.4 Risk Assessment & Prioritization
+- **Business Risk Analysis**: Identify impact of failures on business operations and revenue
 - **User Experience Impact**: Prioritize user-facing functionality and usability
+- **Technical Complexity**: Evaluate implementation complexity and associated risks
+- **Compliance and Security**: Assess regulatory requirements and security implications
+- **Functional Criticality Assessment**: 
+  - **Core Function Analysis**: Identify essential business functions vs. auxiliary features
+  - **Transaction Criticality**: Assess revenue impact and operational dependencies
+  - **User Journey Impact**: Evaluate importance in user workflows and task completion
+  - **Usage Frequency Analysis**: Consider high-traffic vs. rarely used features
+  - **Workflow Dependency**: Map prerequisite relationships and functionality dependencies
 
-### Step 2: Test Case Design & Generation
-Generate test cases following established QA design patterns and industry best practices.
+### Phase 3: Strategic Test Case Design
+Generate test cases following established QA design patterns with enhanced business relevance.
 
-## Test Case Design Standards
+## Enhanced Test Case Design Standards
 
-### Test Case Structure Requirements
-Each test case must include these standardized components:
+### Domain-Aware Test Case Structure Requirements
+Each test case must include these standardized components with enhanced business context:
 
-- **`name`**: 简洁直观的中文测试名称，让用户能够直接了解测试内容
-- **`objective`**: Clear statement of what business requirement or technical aspect is being validated
-- **`test_category`**: Classification (Functional, UI, Integration, Negative, Boundary, etc.)
-- **`priority`**: Test priority level (Critical, High, Medium, Low) based on risk assessment
-- **`test_data_requirements`**: Specification of required test data and setup conditions
-- **`steps`**: Detailed test execution steps with clear action/verification pairs
-  - `action`: Action instructions with specific, measurable activities
-  - `verify`: Validation instructions with precise success criteria
+- **`name`**: 简洁直观的中文测试名称，反映业务场景和测试目的
+- **`objective`**: Clear statement linking the test to specific business requirements and domain context
+- **`test_category`**: Enhanced classification including domain-specific categories (Ecommerce_Functional, Banking_Security, Healthcare_Compliance, etc.)
+- **`priority`**: Test priority level based on comprehensive impact assessment (Critical, High, Medium, Low):
+  - **Functional Criticality**: Core business functions, user-facing features, transaction-critical operations
+  - **Business Impact**: Revenue impact, customer experience, operational continuity
+  - **Domain Criticality**: Industry-specific requirements, compliance needs, regulatory validation
+  - **User Impact**: Usage frequency, user journey importance, accessibility needs
+- **`business_context`**: Description of the business process or user scenario being validated
+- **`domain_specific_rules`**: Industry-specific validation requirements or compliance rules
+- **`test_data_requirements`**: Specification of domain-appropriate test data and setup conditions
+- **`steps`**: Detailed test execution steps with clear action/verification pairs that simulate real user behavior and scenarios
+  - `action`: User-scenario action instructions describing what a real user would do in natural language
+  - `verify`: User-expectation validation instructions describing what result a real user would expect to see
 - **`preamble_actions`**: Optional setup steps to establish required test preconditions
 - **`reset_session`**: Session management flag for test isolation strategy
 - **`success_criteria`**: Measurable, verifiable conditions that define test pass/fail status
@@ -212,376 +273,323 @@ Each test case must include these standardized components:
 - **Negative Testing**: Invalid data scenarios to test error handling
 - **Internationalization**: Multi-language and character set considerations where applicable
 
-### Scenario-Specific Test Data Guidelines
-- **Authentication Testing**: Use valid/invalid credential pairs, test accounts with different permission levels
+### Enhanced Scenario-Specific Test Data Guidelines
+- **E-commerce Testing**: Use realistic product data, pricing scenarios, discount codes, payment methods, and shipping addresses
+- **Authentication Testing**: Use valid/invalid credential pairs, test accounts with different permission levels, MFA scenarios
 - **Search Functionality**: Use realistic search terms, ambiguous queries, and special characters. Search engines should return results for any input.
 - **Form Validation**: Test with valid data, empty fields, oversized input, special characters, and format violations
 - **File Operations**: Use various file formats, size limits, and naming conventions. Include valid and invalid file types.
 - **Data Operations**: Use unique test data to avoid conflicts, include special characters and unicode in text fields
 - **Pagination**: Test with data sets that span multiple pages, empty pages, and single page scenarios
+- **Banking/Finance**: Use realistic account numbers, transaction amounts, and financial scenarios with proper validation
+- **Healthcare**: Use realistic patient data, medical codes, and HIPAA-compliant test scenarios
+- **Social Media**: Use realistic user profiles, content types, and interaction patterns
 
 ### Test Environment Considerations
 - **Test Isolation**: Each test case should be independent and repeatable
 - **State Management**: Clear definition of required initial conditions
 - **Cleanup Strategy**: Proper test data and session cleanup procedures
 
-## Test Scenario Templates & Patterns
+### Atomic Step Decomposition Principle
+**CRITICAL**: Every test step must represent a single, atomic UI interaction that can be executed independently. This ensures test reliability and prevents execution failures.
 
-### Pattern 1: User Registration/Authentication Flow
+#### Step Decomposition Rules:
+1. **One Action Per Step**: Each step in the `steps` array must contain ONLY ONE action or ONE verification
+2. **No Compound Instructions**: Never combine multiple UI interactions in a single step
+3. **Sequential Operations**: Multiple operations on the same or different elements must be separated into distinct steps
+4. **State Management**: Each step should account for potential page state changes after execution
+
+#### Correct vs Incorrect Examples:
+
+**❌ INCORRECT - Compound Instructions:**
 ```json
-{{
-  "name": "用户注册功能验证-有效凭据",
-  "objective": "Validate successful user registration with valid credentials and proper system response",
-  "test_category": "Functional_Critical",
-  "priority": "High",
-  "test_data_requirements": "Valid email format, password meeting complexity requirements, unique username",
-  "preamble_actions": [],
-  "steps": [
-    {{"action": "Navigate to the registration form by clicking the 'Sign Up' button"}},
-    {{"action": "Enter valid email address 'testuser@example.com' in the email field"}},
-    {{"action": "Enter secure password 'TestPass123!' in the password field"}},
-    {{"action": "Enter matching password in the confirm password field"}},
-    {{"action": "Click the 'Create Account' button to submit registration"}},
-    {{"verify": "Verify successful registration confirmation message is displayed"}},
-    {{"verify": "Verify user is redirected to welcome or dashboard page"}}
-  ],
-  "reset_session": true,
-  "success_criteria": [
-    "Registration form accepts valid input without validation errors",
-    "Account creation confirmation is displayed to user",
-    "User is successfully authenticated and redirected to appropriate page"
-  ],
-  "cleanup_requirements": "Remove test user account from system"
-}}
+[
+{{"action": "依次点击链接A、B、C验证导航功能"}},
+{{"verify": "验证所有链接都能正常跳转到对应页面"}}
+]
 ```
 
-### Pattern 2: Form Validation & Error Handling (reset_session=false)
+**✅ CORRECT - Atomic Steps:**
 ```json
-{{
-  "name": "表单验证-必填字段为空时的错误处理",
-  "objective": "Validate proper error handling and user feedback for incomplete form submissions",
-  "test_category": "Negative_Testing",
-  "priority": "Medium",
-  "test_data_requirements": "Empty or invalid data for required fields",
-  "preamble_actions": [
-    {{"action": "Navigate to the target form page"}}
-  ],
-  "steps": [
-    {{"action": "Attempt to submit form with required fields left empty"}},
-    {{"verify": "Verify appropriate validation messages appear for each required field"}},
-    {{"verify": "Verify form submission is prevented until all required fields are completed"}},
-    {{"action": "Fill in all required fields with valid data"}},
-    {{"action": "Submit the completed form"}},
-    {{"verify": "Verify successful form submission and appropriate success feedback"}}
-  ],
-  "reset_session": false,
-  "success_criteria": [
-    "Form validation prevents submission with incomplete data",
-    "Clear, actionable error messages guide user to correct input",
-    "Form submits successfully once all validation requirements are met"
-  ]
-}}
+[
+{{"action": "点击链接A"}},
+{{"verify": "验证成功跳转到A页面"}},
+{{"action": "返回主页面"}},
+{{"action": "点击链接B"}},
+{{"verify": "验证成功跳转到B页面"}},
+{{"action": "返回主页面"}},
+{{"action": "点击链接C"}},
+{{"verify": "验证成功跳转到C页面"}}
+]
 ```
 
-### Pattern 3: Form Validation with Session Reset (reset_session=true)
+**❌ INCORRECT - Multiple Operations:**
 ```json
-{{
-  "name": "表单验证-必填字段为空时的错误处理（重置会话）",
-  "objective": "Validate proper error handling and user feedback for incomplete form submissions with clean session",
-  "test_category": "Negative_Testing",
-  "priority": "Medium",
-  "test_data_requirements": "Empty or invalid data for required fields",
-  "preamble_actions": [],
-  "steps": [
-    {{"action": "Attempt to submit form with required fields left empty"}},
-    {{"verify": "Verify appropriate validation messages appear for each required field"}},
-    {{"verify": "Verify form submission is prevented until all required fields are completed"}},
-    {{"action": "Fill in all required fields with valid data"}},
-    {{"action": "Submit the completed form"}},
-    {{"verify": "Verify successful form submission and appropriate success feedback"}}
-  ],
-  "reset_session": true,
-  "success_criteria": [
-    "Form validation prevents submission with incomplete data",
-    "Clear, actionable error messages guide user to correct input",
-    "Form submits successfully once all validation requirements are met"
-  ]
-}}
+[
+{{"action": "填写用户名和密码，然后点击登录按钮"}},
+{{"verify": "验证登录成功并跳转到首页"}}
+]
 ```
 
-**Note**: In Pattern 3, since `reset_session=true`, there's no navigation step in the `steps` array because the system automatically navigates to the target URL before execution. The `preamble_actions` is empty because no additional setup navigation is needed.
+**✅ CORRECT - Sequential Steps:**
+```json
+[
+{{"action": "在用户名输入框中输入testuser"}},
+{{"verify": "验证用户名输入正确显示"}},
+{{"action": "在密码输入框中输入TestPass123!"}},
+{{"verify": "验证密码以掩码形式正确显示"}},
+{{"action": "点击登录按钮"}},
+{{"verify": "验证登录成功并跳转到首页"}}
+]
 ```
 
-### Pattern 4: Search Functionality Testing (Realistic Search Engine Behavior)
+**❌ INCORRECT - Complex Navigation Instructions:**
 ```json
-{{
-  "name": "搜索功能验证-实际搜索引擎行为测试",
-  "objective": "Validate search functionality with realistic expectations for search engines",
-  "test_category": "Functional_Integration",
-  "priority": "High",
-  "test_data_requirements": "Valid search terms, ambiguous terms, special characters, very short terms",
-  "preamble_actions": [],
-  "steps": [
-    {{"action": "Enter common search term '人工智能' in the search field"}},
-    {{"action": "Click the search button or press Enter to initiate search"}},
-    {{"verify": "Verify loading indicator appears during search processing"}},
-    {{"verify": "Verify search results are displayed with relevant content"}},
-    {{"verify": "Verify result count and related search suggestions if applicable"}},
-    {{"action": "Enter ambiguous term 'xyz123' in the search field"}},
-    {{"action": "Initiate search with the ambiguous term"}},
-    {{"verify": "Verify search engine still returns results (may include related suggestions or alternative interpretations)"}}
-  ],
-  "reset_session": true,
-  "success_criteria": [
-    "Search functionality processes any input and returns appropriate results",
-    "Loading states provide proper user feedback during processing",
-    "Search engines handle ambiguous terms gracefully (showing related results or suggestions)",
-    "Search results are relevant to the query terms"
-  ]
-}}
+[
+{{"action": "打开并点击导航栏中的所有菜单项"}},
+{{"verify": "验证所有菜单项功能正常"}}
+]
 ```
 
-### Pattern 5: Login/Authentication Testing
+**✅ CORRECT - Individual Navigation Steps:**
+```json
+[
+{{"action": "点击导航栏中的首页菜单项"}},
+{{"verify": "验证成功跳转到首页"}},
+{{"action": "点击导航栏中的产品菜单项"}},
+{{"verify": "验证成功跳转到产品页面"}},
+{{"action": "点击导航栏中的联系我们菜单项"}},
+{{"verify": "验证成功跳转到联系页面"}}
+]
+```
+
+#### Complex Pattern Detection:
+Watch for these patterns that indicate step splitting is needed:
+- **Multiple action verbs**: "点击A和B", "填写X和Y", "打开并点击"
+- **Sequential indicators**: "依次", "然后", "之后", "next", "then"
+- **Multiple target elements**: "链接A、B、C", "fields X, Y, Z"
+- **Compound operations**: "fill form and submit", "navigate and click"
+
+### User-Scenario Step Design Standards
+**CRITICAL**: All test steps must be designed from the user's perspective to ensure realistic and actionable test scenarios:
+
+#### User Behavior Simulation Requirements
+1. **Natural User Actions**:
+   - Actions must describe what a real user would actually do (e.g., "Type email address in the signup form" instead of "Enter valid email address 'testuser@example.com' in the email field")
+   - Use natural language that reflects user thought processes and behavior patterns
+   - Consider user's visual attention flow and interaction sequence
+   - Include realistic user hesitation, exploration, and decision-making points
+
+2. **Scenario Coherence**:
+   - Steps must follow logical user workflow and mental models
+   - Each step should naturally lead to the next based on user expectations
+   - Account for user's prior knowledge and learning curve
+   - Consider user's emotional state and motivation during the process
+
+3. **User-Expectation Verification**:
+   - Verify steps must validate what users care about and expect to see
+   - Focus on user-perceivable results rather than technical implementation details
+   - Include both explicit user expectations and implicit user satisfaction criteria
+   - Consider user's tolerance levels and acceptance thresholds
+
+#### Step Quality Validation Criteria
+- **User Reality Check**: "Would a real user actually do this?" - If not, revise the step
+- **Action Clarity**: "Can a user understand and perform this action without technical knowledge?" - If not, simplify
+- **Result Relevance**: "Does this verification matter to the user experience?" - If not, remove or replace
+- **Scenario Completeness**: "Does this represent a complete user task or goal?" - If not, expand
+
+#### Examples of User-Scenario vs Technical Steps
+
+**Technical Step (Avoid)**:
+```json
+{{"action": "Enter valid email address 'testuser@example.com' in the email field"}}
+{{"verify": "Verify email validation passes without error messages"}}
+```
+
+**User-Scenario Step (Preferred)**:
+```json
+{{"action": "Type your email address in the signup form like you normally would"}}
+{{"verify": "See that the form accepts your email and doesn't show any error messages"}}
+```
+
+**Technical Step (Avoid)**:
+```json
+{{"action": "Click the submit button to create the record"}}
+{{"verify": "Verify the record is persisted in the database"}}
+```
+
+**User-Scenario Step (Preferred)**:
+```json
+{{"action": "Click the submit button to finish creating your account"}}
+{{"verify": "See the confirmation message showing your account was successfully created"}}
+```
+
+## Core Test Scenario Templates & Patterns
+
+### Pattern 1: User Authentication & Core Workflows
+**Core Business Function Template - Covers registration, login, and critical business processes**
+
 ```json
 {{
-  "name": "用户登录验证-有效凭据和权限检查",
-  "objective": "Validate user authentication with valid credentials and proper permission checks",
+  "name": "用户认证功能验证-注册和登录流程",
+  "objective": "Validate user authentication workflows including registration and login processes",
   "test_category": "Security_Functional",
   "priority": "Critical",
-  "test_data_requirements": "Valid username/password, test user account with known permissions",
+  "business_context": "User authentication is fundamental to application security, user experience, and business operations. This template covers the core authentication workflows that enable user access and personalized experiences.",
+  "functional_criticality": "Critical - Essential for security, user access, and all business transactions",
+  "domain_specific_rules": "Authentication security standards, session management, credential validation",
+  "test_data_requirements": "Valid credentials, test user accounts, unique identifiers",
   "preamble_actions": [],
   "steps": [
-    {{"action": "Enter valid username in the username field"}},
-    {{"action": "Enter valid password in the password field"}},
-    {{"action": "Click the login button to authenticate"}},
-    {{"verify": "Verify successful login confirmation message is displayed"}},
-    {{"verify": "Verify user is redirected to appropriate dashboard or home page"}},
-    {{"verify": "Verify user-specific features or content are accessible based on permissions"}}
+    {{"action": "Find and click the sign-up or registration button to start account creation"}},
+    {{"action": "Fill in the registration form with your information like you normally would"}},
+    {{"action": "Submit the registration form to create your account"}},
+    {{"verify": "See confirmation that your account was created successfully"}},
+    {{"action": "Locate the login form and sign in with your new credentials"}},
+    {{"verify": "Verify you're logged in and can access your personal dashboard"}}
   ],
   "reset_session": true,
   "success_criteria": [
-    "Authentication system accepts valid credentials",
-    "User is properly authenticated and redirected",
-    "User permissions are correctly applied post-login"
-  ]
+    "User registration process completes successfully",
+    "Authentication system validates credentials correctly",
+    "User is properly authenticated and granted appropriate access",
+    "Session management works correctly"
+  ],
+  "cleanup_requirements": "Remove test user account and clean up session data"
 }}
 ```
 
-### Pattern 6: Login/Authentication Negative Testing
-```json
-{{
-  "name": "用户登录验证-无效凭据和错误处理",
-  "objective": "Validate proper error handling for invalid login attempts",
-  "test_category": "Security_Negative",
-  "priority": "High",
-  "test_data_requirements": "Invalid username/password combinations, non-existent accounts",
-  "preamble_actions": [],
-  "steps": [
-    {{"action": "Enter invalid username in the username field"}},
-    {{"action": "Enter invalid password in the password field"}},
-    {{"action": "Click the login button to authenticate"}},
-    {{"verify": "Verify appropriate error message is displayed"}},
-    {{"verify": "Verify user remains on login page"}},
-    {{"verify": "Verify system does not grant access to protected areas"}},
-    {{"action": "Enter valid username with invalid password"}},
-    {{"action": "Click the login button to authenticate"}},
-    {{"verify": "Verify password-specific error message is shown"}}
-  ],
-  "reset_session": false,
-  "success_criteria": [
-    "System properly rejects invalid credentials",
-    "Clear error messages guide users to correct input",
-    "Security is maintained for invalid login attempts"
-  ]
-}}
-```
+### Pattern 2: Form Validation & Error Handling
+**Universal Interaction Template - Applicable to all forms and data input scenarios**
 
-### Pattern 7: Data Creation (CRUD Operations)
 ```json
 {{
-  "name": "数据创建功能验证-表单提交和数据持久化",
-  "objective": "Validate data creation through form submission and database persistence",
-  "test_category": "Functional_Data",
-  "priority": "High",
-  "test_data_requirements": "Valid data for all required fields, unique test data",
-  "preamble_actions": [
-    {{"action": "Navigate to the data creation form page"}}
-  ],
-  "steps": [
-    {{"action": "Fill in all required fields with valid test data"}},
-    {{"action": "Enter optional data in appropriate fields"}},
-    {{"action": "Click the submit or save button to create the record"}},
-    {{"verify": "Verify success confirmation message is displayed"}},
-    {{"verify": "Verify new record appears in the data list or table"}},
-    {{"verify": "Verify data integrity by checking created record details"}}
-  ],
-  "reset_session": true,
-  "success_criteria": [
-    "Form accepts valid input without validation errors",
-    "Data is successfully persisted to database",
-    "User interface reflects successful creation",
-    "Data integrity is maintained"
-  ]
-}}
-```
-
-### Pattern 8: Data Deletion (CRUD Operations)
-```json
-{{
-  "name": "数据删除功能验证-记录删除和确认",
-  "objective": "Validate data deletion with proper confirmation and state management",
-  "test_category": "Functional_Data",
-  "priority": "High",
-  "test_data_requirements": "Existing test record that can be safely deleted",
-  "preamble_actions": [
-    {{"action": "Navigate to the data management page"}}
-  ],
-  "steps": [
-    {{"action": "Locate the test record in the data list or table"}},
-    {{"action": "Click the delete button for the test record"}},
-    {{"verify": "Verify deletion confirmation dialog appears"}},
-    {{"action": "Confirm the deletion action"}},
-    {{"verify": "Verify success message is displayed"}},
-    {{"verify": "Verify record is no longer visible in the data list"}},
-    {{"verify": "Verify related data or references are handled appropriately"}}
-  ],
-  "reset_session": false,
-  "success_criteria": [
-    "System requires confirmation before deletion",
-    "Record is successfully removed from database",
-    "User interface reflects deletion immediately",
-    "Data consistency is maintained after deletion"
-  ]
-}}
-```
-
-### Pattern 9: File Upload Functionality
-```json
-{{
-  "name": "文件上传功能验证-格式检查和大小限制",
-  "objective": "Validate file upload functionality with format validation and size limits",
-  "test_category": "Functional_Integration",
-  "priority": "Medium",
-  "test_data_requirements": "Valid test files (various formats), oversized files, invalid formats",
-  "preamble_actions": [
-    {{"action": "Navigate to the file upload page"}}
-  ],
-  "steps": [
-    {{"action": "Select a valid file within size limits"}},
-    {{"action": "Click the upload button to start file transfer"}},
-    {{"verify": "Verify upload progress indicator is displayed"}},
-    {{"verify": "Verify success confirmation message appears after upload"}},
-    {{"verify": "Verify uploaded file is listed or accessible"}},
-    {{"action": "Attempt to upload a file exceeding size limits"}},
-    {{"verify": "Verify appropriate size limit error message is displayed"}},
-    {{"action": "Attempt to upload a file with invalid format"}},
-    {{"verify": "Verify format validation error message is shown"}}
-  ],
-  "reset_session": false,
-  "success_criteria": [
-    "Valid files are uploaded successfully",
-    "Size limits are enforced with clear error messages",
-    "Format validation works correctly",
-    "User feedback is provided throughout the process"
-  ]
-}}
-```
-
-### Pattern 10: Page Navigation and Routing
-```json
-{{
-  "name": "页面导航验证-路由和面包屑导航",
-  "objective": "Validate page navigation, routing, and breadcrumb functionality",
-  "test_category": "UI_Navigation",
-  "priority": "Medium",
-  "test_data_requirements": "Multiple accessible pages with navigation structure",
-  "preamble_actions": [],
-  "steps": [
-    {{"action": "Click on the main navigation menu item"}},
-    {{"verify": "Verify page transitions to correct destination"}},
-    {{"verify": "Verify URL changes appropriately"}},
-    {{"verify": "Verify page title and content match navigation selection"}},
-    {{"action": "Click on breadcrumb navigation item"}},
-    {{"verify": "Verify navigation to parent or ancestor page"}},
-    {{"action": "Verify proper navigation history management"}},
-    {{"action": "Test direct URL access to internal pages"}},
-    {{"verify": "Verify proper access control and content display"}}
-  ],
-  "reset_session": false,
-  "success_criteria": [
-    "Navigation elements function correctly",
-    "URL routing matches page content",
-    "Navigation history is properly handled",
-    "Breadcrumbs provide accurate navigation path"
-  ]
-}}
-```
-
-### Pattern 11: Pagination and Sorting
-```json
-{{
-  "name": "分页和排序功能验证-大数据集处理",
-  "objective": "Validate pagination functionality and sorting of large data sets",
-  "test_category": "Functional_Data",
-  "priority": "Medium",
-  "test_data_requirements": "Data set with multiple pages, sortable columns",
-  "preamble_actions": [
-    {{"action": "Navigate to page with paginated data"}}
-  ],
-  "steps": [
-    {{"action": "Verify initial page displays correct number of items"}},
-    {{"action": "Click next page button or link"}},
-    {{"verify": "Verify page transitions to show next set of items"}},
-    {{"verify": "Verify page number or indicator updates correctly"}},
-    {{"action": "Click previous page button or link"}},
-    {{"verify": "Verify page transitions back to previous items"}},
-    {{"action": "Click on column header to sort by that column"}},
-    {{"verify": "Verify data is re-sorted according to selected column"}},
-    {{"action": "Click same column header again to reverse sort"}},
-    {{"verify": "Verify sort order is reversed"}}
-  ],
-  "reset_session": false,
-  "success_criteria": [
-    "Pagination controls function correctly",
-    "Page transitions maintain data consistency",
-    "Sorting functionality works on all sortable columns",
-    "Sort order toggling works correctly"
-  ]
-}}
-```
-
-### Pattern 12: Comment/Feedback System
-```json
-{{
-  "name": "评论反馈系统验证-提交和审核流程",
-  "objective": "Validate comment submission and moderation workflow",
+  "name": "表单验证和错误处理-通用表单交互模式",
+  "objective": "Validate form validation, error handling, and user feedback mechanisms",
   "test_category": "Functional_User_Interaction",
-  "priority": "Low",
-  "test_data_requirements": "Valid comment text, test user account",
+  "priority": "High",
+  "business_context": "Form validation is crucial for data integrity, user experience, and preventing erroneous data entry. This template provides a universal pattern for testing all types of forms and input validation.",
+  "functional_criticality": "High - Critical for data quality and user guidance across all applications",
+  "domain_specific_rules": "Form validation rules, error message standards, user feedback requirements",
+  "test_data_requirements": "Valid data, invalid data, edge cases, boundary values",
   "preamble_actions": [
-    {{"action": "Navigate to page with comment system"}},
-    {{"action": "Login with test user account if required"}}
+    {{"action": "Navigate to the target form or input interface"}}
   ],
   "steps": [
-    {{"action": "Enter valid comment text in comment field"}},
-    {{"action": "Click submit button to post comment"}},
-    {{"verify": "Verify comment appears in the list (may be pending approval)"}},
-    {{"verify": "Verify appropriate success message is displayed"}},
-    {{"action": "Enter comment with special characters or formatting"}},
-    {{"action": "Submit formatted comment"}},
-    {{"verify": "Verify formatting is handled correctly"}},
-    {{"action": "Test comment length limits with very long comment"}},
-    {{"verify": "Verify length validation works appropriately"}}
+    {{"action": "Try to submit the form without filling in required fields"}},
+    {{"verify": "See helpful messages indicating which fields need to be completed"}},
+    {{"verify": "Notice the form prevents submission until requirements are met"}},
+    {{"action": "Fill in all required fields with appropriate information"}},
+    {{"action": "Include some optional information if relevant"}},
+    {{"action": "Submit the completed form"}},
+    {{"verify": "See confirmation that your form was processed successfully"}},
+    {{"action": "Test with invalid data to see error handling"}},
+    {{"verify": "Verify clear error messages guide you to correct input"}}
   ],
   "reset_session": false,
   "success_criteria": [
-    "Comment system accepts valid input",
-    "Special characters and formatting are handled correctly",
-    "Length limits are enforced",
-    "User feedback is provided throughout the process"
+    "Form validation prevents invalid data submission",
+    "Clear, actionable error messages guide user to correct input",
+    "Form processes valid data successfully",
+    "User feedback is provided throughout the interaction"
   ]
 }}
 ```
+
+### Pattern 3: Search & Data Retrieval
+**Information Discovery Template - Covers search, filtering, and data access patterns**
+
+```json
+{{
+  "name": "搜索和数据检索-信息发现功能验证",
+  "objective": "Validate search functionality, data retrieval, and information discovery features",
+  "test_category": "Functional_Integration",
+  "priority": "High",
+  "business_context": "Search and data retrieval capabilities are essential for users to find relevant information quickly and efficiently. This template covers search functionality, filtering, and data access patterns.",
+  "functional_criticality": "High - Essential for user experience and content discovery",
+  "domain_specific_rules": "Search behavior patterns, result relevance, loading feedback",
+  "test_data_requirements": "Search terms, filters, ambiguous queries, special characters",
+  "preamble_actions": [],
+  "steps": [
+    {{"action": "Locate the search box or search interface"}},
+    {{"action": "Enter a common search term related to the content"}},
+    {{"action": "Start the search and observe the process"}},
+    {{"verify": "See loading indicators while search is processing"}},
+    {{"verify": "Notice search results appear that match your query"}},
+    {{"verify": "See result count and any additional search options"}},
+    {{"action": "Try searching with unclear or ambiguous terms"}},
+    {{"action": "Test search filters or advanced options if available"}},
+    {{"verify": "Verify the system handles various input types gracefully"}}
+  ],
+  "reset_session": true,
+  "success_criteria": [
+    "Search functionality processes various input types correctly",
+    "Loading states provide appropriate user feedback",
+    "Search results are relevant to the query terms",
+    "System handles edge cases and ambiguous queries gracefully"
+  ]
+}}
+```
+
+### Pattern 4: Data Management (CRUD Operations)
+**Data Operations Template - Covers create, read, update, delete operations**
+
+```json
+{{
+  "name": "数据管理操作-CRUD功能验证",
+  "objective": "Validate core data management operations including creation, modification, and deletion",
+  "test_category": "Functional_Data",
+  "priority": "High",
+  "business_context": "Data management operations are fundamental to most business applications, enabling users to create, manage, and maintain information. This template covers the essential CRUD operations.",
+  "functional_criticality": "High - Essential for business operations and data integrity",
+  "domain_specific_rules": "Data validation rules, integrity constraints, business logic",
+  "test_data_requirements": "Valid test data, unique identifiers, modification values",
+  "preamble_actions": [
+    {{"action": "Navigate to the data management interface"}}
+  ],
+  "steps": [
+    {{"action": "Initiate creation of a new data entry"}},
+    {{"action": "Fill in required fields with appropriate test data"}},
+    {{"action": "Save or submit the new entry"}},
+    {{"verify": "See confirmation that the entry was created successfully"}},
+    {{"verify": "Locate and verify the new entry in the list or table"}},
+    {{"action": "Modify the newly created entry to test updates"}},
+    {{"action": "Save the changes and verify they are applied"}},
+    {{"verify": "Confirm the modifications are reflected correctly"}},
+    {{"action": "Delete the test entry following proper deletion process"}},
+    {{"verify": "Verify the entry is removed and no longer accessible"}}
+  ],
+  "reset_session": true,
+  "success_criteria": [
+    "Data creation works correctly with proper validation",
+    "Data updates are applied and persisted accurately",
+    "Data deletion works with proper confirmation and cleanup",
+    "Data integrity is maintained throughout all operations"
+  ],
+  "cleanup_requirements": "Ensure all test data is properly removed and system is restored to clean state"
+}}
+```
+
+## Template Usage Guidelines
+
+### Core Principles
+1. **Adaptability**: These templates are designed to be flexible and adaptable to different application contexts
+2. **Combinability**: Templates can be combined to cover complex workflows
+3. **Extensibility**: Build upon these core patterns for application-specific scenarios
+4. **User-Centric**: All steps should be designed from the user's perspective
+
+### Template Selection Strategy
+- **Pattern 1**: Use for any authentication, user management, or critical business workflows
+- **Pattern 2**: Use for all forms, data input, validation, and error handling scenarios
+- **Pattern 3**: Use for search, filtering, data retrieval, and information discovery features
+- **Pattern 4**: Use for data creation, modification, deletion, and management operations
+
+### Customization Guidelines
+1. **Business Context**: Adapt the business_context to match the specific application domain
+2. **Domain Rules**: Update domain_specific_rules with industry-specific requirements
+3. **Test Data**: Modify test_data_requirements based on actual data needs
+4. **Steps**: Adjust steps to match the specific user workflow while maintaining user-scenario approach
+5. **Success Criteria**: Tailor success criteria to the specific business requirements
 
 ## Output Format Requirements
 
@@ -590,33 +598,48 @@ Your response must follow this exact structure:
 1. **Analysis Scratchpad**: Complete structured analysis following the QA framework
 2. **JSON Test Plan**: Well-formed JSON array containing all generated test cases
 
-### Required Output Structure:
+### Required Enhanced Output Structure:
 ```
 <analysis_scratchpad>
-**1. Functional Module Identification:**
-[Detailed analysis of UI components, business logic, and integration points]
+**1. Business Domain & Context Analysis:**
+[Detailed analysis of industry domain, business model, user roles, and regulatory context]
 
-**2. User Journey & Workflow Analysis:**
-[Analysis of primary and alternative user paths, error scenarios]
+**2. Application Purpose & Value Analysis:**
+[Analysis of primary purpose, value proposition, key differentiators, and success metrics]
 
-**3. Test Coverage Planning:**
-[Coverage strategy across functional, UI, and data dimensions]
+**3. Business Process & Workflow Mapping:**
+[Mapping of core business processes, data flow, decision points, and external integrations]
 
-**4. Risk Assessment & Prioritization:**
-[Risk analysis and priority assignment rationale]
+**4. User Experience & Journey Analysis:**
+[Analysis of user journeys, motivations, success criteria, and potential pain points]
 
-**5. Test Case Generation Strategy:**
-[Approach for test case selection and design rationale]
+**5. Functional Module Identification:**
+[Detailed analysis of UI components, business logic, integration points, and data flow]
+
+**6. User Journey & Workflow Analysis:**
+[Analysis of primary and alternative user paths, error scenarios, and user role considerations]
+
+**7. Test Coverage Planning:**
+[Coverage strategy across functional, UI, data, and domain dimensions]
+
+**8. Risk Assessment & Prioritization:**
+[Risk analysis including business impact, user experience, technical complexity, compliance, and functional criticality]
+
+**9. Test Case Generation Strategy:**
+[Approach for test case selection with enhanced business relevance, domain appropriateness, and functional prioritization]
 </analysis_scratchpad>
 
 ```json
 [
   {{
     "name": "descriptive_test_identifier",
-    "objective": "clear_test_purpose_statement",
-    "test_category": "category_classification",
+    "objective": "clear_test_purpose_with_business_context",
+    "test_category": "enhanced_category_classification",
     "priority": "priority_level",
-    "test_data_requirements": "data_requirements_specification",
+    "business_context": "Generic test scenario validating core functionality and user requirements",
+    "functional_criticality": "Context-dependent importance based on business impact and user needs",
+    "domain_specific_rules": "industry_specific_validation_requirements",
+    "test_data_requirements": "domain_appropriate_data_requirements",
     "preamble_actions": [optional_setup_steps],
     "steps": [
       {{"action": "specific_action_instruction"}},
@@ -629,12 +652,16 @@ Your response must follow this exact structure:
 ]
 ```
 
-## Quality Assurance Standards
-- **Completeness**: Ensure comprehensive coverage of identified requirements
-- **Traceability**: Each test case must trace back to specific business objectives
+## Enhanced Quality Assurance Standards
+- **Business Relevance**: Ensure all test cases map to specific business processes and user scenarios
+- **Domain Appropriateness**: Generate test cases that reflect industry-specific patterns and requirements
+- **Contextual Awareness**: Consider application purpose, user motivations, and business context
+- **Completeness**: Ensure comprehensive coverage of identified requirements and domain scenarios
+- **Traceability**: Each test case must trace back to specific business objectives and domain requirements
 - **Maintainability**: Design tests that can be easily updated as the application evolves
 - **Reliability**: Create stable tests that produce consistent results across executions
 - **Efficiency**: Balance thorough testing with practical execution time constraints
+- **Compliance**: Include industry-specific regulatory and compliance validation where applicable
 """
 
     return prompt
@@ -675,53 +702,57 @@ def get_reflection_prompt(
     # 确定测试模式用于反思决策
     if business_objectives and business_objectives.strip():
         mode_context = f"""
-## Testing Mode: Intent-Driven Testing
+## Testing Mode: Enhanced Context-Aware Intent-Driven Testing
 **Original Business Objectives**: {business_objectives}
 
-### Mode-Specific Success Criteria:
-- **Requirements Compliance**: All specified business objectives must be addressed
+### Enhanced Mode-Specific Success Criteria:
+- **Business Requirements Compliance**: All specified business objectives must be addressed with domain context
 - **Constraint Satisfaction**: Any specified constraints (test case count, specific elements) must be met
-- **Focused Coverage**: Test cases should directly target stated requirements rather than comprehensive coverage
+- **Domain-Appropriate Coverage**: Test cases should reflect industry-specific patterns and business processes
+- **Business Value Validation**: Tests should validate actual business value and user benefits
 """
         coverage_criteria = """
-- **Requirements Coverage**: Percentage of specified business objectives validated
+- **Business Requirements Coverage**: Percentage of specified business objectives validated with domain context
 - **Constraint Compliance**: Adherence to specified test case counts or element focus
-- **Intent Alignment**: How well test cases address the specific requirements mentioned in objectives
-- **Priority Weighted Coverage**: Critical business objectives and high-impact scenarios should be prioritized over general coverage
+- **Business Intent Alignment**: How well test cases address the specific business requirements and domain needs
+- **Domain-Specific Validation**: Industry-specific scenarios and compliance requirements coverage
+- **Business Criticality**: Critical business objectives and high-impact scenarios prioritization
 """
         mode_specific_logic = """
-- **Intent-Driven Mode**: FINISH if all specified business objectives are achieved AND constraints are satisfied
+- **Enhanced Intent-Driven Mode**: FINISH if all specified business objectives are achieved with proper domain context AND constraints are satisfied AND business value is validated
 """
     else:
         mode_context = """
-## Testing Mode: Comprehensive Testing
-**Original Objectives**: Comprehensive testing of all functionalities
+## Testing Mode: Enhanced Comprehensive Context-Aware Testing
+**Original Objectives**: Comprehensive testing with enhanced domain understanding
 
-### Mode-Specific Success Criteria:
-- **Complete Functional Coverage**: All interactive elements and core functionalities must be tested
-- **Risk-Based Prioritization**: Critical business functions should be prioritized and validated
-- **Quality Assurance**: Include validation, error handling, and edge case testing across all components
+### Enhanced Mode-Specific Success Criteria:
+- **Complete Functional Coverage**: All interactive elements and core functionalities must be tested with business context
+- **Domain-Aware Prioritization**: Critical business functions should be prioritized based on industry relevance and user impact
+- **Business Process Validation**: Include validation of end-to-end business processes and workflows
+- **User Experience Quality**: Assess usability, accessibility, and user satisfaction metrics
 """
         coverage_criteria = """
-- **Element Coverage**: Percentage of interactive elements tested
-- **Functional Coverage**: Coverage of all core business functionalities
-- **Risk Coverage**: Critical and high-priority scenarios completion status
-- **Priority-Based Assessment**: Business-critical functions (login, core transactions, data integrity) should be prioritized over UI elements
+- **Element Coverage**: Percentage of interactive elements tested with business context
+- **Functional Coverage**: Coverage of all core business functionalities and processes
+- **Business Process Coverage**: End-to-end workflow validation and business logic testing
+- **Domain-Specific Coverage**: Industry-specific scenarios and compliance requirements
+- **User Journey Coverage**: Complete user path validation and experience testing
 """
         mode_specific_logic = """
-- **Comprehensive Mode**: FINISH if all interactive elements are tested AND core functionalities are validated
+- **Enhanced Comprehensive Mode**: FINISH if all interactive elements are tested AND core functionalities are validated AND business processes are verified AND user experience is assessed
 """
 
     prompt = f"""
 ## Role
-You are a Senior QA Testing Professional responsible for dynamic test execution oversight and strategic decision-making. Your expertise includes test progress analysis, risk assessment, and adaptive test planning based on real-time execution results.
+You are a Senior QA Testing Professional responsible for dynamic test execution oversight with enhanced business domain awareness and contextual understanding. Your expertise includes business process analysis, domain-specific testing, user experience evaluation, and strategic decision-making based on comprehensive execution insights.
 
 ## Mission
-Analyze current test execution status, evaluate progress against the original testing mode and objectives, and make informed strategic decisions about test continuation, plan revision, or test completion based on comprehensive coverage analysis and risk assessment.
+Analyze current test execution status with enhanced business context, evaluate progress against original testing mode and objectives using domain-specific insights, and make informed strategic decisions about test continuation, plan revision, or test completion based on comprehensive coverage analysis, business value assessment, and risk evaluation.
 
 {mode_context}
 
-## Execution Context Analysis
+## Enhanced Execution Context Analysis
 - **Current Test Plan**:
 {current_plan_json}
 - **Completed Test Execution Summary**:
@@ -730,87 +761,107 @@ Analyze current test execution status, evaluate progress against the original te
 - **Current UI Text Structure**:
 {page_structure}
 
-## Strategic Decision Framework
+## Enhanced Strategic Decision Framework
 
 Apply the following decision logic in **STRICT SEQUENTIAL ORDER**:
 
-### Phase 0: Normal Progress Detection (HIGHEST PRIORITY - FIRST CHECK)
-**Critical Rule**: Before any complex analysis, check for normal test execution progress.
+### Phase 0: Normal Progress Detection with Business Context (HIGHEST PRIORITY - FIRST CHECK)
+**Critical Rule**: Before any complex analysis, check for normal test execution progress with business value validation.
 
-**Normal Progress Indicators**:
+**Enhanced Normal Progress Indicators**:
 - **Test Completion Status**: Number of completed_cases < total planned test_cases
-- **Recent Success**: Last completed test case has successful status (passed/success)
+- **Business Value Achievement**: Completed tests are validating actual business processes and user scenarios
+- **Recent Success**: Last completed test case has successful status AND demonstrated business value
+- **Domain Appropriateness**: Tests are reflecting industry-specific patterns and requirements
+- **User Scenario Realism**: Test steps are designed from real user perspective with natural actions and expectations
 - **No Critical Errors**: No system crashes, unrecoverable errors, or blocking UI states
-- **Sequential Execution**: Tests are progressing through the planned sequence
+- **Sequential Execution**: Tests are progressing through the planned sequence with business relevance
 
-**Decision Logic for Normal Progress**:
+**Enhanced Decision Logic for Normal Progress**:
 ```
 IF (len(completed_cases) < len(current_plan)
     AND last_completed_case_status is successful
+    AND business_value_is_being_validated
+    AND domain_appropriate_tests_are_executing
     AND no_critical_blocking_errors):
     THEN decision = "CONTINUE"
-    EXPLANATION: "Normal test execution progress detected. The last test case completed successfully and more planned test cases remain to be executed. Continuing with sequential execution."
+    EXPLANATION: "Normal test execution progress detected with business value validation. The last test case completed successfully, demonstrated business relevance, and more planned test cases remain to be executed. Continuing with sequential execution."
 ```
 
 **Only proceed to Phase 1-3 if normal progress conditions are NOT met.**
 
-### Phase 1: Application State Assessment (SECOND PRIORITY)
-**Evaluation Criteria**: Analyze current UI state for test execution blockers
+### Phase 1: Enhanced Application State Assessment (SECOND PRIORITY)
+**Evaluation Criteria**: Analyze current UI state for test execution blockers with business context
 
-**Blocking Conditions Analysis**:
-- **Critical UI Changes**: Unexpected modals, error dialogs, or navigation disruptions
-- **Application Failures**: System crashes, unresponsive pages, or error states
-- **Environmental Issues**: Network connectivity problems or timeout conditions
-- **Test Data Conflicts**: Data integrity issues affecting subsequent tests
+**Enhanced Blocking Conditions Analysis**:
+- **Business Process Disruptions**: Unexpected modals, error dialogs, or navigation disruptions affecting business workflows
+- **Application Failures**: System crashes, unresponsive pages, or error states impacting business operations
+- **Environmental Issues**: Network connectivity problems or timeout conditions affecting testing
+- **Business Data Conflicts**: Data integrity issues affecting business logic validation
+- **Domain-Specific Blockers**: Industry-specific issues preventing proper test execution
 
-**Decision Logic**:
-- **BLOCKED State Detected** → Decision: `REPLAN`
-  - Provide detailed blocker analysis and remediation strategy
-  - Generate new test plan to address or work around the blocker
+**Enhanced Decision Logic**:
+- **ENHANCED BLOCKED State Detected** → Decision: `REPLAN`
+  - Provide detailed blocker analysis with business context and remediation strategy
+  - Generate new test plan to address or work around blockers with domain awareness
+  - Ensure business process continuity and value validation
 - **NO BLOCKING Issues** → Proceed to Phase 2
 
-### Phase 2: Coverage & Objective Achievement Assessment (THIRD PRIORITY)
-**Evaluation Criteria**: Assess test completion status against original objectives
+### Phase 2: Enhanced Coverage & Business Value Achievement Assessment (THIRD PRIORITY)
+**Evaluation Criteria**: Assess test completion status against original objectives with business context
 
-**Coverage Analysis**:
-{coverage_criteria}- **User Journey Coverage**: End-to-end workflow validation completeness
-- **Edge Case Coverage**: Boundary conditions and error scenarios testing
+**Enhanced Coverage Analysis**:
+{coverage_criteria}- **Business Process Coverage**: End-to-end workflow validation completeness
+- **User Experience Coverage**: Usability, accessibility, and user satisfaction validation
+- **User Scenario Realism**: Test steps designed from actual user perspective with natural behavior patterns
+- **Domain Compliance**: Industry-specific regulation and compliance validation
+- **Business Value Validation**: Actual business benefits and ROI validation
 
-**Objective Achievement Analysis**:
-- **Primary Objectives**: Core business functionality validation status
-- **Secondary Objectives**: Additional requirements and quality attributes
-- **Success Criteria**: Measurable outcomes achievement evaluation
+**Enhanced Objective Achievement Analysis**:
+- **Primary Business Objectives**: Core business functionality validation status with domain context
+- **Secondary Business Objectives**: Additional requirements and quality attributes with industry relevance
+- **User Experience Objectives**: Usability, accessibility, and satisfaction metrics achievement
+- **Business Value Objectives**: Measurable business outcomes and ROI achievement evaluation
 
-**Mode-Specific Decision Logic**:
+**Enhanced Mode-Specific Decision Logic**:
 {mode_specific_logic}
 
-**Decision Logic**:
-- **All Objectives Achieved** AND **All Planned Cases Complete** → Decision: `FINISH`
-- **Remaining Objectives** OR **Incomplete Cases** → Decision: `CONTINUE`
+**Enhanced Decision Logic**:
+- **All Business Objectives Achieved** AND **All Planned Cases Complete** AND **Business Value Validated** → Decision: `FINISH`
+- **Remaining Business Objectives** OR **Incomplete Cases** OR **Insufficient Business Value Validation** → Decision: `CONTINUE`
 
-### Phase 3: Plan Adequacy Assessment (LOWEST PRIORITY)
-**Evaluation Criteria**: Determine if current plan can achieve remaining objectives
+### Phase 3: Enhanced Plan Adequacy Assessment (LOWEST PRIORITY)
+**Evaluation Criteria**: Determine if current plan can achieve remaining objectives with business relevance
 
-**Plan Effectiveness Analysis**:
-- **Test Case Relevance**: Do remaining tests address current objectives?
-- **Test Environment Alignment**: Are tests aligned with current application state?
-- **Execution Feasibility**: Can remaining tests be executed without modification?
+**Enhanced Plan Effectiveness Analysis**:
+- **Business Value Relevance**: Do remaining tests address current business objectives and domain needs?
+- **Domain Appropriateness**: Are tests aligned with industry-specific patterns and requirements?
+- **Business Process Alignment**: Are tests validating actual business workflows and user scenarios?
+- **User Scenario Realism**: Are test steps designed from real user perspective with natural actions and expectations?
+- **Execution Feasibility**: Can remaining tests be executed without modification while maintaining business value?
 
-**Decision Logic**:
+**Enhanced Decision Logic**:
 - **Current Plan Adequate** → Decision: `CONTINUE`
-- **Plan Revision Required** → Decision: `REPLAN`
+- **Enhanced Plan Revision Required** → Decision: `REPLAN`
 
-## Output Format (Strict JSON Schema)
+## Enhanced Output Format (Strict JSON Schema)
 
 ### For CONTINUE or FINISH Decisions:
 ```json
 {{
   "decision": "CONTINUE" | "FINISH",
-  "reasoning": "Comprehensive explanation of decision rationale including coverage analysis, objective assessment, and risk evaluation",
+  "reasoning": "Comprehensive explanation of decision rationale including business context analysis, domain-specific insights, coverage analysis, objective assessment, and risk evaluation",
+  "business_value_analysis": {{
+    "business_objectives_achieved": number_of_achieved_objectives,
+    "domain_coverage_percent": estimated_domain_coverage_percentage,
+    "business_value_validated": boolean_assessment,
+    "user_experience_quality": "assessment_of_user_experience_quality"
+  }},
   "coverage_analysis": {{
     "functional_coverage_percent": estimated_percentage,
-    "objectives_completed": number_of_completed_objectives,
-    "remaining_risks": "assessment_of_outstanding_risks"
+    "business_process_coverage": "assessment_of_business_workflow_validation",
+    "domain_compliance_status": "compliance_validation_status",
+    "remaining_risks": "assessment_of_outstanding_business_risks"
   }},
   "new_plan": []
 }}
@@ -820,33 +871,60 @@ IF (len(completed_cases) < len(current_plan)
 ```json
 {{
   "decision": "REPLAN",
-  "reasoning": "Detailed explanation of why current plan is inadequate, including specific blockers, coverage gaps, or environmental changes",
+  "reasoning": "Detailed explanation of why current plan is inadequate, including specific business context gaps, domain-specific issues, coverage gaps, or environmental changes",
   "replan_strategy": {{
+    "business_context_enhancement": "approach_to_improve_business_relevance",
+    "domain_specific_improvements": "industry_specific_enhancements_to_testing",
+    "user_scenario_enhancement": "improve_user_perspective_and_natural_behavior_simulation",
     "blocker_resolution": "approach_to_address_identified_blockers",
     "coverage_enhancement": "strategy_to_improve_test_coverage",
-    "risk_mitigation": "measures_to_address_outstanding_risks"
+    "business_value_mitigation": "measures_to_address_business_value_risks"
   }},
   "new_plan": [
     {{
       "name": "修订后的测试用例（中文命名）",
-      "objective": "clear_test_purpose_aligned_with_remaining_objectives",
-      "test_category": "category_classification",
-      "priority": "priority_based_on_risk_assessment",
+      "objective": "clear_test_purpose_aligned_with_remaining_business_objectives",
+      "test_category": "enhanced_category_classification",
+      "priority": "priority_based_on_business_impact",
+      "business_context": "Enhanced test scenario with business context and domain-specific validation",
+      "domain_specific_rules": "industry_specific_validation_requirements",
       "steps": [
         {{"action": "action_instruction"}},
         {{"verify": "validation_instruction"}}
       ],
       "reset_session": boolean_flag,
-      "success_criteria": ["measurable_success_conditions"]
+      "success_criteria": ["measurable_business_success_conditions"]
     }}
   ]
 }}
 ```
 
-## Test Case Design Standards for Replanning
+### Atomic Step Decomposition Principle for Replanning
+**CRITICAL**: When generating new test cases during replanning, apply the same atomic step                                                                                  
+decomposition rules:
 
-### Navigation Optimization Guidelines for Replanning
-**IMPORTANT**: When generating new test cases during replanning, apply the same navigation optimization rules:
+1. **One Action Per Step**: Each step must contain ONLY ONE action or verification                                                                                          
+2. **Decompose Complex Instructions**: Break down compound operations into individual steps                                                                                 
+3. **State Management**: Consider page state changes between steps
+4. **Sequential Execution**: Maintain clear execution order
+
+**Examples for Replanning Context**:
+❌ **Avoid**: `{{"action": "点击多个导航链接测试页面跳转"}}`
+✅ **Use**: 
+```json
+[
+{{"action": "点击第一个导航链接"}},
+{{"verify": "验证页面跳转成功"}},
+{{"action": "返回主页面"}},
+{{"action": "点击第二个导航链接"}},
+{{"verify": "验证页面跳转成功"}}
+]
+```
+
+## Enhanced Test Case Design Standards for Replanning
+
+### Navigation Optimization Guidelines for Enhanced Replanning
+**IMPORTANT**: When generating new test cases during replanning, apply the same navigation optimization rules with business context:
 
 1. **When `reset_session=true`**:
    - The system will automatically navigate to the target URL before test execution
@@ -862,16 +940,26 @@ IF (len(completed_cases) < len(current_plan)
    - URL patterns like "https://", "www.", ".com", etc. are also considered navigation
    - The system will automatically skip redundant navigation when already on the target page
 
-### Session Management Considerations
-- **reset_session=true**: Use for test isolation, when you need a clean browser state
-- **reset_session=false**: Use for continuous testing, when you want to maintain state between tests
-- **Mixed Strategies**: You can generate both types of test cases in the same plan as needed
+### Enhanced Session Management Considerations
+- **reset_session=true**: Use for test isolation, when you need a clean browser state for business-critical tests
+- **reset_session=false**: Use for continuous testing, when you want to maintain state between related business processes
+- **Mixed Strategies**: You can generate both types of test cases in the same plan as needed based on business workflow requirements
 
-## Decision Quality Standards
+### Enhanced Business Context Integration
+- **Business Process Continuity**: Ensure test cases maintain business workflow integrity
+- **Domain-Specific Validation**: Include industry-specific validation rules and compliance requirements
+- **User Experience Focus**: Consider usability, accessibility, and user satisfaction in all test cases
+- **User Scenario Realism**: Design test steps from real user perspective with natural actions and expectations
+- **Business Value Alignment**: Ensure each test case validates specific business value and user benefits
+
+## Enhanced Decision Quality Standards
+- **Business Context-Aware**: All decisions must consider business domain, user needs, and industry context
 - **Evidence-Based**: All decisions must be supported by concrete evidence from execution results
-- **Risk-Informed**: Consider business impact and technical risk in all decision-making
-- **Coverage-Driven**: Ensure adequate test coverage before declaring completion
+- **Risk-Informed**: Consider business impact, technical risk, and user experience in all decision-making
+- **Coverage-Driven**: Ensure adequate test coverage across functional, business, and domain dimensions
 - **Objective-Aligned**: Maintain focus on original business objectives throughout analysis
+- **Value-Focused**: Prioritize business value validation and user experience quality
+- **Domain-Appropriate**: Ensure all decisions reflect industry-specific patterns and requirements
 - **Traceability**: Provide clear rationale linking analysis to strategic decisions
 - **Progress-Oriented**: Favor CONTINUE decisions when tests are progressing normally to avoid unnecessary interruptions
 """
