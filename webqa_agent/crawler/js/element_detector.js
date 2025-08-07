@@ -5,6 +5,27 @@
 //
 // Licensed under the MIT License
 
+/**
+ * DOM Element Detection and Highlighting System
+ *
+ * This module provides comprehensive functionality for detecting, analyzing, and highlighting
+ * interactive elements and meaningful text content within web pages. It includes:
+ *
+ * - Interactive element detection with heuristic analysis
+ * - Text element validation and extraction
+ * - Visual highlighting with overlay rendering
+ * - DOM tree construction with filtering capabilities
+ * - Viewport-aware element processing
+ * - Event listener detection and cursor analysis
+ *
+ * Key Features:
+ * - Supports both interactive element and text content highlighting modes
+ * - Handles nested elements with distinct interaction boundary detection
+ * - Provides robust visibility and top-element checking
+ * - Includes performance optimizations with caching mechanisms
+ * - Supports iframe and Shadow DOM contexts
+ */
+
 (function () {
         window._highlight = window._highlight ?? true;                          // RenderHighlight Switch
         window._highlightText = window._highlightText ?? false;                 // RenderTextHighlight Switch
@@ -448,11 +469,11 @@
                 return false;
             }
 
-            // 缓存 tagName 和 样式
+            // Cache tagName and computed style for performance
             const tagName = element.tagName.toLowerCase();
-            const style = getCachedStyle(element); // 或者 window.getComputedStyle(element)
+            const style = getCachedStyle(element);
 
-            // 1. 可见性检查
+            // 1. Visibility check - element must be visible
             if (
                 style.display === 'none' ||
                 style.visibility === 'hidden' ||
@@ -461,11 +482,11 @@
                 return false;
             }
 
-            // 2. 必须包含非空白文本
+            // 2. Must contain non-whitespace text content
             const text = (element.innerText || element.textContent || '').trim();
             if (!text) return false;
 
-            // 3. 排除常见的结构性容器（通常不直接展示用户关心的文本信息）
+            // 3. Exclude common structural containers (usually don't display user-relevant text)
             const structuralTags = new Set([
                 'html', 'body', 'section', 'header', 'footer', 'main', 'nav', 'article', 'aside', 'template', 'iframe'
             ]);
@@ -473,17 +494,17 @@
                 return false;
             }
 
-            // 4. 排除“占满大部分视口”的大容器（可能是整体布局或空白区域）
+            // 4. Exclude large containers that occupy most of the viewport (likely layout or whitespace areas)
             const rect = element.getBoundingClientRect();
             const vw = window.innerWidth, vh = window.innerHeight;
             const areaRatio = (rect.width * rect.height) / (vw * vh);
-            if (areaRatio > 0.6) return false;  // 按需调整阈值
+            if (areaRatio > 0.6) return false;  // Adjust threshold as needed
 
-            // 5. 如果元素本身也是一个可交互元素，就交给 isInteractiveElement 处理，文本信息这里不重复抓取
+            // 5. If element is interactive, let isInteractiveElement handle it to avoid duplicate processing
             // if (isInteractiveElement(element) && !isElementDistinctInteraction(element)) {
             if (isInteractiveElement(element)) return false;
 
-            // 6. 最终判断通过，认为这是有意义的文本信息节点
+            // 6. Final validation - this is considered a meaningful text information node
             return true;
         }
 
@@ -799,14 +820,14 @@
                     const rects = Array.from(elem.getClientRects()).filter(r => r.width >= 2 && r.height >= 2);
                     if (rects.length === 0) return;
 
-                    // 1. 颜色：每个元素固定一个 color
+                    // 1. Color: assign a fixed color for each element
                     let color = _elementHighlightColorMap.get(elem);
                     if (!color) {
                         color = randomColor();
                         _elementHighlightColorMap.set(elem, color);
                     }
 
-                    // 2. 画每个 rect 的 box（保持每行/多 rect 视觉）
+                    // 2. Draw box for each rect (maintain visual consistency for multi-line/multi-rect elements)
                     rects.forEach(r => {
                         const box = document.createElement('div');
                         Object.assign(box.style, {
@@ -822,7 +843,7 @@
                         overlayContainer.appendChild(box);
                     });
 
-                    // 3. 计算 union 用作 fallback 和外部定位参考
+                    // 3. Calculate union rect as fallback and external positioning reference
                     const union = rects.reduce((acc, r) => {
                         if (!acc) {
                             return {
@@ -841,7 +862,7 @@
                     }, null);
                     if (!union) return;
 
-                    // 4. label 创建（隐藏先测量）
+                    // 4. Create label (hidden first for measurement)
                     const label = document.createElement('div');
                     label.textContent = info.highlightIndex;
                     Object.assign(label.style, {
@@ -859,25 +880,25 @@
                     overlayContainer.appendChild(label);
                     const labelRect = label.getBoundingClientRect();
 
-                    // 5. 定位：优先放在第一个 rect 内右上角，fallback 逻辑参考 index.js
+                    // 5. Positioning: prioritize placing in the top-right corner of the first rect, with fallback logic from index.js
                     const firstRect = rects[0];
-                    let labelTop = firstRect.top + 2; // 内部顶部略下
-                    let labelLeft = firstRect.left + firstRect.width - labelRect.width - 2; // 右对齐
+                    let labelTop = firstRect.top + 2; // slightly below the internal top
+                    let labelLeft = firstRect.left + firstRect.width - labelRect.width - 2; // right-aligned
 
-                    // 如果放不下（第一个 rect 太小），放在 rect 上方右对齐
+                    // If it doesn't fit (first rect is too small), place above the rect, right-aligned
                     if (firstRect.width < labelRect.width + 4 || firstRect.height < labelRect.height + 4) {
                         labelTop = firstRect.top - labelRect.height - 2;
                         labelLeft = firstRect.left + firstRect.width - labelRect.width - 2;
                     }
 
-                    // 最终兜底：如果上面仍然溢出或者在非常拥挤场景，可以再 fallback 到 union 的左上内部
+                    // Final fallback: if still overflowing or in very crowded scenarios, fallback to union's top-left interior
                     if (labelLeft < 0 || labelTop < 0 || labelLeft + labelRect.width > window.innerWidth) {
-                        // union 内左上
+                        // Inside union's top-left
                         labelLeft = union.left + 2;
                         labelTop = union.top + 2;
                     }
 
-                    // Clamp 到 viewport
+                    // Clamp to viewport
                     labelTop = Math.max(0, Math.min(labelTop, window.innerHeight - labelRect.height));
                     labelLeft = Math.max(0, Math.min(labelLeft, window.innerWidth - labelRect.width));
 
