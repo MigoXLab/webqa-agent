@@ -65,45 +65,16 @@ class ParallelTestExecutor:
             await self._execute_tests_in_batches(test_session, enabled_tests)
 
             test_session.complete_session()
-
-            # Aggregate results
-            logging.info("Aggregating test results...")
-            aggregated_results = await self.result_aggregator.aggregate_results(test_session)
-            test_session.aggregated_results = aggregated_results
-
-            # Generate JSON & HTML reports in same folder
-            logging.info("Generating reports (JSON + HTML)...")
-            report_path = await self.result_aggregator.generate_json_report(test_session)
-            test_session.report_path = report_path
-            report_dir = os.path.dirname(report_path)
-            html_path = self.result_aggregator.generate_html_report_fully_inlined(test_session, report_dir=report_dir)
-            test_session.html_report_path = html_path
-
         except asyncio.CancelledError:
             logging.warning("Parallel test execution cancelled – generating partial report.")
-
-            try:
-                aggregated_results = await self.result_aggregator.aggregate_results(test_session)
-                test_session.aggregated_results = aggregated_results
-
-                report_path = await self.result_aggregator.generate_json_report(test_session)
-                test_session.report_path = report_path
-                logging.info(f"Partial report generated: {report_path}")
-            except Exception as agg_err:
-                logging.error(f"Failed to generate partial report after cancellation: {agg_err}")
-
-            # Re-raise to let upstream callers know the operation was cancelled
             raise
-
         except Exception as e:
             logging.error(f"Error in parallel test execution: {e}")
             raise
         finally:
-            if test_session.end_time is None:
-                test_session.complete_session()
-            await self.session_manager.close_all_sessions()
+            # Consolidated cleanup, aggregation, and report generation
+            await self._finalize_session(test_session)
 
-        logging.info(f"Parallel test execution completed. Report: {test_session.report_path}")
         return test_session
 
     async def _execute_tests_in_batches(
@@ -347,3 +318,33 @@ class ParallelTestExecutor:
         elif test_id in self.completed_tests:
             return self.completed_tests[test_id].status
         return None
+
+    async def _finalize_session(self, test_session: ParallelTestSession):
+        """Close sessions, aggregate results, and generate reports for the given session.
+
+        This helper consolidates cleanup and report generation logic to avoid duplication
+        across normal completion, cancellation, and error paths.
+        """
+        # Ensure all browser sessions are closed
+        await self.session_manager.close_all_sessions()
+
+        # Aggregate results
+        aggregated_results = await self.result_aggregator.aggregate_results(test_session)
+        test_session.aggregated_results = aggregated_results
+
+        # Generate JSON & HTML reports
+        report_path = await self.result_aggregator.generate_json_report(test_session)
+        test_session.report_path = report_path
+
+        report_dir = os.path.dirname(report_path)
+        html_path = self.result_aggregator.generate_html_report_fully_inlined(
+            test_session, report_dir=report_dir
+        )
+        test_session.html_report_path = html_path
+
+        logging.info(f"Report generated: {report_path}")
+        logging.info(f"HTML report generated: {html_path}")
+
+        # Mark session as completed if not already done
+        if test_session.end_time is None:
+            test_session.complete_session()

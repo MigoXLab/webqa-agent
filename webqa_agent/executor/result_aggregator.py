@@ -20,10 +20,13 @@ class ResultAggregator:
             Aggregated results dictionary
         """
         logging.info(f"Aggregating results for session: {test_session.session_id}")
-
+        issues = []
+        error_message = await self._get_error_message(test_session)
         # Generate issue list (LLM powered when possible)
-        issues = await self._generate_llm_issues(test_session)
+        llm_issues = await self._generate_llm_issues(test_session)
         
+        issues.extend(error_message)
+        issues.extend(llm_issues)
         # 统计指标改为基于所有子测试（SubTest）
         total_sub_tests = sum(len(r.sub_tests or []) for r in test_session.test_results.values())
         passed_sub_tests = sum(
@@ -38,7 +41,7 @@ class ResultAggregator:
         executive_content = {
             "executiveSummary": "",
             "statistics": [
-                {"label": "评估项总数", "value": str(total_sub_tests), "colorClass": "var(--warning-color)"},
+                {"label": "评估子测试总数", "value": str(total_sub_tests), "colorClass": "var(--warning-color)"},
                 {"label": "测试通过", "value": str(passed_sub_tests), "colorClass": "var(--success-color)"},
                 {"label": "测试失败", "value": str(critical_sub_tests), "colorClass": "var(--failure-color)"},
             ]
@@ -51,7 +54,7 @@ class ResultAggregator:
                 "title": "问题列表",
                 "content": {
                     "title": "问题追踪列表",
-                    "note": "注：此列表汇总了所有检测到的“失败”和“警告”项。请点击“查看详情”跳转到具体问题描述。",
+                    "note": "注：此列表汇总了所有检测到的“失败”和“警告”项",
                     "issues": issues,
                 },
             },
@@ -101,7 +104,7 @@ class ResultAggregator:
             for sub in test_result.sub_tests or []:
                 try:
                     issue_entry = {
-                        "issue_name": test_result.test_name,
+                        "issue_name": test_result.test_name, 
                         "issue_type": test_result.test_type.value,
                         "sub_test_name": sub.name,
                         "severity": "high" if test_result.status == TestStatus.FAILED else "medium",
@@ -220,6 +223,21 @@ class ResultAggregator:
 
         return prompt
 
+    async def _get_error_message(self, test_session: ParallelTestSession) -> str:
+        """Get error message from test session."""
+        error_message = []
+        for test_result in test_session.test_results.values():
+            if test_result.status != TestStatus.PASSED:
+                # Only append if error_message is not empty
+                if test_result.error_message:
+                    error_message.append({
+                        "issue_name": "执行失败: "+test_result.test_name,
+                        "issue_type": test_result.test_type.value,
+                        "severity": "high",
+                        "issues": test_result.error_message
+                    })
+        return error_message
+
     async def generate_json_report(self, test_session: ParallelTestSession, report_dir: str | None = None) -> str:
         """Generate comprehensive JSON report."""
         try:
@@ -234,8 +252,13 @@ class ResultAggregator:
                 json.dump(test_session.to_dict(), f, indent=2, ensure_ascii=False, default=str)
 
             absolute_path = os.path.abspath(json_path)
-            logging.info(f"JSON report generated: {absolute_path}")
-            return absolute_path
+            if os.getenv("DOCKER_ENV"):
+                host_path = absolute_path.replace("/app/reports", "./reports")
+                logging.debug(f"JSON report generated: {host_path}")
+                return host_path
+            else:
+                logging.debug(f"JSON report generated: {absolute_path}")
+                return absolute_path
 
         except Exception as e:
             logging.error(f"Failed to generate JSON report: {e}")
@@ -244,7 +267,7 @@ class ResultAggregator:
     def _read_css_content(self) -> str:
         """Read and return CSS content."""
         try:
-            css_path = os.path.join(os.path.dirname(__file__), "../html/assets/style.css")
+            css_path = os.path.join(os.path.dirname(__file__), "../static/assets/style.css")
             if os.path.exists(css_path):
                 with open(css_path, "r", encoding="utf-8") as f:
                     return f.read()
@@ -255,7 +278,7 @@ class ResultAggregator:
     def _read_js_content(self) -> str:
         """Read and return JavaScript content."""
         try:
-            js_path = os.path.join(os.path.dirname(__file__), "../html/assets/index.js")
+            js_path = os.path.join(os.path.dirname(__file__), "../static/assets/index.js")
             if os.path.exists(js_path):
                 with open(js_path, "r", encoding="utf-8") as f:
                     return f.read()
@@ -271,7 +294,7 @@ class ResultAggregator:
 
         try:
             if template_path is None:
-                template_path = os.path.join(os.path.dirname(__file__), "../html/index.html")
+                template_path = os.path.join(os.path.dirname(__file__), "../static/index.html")
             with open(template_path, "r", encoding="utf-8") as f:
                 html_template = f.read()
 
@@ -306,8 +329,13 @@ class ResultAggregator:
             with open(html_path, "w", encoding="utf-8") as f:
                 f.write(html_out)
             absolute_path = os.path.abspath(html_path)
-            logging.info(f"HTML report generated: {absolute_path}")
-            return absolute_path
+            if os.getenv("DOCKER_ENV"):
+                host_path = absolute_path.replace("/app/reports", "./reports")
+                logging.debug(f"HTML report generated: {host_path}")
+                return host_path
+            else:
+                logging.debug(f"HTML report generated: {absolute_path}")
+                return absolute_path
         except Exception as e:
             logging.error(f"Failed to generate fully inlined HTML report: {e}")
             return ""

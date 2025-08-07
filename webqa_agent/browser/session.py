@@ -78,7 +78,17 @@ class BrowserSession:
             except Exception as e:
                 logging.error(f"Failed to add cookies: {e}")
 
+        # Navigate to the target URL and wait until DOM is ready
         await page.goto(url, **kwargs)
+        await page.wait_for_load_state("networkidle", timeout=60000)
+        try:
+            is_blank = await page.evaluate("!document.body || document.body.innerText.trim().length === 0")
+        except Exception as e:
+            logging.warning(f"Error while checking page content after navigation: {e}")
+            is_blank = False  # Fail open – don't block execution if evaluation fails
+
+        if is_blank:
+            raise RuntimeError(f"Page load timeout or blank content after navigation to {url}, Please check the url and try again.")
 
     def get_page(self) -> Page:
         """Return current page via Driver."""

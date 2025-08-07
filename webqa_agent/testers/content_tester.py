@@ -41,6 +41,7 @@ class PageTextTest:
             # 创建ActionHandler用于截图
             action_handler = ActionHandler()
             action_handler.page = page
+            await asyncio.sleep(2)
 
             # 检查页面是否空白
             is_blank = await page.evaluate("document.body.innerText.trim() === ''")
@@ -69,10 +70,9 @@ class PageTextTest:
 
                 test_page_content = await self.llm.get_llm_response(LLMPrompt.page_default_prompt, prompt)
 
-                # 如果LLM返回实际问题内容(不是None)，标记为发现问题但测试完成
                 has_issues = test_page_content and "None" not in str(test_page_content)
                 if has_issues:
-                    result.status = TestStatus.FAILED  # 发现了文本错误
+                    result.status = TestStatus.FAILED 
                     issues = test_page_content
                 else:
                     result.status = TestStatus.PASSED
@@ -150,6 +150,7 @@ class PageContentTest:
                 # parse LLM response
                 summary_text = None
                 issues_list = []
+                issues_text = "无发现问题"  # initialize with default value
 
                 logging.debug(f"LLM response for user case '{user_case[:20]}...': {test_page_content}")
 
@@ -181,10 +182,6 @@ class PageContentTest:
                         # if not structured, use raw text as summary
                         summary_text = str(test_page_content) if test_page_content else None
 
-                    # if found issues, set test result to warning
-                    if issues_list or (summary_text and summary_text.strip()):
-                        result.status = TestStatus.WARNING
-
                     # collect summary info for report
                     if summary_text:
                         all_issues.append(f"总结: {summary_text}")
@@ -215,7 +212,17 @@ class PageContentTest:
                             ))
                             id_counter += 1
 
-                issues_text = "; ".join(all_issues) if all_issues else "无发现问题"
+                    # set status based on whether issues were found
+                    if issues_list or (summary_text and summary_text.strip()):
+                        result.status = TestStatus.WARNING
+                        issues_text = "; ".join(all_issues) if all_issues else "发现问题"
+                    else:
+                        result.status = TestStatus.PASSED
+                        issues_text = "无发现问题"
+                else:
+                    # no valid content from LLM, treat as no issues found
+                    result.status = TestStatus.PASSED
+                    issues_text = "无发现问题"
 
                 result.report.append(SubTestReport(title=user_case[:4], issues=issues_text))
 
@@ -285,6 +292,7 @@ class PageButtonTest:
                         current_url = page.url
                         if current_url != url:
                             await page.goto(url)
+                            await page.wait_for_load_state("networkidle", timeout=30000)
                             await asyncio.sleep(0.5)  # Wait for page to stabilize
 
                         screenshots = []

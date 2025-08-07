@@ -89,12 +89,12 @@ class TestExecutionContext(BaseModel):
 
     def start_execution(self):
         """Mark test as started."""
-        self.start_time = datetime.now()
+        self.start_time = datetime.now().replace(microsecond=0)
         self.status = TestStatus.RUNNING
 
     def complete_execution(self, success: bool = True, error_message: str = ""):
         """Mark test as completed."""
-        self.end_time = datetime.now()
+        self.end_time = datetime.now().replace(microsecond=0)
         self.status = TestStatus.PASSED if success else TestStatus.FAILED
         self.error_message = error_message
 
