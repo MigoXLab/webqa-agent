@@ -1,6 +1,6 @@
 # WebQA Agent
 
-**WebQA Agent** 是全自动网页评估测试 Agent，一键诊断性能、功能与交互体验
+**WebQA Agent** 是全自动网页评估测试 Agent，一键诊断性能、安全、功能与交互体验
 
 ## 🚀 核心特性
 

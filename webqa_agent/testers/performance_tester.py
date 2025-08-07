@@ -357,6 +357,14 @@ class LighthouseMetricsTest:
         best_practices_category = categories.get("best-practices", {})
         seo_category = categories.get("seo", {})
         audits = lhr.get("audits", {})
+        
+        # Check for valid Lighthouse results
+        if not categories or not performance_category:
+            raise Exception("Lighthouse execution failed: No valid performance category found in results")
+        
+        # Check if performance score is available
+        if performance_category.get("score") is None:
+            raise Exception("Lighthouse execution failed: Performance score is N/A or missing")
 
         # ====== Performance Analysis ======
         # 1. Overall score and metrics
@@ -417,9 +425,13 @@ class LighthouseMetricsTest:
 
                 # For core metrics, record whether threshold is passed
                 if metric_info["is_core_vital"]:
-                    performance_metrics[metric_info["id"]]["passes_threshold"] = (
-                        score >= 0.9 if score is not None else False
+                    # Use actual performance thresholds instead of Lighthouse scores
+                    passes_threshold = self._check_core_vital_threshold(
+                        metric_info["id"], 
+                        audit.get("numericValue"), 
+                        audit.get("displayValue", "")
                     )
+                    performance_metrics[metric_info["id"]]["passes_threshold"] = passes_threshold
                     core_vitals[metric_info["id"]] = performance_metrics[metric_info["id"]]
 
         # 4. Performance opportunities and diagnostics
@@ -622,6 +634,36 @@ class LighthouseMetricsTest:
         return extracted_details
 
     @staticmethod
+    def _check_core_vital_threshold(metric_id, numeric_value, display_value):
+        """Check if a core vital metric passes the recommended threshold.
+        
+        Args:
+            metric_id: The metric identifier (lcp, cls, tbt)
+            numeric_value: The numeric value from Lighthouse audit
+            display_value: The display value string
+            
+        Returns:
+            bool: True if the metric passes the threshold
+        """
+        if numeric_value is None:
+            return False
+            
+        # Define thresholds for Core Web Vitals (good thresholds)
+        thresholds = {
+            "lcp": 2500,  # 2.5 seconds in milliseconds
+            "cls": 0.1,   # CLS score
+            "tbt": 200,   # 200 milliseconds
+        }
+        
+        threshold = thresholds.get(metric_id)
+        if threshold is None:
+            return False
+            
+        # For LCP and TBT, numeric_value is in milliseconds
+        # For CLS, numeric_value is the score itself
+        return numeric_value <= threshold
+
+    @staticmethod
     def _determine_impact_level(score):
         """Determine impact level based on score."""
         if score == 0:
@@ -632,7 +674,6 @@ class LighthouseMetricsTest:
             return "moderate"
         else:
             return "minor"
-
     @staticmethod
     def _generate_recommendations(core_vitals, opportunities, diagnostics, page_stats, seo_issues):
         """Generate prioritized recommendations."""
@@ -695,3 +736,4 @@ class LighthouseMetricsTest:
             recommendations.append(recommendation)
 
         return recommendations
+

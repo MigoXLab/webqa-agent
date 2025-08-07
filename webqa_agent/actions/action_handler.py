@@ -41,7 +41,7 @@ class ActionHandler:
                 raise Exception(f"add context cookies error: {e}")
 
         await self.page.goto(url=url, wait_until="domcontentloaded")
-        await self.page.wait_for_load_state("networkidle", timeout=60000)
+        await self.page.wait_for_load_state("networkidle", timeout=30000)
 
     async def smart_navigate_to_page(self, page: Page, url: str, cookies=None) -> bool:
         """Smart navigation to target page, avoiding redundant navigation.
@@ -503,7 +503,7 @@ class ActionHandler:
             tuple: (screenshot base64 encoded, screenshot file path)
         """
         # get screenshot
-        screenshot_bytes = await self.take_screenshot(self.page, full_page=full_page, timeout=120000)
+        screenshot_bytes = await self.take_screenshot(self.page, full_page=full_page, timeout=30000)
 
         # convert to Base64
         screenshot_base64 = base64.b64encode(screenshot_bytes).decode("utf-8")

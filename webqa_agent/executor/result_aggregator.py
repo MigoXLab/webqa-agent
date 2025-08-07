@@ -20,11 +20,21 @@ class ResultAggregator:
             Aggregated results dictionary
         """
         logging.info(f"Aggregating results for session: {test_session.session_id}")
-
+        issues = []
+        error_message = await self._get_error_message(test_session)
         # Generate issue list (LLM powered when possible)
-        issues = await self._generate_llm_issues(test_session)
+        llm_issues = await self._generate_llm_issues(test_session)
         
-        # 统计指标改为基于所有子测试（SubTest）
+        issues.extend(error_message)
+        issues.extend(llm_issues)
+        logging.debug(f"Found {len(test_session.test_results)} test results")
+        for test_id, result in test_session.test_results.items():
+            sub_tests_count = len(result.sub_tests or [])
+            logging.debug(f"Test {test_id} has {sub_tests_count} sub_tests")
+            if result.sub_tests:
+                for i, sub_test in enumerate(result.sub_tests):
+                    logging.debug(f"Sub-test {i}: status={sub_test.status}")
+        
         total_sub_tests = sum(len(r.sub_tests or []) for r in test_session.test_results.values())
         passed_sub_tests = sum(
             1
@@ -33,12 +43,14 @@ class ResultAggregator:
             if sub.status == TestStatus.PASSED
         )
         critical_sub_tests = total_sub_tests - passed_sub_tests  # 未通过即视为关键问题
+        
+        logging.info(f"Debug: total_sub_tests={total_sub_tests}, passed_sub_tests={passed_sub_tests}, critical_sub_tests={critical_sub_tests}")
 
         # Build content for executive summary tab
         executive_content = {
             "executiveSummary": "",
             "statistics": [
-                {"label": "评估项总数", "value": str(total_sub_tests), "colorClass": "var(--warning-color)"},
+                {"label": "评估子测试总数", "value": str(total_sub_tests), "colorClass": "var(--warning-color)"},
                 {"label": "测试通过", "value": str(passed_sub_tests), "colorClass": "var(--success-color)"},
                 {"label": "测试失败", "value": str(critical_sub_tests), "colorClass": "var(--failure-color)"},
             ]
@@ -51,7 +63,7 @@ class ResultAggregator:
                 "title": "问题列表",
                 "content": {
                     "title": "问题追踪列表",
-                    "note": "注：此列表汇总了所有检测到的“失败”和“警告”项。请点击“查看详情”跳转到具体问题描述。",
+                    "note": "注：此列表汇总了所有检测到的“失败”和“警告”项",
                     "issues": issues,
                 },
             },
@@ -100,35 +112,56 @@ class ResultAggregator:
         for test_result in test_session.test_results.values():
             for sub in test_result.sub_tests or []:
                 try:
+                    # Determine severity strictly based on sub-test status
+                    if sub.status == TestStatus.PASSED:
+                        continue  # No issue for passed sub-tests
+                    if sub.status == TestStatus.WARNING:
+                        severity_level = "low"
+                    elif sub.status == TestStatus.FAILED:
+                        severity_level = "high"
+                    else:
+                        severity_level = "medium"
+
                     issue_entry = {
-                        "issue_name": test_result.test_name,
+                        "issue_name": "测试不通过: "+test_result.test_name, 
                         "issue_type": test_result.test_type.value,
                         "sub_test_name": sub.name,
-                        "severity": "high" if test_result.status == TestStatus.FAILED else "medium",
+                        "severity": severity_level,
                     }
                     if use_llm and llm:
                         prompt_content = {
                             "name": sub.name,
+                            "status": sub.status,
                             "report": sub.report,
                             "metrics": sub.metrics,
                             "final_summary": sub.final_summary,
                         }
                         prompt = (
-                            "你是一名经验丰富的软件测试分析师。请根据以下子测试信息判断是否存在问题，并给出严重程度，请关注report中的失败问题，其他内容为辅助标准；如果没有report字段，根据其他内容总结。"
-                            '如果没有问题，返回 JSON {"severity": "none"}。\n'
-                            '如果有问题，返回 JSON 格式：{"severity": "high|medium|low", "issues": "一句话中文问题描述"}。\n'
+                            "你是一名经验丰富的软件测试分析师。请阅读以下子测试信息，提取【问题内容】、【问题数量】和【严重程度】：\n"
+                            "1）如果 status = pass，请返回 JSON {\"issue_count\": 0}。\n"
+                            "2）如果 status != pass，则根据 report、metrics 或 final_summary 的具体内容判断：\n"
+                            "   - 提取最关键的一句话问题描述 issues\n"
+                            "   - 统计问题数量 issue_count（如果无法准确统计，可默认为 1）\n"
+                            "   - 严重程度判断：优先查看 report 中是否已标明严重程度（如 high/medium/low、严重/中等/轻微、critical/major/minor 等），如果有则直接遵循；如果 report 中没有明确标明，则根据问题影响程度自行判断：high（严重影响功能/性能）、medium（中等影响）、low（轻微问题/警告）\n"
+                            "3）你不能输出任何其他内容，也不能输出代码块，只能输出统一为 JSON：{\"issue_count\": <数字>, \"issues\": \"一句话中文问题描述\", \"severity\": \"high|medium|low\"}。\n"
                             f"子测试信息: {json.dumps(prompt_content, ensure_ascii=False, default=str)}"
                         )
                         logging.debug(f"LLM Issue Prompt: {prompt}")
-                        llm_response = await llm.get_llm_response("", prompt)
+                        llm_response_raw = await llm.get_llm_response("", prompt)
+                        llm_response = llm._clean_response(llm_response_raw)
+                        logging.debug(f"LLM Issue Response: {llm_response}")
                         try:
                             parsed = json.loads(llm_response)
-                            sev = parsed.get("severity", "none")
-                            if sev.lower() == "none":
-                                continue  # no issue reported
-                            issue_text = parsed.get("issues", "")
-                            issue_entry["severity"] = sev
+                            issue_count = parsed.get("issue_count", parsed.get("count", 1))
+                            if issue_count == 0:
+                                continue
+                            issue_text = parsed.get("issues", "").strip()
+                            if not issue_text:
+                                continue
+                            llm_severity = parsed.get("severity", severity_level)
+                            issue_entry["severity"] = llm_severity
                             issue_entry["issues"] = issue_text
+                            issue_entry["issue_count"] = issue_count
                         except Exception as parse_err:
                             logging.error(f"Failed to parse LLM JSON: {parse_err}; raw: {llm_response}")
                             continue  # skip if cannot parse
@@ -136,16 +169,16 @@ class ResultAggregator:
                         # Heuristic fallback – use final_summary to detect issue presence
                         summary_text = (sub.final_summary or "").strip()
                         if not summary_text:
-                            continue  # no summary, assume no issue
-                        # simple heuristic severity
+                            continue
                         lowered = summary_text.lower()
-                        if any(k in lowered for k in ["error", "fail", "严重", "错误"]):
+                        if any(k in lowered for k in ["error", "fail", "严重", "错误", "崩溃", "无法"]):
                             issue_entry["severity"] = "high"
-                        elif any(k in lowered for k in ["warning", "警告", "建议"]):
-                            issue_entry["severity"] = "medium"
-                        else:
+                        elif any(k in lowered for k in ["warning", "警告", "建议", "优化", "改进"]):
                             issue_entry["severity"] = "low"
+                        else:
+                            issue_entry["severity"] = "medium"
                         issue_entry["issues"] = summary_text
+                        issue_entry["issue_count"] = 1
                     # add populated entry
                     critical_issues.append(issue_entry)
                 except Exception as e:
@@ -220,6 +253,21 @@ class ResultAggregator:
 
         return prompt
 
+    async def _get_error_message(self, test_session: ParallelTestSession) -> str:
+        """Get error message from test session."""
+        error_message = []
+        for test_result in test_session.test_results.values():
+            if test_result.status != TestStatus.PASSED:
+                # Only append if error_message is not empty
+                if test_result.error_message:
+                    error_message.append({
+                        "issue_name": "执行异常: "+test_result.test_name,
+                        "issue_type": test_result.test_type.value,
+                        "severity": "high",
+                        "issues": test_result.error_message
+                    })
+        return error_message
+
     async def generate_json_report(self, test_session: ParallelTestSession, report_dir: str | None = None) -> str:
         """Generate comprehensive JSON report."""
         try:
@@ -234,8 +282,13 @@ class ResultAggregator:
                 json.dump(test_session.to_dict(), f, indent=2, ensure_ascii=False, default=str)
 
             absolute_path = os.path.abspath(json_path)
-            logging.info(f"JSON report generated: {absolute_path}")
-            return absolute_path
+            if os.getenv("DOCKER_ENV"):
+                host_path = absolute_path.replace("/app/reports", "./reports")
+                logging.debug(f"JSON report generated: {host_path}")
+                return host_path
+            else:
+                logging.debug(f"JSON report generated: {absolute_path}")
+                return absolute_path
 
         except Exception as e:
             logging.error(f"Failed to generate JSON report: {e}")
@@ -244,7 +297,7 @@ class ResultAggregator:
     def _read_css_content(self) -> str:
         """Read and return CSS content."""
         try:
-            css_path = os.path.join(os.path.dirname(__file__), "../html/assets/style.css")
+            css_path = os.path.join(os.path.dirname(__file__), "../static/assets/style.css")
             if os.path.exists(css_path):
                 with open(css_path, "r", encoding="utf-8") as f:
                     return f.read()
@@ -255,7 +308,7 @@ class ResultAggregator:
     def _read_js_content(self) -> str:
         """Read and return JavaScript content."""
         try:
-            js_path = os.path.join(os.path.dirname(__file__), "../html/assets/index.js")
+            js_path = os.path.join(os.path.dirname(__file__), "../static/assets/index.js")
             if os.path.exists(js_path):
                 with open(js_path, "r", encoding="utf-8") as f:
                     return f.read()
@@ -271,7 +324,7 @@ class ResultAggregator:
 
         try:
             if template_path is None:
-                template_path = os.path.join(os.path.dirname(__file__), "../html/index.html")
+                template_path = os.path.join(os.path.dirname(__file__), "../static/index.html")
             with open(template_path, "r", encoding="utf-8") as f:
                 html_template = f.read()
 
@@ -306,8 +359,13 @@ class ResultAggregator:
             with open(html_path, "w", encoding="utf-8") as f:
                 f.write(html_out)
             absolute_path = os.path.abspath(html_path)
-            logging.info(f"HTML report generated: {absolute_path}")
-            return absolute_path
+            if os.getenv("DOCKER_ENV"):
+                host_path = absolute_path.replace("/app/reports", "./reports")
+                logging.debug(f"HTML report generated: {host_path}")
+                return host_path
+            else:
+                logging.debug(f"HTML report generated: {absolute_path}")
+                return absolute_path
         except Exception as e:
             logging.error(f"Failed to generate fully inlined HTML report: {e}")
             return ""

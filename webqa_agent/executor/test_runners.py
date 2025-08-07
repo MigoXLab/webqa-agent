@@ -207,7 +207,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
             result.status = TestStatus.FAILED
             result.error_message = error_msg
             logging.error(error_msg)
-            raise e
+            raise
 
         finally:
             # Cleanup parallel tester
@@ -276,7 +276,7 @@ class UXTestRunner(BaseTestRunner):
             result.status = TestStatus.FAILED
             result.error_message = error_msg
             logging.error(error_msg)
-            raise e
+            raise
 
         return result
 
@@ -321,7 +321,7 @@ class LighthouseTestRunner(BaseTestRunner):
             result.status = TestStatus.FAILED
             result.error_message = error_msg
             logging.error(error_msg)
-            raise e
+            raise
 
         return result
 
@@ -352,6 +352,9 @@ class ButtonTestRunner(BaseTestRunner):
             crawler = CrawlHandler(target_url)
             clickable_elements = await crawler.clickable_elements_detection(page)
             logging.info(f"Clickable elements number: {len(clickable_elements)}")
+            if len(clickable_elements) > 50:
+                clickable_elements = clickable_elements[:50]
+                logging.warning(f"Clickable elements number is too large, only keep the first 50")
 
             button_test = PageButtonTest()
             button_test_result = await button_test.run(
@@ -371,7 +374,7 @@ class ButtonTestRunner(BaseTestRunner):
             result.status = TestStatus.FAILED
             result.error_message = error_msg
             logging.error(error_msg)
-            raise e
+            raise
 
         return result
 
@@ -415,7 +418,7 @@ class WebBasicCheckRunner(BaseTestRunner):
             result.status = TestStatus.FAILED
             result.error_message = error_msg
             logging.error(error_msg)
-            raise e
+            raise
 
         return result
 

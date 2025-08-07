@@ -91,7 +91,7 @@ class WebAccessibilityTest:
             error_message = f"An error occurred in WebAccessibilityTest: {str(e)}"
             logging.error(error_message)
             result.status = TestStatus.FAILED
-            result.messages = {"page": error_message}
+            result.messages = {"error": error_message}
 
         return result
 
