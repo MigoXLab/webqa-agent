@@ -50,7 +50,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         model=llm_config.get("model", "gpt-4o-mini"),
         api_key=llm_config.get("api_key"),
         base_url=llm_config.get("base_url"),
-        temperature=0.0,
+        temperature=0.1,
     )
     logging.info(f"LLM configured: {llm_config.get('model')} at {llm_config.get('base_url')}")
 

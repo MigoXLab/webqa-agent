@@ -16,7 +16,7 @@ from langgraph.graph import END, StateGraph
 from webqa_agent.actions.action_handler import ActionHandler
 from webqa_agent.crawler.deep_crawler import DeepCrawler
 from webqa_agent.testers.langgraph.agents.execute_agent import agent_worker_node
-from webqa_agent.testers.langgraph.prompts.planning_prompts import get_reflection_prompt, get_test_case_planning_prompt
+from webqa_agent.testers.langgraph.prompts.planning_prompts import get_reflection_prompt, get_test_case_planning_system_prompt, get_test_case_planning_user_prompt
 from webqa_agent.testers.langgraph.state.schemas import MainGraphState
 
 
@@ -83,21 +83,27 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
 
     page = await ui_tester.get_current_page()
     dp = DeepCrawler(page)
-    _, page_content_summary = await dp.crawl(highlight=True, viewport_only=False)
+    _, page_content_summary = await dp.crawl(highlight=True, viewport_only=True)
     screenshot = await ui_tester._actions.b64_page_screenshot(
-        file_name="plan_or_replan", save_to_log=False, full_page=True
+        file_name="plan_or_replan", save_to_log=False, full_page=False
     )
     await dp.remove_marker()
-    await dp.crawl(highlight=False, highlight_text=True, viewport_only=False)
+    await dp.crawl(highlight=False, highlight_text=True, viewport_only=True)
     page_structure = dp.get_text()
     logging.debug(f"----- plan cases ---- Page structure: {page_structure}")
 
     business_objectives = state.get("business_objectives", "No specific business objectives provided.")
     completed_cases = state.get("completed_cases")
 
-    prompt = get_test_case_planning_prompt(
-        state_url=state["url"],
+    system_prompt = get_test_case_planning_system_prompt(
         business_objectives=business_objectives,
+        completed_cases=completed_cases,
+        reflection_history=state.get("reflection_history"),
+        remaining_objectives=state.get("remaining_objectives"),
+    )
+    
+    user_prompt = get_test_case_planning_user_prompt(
+        state_url=state["url"],
         page_content_summary=page_content_summary,
         page_structure=page_structure,
         completed_cases=completed_cases,
@@ -109,7 +115,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
     start_time = datetime.datetime.now()
 
     response = await ui_tester.llm.get_llm_response(
-        system_prompt="You are a test planning expert.", prompt=prompt, images=screenshot, temperature=0.1
+        system_prompt=system_prompt, prompt=user_prompt, images=screenshot, temperature=0.1
     )
 
     end_time = datetime.datetime.now()
@@ -262,17 +268,17 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
     # Use DeepCrawler to get interactive elements mapping and highlighted screenshot
     logging.info("Using DeepCrawler to obtain visual element mapping for reflection analysis")
     dp = DeepCrawler(page)
-    _, page_content_summary = await dp.crawl(highlight=True, viewport_only=False)
-    screenshot = await ui_tester._actions.b64_page_screenshot(file_name="reflection", save_to_log=False, full_page=True)
+    _, page_content_summary = await dp.crawl(highlight=True, viewport_only=True)
+    screenshot = await ui_tester._actions.b64_page_screenshot(file_name="reflection", save_to_log=False, full_page=False)
     await dp.remove_marker()
-    await dp.crawl(highlight=False, highlight_text=True, viewport_only=False)
+    await dp.crawl(highlight=False, highlight_text=True, viewport_only=True)
     page_structure = dp.get_text()
     logging.debug(f"----- reflection ---- Page structure: {page_structure}")
 
     logging.info(f"Reflection analysis enhanced with {len(page_content_summary)} interactive elements")
 
     # 使用新的反思提示词函数，传入page_content_summary
-    prompt = get_reflection_prompt(
+    system_prompt, user_prompt = get_reflection_prompt(
         business_objectives=state.get("business_objectives"),
         current_plan=state["test_cases"],
         completed_cases=state["completed_cases"],
@@ -284,7 +290,7 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
     start_time = datetime.datetime.now()
 
     response_str = await ui_tester.llm.get_llm_response(
-        system_prompt="You are a QA strategist.", prompt=prompt, images=screenshot, temperature=0.1
+        system_prompt=system_prompt, prompt=user_prompt, images=screenshot, temperature=0.1
     )
 
     end_time = datetime.datetime.now()
