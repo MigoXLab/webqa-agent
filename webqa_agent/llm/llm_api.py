@@ -19,8 +19,8 @@ class LLMAPI:
                 raise ValueError("API key is empty. OpenAI client not initialized.")
             self.base_url = self.llm_config.get("base_url")
             # Use AsyncOpenAI client for async operations
-            self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url) if self.base_url else AsyncOpenAI(
-                api_key=self.api_key)
+            self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url, timeout=60) if self.base_url else AsyncOpenAI(
+                api_key=self.api_key, timeout=60)
             logging.debug(f"AsyncOpenAI client initialized with API key: {self.api_key}, Model: {self.model} and base URL: {self.base_url}")
         else:
             raise ValueError("Invalid API type or missing credentials. LLM client not initialized.")
@@ -32,7 +32,7 @@ class LLMAPI:
             self._client = httpx.AsyncClient(timeout=60.0)
         return self._client
 
-    async def get_llm_response(self, system_prompt, prompt, images=None, images_path=None):
+    async def get_llm_response(self, system_prompt, prompt, images=None, temperature=None):
         model_input = {"model": self.model, "api_type": self.api_type}
         if self.api_type == "openai" and self.client is None:
             await self.initialize()
@@ -45,7 +45,7 @@ class LLMAPI:
                 model_input["images"] = "included"
             # Choose and call API
             if self.api_type == "openai":
-                result = await self._call_openai(messages)
+                result = await self._call_openai(messages, temperature)
 
             return result
         except Exception as e:
@@ -78,10 +78,10 @@ class LLMAPI:
             logging.error(f"Error while handling images for OpenAI: {e}")
             raise ValueError(f"Failed to process images for OpenAI. Error: {e}")
 
-    async def _call_openai(self, messages):
+    async def _call_openai(self, messages, temperature=None):
         try:
             completion = await self.client.chat.completions.create(
-                model=self.llm_config.get("model"), messages=messages, timeout=60, temperature=0.0  # adjustable
+                model=self.llm_config.get("model"), messages=messages, timeout=60, temperature=temperature if temperature is not None else 0.0
             )
             content = completion.choices[0].message.content
             # Clean response if it's wrapped in JSON code blocks
