@@ -95,10 +95,6 @@ class UITester:
             _, id_map = await dp.crawl(highlight=True, viewport_only=True)
             await self._actions.update_element_buffer(id_map)
 
-            # Get complete page text structure
-            await dp.crawl(highlight=False, highlight_text=True, viewport_only=True)
-            page_structure = dp.get_text()
-
             # Take screenshot
             marker_screenshot = await self._actions.b64_page_screenshot(file_name="marker")
 
@@ -106,7 +102,7 @@ class UITester:
             await dp.remove_marker()
 
             # Prepare LLM input
-            user_prompt = self._prepare_prompt(test_step, id_map, LLMPrompt.planner_output_prompt, page_structure)
+            user_prompt = self._prepare_prompt_action(test_step, id_map, LLMPrompt.planner_output_prompt)
 
             # Generate plan
             plan_json = await self._generate_plan(LLMPrompt.planner_system_prompt, user_prompt, marker_screenshot)
@@ -201,8 +197,8 @@ class UITester:
             page_structure = dp.get_text()
 
             # Prepare LLM input
-            user_prompt = self._prepare_prompt(
-                f"assertion: {assertion}", f"page label: {id_map}", LLMPrompt.verification_prompt, page_structure
+            user_prompt = self._prepare_prompt_verify(
+                f"assertion: {assertion}", LLMPrompt.verification_prompt, page_structure
             )
 
             result = await self.llm.get_llm_response(
@@ -282,12 +278,20 @@ class UITester:
             # Return error_step and a failed model output
             return error_step, {"Validation Result": "Validation Failed", "Details": error_msg}
 
-    def _prepare_prompt(self, test_step: str, browser_elements: str, prompt_template: str, page_structure: str) -> str:
+    def _prepare_prompt_action(self, test_step: str, browser_elements: str, prompt_template: str) -> str:
         """Prepare LLM prompt."""
         return (
             f"test step: {test_step}\n"
             f"====================\n"
             f"pageDescription (interactive elements): {browser_elements}\n"
+            f"====================\n"
+            f"{prompt_template}"
+        )
+
+    def _prepare_prompt_verify(self, test_step: str, prompt_template: str, page_structure: str) -> str:
+        """Prepare LLM prompt."""
+        return (
+            f"test step: {test_step}\n"
             f"====================\n"
             f"page_structure (full text content): {page_structure}\n"
             f"====================\n"
