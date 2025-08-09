@@ -149,6 +149,9 @@ def validate_and_build_llm_config(cfg):
     api_key = os.getenv("OPENAI_API_KEY") or llm_cfg_raw.get("api_key", "")
     base_url = os.getenv("OPENAI_BASE_URL") or llm_cfg_raw.get("base_url", "")
     model = llm_cfg_raw.get("model", "gpt-4o-mini")
+    # 采样配置：默认 temperature 为 0.1；top_p 默认不设置
+    temperature = llm_cfg_raw.get("temperature", 0.1)
+    top_p = llm_cfg_raw.get("top_p")
 
     # 验证必填字段
     if not api_key:
@@ -167,7 +170,10 @@ def validate_and_build_llm_config(cfg):
         "model": model,
         "api_key": api_key,
         "base_url": base_url,
+        "temperature": temperature,
     }
+    if top_p is not None:
+        llm_config["top_p"] = top_p
 
     # 显示配置来源（隐藏敏感信息）
     api_key_masked = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "***"
@@ -178,6 +184,9 @@ def validate_and_build_llm_config(cfg):
     print(f"   - API Key: {api_key_masked} ({'环境变量' if env_api_key else '配置文件'})")
     print(f"   - Base URL: {base_url} ({'环境变量' if env_base_url else '配置文件/默认'})")
     print(f"   - Model: {model}")
+    print(f"   - Temperature: {temperature}")
+    if top_p is not None:
+        print(f"   - Top_p: {top_p}")
 
     return llm_config
 
@@ -351,7 +360,19 @@ async def run_tests(cfg):
 
     # 调用执行器
     try:
-        parallel_mode = ParallelMode([], max_concurrent_tests=2)  # 依据实际调整
+        # 从配置读取并行度（默认2），允许用户在 config.target.max_concurrent_tests 指定
+        raw_concurrency = cfg.get("target", {}).get("max_concurrent_tests", 2)
+        try:
+            max_concurrent_tests = int(raw_concurrency)
+            if max_concurrent_tests < 1:
+                raise ValueError
+        except Exception:
+            print(f"⚠️  无效的并行设置: {raw_concurrency}，已回退为 2")
+            max_concurrent_tests = 2
+
+        print(f"⚙️ 并行度: {max_concurrent_tests}")
+
+        parallel_mode = ParallelMode([], max_concurrent_tests=max_concurrent_tests)
         results, report_path, html_report_path = await parallel_mode.run(
             url=target_url, llm_config=llm_config, test_configurations=test_configurations,
             log_cfg=cfg.get("log", {"level": "info"})

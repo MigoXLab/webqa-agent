@@ -14,7 +14,7 @@ from pydantic import Field
 
 from webqa_agent.crawler.deep_crawler import DeepCrawler
 from webqa_agent.testers.langgraph.prompts.tool_prompts import get_error_detection_prompt
-from webqa_agent.testers.ui_tester import UITester
+from webqa_agent.testers.function_tester import UITester
 
 
 class UITool(BaseTool):

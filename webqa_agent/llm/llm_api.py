@@ -32,7 +32,7 @@ class LLMAPI:
             self._client = httpx.AsyncClient(timeout=60.0)
         return self._client
 
-    async def get_llm_response(self, system_prompt, prompt, images=None, temperature=None):
+    async def get_llm_response(self, system_prompt, prompt, images=None, temperature=None, top_p=None):
         model_input = {"model": self.model, "api_type": self.api_type}
         if self.api_type == "openai" and self.client is None:
             await self.initialize()
@@ -45,7 +45,13 @@ class LLMAPI:
                 model_input["images"] = "included"
             # Choose and call API
             if self.api_type == "openai":
-                result = await self._call_openai(messages, temperature)
+                # resolve sampling params: prefer method args, fallback to config defaults (default temperature=0.1)
+                resolved_temperature = (
+                    temperature if temperature is not None else self.llm_config.get("temperature", 0.1)
+                )
+                resolved_top_p = top_p if top_p is not None else self.llm_config.get("top_p", None)
+                logging.debug(f"Resolved temperature: {resolved_temperature}, top_p: {resolved_top_p}")
+                result = await self._call_openai(messages, resolved_temperature, resolved_top_p)
 
             return result
         except Exception as e:
@@ -78,11 +84,20 @@ class LLMAPI:
             logging.error(f"Error while handling images for OpenAI: {e}")
             raise ValueError(f"Failed to process images for OpenAI. Error: {e}")
 
-    async def _call_openai(self, messages, temperature=None):
+    async def _call_openai(self, messages, temperature=None, top_p=None):
         try:
-            completion = await self.client.chat.completions.create(
-                model=self.llm_config.get("model"), messages=messages, timeout=60, temperature=temperature if temperature is not None else 0.0
-            )
+            create_kwargs = {
+                "model": self.llm_config.get("model"),
+                "messages": messages,
+                "timeout": 60,
+            }
+            # Always send user/configured temperature when provided (default handled upstream)
+            if temperature is not None:
+                create_kwargs["temperature"] = temperature
+            if top_p is not None:
+                create_kwargs["top_p"] = top_p
+
+            completion = await self.client.chat.completions.create(**create_kwargs)
             content = completion.choices[0].message.content
             # Clean response if it's wrapped in JSON code blocks
             content = self._clean_response(content)

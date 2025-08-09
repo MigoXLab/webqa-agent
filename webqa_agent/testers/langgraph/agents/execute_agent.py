@@ -48,11 +48,22 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     logging.info(f"{icon['running']} Agent worker for test case started: {case_name}")
 
     # Use ChatOpenAI directly for better integration with LangChain
-    llm = ChatOpenAI(
-        model=llm_config.get("model", "gpt-4o-mini"),
-        api_key=llm_config.get("api_key"),
-        base_url=llm_config.get("base_url"),
-        temperature=0.1,
+    llm_kwargs = {
+        "model": llm_config.get("model", "gpt-4o-mini"),
+        "api_key": llm_config.get("api_key"),
+        "base_url": llm_config.get("base_url"),
+    }
+    # default temperature 0.1 unless user explicitly sets another value
+    cfg_temp = llm_config.get("temperature", 0.1)
+    llm_kwargs["temperature"] = cfg_temp
+    cfg_top_p = llm_config.get("top_p")
+    if cfg_top_p is not None:
+        llm_kwargs["top_p"] = cfg_top_p
+
+    llm = ChatOpenAI(**llm_kwargs)
+    logging.debug(
+        f"LangGraph LLM params resolved: model={llm_kwargs.get('model')}, base_url={llm_kwargs.get('base_url')}, "
+        f"temperature={llm_kwargs.get('temperature', '0.1')}, top_p={llm_kwargs.get('top_p', 'unset')}"
     )
     logging.debug(f"LLM configured: {llm_config.get('model')} at {llm_config.get('base_url')}")
 
