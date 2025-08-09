@@ -408,18 +408,35 @@ class UITester:
         return results
 
     async def end_session(self):
-        """End session: close monitoring, recycle resources"""
+        """End session: close monitoring, recycle resources.
+
+        This method **must not** propagate exceptions. Any errors during gathering
+        monitoring data or listener cleanup are logged, and an (possibly empty)
+        results dict is always returned so that callers don't need to wrap it in
+        their own try/except blocks.
+        """
+        import sys
+
+        results: dict = {}
+
         try:
-            results = self.get_monitoring_results()
+            results = self.get_monitoring_results() or {}
+        except BaseException as e:
+            logging.warning(
+                f"ParallelUITester end_session monitoring warning: {e!r} (type: {type(e)})"
+            )
 
-            if self.console_check:
-                self.console_check.remove_listeners()
-            if self.network_check:
-                self.network_check.remove_listeners()
+        for listener_name in ("console_check", "network_check"):
+            listener = getattr(self, listener_name, None)
+            if listener:
+                try:
+                    listener.remove_listeners()
+                except BaseException as e:
+                    logging.warning(
+                        f"ParallelUITester end_session cleanup warning while removing {listener_name}: {e!r} (type: {type(e)})"
+                    )
 
-            return results
-        except Exception as e:
-            logging.warning(f"ParallelUITester end_session cleanup warning: {e}")
+        return results
 
     async def cleanup(self):
         """Lightweight wrapper so external callers can always call

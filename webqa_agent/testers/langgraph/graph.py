@@ -18,7 +18,7 @@ from webqa_agent.crawler.deep_crawler import DeepCrawler
 from webqa_agent.testers.langgraph.agents.execute_agent import agent_worker_node
 from webqa_agent.testers.langgraph.prompts.planning_prompts import get_reflection_prompt, get_test_case_planning_system_prompt, get_test_case_planning_user_prompt
 from webqa_agent.testers.langgraph.state.schemas import MainGraphState
-
+from webqa_agent.utils.log_icon import icon
 
 async def setup_session(state: MainGraphState) -> Dict[str, Any]:
     """Uses the provided UITester instance to start the browser session."""
@@ -81,6 +81,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
     logging.debug("Generating initial test plan.")
     ui_tester = state["ui_tester_instance"]
 
+    logging.info(f"Deep crawling page structure and elements for initial test plan...")
     page = await ui_tester.get_current_page()
     dp = DeepCrawler(page)
     _, page_content_summary = await dp.crawl(highlight=True, viewport_only=True)
@@ -111,7 +112,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
         remaining_objectives=state.get("remaining_objectives"),
     )
 
-    logging.debug("Generating initial test plan - Sending request to LLM...")
+    logging.info("Generating initial test plan - Sending request to LLM...")
     start_time = datetime.datetime.now()
 
     response = await ui_tester.llm.get_llm_response(
@@ -169,6 +170,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             logging.error(f"Failed to save initial test cases to file: {e}")
 
         logging.debug(f"Generated {len(test_cases)} test cases.")
+        logging.info(f"{icon['rocket']} Designed {len(test_cases)} functional test cases")
         # Ensure the current_test_case_index is initialized if not present
         if "current_test_case_index" not in state:
             return {"test_cases": test_cases, "current_test_case_index": 0}
@@ -207,7 +209,7 @@ async def get_next_test_case(state: MainGraphState) -> dict[str, Any]:
 async def reflect_and_replan(state: MainGraphState) -> dict:
     """Analyzes execution, increments index, and decides on the next strategic
     move."""
-    logging.debug("=== Starting Reflection and Replanning Analysis ===")
+    logging.info("Reflection and Replanning Analysis...")
 
     # CRITICAL: Increment the test case index here to ensure progress
     # This guarantees that whether we continue, replan, or finish, we are always moving forward.
@@ -239,6 +241,7 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
     logging.debug(f"  - Completed test cases: {len(completed_cases)}")
     # Use the length of completed_cases for a more accurate progress count
     logging.debug(f"  - Current progress: {len(completed_cases)} / {len(test_cases)} cases completed.")
+    logging.info(f"{icon['hourglass']} Currently executed {len(completed_cases)} / {len(test_cases)} functional test cases")
 
     # 分析最后完成的测试用例
     if completed_cases:
@@ -266,7 +269,7 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
     page = await ui_tester.get_current_page()
 
     # Use DeepCrawler to get interactive elements mapping and highlighted screenshot
-    logging.debug("Using DeepCrawler to obtain visual element mapping for reflection analysis")
+    logging.info(f"Deep crawling page structure and elements for reflection and replanning analysis...")
     dp = DeepCrawler(page)
     _, page_content_summary = await dp.crawl(highlight=True, viewport_only=True)
     screenshot = await ui_tester._actions.b64_page_screenshot(file_name="reflection", save_to_log=False, full_page=False)
@@ -286,7 +289,7 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
         page_content_summary=page_content_summary,
     )
 
-    logging.debug("Sending reflection request to LLM (this may take a moment)...")
+    logging.info("Reflection and Replanning analysis - Sending request to LLM...")
     start_time = datetime.datetime.now()
 
     response_str = await ui_tester.llm.get_llm_response(
@@ -312,6 +315,7 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
 
         if decision == "REPLAN" and new_plan:
             logging.debug(f"REPLAN decision confirmed. New plan has {len(new_plan)} cases.")
+            logging.info(f"{icon['repeat']} Designed {len(new_plan)} functional test cases")
             logging.debug("Setting is_replan flag and storing new cases. The plan will be updated in the next cycle.")
             # Set the replan flag and store the new cases. Do NOT modify the main list here.
             update["is_replan"] = True
@@ -360,6 +364,7 @@ async def execute_single_case(state: MainGraphState) -> dict:
     # === 开始跟踪case数据 ===
     # 使用start_case来同时设置名称和开始数据跟踪
     ui_tester_instance.start_case(case_name, case)
+    logging.debug(f"Executing functional test: {case_name}")
 
     # Conditionally reset the session based on the test case flag
     if case.get("reset_session", False):

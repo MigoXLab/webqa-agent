@@ -13,7 +13,7 @@ from webqa_agent.actions.scroll_handler import ScrollHandler
 from webqa_agent.data.test_structures import SubTestReport, SubTestResult, SubTestScreenshot, SubTestStep, TestStatus
 from webqa_agent.llm.llm_api import LLMAPI
 from webqa_agent.llm.prompt import LLMPrompt
-
+from webqa_agent.utils.log_icon import icon
 
 class PageTextTest:
 
@@ -33,9 +33,8 @@ class PageTextTest:
     async def run(self, page: Page) -> SubTestResult:
         """Runs a test to check the text content of a web page and identifies
         any issues based on predefined user cases."""
-        test_name = "错别字检查"
-
-        result = SubTestResult(name=test_name)
+        result = SubTestResult(name="文本检查")
+        logging.info(f"{icon['running']} Running Sub Test: {result.name}")
 
         try:
             # 创建ActionHandler用于截图
@@ -83,6 +82,7 @@ class PageTextTest:
                         issues=issues,
                     )
                 )
+            logging.info(f"{icon['check']} Sub Test Completed: {result.name}")
 
         except Exception as e:
             error_message = f"PageTextTest error: {str(e)}"
@@ -122,11 +122,8 @@ class PageContentTest:
         Returns:
             SubTestResult containing test results and screenshots
         """
-        test_name = f"网页内容检查_{page.viewport_size['width']}x{page.viewport_size['height']}"
-        result = SubTestResult(name=test_name)
-        logging.debug(
-            f"Testing with browser configuration: {page.viewport_size['width']}x{page.viewport_size['height']}"
-        )
+        result = SubTestResult(name=f"网页内容检查_{page.viewport_size['width']}x{page.viewport_size['height']}")
+        logging.info(f"{icon['running']} Running Sub Test: {result.name}")
 
         try:
             if not hasattr(self.llm, "_client") or self.llm._client is None:
@@ -134,6 +131,7 @@ class PageContentTest:
 
             page_identifier = str(int(uuid.uuid4().int) % 10000)
             _scroll = ScrollHandler(page)
+            logging.info("Scrolling the page...")
             browser_screenshot = await _scroll.scroll_and_crawl(
                 scroll=True, max_scrolls=10, page_identifier=page_identifier
             )
@@ -143,17 +141,19 @@ class PageContentTest:
 
             page_img = True
             id_counter = 0
+            overall_status = TestStatus.PASSED
             for user_case in self.user_cases:
-                all_issues = []
                 prompt = self._build_prompt(user_case, id_map)
+                logging.info(f"Vision model: evaluating use case '{user_case[:4]}'...")
                 test_page_content = await self._get_llm_response(prompt, page_img, browser_screenshot)
 
                 # parse LLM response
                 summary_text = None
                 issues_list = []
                 issues_text = "无发现问题"  # initialize with default value
+                case_status = TestStatus.PASSED
 
-                logging.debug(f"LLM response for user case '{user_case[:20]}...': {test_page_content}")
+                logging.debug(f"LLM response for user case '{user_case[:4]}...': {test_page_content}")
 
                 if test_page_content and "None" not in str(test_page_content):
                     try:
@@ -171,7 +171,9 @@ class PageContentTest:
                             if isinstance(item, dict) and "summary" in item:
                                 summary_text = item.get("summary")
                             elif isinstance(item, str):
-                                summary_text = item if summary_text is None else summary_text
+                                # accept leading plain string like "summary: ..."
+                                if summary_text is None:
+                                    summary_text = item
                             elif isinstance(item, dict):
                                 issues_list.append(item)
                     elif isinstance(parsed, dict):
@@ -183,18 +185,17 @@ class PageContentTest:
                         # if not structured, use raw text as summary
                         summary_text = str(test_page_content) if test_page_content else None
 
-                    # collect summary info for report
-                    if summary_text:
-                        all_issues.append(f"总结: {summary_text}")
+                    # determine case status: any discovered issues are warnings
+                    if issues_list or (summary_text and str(summary_text).strip()):
+                        case_status = TestStatus.WARNING
 
                     for idx, issue in enumerate(issues_list):
                         # collect issue info for report
                         issue_desc = issue.get("issue") or issue.get("description") or str(issue)
                         suggestion = issue.get("suggestion")
-                        all_issues.append(f"问题: {issue_desc}")
 
                         # if screenshot index, append corresponding screenshot and create step
-                        screenshot_idx = issue.get("id")
+                        screenshot_idx = issue.get("screenshotid", issue.get("id"))
                         if isinstance(screenshot_idx, int) and 1 <= screenshot_idx <= len(browser_screenshot):
                             screenshot_data = browser_screenshot[screenshot_idx - 1]
 
@@ -204,29 +205,36 @@ class PageContentTest:
                             elif isinstance(screenshot_data, dict):
                                 screenshots.append(SubTestScreenshot(**screenshot_data))
 
+                            # step status: all discovered issues are warnings
+                            step_status = TestStatus.WARNING
                             result.steps.append(SubTestStep(
                                 id=int(id_counter + 1),
                                 description=user_case[:4] + ": " + issue_desc,
                                 modelIO=suggestion,
                                 screenshots=screenshots,
-                                status=TestStatus.WARNING if suggestion else TestStatus.PASSED,
+                                status=step_status,
                             ))
                             id_counter += 1
 
-                    # set status based on whether issues were found
-                    if issues_list or (summary_text and summary_text.strip()):
-                        result.status = TestStatus.WARNING
-                        issues_text = "; ".join(all_issues) if all_issues else "发现问题"
-                    else:
-                        result.status = TestStatus.PASSED
-                        issues_text = "无发现问题"
+                    # compute issues_text per requirement and collect overall summary
+                    if summary_text and str(summary_text).strip():
+                        issues_text = str(summary_text).strip()
+                    elif issues_list:
+                        try:
+                            issues_text = json.dumps(issues_list, ensure_ascii=False)
+                        except Exception:
+                            issues_text = str(issues_list)
                 else:
                     # no valid content from LLM, treat as no issues found
-                    result.status = TestStatus.PASSED
+                    case_status = TestStatus.PASSED
                     issues_text = "无发现问题"
 
                 result.report.append(SubTestReport(title=user_case[:4], issues=issues_text))
-
+                # aggregate overall status: any WARNING -> WARNING; else PASSED
+                if case_status == TestStatus.WARNING and overall_status != TestStatus.WARNING:
+                    overall_status = TestStatus.WARNING
+            logging.info(f"{icon['check']} Sub Test Completed: {result.name}")
+            result.status = overall_status
         except Exception as e:
             error_message = f"PageContentTest error: {str(e)}"
             logging.error(error_message)
@@ -273,6 +281,7 @@ class PageButtonTest:
         """
 
         result = SubTestResult(name="可点击元素遍历检查")
+        logging.info(f"{icon['running']} Running Sub Test: {result.name}")
         sub_test_results = []
         try:
             status = TestStatus.PASSED
@@ -288,7 +297,7 @@ class PageButtonTest:
                 for i, element in enumerate(clickable_elements):
                     # Run single test with the provided browser configuration
                     element_text = element.get("selector", "Unknown")
-                    logging.debug(f"Testing clickable element {i + 1}: {element_text}")
+                    logging.info(f"Testing clickable element {i + 1}...")
 
                     try:
                         current_url = page.url
@@ -336,6 +345,7 @@ class PageButtonTest:
                     finally:
                         sub_test_results.append(step)
 
+            logging.info(f"{icon['check']} Sub Test Completed: {result.name}")
             result.report.append(
                 SubTestReport(
                     title="遍历测试结果",

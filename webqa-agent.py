@@ -221,7 +221,7 @@ def build_test_configurations(cfg, cookies=None):
             tests += [
                 {
                     "test_type": "button_test",
-                    "test_name": "按钮测试",
+                    "test_name": "遍历测试",
                     "enabled": True,
                     "browser_config": base_browser,
                     "test_specific_config": {},

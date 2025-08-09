@@ -44,6 +44,7 @@ class GetLog:
         """
         logging.getLogger("httpx").setLevel(logging.ERROR)
         logging.getLogger("httpcore").setLevel(logging.ERROR)
+        logging.getLogger("openai").setLevel(logging.ERROR)
         if log_level not in log_level:
             raise ValueError(f"Invalid log level: {log_level}")
 

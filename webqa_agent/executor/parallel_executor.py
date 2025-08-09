@@ -18,6 +18,7 @@ from webqa_agent.executor.test_runners import (
     UXTestRunner,
     WebBasicCheckRunner,
 )
+from webqa_agent.utils.log_icon import icon
 
 
 class ParallelTestExecutor:
@@ -222,8 +223,6 @@ class ParallelTestExecutor:
 
             except Exception as e:
                 error_msg = f"Test execution failed: {str(e)}"
-                logging.error(f"Test failed: {test_config.test_name} - {error_msg}")
-
                 test_context.complete_execution(success=False, error_message=error_msg)
 
                 # Create failed result
