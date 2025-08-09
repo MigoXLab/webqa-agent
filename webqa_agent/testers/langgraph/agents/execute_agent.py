@@ -16,7 +16,7 @@ from langchain_openai import ChatOpenAI
 from webqa_agent.crawler.deep_crawler import DeepCrawler
 from webqa_agent.testers.langgraph.prompts.agent_prompts import get_execute_system_prompt
 from webqa_agent.testers.langgraph.tools.element_action_tool import UIAssertTool, UITool
-
+from webqa_agent.utils.log_icon import icon
 
 # The node function that will be used in the graph
 async def agent_worker_node(state: dict, config: dict) -> dict:
@@ -45,6 +45,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
     llm_config = ui_tester_instance.llm.llm_config
 
+    logging.info(f"{icon['running']} Agent worker for test case started: {case_name}")
+
     # Use ChatOpenAI directly for better integration with LangChain
     llm = ChatOpenAI(
         model=llm_config.get("model", "gpt-4o-mini"),
@@ -72,7 +74,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
     # Create the agent
     agent = create_tool_calling_agent(llm, tools, prompt)
-    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, max_iterations=5)
+    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=False, max_iterations=5)
     logging.debug("AgentExecutor created successfully")
 
     # --- Execute Preamble Actions to Restore State ---
@@ -175,7 +177,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 except Exception as e:
                     logging.warning(f"Could not check current URL for preamble action: {e}, proceeding with execution")
 
-            logging.debug(f"Executing preamble action {i+1}/{len(preamble_actions)}: {instruction_to_execute}")
+            logging.info(f"Executing preamble action {i+1}/{len(preamble_actions)}: {instruction_to_execute}")
             preamble_messages.append(
                 HumanMessage(content=f"Now, execute this preamble action: {instruction_to_execute}")
             )
@@ -225,8 +227,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         instruction_to_execute = step.get("action") or step.get("verify")
         step_type = "Action" if step.get("action") else "Assertion"
 
-        logging.debug(f"=== Executing Step {i+1}/{total_steps} ({step_type}) ===")
-        logging.debug(f"Step instruction: {instruction_to_execute}")
+        logging.info(f"Executing Step {i+1}/{total_steps} ({step_type}), step instruction: {instruction_to_execute}")
 
         # Define instruction templates for variation
         instruction_templates = [

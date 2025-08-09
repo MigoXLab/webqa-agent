@@ -254,9 +254,22 @@ class NetworkCheck:
         self.network_messages["failed_requests"].append(error_data)
 
     def remove_listeners(self):
-        self.page.remove_listener("request", self._request_callback)
-        self.page.remove_listener("response", self._response_callback)
-        self.page.remove_listener("requestfinished", self._requestfinished_callback)
+        # Prefer Playwright's off() which understands internal wrapper mapping
+        listeners = [
+            ("request", self._request_callback),
+            ("response", self._response_callback),
+            ("requestfinished", self._requestfinished_callback),
+        ]
+        for event_name, handler in listeners:
+            try:
+                if hasattr(self.page, "off"):
+                    self.page.off(event_name, handler)
+                else:
+                    # Fallback for environments exposing remove_listener
+                    self.page.remove_listener(event_name, handler)
+            except Exception:
+                # Silently ignore if already removed or not found
+                pass
 
 
 class ConsoleCheck:
@@ -278,4 +291,10 @@ class ConsoleCheck:
         return self.console_messages
 
     def remove_listeners(self):
-        self.page.remove_listener("console", self._handle_console)
+        try:
+            if hasattr(self.page, "off"):
+                self.page.off("console", self._handle_console)
+            else:
+                self.page.remove_listener("console", self._handle_console)
+        except Exception:
+            pass

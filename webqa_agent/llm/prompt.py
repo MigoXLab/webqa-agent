@@ -572,35 +572,53 @@ class LLMPrompt:
         - For each error, provide its location and the correct form."""
     ]
     CONTENT_USER_CASES = [
-      f"""排版检查: Rigorously check the screenshot for any layout issues.
+      f"""排版检查: Rigorously review each screenshot at the current viewport for layout issues, and provide specific, actionable recommendations.
 
       [Checklist]
-      1. Text Alignment: Are headings / paragraphs / lists obviously offset  
-      2. Element Spacing: Too large / too small / uneven  
-      3. Element Overlap: Any obstruction or content overflowing its container  
-      4. Responsive Breakpoints: Does the layout break at the current viewport width  
-      5. Visual Hierarchy: Is important information covered
+      1. Text alignment: Misaligned headings/paragraphs/lists; inconsistent margins or baselines  
+      2. Spacing: Intra- and inter-component spacing too large/too small/uneven; inconsistent spacing in lists or card grids  
+      3. Obstruction & overflow: Text/buttons obscured; content overflowing containers causing truncation, awkward wrapping, or unintended ellipses; sticky header/footer covering content; incorrect z-index stacking  
+      4. Responsive breakpoints: Broken layout at current width; wrong column count; unexpected line wraps; horizontal scrollbar appearing/disappearing incorrectly  
+      5. Visual hierarchy: Important information not prominent; hierarchy confusion; insufficient contrast between headings and content; font size/weight/color not reflecting hierarchy  
+      6. Consistency: Uneven card heights breaking grid rhythm; inconsistent button styles/sizes; misaligned keylines  
+      7. Readability: Insufficient contrast; font too small; improper line-height; poor paragraph spacing; long words/URLs not breaking and causing layout stretch  
+      8. Images & media: Distorted aspect ratio; improper cropping; blurry/pixelated; placeholder not replaced; video container letterboxing  
 
+      [Decision & Output Rules]
+      - Base conclusions only on the current screenshot; if uncertain, state the most likely cause and an actionable fix  
+      - If multiple layout issues exist in the same screenshot, merge them into a single object and list them in the 'issue' field separated by semicolons  
+      - If no issues are found, output strictly None (no explanation)
       """,
-      f"""元素缺失: Rigorously check the screenshot for missing key elements or display anomalies.
+      f"""元素缺失: Rigorously check each screenshot for missing key functional/content/navigation elements, loading failures, or display anomalies, and provide fix suggestions.
 
       [Checklist]
-      1. Functional Elements: Buttons / Links / Input fields  
-      2. Content Elements: Images / Icons / Text  
-      3. Navigation Elements: Menus / Breadcrumbs  
-      4. Loading Failure: Broken images, 404, missing fonts  
+      1. Functional elements: Buttons/links/inputs/dropdowns/pagination/search etc. missing or misplaced  
+      2. Content elements: Images/icons/headings/body text/lists/tables/placeholder copy missing  
+      3. Navigation elements: Top nav/sidebar/breadcrumb/back entry/navigation links missing  
+      4. Loading/error states: Broken images, 404, blank placeholders, skeleton not replaced, overly long loading, empty states lacking hints/guidance/actions  
+      5. Image display: Display anomalies, low-quality/blurry/pixelated, wrong cropping, aspect-ratio distortion, lazy-load failure  
+      6. Business-critical: Core CTAs missing/unusable; price/stock/status missing; required form fields missing; no submission feedback  
+      7. Interaction usability: Element visible but not clickable/disabled state incorrect; tappable/clickable area too small  
+
+      [Decision & Output Rules]
+      - When unsure whether it's not rendered or late loading, still provide the best evidence-based judgment and suggestion  
+      - If multiple missing/anomaly issues exist in the same screenshot, merge them into a single object and separate in the 'issue' field with semicolons  
+      - If no issues are found, output strictly None (no explanation)
         """
     ]
 
     OUTPUT_FORMAT = """
     Output Requirements
     1. **If no errors are found**: Output only None with no explanations; avoid vague words such as "maybe" or "probably".
-    2. **If errors are found**: Output a **JSON array**, each object corresponding to one error in one screenshot; field definitions are as follows
+    2. **If errors are found**: Output a **JSON array** with the following structure:
+       - The first element SHOULD be an object providing an overall summary, e.g. {"summary": "..."}. If you prefer, you may also output a plain string like "summary: ..." as the first element.
+       - After the summary element, include one object per screenshot (merge all issues for the same screenshot into a single object). Field definitions are as follows:
     [
+        { "summary": "Concise overall findings across screenshots" },
         {
-            "id": <number>, # screenshot index (integer)
+            "screenshotid": <number>, # 1-based index of the input screenshot
             "element": "<string>", # core element where the issue occurs (e.g., title, button, image, paragraph)
-            "issue": "<string>", # concise problem description stating the exact cause
+            "issue": "<string>", # concise problem description stating the exact cause (if multiple issues exist for the same screenshot, summarize them here)
             "suggestion": "<string>", # suggestions / expected solutions (multiple points, separated by ";")
             "confidence": "<high|medium|low>" # confidence level, values: *high* / *medium* / *low* 
         }
@@ -608,19 +626,19 @@ class LLMPrompt:
     3.  **Example format** (only for reference, replace with actual content when outputting)  
         ```json
         [
-            "summary": "Page issues 1: description; 2: description",
+            { "summary": "Page issues: 1) navbar overlap; 2) grid spacing inconsistent" },
             {
-                "id": 2,
+                "screenshotid": 2,
                 "element": "Main Navigation Bar",
-                "description": "Navigation items overlap with the logo, making the text unreadable",
-                "suggestion": "",
+                "issue": "Navigation items overlap with the logo, making the text unreadable",
+                "suggestion": "Reduce logo width; add min-width to nav items; adjust flex-wrap",
                 "confidence": "medium"
             },
             {
-                "id": 3,
+                "screenshotid": 3,
                 "element": "Product List Card",
-                "description": "Excess vertical whitespace between cards prevents the first screen from displaying completely",
-                "suggestion": "",
+                "issue": "Excess vertical whitespace between cards prevents the first screen from displaying completely",
+                "suggestion": "Normalize card min-height; unify grid gap; reduce top/bottom padding",
                 "confidence": "low"
             }
         ]

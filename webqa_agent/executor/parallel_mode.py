@@ -7,6 +7,7 @@ from webqa_agent.data import ParallelTestSession, TestConfiguration, TestType
 from webqa_agent.executor import ParallelTestExecutor
 from webqa_agent.utils import Display
 from webqa_agent.utils.get_log import GetLog
+from webqa_agent.utils.log_icon import icon
 
 class ParallelMode:
     """Parallel test mode - runs tests concurrently with data isolation"""
@@ -41,7 +42,7 @@ class ParallelMode:
             Display.init()
             Display.display.start()
 
-            logging.debug(f"Starting parallel mode tests for URL: {url}")
+            logging.info(f"{icon['rocket']} Starting tests for URL: {url}, parallel mode {self.max_concurrent_tests}")
 
             # Use default config if none provided
             if not browser_config:

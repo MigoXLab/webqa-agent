@@ -4,14 +4,16 @@
 
 ## 🚀 核心特性
 
-- **🤖 AI智能测试**：集成OPENAI SDK兼容模型，实现智能化的功能测试和用户体验评估，从页面抓取到测试执行，全程无需人工干预
+- **🤖 AI智能测试**：兼容 OpenAI SDK 的模型，实现智能化的功能测试和用户体验评估，从页面抓取到测试执行，全程无需人工干预
 - **📊 多维度评估**：涵盖功能测试、性能测试、用户体验测试和安全测试
 - **🎯 精准诊断**：基于真实浏览器环境的深度测试，提供可操作的优化建议
 - **📈 可视化报告**：生成详细的HTML测试报告，支持多种测试结果展示
 
 ## 安装与配置
 
-### Docker 快速启动 (推荐)
+### Docker 快速启动（推荐）
+
+在开始之前，请确保已安装 Docker。如未安装，请参考官方安装指南：[Docker 安装指南](https://docs.docker.com/get-started/get-docker/)。
 
 ```bash
 # 1. 克隆项目
@@ -22,9 +24,9 @@ cd webqa-agent
 cp config/config.yaml.example config/config.yaml
 # 编辑 config/config.yaml 配置文件
 
-# 3. 启动服务 for MacOS and Linux
-sh start.sh --build      # 初次构建镜像，或者重新构建并启动 (代码/配置更新后)
-sh start.sh --local      # 使用已有webqa-agent镜像快速启动
+# 3. 启动服务（适用于 macOS 与 Linux）
+sh start.sh --build      # 初次构建镜像，或者重新构建并启动（代码/配置更新后）
+sh start.sh --local      # 使用已有 webqa-agent 镜像快速启动
 ```
 
 ### 源码安装
@@ -34,7 +36,7 @@ git clone
 cd webqa-agent
 ```
 
-安装 Python >= 3.10, 运行以下命令：
+安装 Python >= 3.10，运行以下命令：
 
 ```bash
 pip install -r requirements.txt
@@ -45,14 +47,14 @@ playwright install
 Lighthouse 安装
 
 ```bash
-# Lighthouse node.js>=18.0.0
-npm init -y && npm install lighthouse chrome-launcher
+# 需要 Node.js >= 18.0.0 package.json
+npm install
 
 ```
 
 Nuclei 安装
 
-下载地址: https://github.com/projectdiscovery/nuclei/releases/
+下载地址： [Nuclei Releases](https://github.com/projectdiscovery/nuclei/releases/)
 
 ```bash
 # MacOS
@@ -61,7 +63,7 @@ brew install nuclei
 # 其他系统请从上述下载地址获取对应架构的版本
 
 # 安装后更新模板并验证
-nuclei -ut -v          # 更新nuclei模板
+nuclei -ut -v          # 更新 Nuclei 模板
 nuclei -version        # 验证安装成功
 
 ```
@@ -95,7 +97,7 @@ test_config:                                      # 测试项配置
   security_test:                                  # 安全测试
     enabled: False
 
-llm_config:                                       # 视觉模型配置，当前仅支持 OpenAI sdk格式兼容
+llm_config:                                       # 视觉模型配置，当前仅支持 OpenAI SDK 兼容格式
   model: gpt-4.1                                  # 推荐使用
   api_key: your_api_key
   base_url: https://api.example.com/v1
@@ -114,7 +116,7 @@ browser_config:
 
 - **AI模式**：当在配置文件中指定生成测试用例的数量时，系统可能会根据实际测试情况进行代理重新规划和调整。这可能导致最终执行的测试用例数量与初始设定存在一定出入，以确保测试的准确性和有效性。
 
-- **Default模式**：功能测试的 `default` 模式主要验证UI元素的点击行为是否成功执行，包括按钮点击、链接跳转等基本交互功能。该模式不会检查页面内容变化、业务逻辑正确性或数据完整性等相关项目（开发中）。
+- **Default模式**：功能测试的 `default` 模式主要验证UI元素的点击行为是否成功执行，包括按钮点击、链接跳转等基本交互功能。。
 
 #### 2. 用户体验测试说明
 
@@ -122,4 +124,19 @@ UX（用户体验）测试专注于评估网站的交互设计、可用性和用
 
 ## 查看结果
 
-在 reports 目录生成一个测试报告文件夹，可以查看执行 **HTML测试报告**
+在 `reports` 目录会生成本次测试的文件夹，打开其中的 HTML 报告即可查看结果。
+
+## RoadMap
+
+### 功能与覆盖
+- AI功能测试持续优化：不断迭代优化测试用例生成效果，提高覆盖率与准确性；支持更多的浏览器操作
+- 功能遍历测试优化：实现页面自动遍历，检查页面内容变化，验证业务逻辑正确性与数据完整性
+- 用户体验测试优化：自动识别并标注问题区域，辅助定位交互与可用性缺陷，提供改进线索
+
+### 交互优化
+- 测试用例可视化：以思维导图形式展示测试用例
+- 本地服务（localhost）：在本地页面直接运行评估，并实时展示模型的思考过程与推理链路
+
+### 能力扩展
+- 多模型接入：支持接入多种模型，增强测试能力并适配不同场景的评估需求
+- 扩展评估项：逐步集成更多测试维度（如业务安全测试等），统一纳入报告体系

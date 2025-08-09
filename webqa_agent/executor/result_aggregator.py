@@ -27,7 +27,7 @@ class ResultAggregator:
         
         issues.extend(error_message)
         issues.extend(llm_issues)
-        logging.debug(f"Found {len(test_session.test_results)} test results")
+        logging.info(f"Aggregated {len(test_session.test_results)} test results, found {len(issues)} issues")
         for test_id, result in test_session.test_results.items():
             sub_tests_count = len(result.sub_tests or [])
             logging.debug(f"Test {test_id} has {sub_tests_count} sub_tests")
@@ -50,9 +50,9 @@ class ResultAggregator:
         executive_content = {
             "executiveSummary": "",
             "statistics": [
-                {"label": "评估子测试总数", "value": str(total_sub_tests), "colorClass": "var(--warning-color)"},
-                {"label": "测试通过", "value": str(passed_sub_tests), "colorClass": "var(--success-color)"},
-                {"label": "测试失败", "value": str(critical_sub_tests), "colorClass": "var(--failure-color)"},
+                {"label": "评估类别", "value": str(total_sub_tests), "colorClass": "var(--warning-color)"},
+                {"label": "通过数", "value": str(passed_sub_tests), "colorClass": "var(--success-color)"},
+                {"label": "失败数", "value": str(critical_sub_tests), "colorClass": "var(--failure-color)"},
             ]
         }
 

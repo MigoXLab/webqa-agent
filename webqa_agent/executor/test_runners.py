@@ -18,6 +18,7 @@ from webqa_agent.testers import (
     WebAccessibilityTest,
 )
 from webqa_agent.utils import Display
+from webqa_agent.utils.log_icon import icon
 
 
 class BaseTestRunner(ABC):
@@ -44,8 +45,6 @@ class UIAgentLangGraphRunner(BaseTestRunner):
             from webqa_agent.testers.langgraph.graph import app as graph_app
             from webqa_agent.testers.ui_tester import UITester
 
-            logging.debug(f"Running UIAgent LangGraph test: {test_config.test_name}")
-
             result = TestResult(
                 test_id=test_config.test_id,
                 test_type=test_config.test_type,
@@ -60,7 +59,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                 await parallel_tester.initialize()
 
                 business_objectives = test_config.test_specific_config.get("business_objectives", "")
-                logging.debug(f"AI 智能测试业务目标: {business_objectives}")
+                logging.info(f"{icon['running']} Running test: {test_config.test_name} with business objectives: {business_objectives}")
 
                 cookies = test_config.test_specific_config.get("cookies")
 
@@ -202,7 +201,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                     result.status = TestStatus.FAILED
                     result.error_message = "No test cases were executed or results were not available"
 
-                logging.debug(f"UIAgent LangGraph test completed via LangGraph workflow: {test_config.test_name}")
+                logging.info(f"{icon['check']} Test completed: {test_config.test_name}")
 
             except Exception as e:
                 error_msg = f"UIAgent LangGraph test failed: {str(e)}"
@@ -232,8 +231,6 @@ class UXTestRunner(BaseTestRunner):
         self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
     ) -> TestResult:
         """Run UX tests with enhanced screenshot and data collection."""
-
-        logging.debug(f"Running UX test: {test_config.test_name}")
         
         with Display.display(test_config.test_name):
             result = TestResult(
@@ -245,6 +242,7 @@ class UXTestRunner(BaseTestRunner):
             )
 
             try:
+                logging.info(f"{icon['running']} Running UX test: {test_config.test_name}")
                 page = session.get_page()
 
                 text_test = PageTextTest(llm_config)
@@ -272,7 +270,7 @@ class UXTestRunner(BaseTestRunner):
                     if errors:
                         result.error_message = "; ".join(errors)
 
-                logging.debug(f"UX test completed: {test_config.test_name}")
+                logging.info(f"{icon['check']} Test completed: {test_config.test_name}")
 
             except Exception as e:
                 error_msg = f"UX test failed: {str(e)}"
@@ -290,8 +288,7 @@ class LighthouseTestRunner(BaseTestRunner):
     async def run_test(
         self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
     ) -> TestResult:
-        """Run  tests."""
-        logging.debug(f"Running Lighthouse test: {test_config.test_name}")
+        """Run Lighthouse tests."""
         
         with Display.display(test_config.test_name):
             result = TestResult(
@@ -303,6 +300,7 @@ class LighthouseTestRunner(BaseTestRunner):
             )
 
             try:
+                logging.info(f"{icon['running']} Running test: {test_config.test_name}")
                 browser_config = session.browser_config
 
                 # Only run Lighthouse on Chromium browsers
@@ -318,7 +316,7 @@ class LighthouseTestRunner(BaseTestRunner):
 
                 result.sub_tests = [lighthouse_results]
                 result.status = lighthouse_results.status
-                logging.debug(f"Lighthouse test completed: {test_config.test_name}")
+                logging.info(f"{icon['check']} Test completed: {test_config.test_name}")
 
             except Exception as e:
                 error_msg = f"Lighthouse test failed: {str(e)}"
@@ -336,7 +334,7 @@ class ButtonTestRunner(BaseTestRunner):
     async def run_test(
         self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
     ) -> TestResult:
-        logging.debug(f"Running Button test: {test_config.test_name}")
+        """Run Button test."""
         
         with Display.display(test_config.test_name):
             result = TestResult(
@@ -348,6 +346,7 @@ class ButtonTestRunner(BaseTestRunner):
             )
 
             try:
+                logging.info(f"{icon['running']} Running test: {test_config.test_name}")
                 page = session.get_page()
                 browser_config = session.browser_config
 
@@ -356,7 +355,7 @@ class ButtonTestRunner(BaseTestRunner):
 
                 crawler = CrawlHandler(target_url)
                 clickable_elements = await crawler.clickable_elements_detection(page)
-                logging.debug(f"Clickable elements number: {len(clickable_elements)}")
+                logging.info(f"Crawled {len(clickable_elements)} clickable elements")
                 if len(clickable_elements) > 50:
                     clickable_elements = clickable_elements[:50]
                     logging.warning(f"Clickable elements number is too large, only keep the first 50")
@@ -372,7 +371,7 @@ class ButtonTestRunner(BaseTestRunner):
                 # Overall metrics/status
                 result.status = button_test_result.status
 
-                logging.debug(f"Button test completed: {test_config.test_name}")
+                logging.info(f"{icon['check']} Test completed: {test_config.test_name}")
 
             except Exception as e:
                 error_msg = f"Button test failed: {str(e)}"
@@ -391,7 +390,6 @@ class WebBasicCheckRunner(BaseTestRunner):
         self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
     ) -> TestResult:
         """Run Web Basic Check tests."""
-        logging.debug(f"Running Web Basic Check test: {test_config.test_name}")
         
         with Display.display(test_config.test_name):
             result = TestResult(
@@ -403,6 +401,7 @@ class WebBasicCheckRunner(BaseTestRunner):
             )
 
             try:
+                logging.info(f"{icon['running']} Running test: {test_config.test_name}")
                 page = session.get_page()
 
                 # Discover page elements
@@ -410,14 +409,14 @@ class WebBasicCheckRunner(BaseTestRunner):
 
                 crawler = CrawlHandler(target_url)
                 links = await crawler.extract_links(page)
-
+                logging.info(f"Crawled {len(links)} links")
                 # WebAccessibilityTest
                 accessibility_test = WebAccessibilityTest()
                 accessibility_result = await accessibility_test.run(target_url, links)
 
                 result.sub_tests = [accessibility_result]
                 result.status = accessibility_result.status
-                logging.debug(f"Web Basic Check test completed: {test_config.test_name}")
+                logging.info(f"{icon['check']} Test completed: {test_config.test_name}")
 
             except Exception as e:
                 error_msg = f"Web Basic Check test failed: {str(e)}"
@@ -458,7 +457,6 @@ class SecurityTestRunner(BaseTestRunner):
         self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
     ) -> TestResult:
         """Run Security tests using Nuclei scanning."""
-        logging.debug(f"Running Security test: {test_config.test_name}")
         
         with Display.display(test_config.test_name):
             result = TestResult(
@@ -471,7 +469,7 @@ class SecurityTestRunner(BaseTestRunner):
 
             try:
                 # 安全测试不需要浏览器会话，使用Nuclei进行独立扫描
-                logging.debug("Security test running independently of browser session")
+                logging.info(f"{icon['running']} Running test: {test_config.test_name}")
 
                 # 检查nuclei是否安装
                 nuclei_available = await self._check_nuclei_available()
@@ -617,7 +615,7 @@ class SecurityTestRunner(BaseTestRunner):
                 # 清理临时文件
                 await self._cleanup_temp_files(scan_results.get("output_path"))
 
-                logging.debug(f"Security test completed: {test_config.test_name}, found {total_findings} issues")
+                logging.info(f"{icon['check']} Test completed: {test_config.test_name}")
 
             except Exception as e:
                 error_msg = f"Security test failed: {str(e)}"
@@ -684,7 +682,7 @@ class SecurityTestRunner(BaseTestRunner):
                 tasks.append(task)
 
         # 并行执行所有扫描
-        logging.debug(f"Start {len(tasks)} security scan tasks...")
+        logging.info(f"Start {len(tasks)} security scan tasks...")
         scan_results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # 处理结果
