@@ -41,7 +41,7 @@ class ActionHandler:
                 raise Exception(f"add context cookies error: {e}")
 
         await self.page.goto(url=url, wait_until="domcontentloaded")
-        await self.page.wait_for_load_state("networkidle", timeout=30000)
+        await self.page.wait_for_load_state("networkidle", timeout=60000)
 
     async def smart_navigate_to_page(self, page: Page, url: str, cookies=None) -> bool:
         """Smart navigation to target page, avoiding redundant navigation.
@@ -507,9 +507,7 @@ class ActionHandler:
 
         # convert to Base64
         screenshot_base64 = base64.b64encode(screenshot_bytes).decode("utf-8")
-
         base64_data = f"data:image/png;base64,{screenshot_base64}"
-
         return base64_data
 
     async def take_screenshot(
@@ -531,19 +529,20 @@ class ActionHandler:
             bytes: screenshot binary data
         """
         try:
-            await page.wait_for_load_state(timeout=120000)
-            logging.debug("Page is fully loaded, agent is about to take screenshots")
+            try:
+                await page.wait_for_load_state(timeout=60000)
+            except Exception as e:
+                logging.warning(f"wait_for_load_state before screenshot failed: {e}; attempting screenshot anyway")
+            logging.debug("Page is fully loaded or skipped wait; taking screenshot")
 
             # Directly capture screenshot as binary data
             if file_path:
-                # If file path is specified, save directly to that path
                 screenshot: bytes = await page.screenshot(
                     path=file_path,
                     full_page=full_page,
                     timeout=timeout,
                 )
             else:
-                # No path specified, only return binary data
                 screenshot: bytes = await page.screenshot(
                     full_page=full_page,
                     timeout=timeout,
@@ -552,8 +551,8 @@ class ActionHandler:
             return screenshot
 
         except Exception as e:
-            logging.error(f"An error occurred while taking the screenshot: {e}")
-            return None
+            logging.warning(f"Page screenshot attempt failed: {e}; trying fallback capture")
+            raise
 
     async def go_back(self) -> bool:
         """Navigate back to the previous page."""

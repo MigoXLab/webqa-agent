@@ -43,7 +43,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
         
         with Display.display(test_config.test_name):
             from webqa_agent.testers.langgraph.graph import app as graph_app
-            from webqa_agent.testers.ui_tester import UITester
+            from webqa_agent.testers.function_tester import UITester
 
             result = TestResult(
                 test_id=test_config.test_id,
@@ -204,7 +204,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                 logging.info(f"{icon['check']} Test completed: {test_config.test_name}")
 
             except Exception as e:
-                error_msg = f"UIAgent LangGraph test failed: {str(e)}"
+                error_msg = f"AI Functional Test failed: {str(e)}"
                 result.status = TestStatus.FAILED
                 result.error_message = error_msg
                 logging.error(error_msg)

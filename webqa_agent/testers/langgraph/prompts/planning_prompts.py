@@ -58,8 +58,7 @@ Each test case must include these standardized components with enhanced business
 **Search Testing - Atomic Steps**:
 ```json
 [
-{{"action": "点击搜索框"}},
-{{"action": "输入搜索关键词'产品'"}},
+{{"action": "在输入框输入搜索关键词'产品'"}},
 {{"action": "点击搜索按钮"}},
 {{"verify": "确认显示搜索结果列表"}}
 ]
