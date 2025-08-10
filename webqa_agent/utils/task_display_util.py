@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import sys
 import time
 import threading
@@ -61,6 +62,8 @@ class _Display:
         self._render_task: Optional[asyncio.Task] = None
         self._spinner_index = 0
         self.captured_output = StringIO()
+        self._log_queue = deque(maxlen=1000)
+        self.num_log = 5  # TODO: Make it configurable
 
         for hdr in self.logger.handlers:
             if isinstance(hdr, logging.StreamHandler) and hdr.name == "stream":
@@ -88,6 +91,11 @@ class _Display:
         self._render_frame()
 
     def _render_frame(self):
+        col, lin = os.get_terminal_size()
+        _log = self.captured_output.getvalue()
+        lines = []
+        if _log:
+            lines = _log.splitlines()
         self._spinner_index = (self._spinner_index + 1) % len(self.SPINNER)
         spinner = self.SPINNER[self._spinner_index]
         out = sys.stdout
@@ -109,6 +117,14 @@ class _Display:
             for t in self.running:
                 elapsed = now - t.start
                 out.write(f"  ⏳ {spinner} {t.name} [{elapsed:.2f}s]\n")
+            out.write("-" * col + "\n")
+            length = min(self.num_log, len(lines))
+            for ln in range(length):
+                line = lines[-length + ln]
+                if len(line) >= col:
+                    out.write("... (to long) \n")
+                else:
+                    out.write(line + "\n")
         out.flush()
 
     def render_summary(self):

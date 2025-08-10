@@ -6,8 +6,10 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 import requests
+from playwright.async_api import Page
 
-from webqa_agent.data.test_structures import SubTestReport, SubTestResult, TestStatus
+from webqa_agent.data.test_structures import SubTestReport, SubTestResult, TestStatus, SubTestScreenshot, SubTestStep
+from webqa_agent.utils.log_icon import icon
 
 
 class WebAccessibilityTest:
@@ -16,7 +18,7 @@ class WebAccessibilityTest:
         result = SubTestResult(name="可访问性检查")
 
         try:
-            # check main link
+            # check the main link
             main_valid, main_reason, main_expiry_date = await self.check_https_expiry(url)
             main_status = await self.check_page_status(url)
             main_url_result = {
@@ -149,3 +151,102 @@ class WebAccessibilityTest:
             error_message = f"Failed to load page {url}: {str(e)}"
             logging.error(error_message)
             raise Exception(error_message)
+
+
+class PageButtonTest:
+
+    @staticmethod
+    async def run(url: str, page: Page, clickable_elements: list, **kwargs) -> SubTestResult:
+        """Run page button test.
+
+        Args:
+            url: target url
+            page: playwright page
+            clickable_elements: list of clickable elements
+
+        Returns:
+            SubTestResult containing test results and click screenshots
+        """
+
+        result = SubTestResult(name="可点击元素遍历检查")
+        logging.info(f"{icon['running']} Running Sub Test: {result.name}")
+        sub_test_results = []
+        try:
+            status = TestStatus.PASSED
+            from webqa_agent.actions.click_handler import ClickHandler
+
+            click_handler = ClickHandler()
+            await click_handler.setup_listeners(page)
+
+            # count total passed / failed
+            total, total_failed = 0, 0
+
+            if clickable_elements:
+                for i, element in enumerate(clickable_elements):
+                    # Run single test with the provided browser configuration
+                    element_text = element.get("selector", "Unknown")
+                    logging.info(f"Testing clickable element {i + 1}...")
+
+                    try:
+                        current_url = page.url
+                        if current_url != url:
+                            await page.goto(url)
+                            await asyncio.sleep(0.5)  # Wait for page to stabilize
+
+                        screenshots = []
+                        click_result = await click_handler.click_and_screenshot(page, element, i)
+                        if click_result.get("screenshot_after"):
+                            scr = click_result["screenshot_after"]
+                            if isinstance(scr, str):
+                                screenshots.append(SubTestScreenshot(type="base64", data=scr))
+                            elif isinstance(scr, dict):
+                                screenshots.append(SubTestScreenshot(**scr))
+                        if click_result.get("new_page_screenshot"):
+                            scr = click_result["new_page_screenshot"]
+                            if isinstance(scr, str):
+                                screenshots.append(SubTestScreenshot(type="base64", data=scr))
+                            elif isinstance(scr, dict):
+                                screenshots.append(SubTestScreenshot(**scr))
+
+                        business_success = click_result["success"]
+                        step = SubTestStep(
+                            id=int(i + 1), description=f"点击元素: {element_text}", screenshots=screenshots
+                        )
+                        # Determine step status based on business result
+                        step_status = TestStatus.PASSED if business_success else TestStatus.FAILED
+                        step.status = step_status  # record status for each step
+                        total += 1
+                        if step_status != TestStatus.PASSED:
+                            total_failed += 1
+                            status = TestStatus.FAILED
+
+                        # Brief pause between clicks
+                        await asyncio.sleep(0.5)
+
+                    except Exception as e:
+                        error_message = f"PageButtonTest error: {str(e)}"
+                        logging.error(error_message)
+                        step.status = TestStatus.FAILED
+                        step.errors = str(e)
+                        total_failed += 1
+                        status = TestStatus.FAILED
+                    finally:
+                        sub_test_results.append(step)
+
+            logging.info(f"{icon['check']} Sub Test Completed: {result.name}")
+            result.report.append(
+                SubTestReport(
+                    title="遍历测试结果",
+                    issues=f"可点击元素{total}个，点击行为失败{total_failed}个",
+                )
+            )
+
+        except Exception as e:
+            error_message = f"PageButtonTest error: {str(e)}"
+            logging.error(error_message)
+            status = TestStatus.FAILED
+            raise
+
+        result.status = status
+        result.steps = sub_test_results
+        return result
