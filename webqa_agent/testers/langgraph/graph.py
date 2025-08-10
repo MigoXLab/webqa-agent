@@ -19,6 +19,7 @@ from webqa_agent.testers.langgraph.agents.execute_agent import agent_worker_node
 from webqa_agent.testers.langgraph.prompts.planning_prompts import get_reflection_prompt, get_test_case_planning_system_prompt, get_test_case_planning_user_prompt
 from webqa_agent.testers.langgraph.state.schemas import MainGraphState
 from webqa_agent.utils.log_icon import icon
+from webqa_agent.utils import Display
 
 async def setup_session(state: MainGraphState) -> Dict[str, Any]:
     """Uses the provided UITester instance to start the browser session."""
@@ -361,44 +362,45 @@ async def execute_single_case(state: MainGraphState) -> dict:
     ui_tester_instance = state["ui_tester_instance"]
     case_name = case.get("name")
 
-    # === 开始跟踪case数据 ===
-    # 使用start_case来同时设置名称和开始数据跟踪
-    ui_tester_instance.start_case(case_name, case)
-    logging.debug(f"Executing functional test: {case_name}")
+    with Display.display(f"智能功能测试 - {case_name}"):
+        # === 开始跟踪case数据 ===
+        # 使用start_case来同时设置名称和开始数据跟踪
+        ui_tester_instance.start_case(case_name, case)
+        logging.debug(f"Executing functional test: {case_name}")
 
-    # Conditionally reset the session based on the test case flag
-    if case.get("reset_session", False):
-        logging.debug(f"Resetting session: navigation to {case.get('url')}.")
-        await ui_tester_instance.start_session(case.get("url"))
-        page = await ui_tester_instance.get_current_page()
-        action_handler = ActionHandler()
-        await action_handler.go_to_page(page, state["url"], cookies=state["cookies"])
-        logging.debug("Navigation was performed as part of session reset.")
-    else:
-        await ui_tester_instance.start_session(case.get("url"))
-        page = await ui_tester_instance.get_current_page()
-        action_handler = ActionHandler()
-        await action_handler.go_to_page(page, state["url"], cookies=state["cookies"])
-        logging.debug("Continuing with the existing session state.")
+        # Conditionally reset the session based on the test case flag
+        if case.get("reset_session", False):
+            logging.debug(f"Resetting session: navigation to {case.get('url')}.")
+            await ui_tester_instance.start_session(case.get("url"))
+            page = await ui_tester_instance.get_current_page()
+            action_handler = ActionHandler()
+            await action_handler.go_to_page(page, state["url"], cookies=state["cookies"])
+            logging.debug("Navigation was performed as part of session reset.")
+        else:
+            await ui_tester_instance.start_session(case.get("url"))
+            page = await ui_tester_instance.get_current_page()
+            action_handler = ActionHandler()
+            await action_handler.go_to_page(page, state["url"], cookies=state["cookies"])
+            logging.debug("Continuing with the existing session state.")
 
-    # Invoke the agent worker for the single case
-    # Pass the current completed cases to the worker so it can append
-    worker_input_state = {"test_case": case, "completed_cases": state.get("completed_cases", [])}
-    result = await agent_worker_node(
-        worker_input_state, config={"configurable": {"ui_tester_instance": ui_tester_instance}}
-    )
+        # Invoke the agent worker for the single case
+        # Pass the current completed cases to the worker so it can append
+        worker_input_state = {"test_case": case, "completed_cases": state.get("completed_cases", [])}
+        result = await agent_worker_node(
+            worker_input_state, config={"configurable": {"ui_tester_instance": ui_tester_instance}}
+        )
 
-    # The result from the worker now contains the single case result
-    case_result = result.get("case_result")
+        # The result from the worker now contains the single case result
+        case_result = result.get("case_result")
 
-    # === 结束case跟踪并获取详细数据 ===
-    final_status = case_result.get("status", "completed") if case_result else "failed"
-    final_summary = case_result.get("final_summary", "") if case_result else "No summary available"
+        # === 结束case跟踪并获取详细数据 ===
+        final_status = case_result.get("status", "completed") if case_result else "failed"
+        final_summary = case_result.get("final_summary", "") if case_result else "No summary available"
 
-    ui_tester_instance.finish_case(final_status, final_summary)
+        ui_tester_instance.finish_case(final_status, final_summary)
 
-    # Return the single result in a list to be appended by the graph state
-    return {"completed_cases": [case_result] if case_result else []}
+        # Return the single result in a list to be appended by the graph state
+        return {"completed_cases": [case_result] if case_result else []}
 
 
 def should_replan_or_continue(state: MainGraphState) -> str:
