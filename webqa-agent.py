@@ -255,7 +255,7 @@ def build_test_configurations(cfg, cookies=None):
                 "test_specific_config": {},
             }
         )
-
+  
     # performance test
     if tconf.get("performance_test", {}).get("enabled"):
         tests.append(
@@ -373,10 +373,15 @@ async def run_tests(cfg):
         print(f"⚙️ 并行度: {max_concurrent_tests}")
 
         parallel_mode = ParallelMode([], max_concurrent_tests=max_concurrent_tests)
-        results, report_path, html_report_path = await parallel_mode.run(
+        results, report_path, html_report_path, result_count = await parallel_mode.run(
             url=target_url, llm_config=llm_config, test_configurations=test_configurations,
             log_cfg=cfg.get("log", {"level": "info"})
         )
+        if result_count:
+            print(f"🔢 总评估数：{result_count.get('total', 0)}")
+            print(f"✅ 成功数：{result_count.get('passed', 0)}")
+            print(f"❌ 失败数：{result_count.get('failed', 0)}")
+
         if html_report_path:
             print("html报告路径: ", html_report_path)
         else:

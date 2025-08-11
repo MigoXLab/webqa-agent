@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from webqa_agent.browser.config import DEFAULT_CONFIG
 
-# 侧边栏标题
+# 侧边栏标题（默认）
 CATEGORY_TITLES: Dict[str, str] = {
     "function": "功能测试",
     "ux": "UX测试",
@@ -14,13 +14,11 @@ CATEGORY_TITLES: Dict[str, str] = {
     "security": "安全测试",
 }
 
-
 class TestCategory(str, Enum):
     FUNCTION = "function"
     UX = "ux"
     SECURITY = "security"
     PERFORMANCE = "performance"
-
 
 # 测试类型
 class TestType(str, Enum):
@@ -35,7 +33,6 @@ class TestType(str, Enum):
     SECURITY_TEST = "security_test"
     SEO_TEST = "seo_test"
 
-
 def get_category_for_test_type(test_type: TestType) -> TestCategory:
     """Map TestType to TestCategory."""
     mapping = {
@@ -49,6 +46,24 @@ def get_category_for_test_type(test_type: TestType) -> TestCategory:
     }
     return mapping.get(test_type, TestCategory.FUNCTION)
 
+
+# 报告子标题栏
+TEST_TYPE_DEFAULT_NAMES: Dict[TestType, str] = {
+    TestType.UI_AGENT_LANGGRAPH: "智能功能测试",
+    TestType.BUTTON_TEST: "遍历测试",
+    TestType.WEB_BASIC_CHECK: "技术健康度检查",
+    TestType.UX_TEST: "用户体验测试",
+    TestType.PERFORMANCE: "性能测试",
+    TestType.SECURITY_TEST: "安全测试",
+}
+
+
+def get_default_test_name(test_type: TestType) -> str:
+    """Return the internal default test name for a given TestType.
+
+    Names are hardcoded and not user-configurable.
+    """
+    return TEST_TYPE_DEFAULT_NAMES.get(test_type, test_type.value)
 
 class TestStatus(str, Enum):
     """Test status enumeration."""

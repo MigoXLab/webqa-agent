@@ -13,7 +13,7 @@ from langchain_core.tools import BaseTool
 from pydantic import Field
 
 from webqa_agent.crawler.deep_crawler import DeepCrawler
-from webqa_agent.testers.langgraph.prompts.tool_prompts import get_error_detection_prompt
+from webqa_agent.testers.case_gen.prompts.tool_prompts import get_error_detection_prompt
 from webqa_agent.testers.function_tester import UITester
 
 

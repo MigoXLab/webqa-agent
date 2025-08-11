@@ -141,7 +141,7 @@ class ScrollHandler:
             await self.page.evaluate(f"window.scrollBy(0, {viewport_height})")
             await asyncio.sleep(2)
             scroll_count += 1
-            logging.debug(f"Global scrolling down... count: {scroll_count}")
+            logging.info(f"Global scrolling down... count: {scroll_count}")
             await capture_viewport(scroll_count)
 
         return screenshot_image_list
@@ -253,7 +253,7 @@ class ScrollHandler:
 
             await asyncio.sleep(2)
             scroll_count += 1
-            logging.debug(f"Container scrolling down... count: {scroll_count}")
+            logging.info(f"Container scrolling down... count: {scroll_count}")
             await capture_viewport(scroll_count)
 
         return screenshot_image_list

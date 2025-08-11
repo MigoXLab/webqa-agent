@@ -86,7 +86,16 @@ class ResultAggregator:
 
         executive_content["executiveSummary"] = f"{dict_to_text(raw_analysis['session_summary'])}"
 
-        return {"title": "评估总览", "tabs": aggregated_results_list}
+        # Also expose simple counters at the top-level for easy consumption
+        return {
+            "title": "评估总览",
+            "tabs": aggregated_results_list,
+            "count":{
+                "total": total_sub_tests,
+                "passed": passed_sub_tests,
+                "failed": critical_sub_tests,
+            }
+        }
 
     async def _generate_llm_issues(self, test_session: ParallelTestSession) -> List[Dict[str, Any]]:
         """Use LLM to summarise issues for each sub-test.
