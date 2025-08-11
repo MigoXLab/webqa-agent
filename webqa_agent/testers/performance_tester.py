@@ -216,7 +216,7 @@ class LighthouseMetricsTest:
                         }}
 
                         const launchOptions = {{
-                            chromeFlags: ['--headless', '--no-sandbox', '--disable-dev-shm-usage'],
+                            chromeFlags: ['--headless', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
                         }};
 
                         if (chromePath && existsSync(chromePath)) {{
