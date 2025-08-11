@@ -185,7 +185,7 @@ class UITester:
 
             # Crawl current page
             dp = DeepCrawler(self.page)
-            _, id_map = await dp.crawl(highlight=True, viewport_only=True)
+            _, id_map = await dp.crawl(highlight=True, highlight_text=True, viewport_only=True)
 
             marker_screenshot = await self._actions.b64_page_screenshot(file_name="marker")
             await dp.remove_marker()
