@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import os
 import sys
 import time
@@ -38,6 +39,10 @@ class _Tracker:
             self.display_util.completed.append(
                 TaskInfo(name=self.name, start=self.start_time, end=end_time, error=error))
         return False
+
+def remove_ansi_escape_sequences(text):
+    ansi_escape = re.compile(r'\x1B[@-_][0-?]*[ -/]*[@-~]')
+    return ansi_escape.sub('', text)
 
 
 class Display:
@@ -124,7 +129,7 @@ class _Display:
             length = min(self.num_log, len(lines))
             for ln in range(length):
                 line = lines[-length + ln]
-                if len(line) >= col:
+                if len(remove_ansi_escape_sequences(str(line))) >= col:
                     out.write("... (to long) \n")
                 else:
                     out.write(line + "\n")
