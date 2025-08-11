@@ -391,10 +391,7 @@ Leverage deeper business domain insights and execution learnings to generate ref
 
 ## Output Format Requirements
 
-Your response must follow this exact structure:
-
-1. **Analysis Scratchpad**: Complete structured analysis following the QA framework
-2. **JSON Test Plan**: Well-formed JSON array containing all generated test cases
+Your response must be ONLY in JSON format. Do not include any analysis, explanation, or additional text outside the JSON structure.
 
 ```json
 [
