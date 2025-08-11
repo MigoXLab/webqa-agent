@@ -91,7 +91,10 @@ class _Display:
         self._render_frame()
 
     def _render_frame(self):
-        col, lin = os.get_terminal_size()
+        try:
+            col, lin = os.get_terminal_size()
+        except OSError:
+            col = 180  # TODO: Make it configurable
         _log = self.captured_output.getvalue()
         lines = []
         if _log:
