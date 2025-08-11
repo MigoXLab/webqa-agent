@@ -42,7 +42,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
         ParallelUITester."""
         
         with Display.display(test_config.test_name):
-            from webqa_agent.testers.langgraph.graph import app as graph_app
+            from webqa_agent.testers.case_gen.graph import app as graph_app
             from webqa_agent.testers.function_tester import UITester
 
             result = TestResult(

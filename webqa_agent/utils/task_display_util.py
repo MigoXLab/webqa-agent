@@ -144,9 +144,9 @@ class _Display:
         failed = total - success
         total_time = sum(t.end - t.start for t in self.completed if t.end)
 
-        out.write(f"🔢 总任务数：{total}\n")
-        out.write(f"✅ 成功任务：{success}\n")
-        out.write(f"❌ 失败任务：{failed}\n")
+        # out.write(f"🔢 总任务数：{total}\n")
+        # out.write(f"✅ 成功任务：{success}\n")
+        # out.write(f"❌ 失败任务：{failed}\n")
         out.write(f"⏱️ 总共耗时：{total_time:.2f}s\n")
 
         if failed > 0:
@@ -155,8 +155,8 @@ class _Display:
                 if t.error:
                     out.write(f"  ❌ {t.name} 错误信息：{t.error}\n")
 
-        out.write("════════════════════════════════════════\n")
-        out.write("🎯 Done！\n")
+        # out.write("════════════════════════════════════════\n")
+        # out.write("🎯 Done！\n")
         out.flush()
 
         for hdr in self.logger_handlers:

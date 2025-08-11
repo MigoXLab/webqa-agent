@@ -14,8 +14,8 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 
 from webqa_agent.crawler.deep_crawler import DeepCrawler
-from webqa_agent.testers.langgraph.prompts.agent_prompts import get_execute_system_prompt
-from webqa_agent.testers.langgraph.tools.element_action_tool import UIAssertTool, UITool
+from webqa_agent.testers.case_gen.prompts.agent_prompts import get_execute_system_prompt
+from webqa_agent.testers.case_gen.tools.element_action_tool import UIAssertTool, UITool
 from webqa_agent.utils.log_icon import icon
 
 # The node function that will be used in the graph

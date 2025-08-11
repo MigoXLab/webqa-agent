@@ -5,6 +5,7 @@ from .test_structures import (
     TestResult,
     TestStatus,
     TestType,
+    get_default_test_name,
 )
 
-__all__ = ["TestType", "TestStatus", "TestConfiguration", "TestExecutionContext", "TestResult", "ParallelTestSession"]
+__all__ = ["TestType", "TestStatus", "TestConfiguration", "TestExecutionContext", "TestResult", "ParallelTestSession", "get_default_test_name"]

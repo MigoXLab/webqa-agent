@@ -218,6 +218,7 @@ __marimo__/
 
 # Data files
 /log/*
+/logs/*
 *log
 *.log
 report/

@@ -3,7 +3,7 @@ import uuid
 from typing import Any, Dict, List, Optional, Tuple, Coroutine
 
 from webqa_agent.browser.config import DEFAULT_CONFIG
-from webqa_agent.data import ParallelTestSession, TestConfiguration, TestType
+from webqa_agent.data import ParallelTestSession, TestConfiguration, TestType, get_default_test_name
 from webqa_agent.executor import ParallelTestExecutor
 from webqa_agent.utils import Display
 from webqa_agent.utils.get_log import GetLog
@@ -58,6 +58,9 @@ class ParallelMode:
             # Execute tests in parallel
             completed_session = await self.executor.execute_parallel_tests(test_session)
 
+            result = completed_session.aggregated_results.get("count", {})
+            
+
             await Display.display.stop()
             Display.display.render_summary()
             # Return results in format compatible with existing code
@@ -65,6 +68,7 @@ class ParallelMode:
                 completed_session.aggregated_results,
                 completed_session.report_path,
                 completed_session.html_report_path,
+                result,
             )
 
         except Exception as e:
@@ -90,7 +94,7 @@ class ParallelMode:
             test_config = TestConfiguration(
                 test_id=str(uuid.uuid4()),
                 test_type=test_type,
-                test_name=config.get("test_name", f"{test_type_str}_test"),
+                test_name=get_default_test_name(test_type),
                 enabled=config.get("enabled", True),
                 browser_config=browser_config,
                 test_specific_config=config.get("test_specific_config", {}),
