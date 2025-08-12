@@ -19,22 +19,19 @@
 
 ## 安装与配置
 
-### Docker 快速启动
+### 🚀 Docker一键启动（推荐）
 
 在开始之前，请确保已安装 Docker。如未安装，请参考官方安装指南：[Docker 安装指南](https://docs.docker.com/get-started/get-docker/)。
 
 ```bash
-# 1. 克隆项目
-git clone <repository-url>
-cd webqa-agent
+# 1. 下载配置文件模板
+curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/config/config.yaml.example -o config.yaml
 
-# 2. 配置项目
-cp config/config.yaml.example config/config.yaml
-# 编辑 config/config.yaml 配置文件
+# 2. 编辑配置文件
+# 设置 target.url、llm_config.api_key 等参数
 
-# 3. 启动服务（适用于 macOS 与 Linux）
-sh start.sh --build      # 初次构建镜像，或者重新构建并启动（代码/配置更新后）
-sh start.sh --local      # 使用已有 webqa-agent 镜像快速启动
+# 3. 一键启动
+curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/start.sh | bash
 ```
 
 ### 源码安装

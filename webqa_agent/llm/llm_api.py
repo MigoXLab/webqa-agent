@@ -99,11 +99,12 @@ class LLMAPI:
 
             completion = await self.client.chat.completions.create(**create_kwargs)
             content = completion.choices[0].message.content
+            logging.debug(f"LLM API response: {content}")
             # Clean response if it's wrapped in JSON code blocks
             content = self._clean_response(content)
             return content
         except Exception as e:
-            logging.error(f"Error while calling OpenAI API: {e}")
+            logging.error(f"Error while calling LLM API: {e}")
             raise ValueError(f"{str(e)}")
 
     def _clean_response(self, response):

@@ -2,10 +2,7 @@ version: "3.10"
 
 services:
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: webqa-agent:latest
+    image: mmmay0722/webqa-agent:latest
     container_name: webqa-agent
     volumes:
       # 挂载配置文件
