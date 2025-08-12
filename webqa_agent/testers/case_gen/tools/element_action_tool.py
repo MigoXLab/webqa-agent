@@ -89,7 +89,7 @@ class UITool(BaseTool):
 
             logging.debug(f"Error detection result: {'ERROR' if error_detected else 'NO ERROR'}")
             if error_detected:
-                logging.warning(f"UI error detected: {error_message}")
+                logging.debug(f"UI error detected: {error_message}")
             else:
                 logging.debug("No UI validation errors detected")
 
@@ -212,7 +212,7 @@ class UITool(BaseTool):
                 error_msg = error_check_result.get("error_message", "Validation error detected")
                 reasoning = error_check_result.get("reasoning", "")
 
-                logging.warning(f"UI validation error detected: {error_msg}")
+                logging.debug(f"UI validation error detected: {error_msg}")
                 logging.debug(f"Error reasoning: {reasoning}")
 
                 # Format as expected by execution agent

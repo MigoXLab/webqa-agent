@@ -346,7 +346,7 @@ class ScrollHandler:
                                 screenshot_image_list = container_screenshots
                                 break
                 else:
-                    logging.warning("No scrollable containers found, taking single screenshot")
+                    logging.debug("No scrollable containers found, taking single screenshot")
                     timestamp = time.strftime("%Y%m%d%H%M%S")
                     processed_filename = f"{timestamp}_{page_identifier}_no_scroll"
                     screenshot_base64 = await self._action_handler.b64_page_screenshot(file_name=processed_filename)
