@@ -94,6 +94,7 @@ class UITester:
             dp = DeepCrawler(self.page)
             _, id_map = await dp.crawl(highlight=True, viewport_only=True)
             await self._actions.update_element_buffer(id_map)
+            logging.debug(f"action id_map: {id_map}")
 
             # Take screenshot
             marker_screenshot = await self._actions.b64_page_screenshot(file_name="marker")

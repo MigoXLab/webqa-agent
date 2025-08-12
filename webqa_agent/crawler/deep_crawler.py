@@ -180,7 +180,7 @@ class DeepCrawler:
                     h = vp.get("height")
                     if w is not None and h is not None:
                         coords.append({
-                            "id": n.id,
+                            # "id": n.id,
                             "tag": n.tag,
                             "center_x": n.center_x,
                             "center_y": n.center_y,

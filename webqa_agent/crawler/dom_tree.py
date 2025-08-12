@@ -131,7 +131,7 @@ class DomTreeNode:
         if data.get('node') is None:
             fake_node = {
                 'node': {
-                    'id': None,
+                    # 'id': None,
                     'highlightIndex': None,
                     'tagName': '__root__',
                     'className': None,
@@ -171,7 +171,7 @@ class DomTreeNode:
                 attrs = {a['name']: a['value'] for a in node_data.get('attributes', [])}
 
                 node = cls(
-                    id=node_data.get('id'),
+                    # id=node_data.get('id'),
                     highlightIndex=node_data.get('highlightIndex'),
                     tag=(node_data.get('tagName') or '').lower() or None,
                     class_name=node_data.get('className'),
