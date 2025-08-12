@@ -713,7 +713,7 @@
             });
 
             return {
-                id: getElementId(elem),
+                // id: getElementId(elem),
                 node: elem,
                 tagName: elem.tagName.toLowerCase(),
                 className: elem.getAttribute('class') || null,
