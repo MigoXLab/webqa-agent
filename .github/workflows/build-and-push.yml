@@ -2,10 +2,10 @@ name: Build and Push Docker Images
 
 on:
   push:
-    branches:
-      - dev
-    # tags:
-    #   - "v*"
+    # branches:
+    #   - dev
+    tags:
+      - "v*"
   # pull_request:
   #   branches:
   #     - main
