@@ -2,13 +2,8 @@ name: Build and Push Docker Images
 
 on:
   push:
-    # branches:
-    #   - dev
     tags:
       - "v*"
-  # pull_request:
-  #   branches:
-  #     - main
 
 env:
   DOCKERHUB_USERNAME: mmmay0722
