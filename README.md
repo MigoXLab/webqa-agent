@@ -10,16 +10,28 @@
   <img src="docs/images/webqa.svg" alt="WebQA Agent 业务功能图" />
 </p>
 
-### 📋 核心特性概览
+### 📋 特性概览
 
-- **🤖 AI智能测试**：兼容 OpenAI SDK 的模型，实现智能化的功能测试和用户体验评估，从页面抓取到测试执行，全程无需人工干预
-- **📊 多维度评估**：涵盖功能测试、性能测试、用户体验测试和安全测试
+- **🤖 AI智能测试**：兼容 OpenAI SDK 的模型，实现智能化的功能测试和用户体验评估，自动完成从页面抓取、测试用例生成到执行的全流程测试，实现真正的全程零人工干预
+- **📊 多维度评估**：覆盖功能、性能、用户体验、安全等核心测试场景，全面保障系统质量
 - **🎯 精准诊断**：基于真实浏览器环境的深度测试，提供可操作的优化建议
-- **📈 可视化报告**：生成详细的HTML测试报告，支持多种测试结果展示
+- **📈 可视化报告**：生成详细的HTML测试报告，多维度、可视化展示测试结果，便于分析与追踪
+
+## 📌 测试案例
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/b75f18bf-8b92-498e-b5e1-7c4dc5cd33f5" alt="AI 功能测试" width="45%"/>
+  &nbsp;
+  <img src="https://github.com/user-attachments/assets/560cd99d-1213-47b9-82dc-52d3f2d1c1e7" alt="其他功能测试" width="45%"/>
+</p>
+
+<p align="center">
+  <b>左：AI 智能测试 全自动执行流程</b>　|　<b>右：其他测试 覆盖多类场景</b>
+</p>
 
 ## 安装与配置
 
-### 🚀 Docker一键启动（推荐）
+### 🚀 Docker一键启动
 
 在开始之前，请确保已安装 Docker。如未安装，请参考官方安装指南：[Docker 安装指南](https://docs.docker.com/get-started/get-docker/)。
 
@@ -49,7 +61,7 @@ playwright install
 
 ```
 
-Lighthouse 安装
+性能测试 - Lighthouse 安装（可选）
 
 ```bash
 # 需要 Node.js >= 18.0.0 package.json
@@ -57,7 +69,7 @@ npm install
 
 ```
 
-Nuclei 安装
+安全测试 - Nuclei 安装（可选）
 
 下载地址： [Nuclei Releases](https://github.com/projectdiscovery/nuclei/releases/)
 
@@ -73,7 +85,7 @@ nuclei -version        # 验证安装成功
 
 ```
 
-参考“使用说明 > 项目配置”进行 `config/config.yaml` 配置后，运行下方命令。
+参考“使用说明 > 测试配置”进行 `config/config.yaml` 配置后，运行下方命令。
 
 ```bash
 python webqa-agent.py
@@ -81,9 +93,9 @@ python webqa-agent.py
 
 ## 使用说明
 
-### 项目配置
+### 测试配置
 
-`webqa-agent` 通过 YAML 配置项目的运行参数：
+`webqa-agent` 通过 YAML 配置测试运行参数：
 
 ```yaml
 target:
@@ -94,7 +106,7 @@ test_config:                                      # 测试项配置
   function_test:                                  # 功能测试
     enabled: True
     type: ai                                      # default or ai
-    business_objectives: example business objectives  # 建议加入测试范围和数量描述，如：测试搜索功能，生成x个用例
+    business_objectives: example business objectives  # 建议加入测试范围，如：测试搜索功能
   ux_test:                                        # 用户体验测试
     enabled: True
   performance_test:                               # 性能测试
@@ -133,10 +145,10 @@ UX（用户体验）测试专注于评估网站的交互设计、可用性和用
 
 ## RoadMap
 
-1. AI功能测试持续优化：提升覆盖率与准确性，支持更多浏览器操作
-2. 功能遍历与页面校验：自动遍历页面，校验业务逻辑与数据完整性
+1. AI功能测试持续优化：提升覆盖率与准确性
+2. 功能遍历与页面校验：校验业务逻辑正确性与数据完整性
 3. 交互与可视化：用例可视化与本地服务实时展示推理过程
-4. 能力扩展：多模型接入与更多评估维度（含安全）集成
+4. 能力扩展：多模型接入与更多评估维度集成
 
 ## 开源许可证
 
