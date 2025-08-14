@@ -1,0 +1,90 @@
+repos:
+# -   repo: https://github.com/psf/black
+#     rev: 25.1.0
+#     hooks:
+#     -   id: black
+#         args: ["--line-length=120"]
+-   repo: https://github.com/PyCQA/flake8
+    rev: 7.2.0
+    hooks:
+    -   id: flake8
+        args: [
+          "--select=E,F",
+          "--ignore=E741,E731,E722,E721,E501,E402,E266,E265,E262,E203,F403,F405",
+          "--exclude=**/__init__.py",
+          "--max-line-length=120"
+        ]
+-   repo: https://github.com/PyCQA/isort
+    rev: 6.0.1
+    hooks:
+    -   id: isort
+-   repo: https://github.com/codespell-project/codespell
+    rev: v2.4.1
+    hooks:
+    -   id: codespell
+        args: ["--skip=*.po,*.ts,*.css", "--ignore-regex=\\b\\w{2,3}\\b"]
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.3.0
+    hooks:
+    -   id: trailing-whitespace
+    -   id: check-yaml
+    -   id: end-of-file-fixer
+    -   id: requirements-txt-fixer
+    -   id: double-quote-string-fixer
+    -   id: check-merge-conflict
+    -   id: fix-encoding-pragma
+        args: ["--remove"]
+    -   id: mixed-line-ending
+        args: ["--fix=lf"]
+    -   id: detect-private-key
+    -   id: check-json
+-   repo: https://github.com/executablebooks/mdformat
+    rev: 0.7.9
+    hooks:
+    -   id: mdformat
+        args: ["--number", "--table-width", "200"]
+        additional_dependencies:
+            - mdformat-openmmlab
+            - mdformat_frontmatter
+            - linkify-it-py
+-   repo: https://github.com/myint/docformatter
+    rev: v1.7.7
+    hooks:
+    -   id: docformatter
+        language: python
+        args: ["--in-place", "--wrap-descriptions", "79"]
+-   repo: https://github.com/jackdewinter/pymarkdown
+    rev: v0.9.30
+    hooks:
+    -   id: pymarkdown
+        args: [fix]
+-   repo: https://github.com/gitleaks/gitleaks
+    rev: v8.27.0
+    hooks:
+    -   id: gitleaks
+        entry: "gitleaks dir"
+        args: [
+          "--verbose",
+          "--redact=50"
+        ]
+-   repo: https://github.com/PyCQA/pylint/
+    rev: v3.3.7
+    hooks:
+    -   id: pylint
+        name: pylint
+        entry: pylint
+        language: system
+        types: [python]
+        require_serial: false
+        args:
+            [   "--jobs=4",
+                "--disable=all",
+                "--enable=E,F",
+                "--disable=E0401,E0402,E0102,E1101",
+                "-sn"
+            ]
+-   repo: https://github.com/tcort/markdown-link-check
+    rev: v3.12.2
+    hooks:
+    -   id: markdown-link-check
+        args: [-q,-c, ./.github/md-link-config.json]

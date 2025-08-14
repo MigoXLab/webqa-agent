@@ -1,0 +1,19 @@
+{
+  "name": "webqa-agent",
+  "version": "0.1.0",
+  "description": "WebQA Agent - 全自动网页评估测试",
+  "dependencies": {
+    "chrome-launcher": "^1.2.0",
+    "lighthouse": "^12.8.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "MigoXLab with ❤",
+  "license": "ISC"
+}

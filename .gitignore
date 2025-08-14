@@ -1,7 +1,8 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
-*.py[codz]
+*.py[cod]
 *$py.class
+.DS_Store
 
 # C extensions
 *.so
@@ -143,6 +144,8 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+node_modules/
+package-lock*.json
 
 # Spyder project settings
 .spyderproject
@@ -182,9 +185,9 @@ cython_debug/
 .abstra/
 
 # Visual Studio Code
-#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
+#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore
 #  that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#  and can be added to the global gitignore or merged into this file. However, if you prefer, 
+#  and can be added to the global gitignore or merged into this file. However, if you prefer,
 #  you could uncomment the following to ignore the entire vscode folder
 # .vscode/
 
@@ -205,3 +208,26 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# IDEs
+.vscode/
+.idea/
+
+# Temp files
+./tmp/*
+
+# Data files
+/log/*
+/logs/*
+*log
+*.log
+report/
+reports/
+output/
+.pytest*
+test.py
+test_cases_*.json
+
+#config
+.env
+config/config*.yaml

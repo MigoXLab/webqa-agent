@@ -1,0 +1,32 @@
+target:
+  url: https://baidu.com
+  description: 测试搜索功能
+  # max_concurrent_tests: 2  # 可选，默认并行2
+
+test_config: # 测试项配置
+  function_test:
+    enabled: True
+    type: ai  # default or ai
+    business_objectives: 测试百度搜索功能，生成3个用例
+  ux_test:
+    enabled: True
+  performance_test:
+    enabled: False
+  security_test:
+    enabled: False
+
+llm_config: # 视觉模型配置，当前仅支持 OpenAI sdk格式兼容
+  model: gpt-4.1  # 推荐使用
+  api_key: your_api_key
+  base_url:  https://api.example.com/v1
+  temperature: 0.1   # 可选，默认 0.1
+  # top_p: 0.9       # 可选，不设置则不传该参数
+
+browser_config:
+  viewport: {"width": 1280, "height": 720}
+  headless: False  # Docker环境会自动覆盖为True
+  language: zh-CN
+  cookies: []
+
+log:
+  level: info

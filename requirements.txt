@@ -1,0 +1,10 @@
+html2text
+jinja2
+langchain
+langchain-openai
+langgraph
+openai
+playwright==1.52.0
+pydantic
+python-dotenv
+requests
