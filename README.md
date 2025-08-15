@@ -12,8 +12,8 @@
 
 ### 📋 特性概览
 
-- **🤖 AI智能测试**：兼容 OpenAI SDK 的模型，实现智能化的功能测试和用户体验评估，自动完成从页面抓取、测试用例生成到执行的全流程测试，实现真正的全程零人工干预
-- **📊 多维度评估**：覆盖功能、性能、用户体验、安全等核心测试场景，全面保障系统质量
+- **🤖 AI智能测试**：WebQA-Agent能够自主进行网站测试，从页面抓取、用例生成与执行，实现端到端功能测试自动化
+- **📊 多维度评估**：覆盖功能、性能、用户体验、安全等核心测试场景，评估页面加载速度、设计细节和链接，全面保障系统质量
 - **🎯 精准诊断**：基于真实浏览器环境的深度测试，提供可操作的优化建议
 - **📈 可视化报告**：生成详细的HTML测试报告，多维度、可视化展示测试结果，便于分析与追踪
 
@@ -37,7 +37,7 @@
 
 ```bash
 # 1. 下载配置文件模板
-curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/config/config.yaml.example -o config.yaml
+mkdir -p config && curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/config/config.yaml.example -o config/config.yaml
 
 # 2. 编辑配置文件
 # 设置 target.url、llm_config.api_key 等参数
