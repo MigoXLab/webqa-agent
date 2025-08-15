@@ -22,11 +22,11 @@
 <p align="center">
   <img src="https://github.com/user-attachments/assets/b75f18bf-8b92-498e-b5e1-7c4dc5cd33f5" alt="AI 功能测试" width="45%"/>
   &nbsp;
-  <img src="https://github.com/user-attachments/assets/560cd99d-1213-47b9-82dc-52d3f2d1c1e7" alt="其他功能测试" width="45%"/>
+  <img src="https://github.com/user-attachments/assets/560cd99d-1213-47b9-82dc-52d3f2d1c1e7" alt="其他测试" width="45%"/>
 </p>
 
 <p align="center">
-  <b>左：AI 智能测试 全自动执行流程</b>　|　<b>右：其他测试 覆盖多类场景</b>
+  <b>左：AI 智能测试 全自动执行流程</b>　|　<b>右：覆盖多类测试场景</b>
 </p>
 
 ## 安装与配置
@@ -133,7 +133,7 @@ browser_config:
 
 - **AI模式**：当在配置文件中指定生成测试用例的数量时，系统可能会根据实际测试情况进行代理重新规划和调整。这可能导致最终执行的测试用例数量与初始设定存在一定出入，以确保测试的准确性和有效性。
 
-- **Default模式**：功能测试的 `default` 模式主要验证UI元素的点击行为是否成功执行，包括按钮点击、链接跳转等基本交互功能。。
+- **Default模式**：功能测试的 `default` 模式主要验证UI元素的点击行为是否成功执行，包括按钮点击、链接跳转等基本交互功能。
 
 #### 2. 用户体验测试说明
 
