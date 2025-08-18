@@ -128,9 +128,9 @@ class _Display:
             out.write("-" * col + "\n")
             length = min(self.num_log, len(lines))
             for ln in range(length):
-                line = lines[-length + ln]
-                if len(remove_ansi_escape_sequences(str(line))) >= col:
-                    out.write("... (to long) \n")
+                line = remove_ansi_escape_sequences(str(lines[-length + ln]))
+                if len(line) >= col:
+                    out.write(f"{line[:col-3]}"+"...\n")
                 else:
                     out.write(line + "\n")
         out.flush()
