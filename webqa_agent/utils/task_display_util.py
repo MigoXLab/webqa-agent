@@ -10,6 +10,8 @@ from io import StringIO
 from typing import Optional, List
 from collections import deque
 
+from webqa_agent.utils.get_log import COLORS
+
 
 @dataclass
 class TaskInfo:
@@ -75,6 +77,8 @@ class _Display:
                 hdr.setStream(self.captured_output)
                 self.logger_handlers.append(hdr)
 
+        self.log_pattern = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d+)(\s+)(\w+)(\s+\[.*?]\s+\[.*?]\s+-\s+)(.*)")
+
     def __call__(self, name: str):
         return _Tracker(self, name)
 
@@ -128,9 +132,20 @@ class _Display:
             out.write("-" * col + "\n")
             length = min(self.num_log, len(lines))
             for ln in range(length):
-                line = remove_ansi_escape_sequences(str(lines[-length + ln]))
-                if len(line) >= col:
-                    out.write(f"{line[:col-3]}"+"...\n")
+                line = lines[-length + ln]
+                _line = remove_ansi_escape_sequences(str(line))
+                if len(_line) >= col:
+                    match = self.log_pattern.search(_line[:col - 3])
+                    if match:
+                        timestamp, space1, loglevel, middle, message = match.groups()
+                        color = COLORS[loglevel]
+                        end = COLORS['ENDC']
+                        colored_loglevel = f"{color}{loglevel}{end}"
+                        colored_message = f"{color}{message}{end}"
+                        _line = f"{timestamp}{space1}{colored_loglevel}{middle}{colored_message}"
+                        out.write(f"{_line}" + "...\n")
+                    else:
+                        out.write(f"{_line[:col-3]}"+"...\n")
                 else:
                     out.write(line + "\n")
         out.flush()
