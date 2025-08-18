@@ -13,11 +13,11 @@ LEVEL = {
 }
 
 COLORS = {
-    'DEBUG': '\033[34m',  # blue
-    'INFO': '\033[32m',  # green
-    'WARNING': '\033[33m',  # yellow
-    'ERROR': '\033[31m',  # red
-    'CRITICAL': '\033[31m',  # red
+    'DEBUG': '\033[1;34m',  # blue
+    'INFO': '\033[1;32m',  # green
+    'WARNING': '\033[1;33m',  # yellow
+    'ERROR': '\033[1;31m',  # red
+    'CRITICAL': '\033[1;31m',  # red
     'ENDC': '\033[0m'  # reset
 }
 
