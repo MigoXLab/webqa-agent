@@ -1,155 +1,153 @@
 # WebQA Agent
 
-**WebQA Agent** 是全自动网页评估测试 Agent，一键诊断性能、安全、功能与交互体验
+[English](README.md) · [简体中文](README_zh-CN.md) 
 
-## 🚀 核心特性
+**WebQA Agent** is an autonomous web agent that audits performance, functionality, and UX for any web product.
 
-### 🧭 功能介绍
+## 🚀 Core Features
+
+### 🧭 Overview
 
 <p>
-  <img src="docs/images/webqa.svg" alt="WebQA Agent 业务功能图" />
+  <img src="docs/images/webqa.svg" alt="WebQA Agent Business Features Diagram" />
 </p>
 
-### 📋 特性概览
+### 📋 Feature Highlights
 
-- **🤖 AI智能测试**：WebQA-Agent能够自主进行网站测试，从页面抓取、用例生成与执行，实现端到端功能测试自动化
-- **📊 多维度评估**：覆盖功能、性能、用户体验、安全等核心测试场景，评估页面加载速度、设计细节和链接，全面保障系统质量
-- **🎯 精准诊断**：基于真实浏览器环境的深度测试，提供可操作的优化建议
-- **📈 可视化报告**：生成详细的HTML测试报告，多维度、可视化展示测试结果，便于分析与追踪
+- **🤖 AI-Powered Testing**: WebQA Agent autonomously conducts website testing, from page crawling and test case generation to execution, achieving end-to-end functional test automation.
+- **📊 Multi-Dimensional Test**: Covers core testing scenarios, including functionality, performance, user experience, and security, evaluating page load speed, design details, and links for comprehensive system quality assurance.
+- **🎯 Precise Diagnostics**: Performs deep testing in real browser environments and provides actionable optimization recommendations.
+- **📈 Visual Reports**: Generates detailed HTML test reports with a multi-dimensional visual presentation of results for easy analysis and tracking.
 
-## 📌 测试案例
+## 📌 Test Cases
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/b75f18bf-8b92-498e-b5e1-7c4dc5cd33f5" alt="AI 功能测试" width="45%"/>
+  <img src="https://github.com/user-attachments/assets/b75f18bf-8b92-498e-b5e1-7c4dc5cd33f5" alt="AI Functional Testing" width="45%"/>
   &nbsp;
-  <img src="https://github.com/user-attachments/assets/560cd99d-1213-47b9-82dc-52d3f2d1c1e7" alt="其他测试" width="45%"/>
+  <img src="https://github.com/user-attachments/assets/560cd99d-1213-47b9-82dc-52d3f2d1c1e7" alt="Other Tests" width="45%"/>
 </p>
 
 <p align="center">
-  <b>左：AI 智能测试 全自动执行流程</b>　|　<b>右：覆盖多类测试场景</b>
+  <b>Left: AI Functional Testing</b>　|　<b>Right: Multiple Test Scenarios Coverage</b>
 </p>
 
-## 安装与配置
+## Installation & Configuration
 
-### 🚀 Docker一键启动
+### 🚀 One-Click Docker Setup
 
-在开始之前，请确保已安装 Docker。如未安装，请参考官方安装指南：[Docker 安装指南](https://docs.docker.com/get-started/get-docker/)。
+Before starting, ensure Docker is installed. If not, please refer to the official installation guide: [Docker Installation Guide](https://docs.docker.com/get-started/get-docker/).
 
 ```bash
-# 1. 下载配置文件模板
+# 1. Download configuration template
 mkdir -p config && curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/config/config.yaml.example -o config/config.yaml
 
-# 2. 编辑配置文件
-# 设置 target.url、llm_config.api_key 等参数
+# 2. Edit configuration file
+# Set target.url, llm_config.api_key and other parameters
 
-# 3. 一键启动
+# 3. One-click start
 curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/start.sh | bash
 ```
 
-### 源码安装
+### Source Installation
 
 ```bash
 git clone https://github.com/MigoXLab/webqa-agent.git
 cd webqa-agent
 ```
 
-安装 Python >= 3.10，运行以下命令：
+Install Python >= 3.10 and run the following commands:
 
 ```bash
 pip install -r requirements.txt
 playwright install
-
 ```
 
-性能测试 - Lighthouse 安装（可选）
+Performance Testing - Lighthouse Installation (Optional)
 
 ```bash
-# 需要 Node.js >= 18.0.0 package.json
+# Requires Node.js >= 18.0.0
 npm install
-
 ```
 
-安全测试 - Nuclei 安装（可选）
+Security Testing - Nuclei Installation (Optional)
 
-下载地址： [Nuclei Releases](https://github.com/projectdiscovery/nuclei/releases/)
+Download from: [Nuclei Releases](https://github.com/projectdiscovery/nuclei/releases/)
 
 ```bash
 # MacOS
 brew install nuclei
 
-# 其他系统请从上述下载地址获取对应架构的版本
+# For other systems, download the appropriate version from the link above
 
-# 安装后更新模板并验证
-nuclei -ut -v          # 更新 Nuclei 模板
-nuclei -version        # 验证安装成功
-
+# Update templates and verify installation
+nuclei -ut -v          # Update Nuclei templates
+nuclei -version        # Verify successful installation
 ```
 
-参考“使用说明 > 测试配置”进行 `config/config.yaml` 配置后，运行下方命令。
+After configuring `config/config.yaml` (refer to "Usage > Test Configuration"), run:
 
 ```bash
 python webqa-agent.py
 ```
 
-## 使用说明
+## Usage
 
-### 测试配置
+### Test Configuration
 
-`webqa-agent` 通过 YAML 配置测试运行参数：
+`webqa-agent` uses YAML configuration for test parameters:
 
 ```yaml
 target:
-  url: https://example.com/                       # 需要测试的网站URL
+  url: https://example.com/                       # Website URL to test
   description: example description
 
-test_config:                                      # 测试项配置
-  function_test:                                  # 功能测试
+test_config:                                      # Test configuration
+  function_test:                                  # Functional testing
     enabled: True
     type: ai                                      # default or ai
-    business_objectives: example business objectives  # 建议加入测试范围，如：测试搜索功能
-  ux_test:                                        # 用户体验测试
+    business_objectives: example business objectives  # Recommended to include test scope, e.g., test search functionality
+  ux_test:                                        # User experience testing
     enabled: True
-  performance_test:                               # 性能测试
+  performance_test:                               # Performance testing
     enabled: False
-  security_test:                                  # 安全测试
+  security_test:                                  # Security testing
     enabled: False
 
-llm_config:                                       # 视觉模型配置，当前仅支持 OpenAI SDK 兼容格式
-  model: gpt-4.1                                  # 推荐使用
+llm_config:                                       # Vision model configuration, currently supports OpenAI SDK compatible format only
+  model: gpt-4.1                                  # Recommended
   api_key: your_api_key
   base_url: https://api.example.com/v1
 
 browser_config:
   viewport: {"width": 1280, "height": 720}
-  headless: False                                 # Docker环境会自动覆盖为True
+  headless: False                                 # Automatically overridden to True in Docker environment
   language: zh-CN
   cookies: []
-
 ```
 
-在配置和运行测试时，请注意以下重要事项：
+Please note the following important considerations when configuring and running tests:
 
-#### 1. 功能测试说明
+#### 1. Functional Testing Notes
 
-- **AI模式**：当在配置文件中指定生成测试用例的数量时，系统可能会根据实际测试情况进行代理重新规划和调整。这可能导致最终执行的测试用例数量与初始设定存在一定出入，以确保测试的准确性和有效性。
+- **AI Mode**: When specifying the number of test cases to generate in the configuration file, the system may re-plan based on based on actual testing conditions. This may result in the final number of executed test cases differing from the initial configuration to ensure testing accuracy and effectiveness.
 
-- **Default模式**：功能测试的 `default` 模式主要验证UI元素的点击行为是否成功执行，包括按钮点击、链接跳转等基本交互功能。
+- **Default Mode**: The `default` mode of functional testing primarily verifies whether UI element clicks execute successfully, including basic interactive functions like button clicks and link navigation.
 
-#### 2. 用户体验测试说明
+#### 2. User Experience Testing Notes
 
-UX（用户体验）测试专注于评估网站的交互设计、可用性和用户友好程度。测试结果中包含的模型输出内容是基于用户体验最佳实践提供的改进建议，供开发和设计团队参考优化。
+UX (User Experience) testing focuses on evaluating website interaction design, usability, and user-friendliness. The model output in the test results provides suggestions for improvement suggestions based on user experience best practices to guide development and design teams in optimization.
 
-## 查看结果
+## View Results
 
-在 `reports` 目录会生成本次测试的文件夹，打开其中的 HTML 报告即可查看结果。
+Test results will be generated in the `reports` directory. Open the HTML report within the generated folder to view results.
 
-## RoadMap
+## Roadmap
 
-1. AI功能测试持续优化：提升覆盖率与准确性
-2. 功能遍历与页面校验：校验业务逻辑正确性与数据完整性
-3. 交互与可视化：用例可视化与本地服务实时展示推理过程
-4. 能力扩展：多模型接入与更多评估维度集成
+1. Continuous optimization of AI functional testing: Improve coverage and accuracy
+2. Functional traversal and page validation: Verify business logic correctness and data integrity
+3. Interaction and visualization: Test case visualization and local service real-time reasoning process display
+4. Capability expansion: Multi-model integration and more evaluation dimensions
 
-## 开源许可证
+## Open Source License
 
-该项目采用 [Apache 2.0 开源许可证](LICENSE)。
+This project is licensed under the [Apache 2.0 License](LICENSE).
