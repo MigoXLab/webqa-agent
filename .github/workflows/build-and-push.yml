@@ -49,7 +49,9 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.DOCKERHUB_USERNAME }}/webqa-agent:${{ steps.extract_tag.outputs.tag_name }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.DOCKERHUB_USERNAME }}/webqa-agent:${{ steps.extract_tag.outputs.tag_name }}
+            ${{ env.REGISTRY }}/${{ env.DOCKERHUB_USERNAME }}/webqa-agent:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
@@ -87,6 +89,7 @@ jobs:
           echo "" >> CHANGELOG.md
           echo "### 📦 Docker Images" >> CHANGELOG.md
           echo "- \`${{ env.DOCKERHUB_USERNAME }}/webqa-agent:$CURRENT_TAG\`" >> CHANGELOG.md
+          echo "- \`${{ env.DOCKERHUB_USERNAME }}/webqa-agent:latest\`" >> CHANGELOG.md
           echo "" >> CHANGELOG.md
 
           if [ -n "$PREVIOUS_TAG" ]; then
@@ -118,8 +121,8 @@ jobs:
       - name: Notify build status
         run: |
           if [ "${{ needs.build-and-push.result }}" == "success" ]; then
-            echo "✅ Docker image built and pushed successfully!"
-            echo "✅ Both versioned and latest tags have been updated!"
+            echo "✅ Docker images built and pushed successfully!"
+            echo "✅ Both versioned tag and latest tag have been updated!"
           else
             echo "❌ Docker image build failed!"
             exit 1
