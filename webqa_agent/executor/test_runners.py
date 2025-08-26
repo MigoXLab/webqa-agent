@@ -357,7 +357,8 @@ class ButtonTestRunner(BaseTestRunner):
                 clickable_elements = await crawler.clickable_elements_detection(page)
                 logging.info(f"Crawled {len(clickable_elements)} clickable elements")
                 if len(clickable_elements) > 50:
-                    clickable_elements = clickable_elements[:50]
+                    from itertools import islice
+                    clickable_elements = dict(islice(clickable_elements.items(), 50))
                     logging.warning(f"Clickable elements number is too large, only keep the first 50")
 
                 button_test = PageButtonTest()
