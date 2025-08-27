@@ -263,6 +263,7 @@ class DeepCrawler:
                 f"window._highlight = {str(highlight).lower()};"
                 f"window._highlightText = {str(highlight_text).lower()};\n"
                 f"window._viewportOnly = {str(viewport_only).lower()};\n"
+                f"window._includeStyles = {str(include_styles).lower()};\n"
                 f"\n{self.read_js(self.DETECTOR_JS)}"
                 f"\nreturn buildElementTree();"
                 f"}})()"
