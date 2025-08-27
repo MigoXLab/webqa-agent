@@ -6,5 +6,7 @@ langgraph
 openai
 playwright==1.52.0
 pydantic
+pytest
+pytest-asyncio
 python-dotenv
 requests
