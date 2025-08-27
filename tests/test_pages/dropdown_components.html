@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dropdown Components Test Page</title>
+  <style>
+    body { font-family: sans-serif; }
+    .section { position: relative; margin: 0; padding: 0; }
+
+    /* Absolute positions to make center_x/center_y predictable */
+    #native-container { position: absolute; left: 100px; top: 100px; width: 220px; height: 32px; }
+    #ant-select-container { position: absolute; left: 100px; top: 200px; width: 220px; height: 34px; }
+    #ant-cascader-container { position: absolute; left: 100px; top: 300px; width: 220px; height: 34px; }
+
+    /* Mimic Ant Design Select */
+    .ant-select { position: relative; display: inline-block; width: 100%; }
+    .ant-select-selector { box-sizing: border-box; width: 100%; height: 34px; border: 1px solid #999; border-radius: 4px; padding: 6px 8px; background: #fff; cursor: pointer; }
+    .ant-select-dropdown { position: absolute; left: 0; top: 36px; width: 100%; border: 1px solid #999; border-radius: 4px; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 1000; }
+    .ant-select-dropdown-hidden { display: none; }
+    .ant-select-item-option { padding: 6px 8px; cursor: pointer; }
+    .ant-select-item-option:hover { background: #f5f5f5; }
+    .ant-select-item-option-content { display: inline-block; }
+
+    /* Mimic Ant Design Cascader */
+    .ant-cascader { position: relative; display: inline-block; width: 100%; }
+    .ant-cascader-dropdown { position: absolute; left: 0; top: 36px; display: flex; border: 1px solid #999; border-radius: 4px; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 1000; }
+    .ant-cascader-dropdown-hidden { display: none; }
+    .ant-cascader-menu { min-width: 160px; max-height: 220px; overflow: auto; border-right: 1px solid #eee; }
+    .ant-cascader-menu:last-child { border-right: none; }
+    .ant-cascader-menu-item { padding: 6px 8px; cursor: pointer; white-space: nowrap; }
+    .ant-cascader-menu-item:hover { background: #f5f5f5; }
+    .ant-cascader-menu-item-expand::after { content: ' ▶'; color: #999; }
+  </style>
+</head>
+<body>
+  <h2 style="margin:16px 16px 64px;">Dropdown Components Test Page</h2>
+
+  <!-- Native select (dropdown_id suggestion: 13) -->
+  <div id="native-container" class="section">
+    <label for="native-select" style="display:none;">Native</label>
+    <select id="native-select" class="is-medium" style="width:100%; height:100%;">
+      <option value="all">All fields</option>
+      <option value="title">Title</option>
+      <option value="authors">Author(s)</option>
+    </select>
+  </div>
+
+  <!-- Ant Design Select mimic (dropdown_id suggestion: 101) -->
+  <div id="ant-select-container" class="section">
+    <div class="ant-select" id="ant-select">
+      <div class="ant-select-selector" aria-expanded="false">Select an option</div>
+      <div class="ant-select-dropdown ant-select-dropdown-hidden" id="ant-select-dropdown">
+        <div class="ant-select-item-option" data-value="chat-model">
+          <span class="ant-select-item-option-content">Chat model</span>
+        </div>
+        <div class="ant-select-item-option" data-value="reasoning-model">
+          <span class="ant-select-item-option-content">Reasoning model</span>
+        </div>
+        <div class="ant-select-item-option" data-value="fast-model">
+          <span class="ant-select-item-option-content">Fast model</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ant Design Cascader mimic (dropdown_id suggestion: 301) -->
+  <div id="ant-cascader-container" class="section">
+    <div class="ant-cascader" id="ant-cascader">
+      <div class="ant-select-selector" aria-expanded="false">Select location</div>
+      <div class="ant-cascader-dropdown ant-cascader-dropdown-hidden" id="ant-cascader-dropdown">
+        <div class="ant-cascader-menu" id="cascader-level-0"></div>
+        <div class="ant-cascader-menu" id="cascader-level-1"></div>
+        <div class="ant-cascader-menu" id="cascader-level-2"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Ant Select: toggle dropdown on selector click
+    (function() {
+      const select = document.getElementById('ant-select');
+      if (!select) return;
+      const selector = select.querySelector('.ant-select-selector');
+      const dropdown = document.getElementById('ant-select-dropdown');
+      selector.addEventListener('click', () => {
+        const hidden = dropdown.classList.contains('ant-select-dropdown-hidden');
+        dropdown.classList.toggle('ant-select-dropdown-hidden', !hidden ? true : false);
+        selector.setAttribute('aria-expanded', hidden ? 'true' : 'false');
+      });
+      dropdown.addEventListener('click', (e) => {
+        const item = e.target.closest('.ant-select-item-option');
+        if (item) {
+          selector.textContent = item.querySelector('.ant-select-item-option-content')?.textContent || item.textContent;
+          dropdown.classList.add('ant-select-dropdown-hidden');
+          selector.setAttribute('aria-expanded', 'false');
+        }
+      });
+    })();
+
+    // Ant Cascader: proper cascading behavior (click L0 -> show L1; click L1 -> show L2 or select if leaf)
+    (function() {
+      const cascader = document.getElementById('ant-cascader');
+      if (!cascader) return;
+      const selector = cascader.querySelector('.ant-select-selector');
+      const dropdown = document.getElementById('ant-cascader-dropdown');
+      const menu0 = document.getElementById('cascader-level-0');
+      const menu1 = document.getElementById('cascader-level-1');
+      const menu2 = document.getElementById('cascader-level-2');
+
+      // Data model
+      const data = {
+        'Asia': {
+          'China': ['Beijing', 'Shanghai'],
+          'Japan': []
+        },
+        'Europe': {
+          'Germany': [],
+          'France': []
+        }
+      };
+
+      function clearMenu(menuEl) {
+        while (menuEl.firstChild) menuEl.removeChild(menuEl.firstChild);
+      }
+
+      function renderMenuItems(menuEl, items, hasChildrenFn) {
+        clearMenu(menuEl);
+        items.forEach(text => {
+          const div = document.createElement('div');
+          div.className = 'ant-cascader-menu-item';
+          div.textContent = text;
+          if (hasChildrenFn && hasChildrenFn(text)) {
+            div.classList.add('ant-cascader-menu-item-expand');
+          }
+          menuEl.appendChild(div);
+        });
+      }
+
+      // Initialize level 0 only
+      renderMenuItems(menu0, Object.keys(data), (key) => Object.keys(data[key] || {}).length > 0);
+      clearMenu(menu1);
+      clearMenu(menu2);
+
+      selector.addEventListener('click', () => {
+        const hidden = dropdown.classList.contains('ant-cascader-dropdown-hidden');
+        dropdown.classList.toggle('ant-cascader-dropdown-hidden', !hidden ? true : false);
+        selector.setAttribute('aria-expanded', hidden ? 'true' : 'false');
+      });
+
+      // Level 0 -> render Level 1
+      menu0.addEventListener('click', (e) => {
+        const item = e.target.closest('.ant-cascader-menu-item');
+        if (!item) return;
+        const topKey = item.textContent.trim();
+        const childrenObj = data[topKey] || {};
+        const level1Items = Object.keys(childrenObj);
+        renderMenuItems(menu1, level1Items, (key) => (childrenObj[key] || []).length > 0);
+        clearMenu(menu2);
+      });
+
+      // Level 1 -> render Level 2 or select if leaf
+      menu1.addEventListener('click', (e) => {
+        const item = e.target.closest('.ant-cascader-menu-item');
+        if (!item) return;
+        const secondKey = item.textContent.trim();
+
+        // Find parent (topKey) by scanning data
+        let topKey = null;
+        for (const k of Object.keys(data)) {
+          if (Object.keys(data[k] || {}).includes(secondKey)) { topKey = k; break; }
+        }
+        const level2Items = (topKey && data[topKey] && data[topKey][secondKey]) ? data[topKey][secondKey] : [];
+        if (level2Items.length === 0) {
+          selector.textContent = secondKey;
+          dropdown.classList.add('ant-cascader-dropdown-hidden');
+          selector.setAttribute('aria-expanded', 'false');
+          return;
+        }
+        renderMenuItems(menu2, level2Items, () => false);
+      });
+
+      // Level 2 -> select and close
+      menu2.addEventListener('click', (e) => {
+        const item = e.target.closest('.ant-cascader-menu-item');
+        if (!item) return;
+        selector.textContent = item.textContent.trim();
+        dropdown.classList.add('ant-cascader-dropdown-hidden');
+        selector.setAttribute('aria-expanded', 'false');
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,576 @@
+{
+  "Tap": [
+    {
+      "url": "https://google.com",
+      "actions": [
+        {
+          "type": "Tap",
+          "locate": {"id": "11"}
+        }
+      ],
+      "id_map": {
+        "11": {
+            "node": "ref: <Node>",
+            "tagName": "a",
+            "className": "pHiOh",
+            "type": null,
+            "placeholder": null,
+            "innerText": "关于 Google",
+            "attributes": [
+              {
+                "name": "class",
+                "value": "pHiOh"
+              },
+              {
+                "name": "href",
+                "value": "https://about.google/?utm_source=google-ZZ&utm_medium=referral&utm_campaign=hp-footer&fg=1"
+              },
+              {
+                "name": "ping",
+                "value": "/url?sa=t&rct=j&source=webhp&url=https://about.google/%3Futm_source%3Dgoogle-ZZ%26utm_medium%3Dreferral%26utm_campaign%3Dhp-footer%26fg%3D1&ved=0ahUKEwiCiufHjYePAxXZEDQIHXHeNyEQkNQCCBQ&opi=89978449"
+              }
+            ],
+            "viewport": {
+              "x": 20,
+              "y": 670,
+              "width": 107.046875,
+              "height": 50
+            },
+            "center_x": 73.5234375,
+            "center_y": 695,
+            "isVisible": true,
+            "isInteractive": true,
+            "isValidText": false,
+            "isTopElement": true,
+            "isInViewport": true,
+            "isParentHighlighted": false,
+            "xpath": "/html[1]/body[1]/div[2]/div[7]/div[1]/div[1]/div[1]/a[1]",
+            "selector": "a.pHiOh",
+            "highlightIndex": 11
+          }
+      }
+    },
+    {
+      "url": "https://arxiv.org/search/",
+      "actions": [
+        {
+          "type": "Tap",
+          "locate": {"id": "18"}
+        },
+        {
+          "type": "Tap",
+          "locate": {"id": "14"}
+        }
+      ],
+      "id_map": {
+        "14": {
+          "node": "ref: <Node>",
+          "tagName": "button",
+          "className": "button is-link is-medium",
+          "type": null,
+          "placeholder": null,
+          "innerText": "Search",
+          "attributes": [
+            {
+              "name": "class",
+              "value": "button is-link is-medium"
+            }
+          ],
+          "viewport": {
+            "x": 1103.828125,
+            "y": 280.203125,
+            "width": 83.671875,
+            "height": 39.375
+          },
+          "center_x": 1145.6640625,
+          "center_y": 299.890625,
+          "isVisible": true,
+          "isInteractive": true,
+          "isValidText": false,
+          "isTopElement": true,
+          "isInViewport": true,
+          "isParentHighlighted": false,
+          "xpath": "/html[1]/body[1]/main[1]/div[2]/form[1]/div[1]/div[3]/button[1]",
+          "selector": "button.button.is-link.is-medium",
+          "highlightIndex": 14
+        },
+        "18": {
+          "node": "ref: <Node>",
+          "tagName": "input",
+          "className": null,
+          "type": "radio",
+          "placeholder": null,
+          "innerText": "hide",
+          "attributes": [
+            {
+              "name": "id",
+              "value": "abstracts-1"
+            },
+            {
+              "name": "name",
+              "value": "abstracts"
+            },
+            {
+              "name": "type",
+              "value": "radio"
+            },
+            {
+              "name": "value",
+              "value": "hide"
+            },
+            {
+              "name": "style",
+              "value": ""
+            }
+          ],
+          "viewport": {
+            "x": 186.8125,
+            "y": 330.078125,
+            "width": 13,
+            "height": 13
+          },
+          "center_x": 193.3125,
+          "center_y": 336.578125,
+          "isVisible": true,
+          "isInteractive": true,
+          "isValidText": false,
+          "isTopElement": true,
+          "isInViewport": true,
+          "isParentHighlighted": true,
+          "xpath": "//*[@id=\"abstracts-1\"]",
+          "selector": "input#abstracts-1",
+          "highlightIndex": 18
+        }
+      }
+    }
+  ],
+  "Hover": [
+    {
+      "url": "https://demo.chat-sdk.dev/",
+      "actions": [
+        {
+          "type": "Hover",
+          "locate": {"id": "6"}
+        }
+      ],
+      "id_map": {
+        "6": {
+          "node": "ref: <Node>",
+          "tagName": "button",
+          "className": "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 py-2 order-2 md:order-1 md:px-2 px-2 md:h-fit ml-auto md:ml-0",
+          "type": null,
+          "placeholder": null,
+          "innerText": "New Chat",
+          "attributes": [
+            {
+              "name": "class",
+              "value": "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 py-2 order-2 md:order-1 md:px-2 px-2 md:h-fit ml-auto md:ml-0"
+            },
+            {
+              "name": "data-state",
+              "value": "closed"
+            }
+          ],
+          "viewport": {
+            "x": 50,
+            "y": 6,
+            "width": 34,
+            "height": 34
+          },
+          "center_x": 67,
+          "center_y": 23,
+          "isVisible": true,
+          "isInteractive": true,
+          "isValidText": false,
+          "isTopElement": true,
+          "isInViewport": true,
+          "isParentHighlighted": false,
+          "xpath": "/html[1]/body[1]/div[1]/main[1]/div[1]/header[1]/button[2]",
+          "selector": "button.inline-flex.items-center.justify-center.gap-2.whitespace-nowrap.rounded-md.text-sm.font-medium.ring-offset-background.transition-colors.focus-visible:outline-none.focus-visible:ring-2.focus-visible:ring-ring.focus-visible:ring-offset-2.disabled:pointer-events-none.disabled:opacity-50.[&_svg]:pointer-events-none.[&_svg]:size-4.[&_svg]:shrink-0.border.border-input.bg-background.hover:bg-accent.hover:text-accent-foreground.h-10.py-2.order-2.md:order-1.md:px-2.px-2.md:h-fit.ml-auto.md:ml-0",
+          "highlightIndex": 6
+        }
+      }
+    }
+  ],
+  "Input": [
+    {
+      "url": "https://demo.chat-sdk.dev/",
+      "actions": [
+        {
+          "type": "Input",
+          "locate": {"id": "15"},
+          "param": {
+            "value": "test input",
+            "clear_before_type": true
+          }
+        }
+      ],
+      "id_map": {
+        "15": {
+          "node": "ref: <Node>",
+          "tagName": "textarea",
+          "className": "flex w-full border border-input px-3 py-2 text-base ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm min-h-[24px] max-h-[calc(75dvh)] overflow-hidden resize-none rounded-2xl !text-base bg-muted pb-10 dark:border-zinc-700",
+          "type": null,
+          "placeholder": "Send a message...",
+          "innerText": "",
+          "attributes": [
+            {
+              "name": "class",
+              "value": "flex w-full border border-input px-3 py-2 text-base ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm min-h-[24px] max-h-[calc(75dvh)] overflow-hidden resize-none rounded-2xl !text-base bg-muted pb-10 dark:border-zinc-700"
+            },
+            {
+              "name": "data-testid",
+              "value": "multimodal-input"
+            },
+            {
+              "name": "placeholder",
+              "value": "Send a message..."
+            },
+            {
+              "name": "rows",
+              "value": "2"
+            },
+            {
+              "name": "autofocus",
+              "value": ""
+            },
+            {
+              "name": "style",
+              "value": "height: 98px;"
+            }
+          ],
+          "viewport": {
+            "x": 272,
+            "y": 598,
+            "width": 736,
+            "height": 98
+          },
+          "center_x": 640,
+          "center_y": 647,
+          "isVisible": true,
+          "isInteractive": true,
+          "isValidText": false,
+          "isTopElement": true,
+          "isInViewport": true,
+          "isParentHighlighted": false,
+          "xpath": "/html[1]/body[1]/div[1]/main[1]/div[1]/form[1]/div[1]/textarea[1]",
+          "selector": "textarea.flex.w-full.border.border-input.px-3.py-2.text-base.ring-offset-background.placeholder:text-muted-foreground.focus-visible:outline-none.focus-visible:ring-2.focus-visible:ring-ring.focus-visible:ring-offset-2.disabled:cursor-not-allowed.disabled:opacity-50.md:text-sm.min-h-[24px].max-h-[calc(75dvh)].overflow-hidden.resize-none.rounded-2xl.!text-base.bg-muted.pb-10.dark:border-zinc-700",
+          "highlightIndex": 15
+        }
+      }
+    },
+    {
+      "url": "https://arxiv.org/search/",
+      "actions": [
+        {
+          "type": "Input",
+          "locate": {"id": "12"},
+          "param": {
+            "value": "test input",
+            "clear_before_type": true
+          }
+        }
+      ],
+      "id_map": {
+        "12": {
+          "node": "ref: <Node>",
+          "tagName": "input",
+          "className": "input is-medium",
+          "type": "text",
+          "placeholder": "Search term...",
+          "innerText": "",
+          "attributes": [
+            {
+              "name": "class",
+              "value": "input is-medium"
+            },
+            {
+              "name": "id",
+              "value": "query"
+            },
+            {
+              "name": "name",
+              "value": "query"
+            },
+            {
+              "name": "placeholder",
+              "value": "Search term..."
+            },
+            {
+              "name": "type",
+              "value": "text"
+            },
+            {
+              "name": "value",
+              "value": ""
+            },
+            {
+              "name": "style",
+              "value": ""
+            }
+          ],
+          "viewport": {
+            "x": 77.5,
+            "y": 280.203125,
+            "width": 825.640625,
+            "height": 39.375
+          },
+          "center_x": 490.3203125,
+          "center_y": 299.890625,
+          "isVisible": true,
+          "isInteractive": true,
+          "isValidText": false,
+          "isTopElement": true,
+          "isInViewport": true,
+          "isParentHighlighted": false,
+          "xpath": "//*[@id=\"query\"]",
+          "selector": "input#query",
+          "highlightIndex": 12
+        }
+      }
+    }
+  ],
+  "Scroll": [
+    {
+      "url": "https://arxiv.org/search/",
+      "actions": [
+        {
+          "type": "Scroll",
+          "locate": null,
+          "param": {
+            "direction": "down",
+            "scrollType": "untilBottom",
+            "distance": null
+          }
+        },
+        {
+          "type": "Scroll",
+          "locate": null,
+          "param": {
+            "direction": "up",
+            "scrollType": "untilTop",
+            "distance": null
+          }
+        }
+      ],
+      "id_map": {}
+    },
+    {
+      "url": "https://arxiv.org/list/astro-ph/new",
+      "actions": [
+        {
+          "type": "Scroll",
+          "locate": null,
+          "param": {
+            "direction": "down",
+            "scrollType": "once"
+          }
+        },
+        {
+          "type": "Scroll",
+          "locate": null,
+          "param": {
+            "direction": "down",
+            "scrollType": "once",
+            "distance": 400
+          }
+        },
+        {
+          "type": "Scroll",
+          "locate": null,
+          "param": {
+            "direction": "up",
+            "scrollType": "once",
+            "distance": 200
+          }
+        }
+      ],
+      "id_map": {}
+    }
+  ],
+  "SelectDropdown": [
+    {
+      "url": "https://demo.chat-sdk.dev/",
+      "actions": [
+        {
+          "type": "Tap",
+          "locate": {"id": "3"}
+        },
+        {
+          "type": "SelectDropdown",
+          "locate": {"dropdown_id": "3", "option_id": "5"},
+          "param": {
+            "selection_path": "Reasoning model"
+          }
+        }
+      ],
+      "id_map": {
+        "3": {
+          "node": "ref: <Node>",
+          "tagName": "button",
+          "className": "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2 w-fit data-[state=open]:bg-accent data-[state=open]:text-accent-foreground order-1 md:order-2 md:px-2 md:h-[34px]",
+          "type": "button",
+          "placeholder": null,
+          "innerText": "Chat model",
+          "attributes": [
+            {
+              "name": "class",
+              "value": "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2 w-fit data-[state=open]:bg-accent data-[state=open]:text-accent-foreground order-1 md:order-2 md:px-2 md:h-[34px]"
+            },
+            {
+              "name": "data-testid",
+              "value": "model-selector"
+            },
+            {
+              "name": "type",
+              "value": "button"
+            },
+            {
+              "name": "id",
+              "value": "radix-«R6l7lelb»"
+            },
+            {
+              "name": "aria-haspopup",
+              "value": "menu"
+            },
+            {
+              "name": "aria-expanded",
+              "value": "false"
+            },
+            {
+              "name": "data-state",
+              "value": "closed"
+            }
+          ],
+          "viewport": {
+            "x": 92,
+            "y": 6,
+            "width": 117.328125,
+            "height": 34
+          },
+          "center_x": 150.6640625,
+          "center_y": 23,
+          "isVisible": true,
+          "isInteractive": true,
+          "isValidText": false,
+          "isTopElement": true,
+          "isInViewport": true,
+          "isParentHighlighted": false,
+          "xpath": "//*[@id=\"radix-«R6l7lelb»\"]",
+          "selector": "button#radix-«R6l7lelb»",
+          "highlightIndex": 3
+        },
+        "5": {
+          "node": "ref: <Node>",
+          "tagName": "button",
+          "className": "relative flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 gap-4 group/item flex flex-row justify-between items-center w-full",
+          "type": "button",
+          "innerText": "Reasoning model\nUses advanced reasoning",
+          "attributes": [{
+            "name": "type",
+            "value": "button"
+          }, {
+            "name": "class",
+            "value": "relative flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 gap-4 group/item flex flex-row justify-between items-center w-full"
+          }, {
+            "name": "role",
+            "value": "menuitem"
+          }, {
+            "name": "data-testid",
+            "value": "model-selector-item-chat-model-reasoning"
+          }, {
+            "name": "data-active",
+            "value": "false"
+          }, {
+            "name": "tabindex",
+            "value": "-1"
+          }, {
+            "name": "data-orientation",
+            "value": "vertical"
+          }, {
+            "name": "data-radix-collection-item",
+            "value": ""
+          }],
+          "viewport": {
+            "x": 97,
+            "y": 101,
+            "width": 290,
+            "height": 52
+          },
+          "center_x": 242,
+          "center_y": 127,
+          "xpath": "/html[1]/body[1]/div[2]/div[1]/button[2]",
+          "selector": "button.relative.flex.cursor-default.select-none.items-center.gap-2.rounded-sm.px-2.py-1.5.text-sm.outline-none.transition-colors.focus:bg-accent.focus:text-accent-foreground.data-[disabled]:pointer-events-none.data-[disabled]:opacity-50.[&_svg]:pointer-events-none.[&_svg]:size-4.[&_svg]:shrink-0.gap-4.group/item.flex-row.justify-between.w-full",
+          "highlightIndex": 3
+        }
+      }
+    },
+    {
+      "name": "local dropdowns page (native, ant-select, ant-cascader)",
+      "url": "__LOCAL_DROPDOWN_PAGE__",
+      "id_map": {
+        "13":  { "center_x": 210, "center_y": 116 },
+        "101": { "center_x": 210, "center_y": 217 },
+        "301": { "center_x": 210, "center_y": 317 }
+      },
+      "actions": [
+        { "type": "SelectDropdown", "locate": { "dropdown_id": "13" },  "param": { "selection_path": "Title" } },
+        { "type": "SelectDropdown", "locate": { "dropdown_id": "101" }, "param": { "selection_path": "Reasoning model" } },
+        { "type": "SelectDropdown", "locate": { "dropdown_id": "301" }, "param": { "selection_path": ["Asia", "China", "Beijing"] } }
+      ]
+    },
+    {
+      "url": "https://arxiv.org/search/",
+      "actions": [
+        {
+          "type": "SelectDropdown",
+          "locate": {"dropdown_id": "13"},
+          "param": {
+            "selection_path": "Title"
+          }
+        }
+      ],
+      "id_map": {
+        "13": {
+          "node": "ref: <Node>",
+          "tagName": "select",
+          "className": "is-medium",
+          "type": null,
+          "placeholder": null,
+          "innerText": "All fields\nTitle\nAuthor(s)\nAbstract\nComments\nJournal reference\nACM classification\nMSC classification\nReport number\narXiv identifier\nDOI\nORCID\nLicense (URI)\narXiv author ID\nHelp pages\nFull text",
+          "attributes": [
+            {
+              "name": "class",
+              "value": "is-medium"
+            },
+            {
+              "name": "id",
+              "value": "searchtype"
+            },
+            {
+              "name": "name",
+              "value": "searchtype"
+            }
+          ],
+          "viewport": {
+            "x": 902.140625,
+            "y": 280.203125,
+            "width": 202.6875,
+            "height": 39.375
+          },
+          "center_x": 1003.484375,
+          "center_y": 299.890625,
+          "isVisible": true,
+          "isInteractive": true,
+          "isValidText": false,
+          "isTopElement": true,
+          "isInViewport": true,
+          "isParentHighlighted": false,
+          "xpath": "//*[@id=\"searchtype\"]",
+          "selector": "select#searchtype",
+          "highlightIndex": 13
+        }
+      }
+    }
+  ]
+}

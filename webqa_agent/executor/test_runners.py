@@ -5,18 +5,15 @@ import time
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from webqa_agent.browser.session import BrowserSession
 from webqa_agent.data import TestConfiguration, TestResult, TestStatus
-from webqa_agent.data.test_structures import SubTestReport, SubTestResult, get_category_for_test_type
-from webqa_agent.testers import (
-    LighthouseMetricsTest,
-    PageButtonTest,
-    PageContentTest,
-    PageTextTest,
-    WebAccessibilityTest,
-)
+from webqa_agent.data.test_structures import (SubTestReport, SubTestResult,
+                                              get_category_for_test_type)
+from webqa_agent.testers import (LighthouseMetricsTest, PageButtonTest,
+                                 PageContentTest, PageTextTest,
+                                 WebAccessibilityTest)
 from webqa_agent.utils import Display
 from webqa_agent.utils.log_icon import icon
 
@@ -40,7 +37,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
     ) -> TestResult:
         """Run UIAgent LangGraph test using LangGraph workflow with
         ParallelUITester."""
-        
+
         with Display.display(test_config.test_name):
             from webqa_agent.testers.case_gen.graph import app as graph_app
             from webqa_agent.testers.function_tester import UITester
@@ -58,23 +55,23 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                 parallel_tester = UITester(llm_config=llm_config, browser_session=session)
                 await parallel_tester.initialize()
 
-                business_objectives = test_config.test_specific_config.get("business_objectives", "")
+                business_objectives = test_config.test_specific_config.get('business_objectives', '')
                 logging.info(f"{icon['running']} Running test: {test_config.test_name} with business objectives: {business_objectives}")
 
-                cookies = test_config.test_specific_config.get("cookies")
+                cookies = test_config.test_specific_config.get('cookies')
 
                 initial_state = {
-                    "url": target_url,
-                    "business_objectives": business_objectives,
-                    "cookies": cookies,
-                    "completed_cases": [],
-                    "reflection_history": [],
-                    "remaining_objectives": business_objectives,
-                    "ui_tester_instance": parallel_tester,
-                    "current_test_case_index": 0,
+                    'url': target_url,
+                    'business_objectives': business_objectives,
+                    'cookies': cookies,
+                    'completed_cases': [],
+                    'reflection_history': [],
+                    'remaining_objectives': business_objectives,
+                    'ui_tester_instance': parallel_tester,
+                    'current_test_case_index': 0,
                 }
 
-                graph_config = {"configurable": {"ui_tester_instance": parallel_tester}, "recursion_limit": 100}
+                graph_config = {'configurable': {'ui_tester_instance': parallel_tester}, 'recursion_limit': 100}
 
                 # Mapping from case name to status obtained from LangGraph aggregate_results
                 graph_case_status_map: Dict[str, str] = {}
@@ -84,15 +81,15 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                 async for event in graph_app.astream(initial_state, config=graph_config):
                     # Each event is a dict where keys are node names and values are their outputs
                     for node_name, node_output in event.items():
-                        if node_name == "aggregate_results":
+                        if node_name == 'aggregate_results':
                             # Capture final report to retrieve authoritative case statuses
-                            final_report = node_output.get("final_report", {})
-                            for idx, case_res in enumerate(final_report.get("completed_summary", [])):
-                                case_name = case_res.get("case_name") or case_res.get("name") or f"Case_{idx + 1}"
-                                graph_case_status_map[case_name] = case_res.get("status", "failed").lower()
+                            final_report = node_output.get('final_report', {})
+                            for idx, case_res in enumerate(final_report.get('completed_summary', [])):
+                                case_name = case_res.get('case_name') or case_res.get('name') or f'Case_{idx + 1}'
+                                graph_case_status_map[case_name] = case_res.get('status', 'failed').lower()
 
-                        if node_name == "__end__":
-                            logging.debug("Graph execution completed successfully")
+                        if node_name == '__end__':
+                            logging.debug('Graph execution completed successfully')
                             graph_completed = True
                             break
                         else:
@@ -108,21 +105,21 @@ class UIAgentLangGraphRunner(BaseTestRunner):
 
                 if parallel_tester:
                     # 生成符合runner标准格式的完整报告
-                    test_name = f"UI Agent Test - {target_url}"
+                    test_name = f'UI Agent Test - {target_url}'
                     runner_format_report = parallel_tester.generate_runner_format_report(
                         test_id=test_config.test_id, test_name=test_name
                     )
 
-                    sub_tests_data = runner_format_report.get("sub_tests", [])
-                    logging.debug(f"Generated runner format report with {len(sub_tests_data)} cases")
+                    sub_tests_data = runner_format_report.get('sub_tests', [])
+                    logging.debug(f'Generated runner format report with {len(sub_tests_data)} cases')
 
                     if not sub_tests_data:
-                        logging.warning("No sub_tests data found in runner format report")
+                        logging.warning('No sub_tests data found in runner format report')
 
                     # 将runner格式的sub_tests转换为TestResult.SubTestResult
                     for i, case in enumerate(sub_tests_data):
-                        case_name = case.get("name", f"Unnamed test case - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                        case_steps = case.get("steps", [])
+                        case_name = case.get('name', f"Unnamed test case - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                        case_steps = case.get('steps', [])
 
                         # 验证case数据完整性
                         logging.debug(f"Processing case {i + 1}: '{case_name}' with {len(case_steps)} steps")
@@ -130,14 +127,14 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                             logging.warning(f"Case '{case_name}' has no steps data")
 
                         # Prefer status from graph aggregation if available
-                        sub_status = graph_case_status_map.get(case_name, case.get("status", "failed")).lower()
+                        sub_status = graph_case_status_map.get(case_name, case.get('status', 'failed')).lower()
                         status_mapping = {
-                            "pending": TestStatus.PENDING,
-                            "running": TestStatus.RUNNING,
-                            "passed": TestStatus.PASSED,
-                            "completed": TestStatus.PASSED,
-                            "failed": TestStatus.FAILED,
-                            "cancelled": TestStatus.CANCELLED,
+                            'pending': TestStatus.PENDING,
+                            'running': TestStatus.RUNNING,
+                            'passed': TestStatus.PASSED,
+                            'completed': TestStatus.PASSED,
+                            'failed': TestStatus.FAILED,
+                            'cancelled': TestStatus.CANCELLED,
                         }
                         status_enum = status_mapping.get(sub_status, TestStatus.FAILED)
 
@@ -147,64 +144,64 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                                 status=status_enum,
                                 metrics={},
                                 steps=case_steps,
-                                messages=case.get("messages", {}),
-                                start_time=case.get("start_time"),
-                                end_time=case.get("end_time"),
-                                final_summary=case.get("final_summary", ""),
-                                report=case.get("report", []),
+                                messages=case.get('messages', {}),
+                                start_time=case.get('start_time'),
+                                end_time=case.get('end_time'),
+                                final_summary=case.get('final_summary', ''),
+                                report=case.get('report', []),
                             )
                         )
 
                     result.sub_tests = sub_tests
 
                     # 从runner格式报告提取汇总指标
-                    results_data = runner_format_report.get("results", {})
-                    result.add_metric("test_case_count", results_data.get("total_cases", 0))
-                    result.add_metric("passed_test_cases", results_data.get("passed_cases", 0))
-                    result.add_metric("failed_test_cases", results_data.get("failed_cases", 0))
-                    result.add_metric("total_steps", results_data.get("total_steps", 0))
-                    result.add_metric("success_rate", results_data.get("success_rate", 0))
+                    results_data = runner_format_report.get('results', {})
+                    result.add_metric('test_case_count', results_data.get('total_cases', 0))
+                    result.add_metric('passed_test_cases', results_data.get('passed_cases', 0))
+                    result.add_metric('failed_test_cases', results_data.get('failed_cases', 0))
+                    result.add_metric('total_steps', results_data.get('total_steps', 0))
+                    result.add_metric('success_rate', results_data.get('success_rate', 0))
 
                     # 从每个case的messages中提取网络和控制台数据并汇总
                     total_failed_requests = 0
                     total_requests = 0
                     total_console_errors = 0
 
-                    for case in runner_format_report.get("sub_tests", []):
-                        case_messages = case.get("messages", {})
+                    for case in runner_format_report.get('sub_tests', []):
+                        case_messages = case.get('messages', {})
                         if isinstance(case_messages, dict):
-                            network_data = case_messages.get("network", {})
+                            network_data = case_messages.get('network', {})
                             if isinstance(network_data, dict):
-                                failed_requests = network_data.get("failed_requests", [])
-                                responses = network_data.get("responses", [])
+                                failed_requests = network_data.get('failed_requests', [])
+                                responses = network_data.get('responses', [])
                                 total_failed_requests += len(failed_requests)
                                 total_requests += len(responses)
 
-                            console_data = case_messages.get("console", [])
+                            console_data = case_messages.get('console', [])
                             if isinstance(console_data, list):
                                 total_console_errors += len(console_data)
 
-                    result.add_metric("network_failed_requests_count", total_failed_requests)
-                    result.add_metric("network_total_requests_count", total_requests)
-                    result.add_metric("console_error_count", total_console_errors)
+                    result.add_metric('network_failed_requests_count', total_failed_requests)
+                    result.add_metric('network_total_requests_count', total_requests)
+                    result.add_metric('console_error_count', total_console_errors)
 
                     # 设置整体状态
-                    runner_status = runner_format_report.get("status", "failed")
-                    if runner_status == "completed":
+                    runner_status = runner_format_report.get('status', 'failed')
+                    if runner_status == 'completed':
                         result.status = TestStatus.PASSED
                     else:
                         result.status = TestStatus.FAILED
-                        result.error_message = runner_format_report.get("error_message", "Test execution failed")
+                        result.error_message = runner_format_report.get('error_message', 'Test execution failed')
 
                 else:
-                    logging.error("No UITester instance available for data extraction")
+                    logging.error('No UITester instance available for data extraction')
                     result.status = TestStatus.FAILED
-                    result.error_message = "No test cases were executed or results were not available"
+                    result.error_message = 'No test cases were executed or results were not available'
 
                 logging.info(f"{icon['check']} Test completed: {test_config.test_name}")
 
             except Exception as e:
-                error_msg = f"AI Functional Test failed: {str(e)}"
+                error_msg = f'AI Functional Test failed: {str(e)}'
                 result.status = TestStatus.FAILED
                 result.error_message = error_msg
                 logging.error(error_msg)
@@ -216,9 +213,9 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                     try:
                         # UITester现在已经自动管理监控数据，只需要清理资源
                         await parallel_tester.cleanup()
-                        logging.debug("UITester cleanup completed")
+                        logging.debug('UITester cleanup completed')
                     except Exception as e:
-                        logging.error(f"Error cleaning up UITester: {e}")
+                        logging.error(f'Error cleaning up UITester: {e}')
 
             return result
 
@@ -231,7 +228,7 @@ class UXTestRunner(BaseTestRunner):
         self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
     ) -> TestResult:
         """Run UX tests with enhanced screenshot and data collection."""
-        
+
         with Display.display(test_config.test_name):
             result = TestResult(
                 test_id=test_config.test_id,
@@ -250,30 +247,31 @@ class UXTestRunner(BaseTestRunner):
 
                 # Run ParallelPageContentTest
                 content_test = PageContentTest(llm_config)
-                content_result: SubTestResult = await content_test.run(page=page)
+                content_results: List[SubTestResult] = await content_test.run(page=page)
 
-                result.sub_tests = [content_result, text_result]
+                result.sub_tests = content_results + [text_result]
 
                 # Extract metrics
-                content_status = content_result.status
+                content_statuses = [r.status for r in content_results]
                 text_status = text_result.status
 
                 # Determine overall status
-                if text_status == "passed" and content_status == "passed":
+                if text_status == 'passed' and all(status == 'passed' for status in content_statuses):
                     result.status = TestStatus.PASSED
                 else:
                     result.status = TestStatus.FAILED
 
-                    # Collect errors from both tests
-                    errors = [r.messages["page"] for r in [text_result, content_result] if "page" in r.messages]
+                    # Collect errors from all tests
+                    all_results = content_results + [text_result]
+                    errors = [r.messages['page'] for r in all_results if 'page' in r.messages]
 
                     if errors:
-                        result.error_message = "; ".join(errors)
+                        result.error_message = '; '.join(errors)
 
                 logging.info(f"{icon['check']} Test completed: {test_config.test_name}")
 
             except Exception as e:
-                error_msg = f"UX test failed: {str(e)}"
+                error_msg = f'UX test failed: {str(e)}'
                 result.status = TestStatus.FAILED
                 result.error_message = error_msg
                 logging.error(error_msg)
@@ -289,7 +287,7 @@ class LighthouseTestRunner(BaseTestRunner):
         self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
     ) -> TestResult:
         """Run Lighthouse tests."""
-        
+
         with Display.display(test_config.test_name):
             result = TestResult(
                 test_id=test_config.test_id,
@@ -304,10 +302,10 @@ class LighthouseTestRunner(BaseTestRunner):
                 browser_config = session.browser_config
 
                 # Only run Lighthouse on Chromium browsers
-                if browser_config.get("browser_type") != "chromium":
-                    logging.warning("Lighthouse tests require Chromium browser, skipping")
+                if browser_config.get('browser_type') != 'chromium':
+                    logging.warning('Lighthouse tests require Chromium browser, skipping')
                     result.status = TestStatus.INCOMPLETED
-                    result.results = {"skipped": "Lighthouse requires Chromium browser"}
+                    result.results = {'skipped': 'Lighthouse requires Chromium browser'}
                     return result
 
                 # Run Lighthouse test
@@ -319,7 +317,7 @@ class LighthouseTestRunner(BaseTestRunner):
                 logging.info(f"{icon['check']} Test completed: {test_config.test_name}")
 
             except Exception as e:
-                error_msg = f"Lighthouse test failed: {str(e)}"
+                error_msg = f'Lighthouse test failed: {str(e)}'
                 result.status = TestStatus.FAILED
                 result.error_message = error_msg
                 logging.error(error_msg)
@@ -335,7 +333,7 @@ class ButtonTestRunner(BaseTestRunner):
         self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
     ) -> TestResult:
         """Run Button test."""
-        
+
         with Display.display(test_config.test_name):
             result = TestResult(
                 test_id=test_config.test_id,
@@ -355,11 +353,11 @@ class ButtonTestRunner(BaseTestRunner):
 
                 crawler = CrawlHandler(target_url)
                 clickable_elements = await crawler.clickable_elements_detection(page)
-                logging.info(f"Crawled {len(clickable_elements)} clickable elements")
+                logging.info(f'Crawled {len(clickable_elements)} clickable elements')
                 if len(clickable_elements) > 50:
                     from itertools import islice
                     clickable_elements = dict(islice(clickable_elements.items(), 50))
-                    logging.warning(f"Clickable elements number is too large, only keep the first 50")
+                    logging.warning(f'Clickable elements number is too large, only keep the first 50')
 
                 button_test = PageButtonTest()
                 button_test_result = await button_test.run(
@@ -375,7 +373,7 @@ class ButtonTestRunner(BaseTestRunner):
                 logging.info(f"{icon['check']} Test completed: {test_config.test_name}")
 
             except Exception as e:
-                error_msg = f"Button test failed: {str(e)}"
+                error_msg = f'Button test failed: {str(e)}'
                 result.status = TestStatus.FAILED
                 result.error_message = error_msg
                 logging.error(error_msg)
@@ -391,7 +389,7 @@ class WebBasicCheckRunner(BaseTestRunner):
         self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
     ) -> TestResult:
         """Run Web Basic Check tests."""
-        
+
         with Display.display(test_config.test_name):
             result = TestResult(
                 test_id=test_config.test_id,
@@ -410,7 +408,7 @@ class WebBasicCheckRunner(BaseTestRunner):
 
                 crawler = CrawlHandler(target_url)
                 links = await crawler.extract_links(page)
-                logging.info(f"Crawled {len(links)} links")
+                logging.info(f'Crawled {len(links)} links')
                 # WebAccessibilityTest
                 accessibility_test = WebAccessibilityTest()
                 accessibility_result = await accessibility_test.run(target_url, links)
@@ -420,7 +418,7 @@ class WebBasicCheckRunner(BaseTestRunner):
                 logging.info(f"{icon['check']} Test completed: {test_config.test_name}")
 
             except Exception as e:
-                error_msg = f"Web Basic Check test failed: {str(e)}"
+                error_msg = f'Web Basic Check test failed: {str(e)}'
                 result.status = TestStatus.FAILED
                 result.error_message = error_msg
                 logging.error(error_msg)
@@ -434,31 +432,31 @@ class SecurityTestRunner(BaseTestRunner):
 
     # 常见网络扫描标签配置
     SCAN_TAGS = {
-        "cve": "已知CVE漏洞扫描",
-        "xss": "跨站脚本攻击检测",
-        "sqli": "SQL注入检测",
-        "rce": "远程代码执行检测",
-        "lfi": "本地文件包含检测",
-        "ssrf": "服务端请求伪造检测",
-        "redirect": "开放重定向检测",
-        "exposure": "敏感信息泄露检测",
-        "config": "配置错误检测",
-        "default-login": "默认凭据检测",
-        "ssl": "SSL/TLS配置检测",
-        "dns": "DNS相关检测",
-        "subdomain-takeover": "子域名接管检测",
-        "tech": "技术栈识别",
-        "panel": "管理面板检测",
+        'cve': '已知CVE漏洞扫描',
+        'xss': '跨站脚本攻击检测',
+        'sqli': 'SQL注入检测',
+        'rce': '远程代码执行检测',
+        'lfi': '本地文件包含检测',
+        'ssrf': '服务端请求伪造检测',
+        'redirect': '开放重定向检测',
+        'exposure': '敏感信息泄露检测',
+        'config': '配置错误检测',
+        'default-login': '默认凭据检测',
+        'ssl': 'SSL/TLS配置检测',
+        'dns': 'DNS相关检测',
+        'subdomain-takeover': '子域名接管检测',
+        'tech': '技术栈识别',
+        'panel': '管理面板检测',
     }
 
     # 协议类型扫描
-    PROTOCOL_SCANS = {"http": "HTTP协议扫描", "dns": "DNS协议扫描", "tcp": "TCP协议扫描", "ssl": "SSL协议扫描"}
+    PROTOCOL_SCANS = {'http': 'HTTP协议扫描', 'dns': 'DNS协议扫描', 'tcp': 'TCP协议扫描', 'ssl': 'SSL协议扫描'}
 
     async def run_test(
         self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
     ) -> TestResult:
         """Run Security tests using Nuclei scanning."""
-        
+
         with Display.display(test_config.test_name):
             result = TestResult(
                 test_id=test_config.test_id,
@@ -477,7 +475,7 @@ class SecurityTestRunner(BaseTestRunner):
 
                 if not nuclei_available:
                     result.status = TestStatus.FAILED
-                    result.error_message = "Nuclei tool not found. Please install nuclei: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"
+                    result.error_message = 'Nuclei tool not found. Please install nuclei: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest'
                     return result
 
                 # 执行安全扫描
@@ -494,83 +492,83 @@ class SecurityTestRunner(BaseTestRunner):
                 finding_details = []
 
                 for finding in findings:
-                    severity = finding.get("info", {}).get("severity", "unknown")
+                    severity = finding.get('info', {}).get('severity', 'unknown')
                     severity_counts[severity] = severity_counts.get(severity, 0) + 1
                     finding_details.append(
                         {
-                            "template_id": finding.get("template-id", "unknown"),
-                            "name": finding.get("info", {}).get("name", "Unknown"),
-                            "severity": severity,
-                            "description": finding.get("info", {}).get("description", ""),
-                            "matched_at": finding.get("matched-at", ""),
-                            "extracted_results": finding.get("extracted-results", []),
+                            'template_id': finding.get('template-id', 'unknown'),
+                            'name': finding.get('info', {}).get('name', 'Unknown'),
+                            'severity': severity,
+                            'description': finding.get('info', {}).get('description', ''),
+                            'matched_at': finding.get('matched-at', ''),
+                            'extracted_results': finding.get('extracted-results', []),
                         }
                     )
 
                 # 创建按严重程度的子测试
-                for severity in ["critical", "high", "medium", "low", "info"]:
+                for severity in ['critical', 'high', 'medium', 'low', 'info']:
                     count = severity_counts.get(severity, 0)
 
                     # 获取该严重程度的具体发现
-                    severity_findings = [f for f in finding_details if f.get("severity") == severity]
+                    severity_findings = [f for f in finding_details if f.get('severity') == severity]
 
                     # 构建报告内容
                     if count == 0:
-                        issues_text = f"未发现{severity.upper()}级别安全问题"
+                        issues_text = f'未发现{severity.upper()}级别安全问题'
                     else:
                         # 取前3个问题的名称作为示例
-                        sample_issues = [f["name"] for f in severity_findings[:3]]
-                        issues_text = f"发现{count}个{severity.upper()}级别安全问题"
+                        sample_issues = [f['name'] for f in severity_findings[:3]]
+                        issues_text = f'发现{count}个{severity.upper()}级别安全问题'
                         if sample_issues:
                             issues_text += f"：{', '.join(sample_issues)}"
                             if count > 3:
-                                issues_text += f" 等{count}个问题"
+                                issues_text += f' 等{count}个问题'
 
                     sub_tests.append(
                         SubTestResult(
-                            name=f"{severity.upper()}级别安全问题扫描",
+                            name=f'{severity.upper()}级别安全问题扫描',
                             status=TestStatus.PASSED,
-                            metrics={"findings_count": count},
-                            report=[SubTestReport(title=f"{severity.upper()}级别安全漏洞扫描", issues=issues_text)],
+                            metrics={'findings_count': count},
+                            report=[SubTestReport(title=f'{severity.upper()}级别安全漏洞扫描', issues=issues_text)],
                         )
                     )
 
                 # 创建扫描类型的子测试
                 for scan_type, description in {**self.SCAN_TAGS, **self.PROTOCOL_SCANS}.items():
-                    type_findings = [f for f in finding_details if scan_type in f.get("template_id", "").lower()]
+                    type_findings = [f for f in finding_details if scan_type in f.get('template_id', '').lower()]
                     type_count = len(type_findings)
 
                     # 构建扫描类型报告内容
                     if type_count == 0:
-                        issues_text = f"{description}：未发现相关安全问题"
+                        issues_text = f'{description}：未发现相关安全问题'
                     else:
                         # 按严重程度统计该类型的发现
                         type_severity_counts = {}
                         for finding in type_findings:
-                            severity = finding.get("severity", "unknown")
+                            severity = finding.get('severity', 'unknown')
                             type_severity_counts[severity] = type_severity_counts.get(severity, 0) + 1
 
                         severity_summary = []
-                        for sev in ["critical", "high", "medium", "low", "info"]:
+                        for sev in ['critical', 'high', 'medium', 'low', 'info']:
                             if type_severity_counts.get(sev, 0) > 0:
-                                severity_summary.append(f"{sev.upper()}级{type_severity_counts[sev]}个")
+                                severity_summary.append(f'{sev.upper()}级{type_severity_counts[sev]}个')
 
-                        issues_text = f"{description}：发现{type_count}个问题"
+                        issues_text = f'{description}：发现{type_count}个问题'
                         if severity_summary:
                             issues_text += f"（{', '.join(severity_summary)}）"
 
                         # 添加具体问题示例（最多3个）
                         if type_findings:
-                            sample_names = [f["name"] for f in type_findings[:2]]
+                            sample_names = [f['name'] for f in type_findings[:2]]
                             if sample_names:
                                 issues_text += f"，包括：{', '.join(sample_names)}"
                                 if type_count > 2:
-                                    issues_text += " 等"
+                                    issues_text += ' 等'
 
                     combined_reports = []
                     if not finding_details:
                         # No security issues found
-                        combined_reports.append(SubTestReport(title="安全检查", issues="无发现问题"))
+                        combined_reports.append(SubTestReport(title='安全检查', issues='无发现问题'))
                     else:
                         for fd in finding_details:
                             title = f"[{fd.get('severity', 'unknown').upper()}] {fd.get('name')}"
@@ -581,15 +579,15 @@ class SecurityTestRunner(BaseTestRunner):
                                 details_parts.append(f"Matched at: {fd['matched_at']}")
                             if fd.get('extracted_results'):
                                 details_parts.append(f"Extracted: {', '.join(map(str, fd['extracted_results']))}")
-                            issues_text = " | ".join(details_parts) if details_parts else "No further details."
+                            issues_text = ' | '.join(details_parts) if details_parts else 'No further details.'
                             combined_reports.append(SubTestReport(title=title, issues=issues_text))
 
                     sub_tests = [
                         SubTestResult(
-                            name="nuclei检查",
+                            name='nuclei检查',
                             status=TestStatus.PASSED,
                             metrics={
-                                "total_findings": len(finding_details),
+                                'total_findings': len(finding_details),
                                 **severity_counts
                             },
                             report=combined_reports
@@ -601,33 +599,33 @@ class SecurityTestRunner(BaseTestRunner):
 
                 # 添加总体指标
                 total_findings = len(findings)
-                critical_findings = severity_counts.get("critical", 0)
-                high_findings = severity_counts.get("high", 0)
+                critical_findings = severity_counts.get('critical', 0)
+                high_findings = severity_counts.get('high', 0)
 
-                result.add_metric("total_findings", total_findings)
-                result.add_metric("critical_findings", critical_findings)
-                result.add_metric("high_findings", high_findings)
-                result.add_metric("security_score", max(0, 100 - (critical_findings * 20 + high_findings * 10)))
+                result.add_metric('total_findings', total_findings)
+                result.add_metric('critical_findings', critical_findings)
+                result.add_metric('high_findings', high_findings)
+                result.add_metric('security_score', max(0, 100 - (critical_findings * 20 + high_findings * 10)))
 
                 # 添加详细结果
-                result.add_data("security_findings", finding_details)
-                result.add_data("severity_summary", severity_counts)
+                result.add_data('security_findings', finding_details)
+                result.add_data('severity_summary', severity_counts)
 
                 # 清理临时文件
-                await self._cleanup_temp_files(scan_results.get("output_path"))
+                await self._cleanup_temp_files(scan_results.get('output_path'))
 
                 logging.info(f"{icon['check']} Test completed: {test_config.test_name}")
 
             except Exception as e:
-                error_msg = f"Security test failed: {str(e)}"
+                error_msg = f'Security test failed: {str(e)}'
                 logging.error(error_msg)
                 result.status = TestStatus.FAILED
                 result.error_message = error_msg
 
                 # 即使失败也要清理临时文件
                 try:
-                    scan_results = locals().get("scan_results", {})
-                    await self._cleanup_temp_files(scan_results.get("output_path"))
+                    scan_results = locals().get('scan_results', {})
+                    await self._cleanup_temp_files(scan_results.get('output_path'))
                 except:
                     pass
 
@@ -637,15 +635,15 @@ class SecurityTestRunner(BaseTestRunner):
         """检查nuclei工具是否可用."""
         try:
             process = await asyncio.create_subprocess_exec(
-                "nuclei", "-version", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                'nuclei', '-version', stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
             stdout, stderr = await process.communicate()
-            logging.debug(f"Nuclei check - return code: {process.returncode}")
-            logging.debug(f"Nuclei check - stdout: {stdout.decode()}")
-            logging.debug(f"Nuclei check - stderr: {stderr.decode()}")
+            logging.debug(f'Nuclei check - return code: {process.returncode}')
+            logging.debug(f'Nuclei check - stdout: {stdout.decode()}')
+            logging.debug(f'Nuclei check - stderr: {stderr.decode()}')
             return process.returncode == 0
         except Exception as e:
-            logging.error(f"Error checking nuclei availability: {e}")
+            logging.error(f'Error checking nuclei availability: {e}')
             return False
 
     async def _run_security_scan(self, target_url: str, test_config: TestConfiguration) -> Dict[str, Any]:
@@ -653,23 +651,23 @@ class SecurityTestRunner(BaseTestRunner):
         # 创建临时输出目录，使用测试ID确保唯一性
         import tempfile
 
-        temp_dir = Path(tempfile.gettempdir()) / "webqa_agent_security" / test_config.test_id
+        temp_dir = Path(tempfile.gettempdir()) / 'webqa_agent_security' / test_config.test_id
         temp_dir.mkdir(parents=True, exist_ok=True)
 
         # 配置扫描任务
-        scan_configs = {"tag": self.SCAN_TAGS, "protocol": self.PROTOCOL_SCANS}
+        scan_configs = {'tag': self.SCAN_TAGS, 'protocol': self.PROTOCOL_SCANS}
 
         # 从测试配置中获取自定义参数
         custom_config = test_config.test_specific_config or {}
-        include_severity_scans = custom_config.get("include_severity_scans", True)
+        include_severity_scans = custom_config.get('include_severity_scans', True)
 
         if include_severity_scans:
-            scan_configs["severity"] = {"critical": "严重漏洞扫描", "high": "高危漏洞扫描", "medium": "中危漏洞扫描"}
+            scan_configs['severity'] = {'critical': '严重漏洞扫描', 'high': '高危漏洞扫描', 'medium': '中危漏洞扫描'}
 
         # 执行并行扫描
         scan_results = await self._execute_scan_batch(target_url, scan_configs, temp_dir)
 
-        return {"scan_results": scan_results, "output_path": str(temp_dir)}
+        return {'scan_results': scan_results, 'output_path': str(temp_dir)}
 
     async def _execute_scan_batch(self, target_url: str, scan_configs: Dict[str, Dict], output_path: Path) -> list:
         """并行执行一批安全扫描."""
@@ -678,19 +676,19 @@ class SecurityTestRunner(BaseTestRunner):
         # 创建扫描任务
         for scan_type, scans in scan_configs.items():
             for scan_name, description in scans.items():
-                output_file = output_path / f"{scan_type}_{scan_name}_{int(time.time())}.json"
+                output_file = output_path / f'{scan_type}_{scan_name}_{int(time.time())}.json'
                 task = self._run_nuclei_command(target_url, scan_type, scan_name, output_file)
                 tasks.append(task)
 
         # 并行执行所有扫描
-        logging.info(f"Start {len(tasks)} security scan tasks...")
+        logging.info(f'Start {len(tasks)} security scan tasks...')
         scan_results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # 处理结果
         results = []
         for result in scan_results:
             if isinstance(result, Exception):
-                logging.error(f"Scan task failed: {result}")
+                logging.error(f'Scan task failed: {result}')
                 continue
             results.append(result)
 
@@ -700,15 +698,15 @@ class SecurityTestRunner(BaseTestRunner):
         self, target_url: str, scan_type: str, scan_name: str, output_file: Path
     ) -> Dict[str, Any]:
         """运行单个Nuclei扫描命令."""
-        cmd = ["nuclei", "-target", target_url, "-json-export", str(output_file), "-silent"]
+        cmd = ['nuclei', '-target', target_url, '-json-export', str(output_file), '-silent']
 
         # 根据扫描类型添加参数
-        if scan_type == "tag":
-            cmd.extend(["-tags", scan_name])
-        elif scan_type == "protocol":
-            cmd.extend(["-type", scan_name])
-        elif scan_type == "severity":
-            cmd.extend(["-severity", scan_name])
+        if scan_type == 'tag':
+            cmd.extend(['-tags', scan_name])
+        elif scan_type == 'protocol':
+            cmd.extend(['-type', scan_name])
+        elif scan_type == 'severity':
+            cmd.extend(['-severity', scan_name])
 
         try:
             process = await asyncio.create_subprocess_exec(
@@ -718,36 +716,36 @@ class SecurityTestRunner(BaseTestRunner):
             stdout, stderr = await process.communicate()
 
             return {
-                "scan_name": scan_name,
-                "scan_type": scan_type,
-                "stdout": stdout.decode() if stdout else "",
-                "stderr": stderr.decode() if stderr else "",
-                "returncode": process.returncode,
-                "output_file": str(output_file),
+                'scan_name': scan_name,
+                'scan_type': scan_type,
+                'stdout': stdout.decode() if stdout else '',
+                'stderr': stderr.decode() if stderr else '',
+                'returncode': process.returncode,
+                'output_file': str(output_file),
             }
         except Exception as e:
             return {
-                "scan_name": scan_name,
-                "scan_type": scan_type,
-                "stdout": "",
-                "stderr": str(e),
-                "returncode": 1,
-                "output_file": str(output_file),
+                'scan_name': scan_name,
+                'scan_type': scan_type,
+                'stdout': '',
+                'stderr': str(e),
+                'returncode': 1,
+                'output_file': str(output_file),
             }
 
     async def _process_scan_results(self, scan_results: Dict[str, Any]) -> list:
         """读取并合并所有扫描结果."""
         all_results = []
-        output_path = Path(scan_results["output_path"])
-        json_files = list(output_path.glob("*.json"))
+        output_path = Path(scan_results['output_path'])
+        json_files = list(output_path.glob('*.json'))
 
         for json_file in json_files:
             try:
-                with open(json_file, "r", encoding="utf-8") as f:
+                with open(json_file, 'r', encoding='utf-8') as f:
                     content = f.read().strip()
                     if content:
                         # 处理JSONL格式（每行一个JSON对象）
-                        for line in content.split("\n"):
+                        for line in content.split('\n'):
                             if line.strip():
                                 try:
                                     result = json.loads(line)
@@ -760,7 +758,7 @@ class SecurityTestRunner(BaseTestRunner):
                                 except json.JSONDecodeError:
                                     continue
             except Exception as e:
-                logging.error(f"Failed to read result file {json_file}: {e}")
+                logging.error(f'Failed to read result file {json_file}: {e}')
 
         return all_results
 
@@ -775,6 +773,6 @@ class SecurityTestRunner(BaseTestRunner):
             temp_dir = Path(temp_path)
             if temp_dir.exists() and temp_dir.is_dir():
                 shutil.rmtree(temp_dir)
-                logging.debug(f"Cleaned up temporary security scan files: {temp_path}")
+                logging.debug(f'Cleaned up temporary security scan files: {temp_path}')
         except Exception as e:
-            logging.warning(f"Failed to cleanup temporary files at {temp_path}: {e}")
+            logging.warning(f'Failed to cleanup temporary files at {temp_path}: {e}')
