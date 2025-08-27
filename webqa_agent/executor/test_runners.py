@@ -132,7 +132,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                             'pending': TestStatus.PENDING,
                             'running': TestStatus.RUNNING,
                             'passed': TestStatus.PASSED,
-                            'completed': TestStatus.PASSED,
+                            'completed': TestStatus.WARNING,
                             'failed': TestStatus.FAILED,
                             'cancelled': TestStatus.CANCELLED,
                         }

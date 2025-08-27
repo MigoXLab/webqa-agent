@@ -16,6 +16,7 @@ from langchain_openai import ChatOpenAI
 from webqa_agent.crawler.deep_crawler import DeepCrawler
 from webqa_agent.testers.case_gen.prompts.agent_prompts import get_execute_system_prompt
 from webqa_agent.testers.case_gen.tools.element_action_tool import UIAssertTool, UITool
+from webqa_agent.testers.case_gen.utils.message_converter import convert_intermediate_steps_to_messages
 from webqa_agent.utils.log_icon import icon
 
 # The node function that will be used in the graph
@@ -85,7 +86,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
     # Create the agent
     agent = create_tool_calling_agent(llm, tools, prompt)
-    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=False, max_iterations=5)
+    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=False, max_iterations=5, return_intermediate_steps=True)
     logging.debug("AgentExecutor created successfully")
 
     # --- Execute Preamble Actions to Restore State ---
@@ -107,9 +108,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 logging.warning(f"Preamble action {i+1} has no instruction, skipping")
                 continue
 
-            # 智能检查：如果preamble action是导航指令且已经在目标页面，则跳过
+            # Smart check: Skip preamble action if it's a navigation instruction and already on target page
             if case.get("reset_session", False) and _is_navigation_instruction(instruction_to_execute):
-                # 检查是否已经在目标页面
+                # Check if already on target page
                 try:
                     page = ui_tester_instance.driver.get_page()
                     current_url = page.url
@@ -120,22 +121,22 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
                         try:
                             parsed = urlparse(u)
-                            # 处理域名变体：移除www前缀，统一小写
+                            # Handle domain variations: remove www prefix, unify to lowercase
                             netloc = parsed.netloc.lower()
                             if netloc.startswith("www."):
-                                netloc = netloc[4:]  # 移除www.
+                                netloc = netloc[4:]  # Remove www.
 
-                            # 标准化路径：去除尾部斜杠
+                            # Standardize path: remove trailing slash
                             path = parsed.path.rstrip("/")
 
-                            # 构建标准化URL
+                            # Build standardized URL
                             normalized = f"{parsed.scheme}://{netloc}{path}"
                             return normalized
                         except Exception:
-                            # 如果解析失败，返回原URL的小写形式
+                            # If parsing fails, return lowercase form of original URL
                             return u.lower()
 
-                    # 更灵活的URL匹配
+                    # More flexible URL matching
                     def extract_domain(u):
                         try:
                             from urllib.parse import urlparse
@@ -160,12 +161,12 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     current_normalized = normalize_url(current_url)
                     target_normalized = normalize_url(target_url)
 
-                    # 基础标准化匹配
+                    # Basic standardized matching
                     if current_normalized == target_normalized:
                         logging.debug("Skipping preamble navigation action - already on target page (normalized match)")
                         continue
 
-                    # 更灵活的域名路径匹配
+                    # More flexible domain and path matching
                     current_domain = extract_domain(current_url)
                     target_domain = extract_domain(target_url)
                     current_path = extract_path(current_url)
@@ -199,7 +200,13 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 start_time = datetime.datetime.now()
 
                 result = await agent_executor.ainvoke({"messages": preamble_messages})
-                preamble_messages = result.get("messages", [])
+
+                preamble_messages = result.get("messages", preamble_messages)
+                # AgentExecutor may not return messages, check for intermediate_steps instead
+                if "intermediate_steps" in result and result["intermediate_steps"]:
+                    # Convert intermediate steps to proper message format
+                    intermediate_messages = convert_intermediate_steps_to_messages(result["intermediate_steps"])
+                    preamble_messages.extend(intermediate_messages)
 
                 end_time = datetime.datetime.now()
                 duration = (end_time - start_time).total_seconds()
@@ -233,6 +240,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     ]
     final_summary = "No summary provided."
     total_steps = len(case.get("steps", []))
+    failed_steps = []  # Track failed steps for summary generation
 
     for i, step in enumerate(case.get("steps", [])):
         instruction_to_execute = step.get("action") or step.get("verify")
@@ -317,45 +325,159 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()
 
-            messages = result.get("messages", [])
+            messages = result.get("messages", pruned_messages)
+
+            # Handle intermediate_steps if available (when return_intermediate_steps=True)
+            if "intermediate_steps" in result and result["intermediate_steps"]:
+                # Convert intermediate steps to proper message format
+                intermediate_messages = convert_intermediate_steps_to_messages(result["intermediate_steps"])
+                # Append intermediate messages to maintain proper conversation history
+                messages.extend(intermediate_messages)
+                logging.debug(f"Step {i+1} added {len(intermediate_messages)} intermediate messages")
+
+
             tool_output = result.get("output", "")
 
             logging.debug(f"Step {i+1} {step_type} completed in {duration:.2f} seconds")
             logging.debug(f"Step {i+1} tool output: {tool_output}")
             messages.append(AIMessage(content=tool_output))
 
+            # Check for failures in the tool output
+            if "[failure]" in tool_output.lower() or "failed" in tool_output.lower():
+                failed_steps.append(i + 1)
+                logging.warning(f"Step {i+1} detected as failed based on output")
+
             # Check for max iterations, which indicates a failure to complete the step.
             if "Agent stopped due to max iterations." in tool_output:
+                failed_steps.append(i + 1)
                 final_summary = f"FINAL_SUMMARY: Step '{instruction_to_execute}' failed after multiple retries. The agent could not complete the instruction. Last output: {tool_output}"
                 logging.error(f"Step {i+1} failed due to max iterations.")
                 break
 
-            logging.debug(f"Step {i+1} completed successfully.")
+            logging.debug(f"Step {i+1} completed {'successfully' if (i+1) not in failed_steps else 'with issues'}.")
 
         except Exception as e:
             logging.error(f"Exception during step {i+1} execution: {str(e)}")
+            failed_steps.append(i + 1)
             final_summary = f"FINAL_SUMMARY: Step '{instruction_to_execute}' raised an exception: {str(e)}"
             break
 
-    # If the loop finishes without an early exit, get a final summary
+    # If the loop finishes without an early exit, generate a final summary
     if "FINAL_SUMMARY:" not in final_summary:
-        logging.debug("All test steps completed, requesting final summary")
-        messages.append(
-            HumanMessage(
-                content="All planned steps have been executed. Please provide a final summary of the test case execution, assessing whether the overall objective was met based on the results."
-            )
-        )
+        logging.debug("All test steps completed, generating final summary")
+        logging.debug(f"Failed steps detected during execution: {failed_steps}")
+        
+        # Use the LLM directly to generate the summary (not through the agent)
         try:
-            summary_result = await agent_executor.ainvoke({"messages": messages})
-            final_summary = summary_result.get("output", "Completed all steps, but no summary was generated.")
-            logging.debug(f"Final summary received: {final_summary}")
+            # Prepare context for summary generation
+            summary_prompt = f"""Based on the test execution of case "{case_name}", generate a summary.
+            
+Test Objective: {case.get('objective', 'Not specified')}
+Success Criteria: {case.get('success_criteria', ['Not specified'])}
+Total Steps Executed: {total_steps}
+Failed Steps: {failed_steps if failed_steps else 'None'}
+
+Generate a test summary in this format:
+FINAL_SUMMARY: Test case "{case_name}" [status]. [details about execution]. [objective achievement status].
+
+If all steps passed without failures:
+FINAL_SUMMARY: Test case "{case_name}" completed successfully. All {total_steps} test steps executed without critical errors. Test objective achieved: [confirmation]. All success criteria met.
+
+If there were failures:
+FINAL_SUMMARY: Test case "{case_name}" failed at step [X]. Error: [description]. Recovery attempts: [if any]. Recommendation: [suggested fix]."""
+
+            # Get the last few messages for context (excluding images to save tokens)
+            recent_messages = []
+            for msg in messages[-6:]:  # Last 3 exchanges
+                if isinstance(msg, HumanMessage):
+                    if isinstance(msg.content, list):
+                        # Extract text content only
+                        text_content = next((item["text"] for item in msg.content if item["type"] == "text"), str(msg.content))
+                        recent_messages.append(f"Human: {text_content}")
+                    else:
+                        recent_messages.append(f"Human: {msg.content}")
+                elif isinstance(msg, AIMessage):
+                    recent_messages.append(f"AI: {msg.content[:500]}...")  # Truncate for brevity
+            
+            context = "\n".join(recent_messages)
+            full_prompt = f"{summary_prompt}\n\nRecent test execution context:\n{context}"
+            
+            # Use the LLM directly
+            response = await llm.ainvoke(full_prompt)
+            
+            # Extract content from response
+            if hasattr(response, 'content'):
+                agent_output = response.content
+            else:
+                agent_output = str(response)
+            
+            # Ensure the summary has the correct format
+            if agent_output and not agent_output.strip().startswith("FINAL_SUMMARY:"):
+                # Auto-format the response if it doesn't follow the expected format
+                logging.debug("LLM summary missing FINAL_SUMMARY prefix, auto-formatting")
+                if not failed_steps:
+                    final_summary = f"FINAL_SUMMARY: Test case \"{case_name}\" completed successfully. All {total_steps} test steps executed. {agent_output}"
+                else:
+                    final_summary = f"FINAL_SUMMARY: Test case \"{case_name}\" failed. {agent_output}"
+            else:
+                final_summary = agent_output if agent_output else f"FINAL_SUMMARY: Test case \"{case_name}\" completed all {total_steps} steps."
+            
+            logging.debug(f"Final summary generated: {final_summary}")
+            
         except Exception as e:
             logging.error(f"Exception during final summary generation: {str(e)}")
-            final_summary = f"Completed all steps, but summary generation failed: {str(e)}"
+            # Provide a reasonable default summary based on what we know
+            if not failed_steps:
+                final_summary = f"FINAL_SUMMARY: Test case \"{case_name}\" completed successfully. All {total_steps} test steps executed without detected failures."
+            else:
+                final_summary = f"FINAL_SUMMARY: Test case \"{case_name}\" completed with failures at steps {failed_steps}. Review execution logs for details."
 
-    # Determine test case status
-    status = "passed" if "success" in final_summary.lower() or "passed" in final_summary.lower() else "failed"
-    logging.debug(f"Test case '{case_name}' final status: {status}")
+    # Determine test case status with improved logic
+    final_summary_lower = final_summary.lower()
+    
+    # More comprehensive success indicators
+    success_indicators = [
+        "completed successfully",
+        "test objective achieved", 
+        "success criteria met",
+        "all test steps executed",
+        "without critical errors",
+        "passed"
+    ]
+    
+    # More comprehensive failure indicators
+    failure_indicators = [
+        "failed at step",
+        "test case failed",
+        "error:",
+        "exception:",
+        "could not",
+        "unable to",
+        "critical error",
+        "test objective not achieved"
+    ]
+    
+    # Check for indicators
+    has_success = any(indicator in final_summary_lower for indicator in success_indicators)
+    has_failure = any(indicator in final_summary_lower for indicator in failure_indicators)
+    
+    # Determine status with clear priority
+    if "failed at step" in final_summary_lower or "test case failed" in final_summary_lower:
+        status = "failed"
+    elif "completed successfully" in final_summary_lower and not has_failure:
+        status = "passed"
+    elif has_failure and not has_success:
+        status = "failed"
+    elif has_success and not has_failure:
+        status = "passed"
+    else:
+        # Default based on whether we detected any failed steps during execution
+        if failed_steps:  # Use the failed_steps list we collected
+            status = "failed"
+        else:
+            status = "passed"
+    
+    logging.debug(f"Test case '{case_name}' final status: {status} (success indicators: {has_success}, failure indicators: {has_failure})")
 
     case_result = {
         "case_name": case_name,
@@ -370,18 +492,18 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
 
 def _is_navigation_instruction(instruction: str) -> bool:
-    """判断指令是否为导航指令.
+    """Determine if the instruction is a navigation instruction.
 
     Args:
-        instruction: 要检查的指令文本
+        instruction: Instruction text to check
 
     Returns:
-        bool: 如果是导航指令返回True，否则返回False
+        bool: True if it's a navigation instruction, False otherwise
     """
     if not instruction:
         return False
 
-    # 导航关键词列表
+    # Navigation keywords list (including both English and Chinese for compatibility)
     navigation_keywords = [
         "navigate",
         "go to",
@@ -389,22 +511,25 @@ def _is_navigation_instruction(instruction: str) -> bool:
         "visit",
         "browse",
         "load",
-        "导航",
-        "打开",
-        "访问",
-        "跳转",
-        "前往",
+        "access",
+        "enter",
+        "launch",
+        "导航",  # navigate (Chinese)
+        "打开",  # open (Chinese)
+        "访问",  # visit (Chinese)
+        "跳转",  # jump to (Chinese)
+        "前往",  # go to (Chinese)
     ]
 
-    # 将指令转换为小写进行匹配
+    # Convert instruction to lowercase for matching
     instruction_lower = instruction.lower()
 
-    # 检查是否包含导航关键词
+    # Check if it contains navigation keywords
     for keyword in navigation_keywords:
         if keyword in instruction_lower:
             return True
 
-    # 检查URL模式
+    # Check URL patterns
     url_patterns = [r"https?://[^\s]+", r"www\.[^\s]+", r"\.com|\.org|\.net|\.edu|\.gov"]
 
     for pattern in url_patterns:

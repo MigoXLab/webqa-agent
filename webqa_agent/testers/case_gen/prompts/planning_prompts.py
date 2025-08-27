@@ -1,13 +1,13 @@
-"""测试计划和用例生成相关的提示词模板."""
+"""Prompt templates for test planning and case generation."""
 
 import json
 
 
 def get_shared_test_design_standards() -> str:
-    """获取共享的测试用例设计标准，用于plan和reflect模块复用.
+    """Get shared test case design standards for reuse in plan and reflect modules.
     
     Returns:
-        包含完整测试用例设计标准的字符串
+        String containing complete test case design standards
     """
     return """## Enhanced Test Case Design Standards
 
@@ -46,21 +46,21 @@ Each test case must include these standardized components with enhanced business
 **✅ Atomic Action Design (Preferred)**:
 ```json
 [
-{{"action": "点击导航栏A"}},
-{{"verify": "确认跳转到A页面"}},
-{{"action": "点击导航栏B"}},
-{{"verify": "确认跳转到B页面"}},
-{{"action": "点击导航栏C"}},
-{{"verify": "确认跳转到C页面"}}
+{{"action": "Click navigation bar A"}},
+{{"verify": "Confirm navigation to page A"}},
+{{"action": "Click navigation bar B"}},
+{{"verify": "Confirm navigation to page B"}},
+{{"action": "Click navigation bar C"}},
+{{"verify": "Confirm navigation to page C"}}
 ]
 ```
 
 **Search Testing - Atomic Steps**:
 ```json
 [
-{{"action": "在输入框输入搜索关键词'产品'"}},
-{{"action": "点击搜索按钮"}},
-{{"verify": "确认显示搜索结果列表"}}
+{{"action": "Enter search keyword 'product' in the input field"}},
+{{"action": "Click the search button"}},
+{{"verify": "Confirm search results list is displayed"}}
 ]
 ```
 
@@ -124,16 +124,16 @@ Each test case must include these standardized components with enhanced business
 
 **❌ Technical Verify Step (Avoid)**:
 ```json
-{{"verify": "记录浏览器控制台中任何异常、堆栈跟踪或网络请求失败的证据（截屏并保存日志）"}},
-{{"verify": "检查DOM元素的CSS属性和JavaScript事件绑定"}},
-{{"verify": "验证HTTP响应状态码为200并检查响应头"}}
+{{"verify": "Record any exceptions, stack traces, or network request failures in browser console (screenshot and save logs)"}},
+{{"verify": "Check DOM element CSS properties and JavaScript event bindings"}},
+{{"verify": "Verify HTTP response status code is 200 and check response headers"}}
 ```
 
 **✅ User-Scenario Verify Step (Preferred)**:
 ```json
-{{"verify": "确认页面显示'登录成功'提示信息"}},
-{{"verify": "检查是否跳转到用户主页"}},
-{{"verify": "确认表单显示错误提示'请输入有效邮箱'"}}
+{{"verify": "Confirm page displays 'Login successful' message"}},
+{{"verify": "Check if redirected to user homepage"}},
+{{"verify": "Confirm form displays error message 'Please enter a valid email'"}}
 ```
 
 #### Verification Design Principles
@@ -175,22 +175,22 @@ def get_test_case_planning_system_prompt(
     reflection_history: list = None,
     remaining_objectives: str = None,
 ) -> str:
-    """生成测试用例规划的系统提示词.
+    """Generate system prompt for test case planning.
 
     Args:
-        business_objectives: 业务目标
-        completed_cases: 已完成的测试用例（用于重新规划）
-        reflection_history: 反思历史（用于重新规划）
-        remaining_objectives: 剩余目标（用于重新规划）
+        business_objectives: Business objectives
+        completed_cases: Completed test cases (for replanning)
+        reflection_history: Reflection history (for replanning)
+        remaining_objectives: Remaining objectives (for replanning)
 
     Returns:
-        格式化的系统提示词字符串
+        Formatted system prompt string
     """
 
-    # 判断是初始规划还是重新规划
+    # Determine if initial planning or replanning
     if not completed_cases:
-        # 根据business_objectives是否为空决定模式
-        # 处理business_objectives可能是列表的情况
+        # Decide mode based on whether business_objectives is empty
+        # Handle case where business_objectives might be a list
         business_objectives_str = business_objectives if isinstance(business_objectives, str) else str(business_objectives) if business_objectives else ""
         if business_objectives_str and business_objectives_str.strip():
             role_and_objective = """
@@ -323,7 +323,7 @@ For each test case, provide:
 - **Test data**: If data input is required, provide specific test data
 """
     else:
-        # 重新规划模式
+        # Replanning mode
         role_and_objective = """
 ## Role
 You are a Senior QA Testing Professional performing adaptive test plan revision based on execution results, enhanced business understanding, and evolving domain context.
@@ -331,8 +331,8 @@ You are a Senior QA Testing Professional performing adaptive test plan revision 
 ## Primary Objective
 Leverage deeper business domain insights and execution learnings to generate refined test plans that address remaining coverage gaps while building upon successful outcomes. Ensure enhanced business relevance and domain appropriateness in all test cases.
 """
-        # 重新规划时也根据business_objectives决定模式
-        # 处理business_objectives可能是列表的情况
+        # Also decide mode based on business_objectives during replanning
+        # Handle case where business_objectives might be a list
         business_objectives_str = business_objectives if isinstance(business_objectives, str) else str(business_objectives) if business_objectives else ""
         if business_objectives_str and business_objectives_str.strip():
             mode_section = f"""
@@ -429,23 +429,23 @@ def get_test_case_planning_user_prompt(
     reflection_history: list = None,
     remaining_objectives: str = None,
 ) -> str:
-    """生成测试用例规划的用户提示词.
+    """Generate user prompt for test case planning.
 
     Args:
-        state_url: 目标URL
-        page_content_summary: 页面内容摘要（交互元素）
-        page_structure: 完整的页面文本结构
-        completed_cases: 已完成的测试用例（用于重新规划）
-        reflection_history: 反思历史（用于重新规划）
-        remaining_objectives: 剩余目标（用于重新规划）
+        state_url: Target URL
+        page_content_summary: Page content summary (interactive elements)
+        page_structure: Complete page text structure
+        completed_cases: Completed test cases (for replanning)
+        reflection_history: Reflection history (for replanning)
+        remaining_objectives: Remaining objectives (for replanning)
 
     Returns:
-        格式化的用户提示词字符串
+        Formatted user prompt string
     """
 
     context_section = ""
     if completed_cases:
-        # 重新规划模式
+        # Replanning mode
         last_reflection = reflection_history[-1] if reflection_history else {}
         context_section = f"""
 ## Revision Context with Enhanced Business Understanding
@@ -462,7 +462,7 @@ def get_test_case_planning_user_prompt(
 
 {context_section}
 
-请帮助我基于以上信息进行测试用例规划。请按照系统提示中的要求进行深入分析，并生成符合规范的测试用例。
+Please help me plan test cases based on the above information. Please conduct in-depth analysis according to the requirements in the system prompt and generate test cases that meet the specifications.
 Example 1:
 ```json
 {{
@@ -535,10 +535,10 @@ Example 1:
 
 
 def get_reflection_system_prompt() -> str:
-    """生成反思和重新规划的系统提示词（静态部分）.
+    """Generate system prompt for reflection and replanning (static part).
 
     Returns:
-        格式化的系统提示词，包含角色定义、决策框架和输出格式
+        Formatted system prompt containing role definition, decision framework, and output format
     """
     
     shared_standards = get_shared_test_design_standards()
@@ -691,23 +691,23 @@ def get_reflection_user_prompt(
     page_structure: str,
     page_content_summary: dict = None,
 ) -> str:
-    """生成反思和重新规划的用户提示词（动态部分）.
+    """Generate user prompt for reflection and replanning (dynamic part).
 
     Args:
-        business_objectives: 总体业务目标
-        current_plan: 当前测试计划
-        completed_cases: 已完成的用例
-        page_structure: 当前UI文本结构
-        page_content_summary: 可交互元素映射（ID到元素信息的字典），可选
+        business_objectives: Overall business objectives
+        current_plan: Current test plan
+        completed_cases: Completed test cases
+        page_structure: Current UI text structure
+        page_content_summary: Interactive element mapping (dict from ID to element info), optional
 
     Returns:
-        格式化的用户提示词，包含当前测试状态和上下文信息
+        Formatted user prompt containing current test status and context information
     """
 
     completed_summary = json.dumps(completed_cases, indent=2)
     current_plan_json = json.dumps(current_plan, indent=2)
 
-    # 构建交互元素映射部分
+    # Build interactive elements mapping section
     interactive_elements_section = ""
     if page_content_summary:
         interactive_elements_json = json.dumps(page_content_summary, indent=2)
@@ -716,8 +716,8 @@ def get_reflection_user_prompt(
 {interactive_elements_json}
 - **Visual Element Reference**: The attached screenshot contains numbered markers corresponding to interactive elements. Each number in the image maps to an element ID in the Interactive Elements Map above, providing precise visual-textual correlation for comprehensive UI analysis."""
 
-    # 确定测试模式用于反思决策
-    # 处理business_objectives可能是列表的情况
+    # Determine test mode for reflection decision
+    # Handle case where business_objectives might be a list
     business_objectives_str = business_objectives if isinstance(business_objectives, str) else str(business_objectives) if business_objectives else ""
     if business_objectives_str and business_objectives_str.strip():
         mode_context = f"""
@@ -804,14 +804,14 @@ def get_reflection_prompt(
     page_structure: str,
     page_content_summary: dict = None,
 ) -> tuple[str, str]:
-    """生成反思和重新规划的提示词（返回system和user prompt）.
+    """Generate prompts for reflection and replanning (returns system and user prompt).
 
     Args:
-        business_objectives: 总体业务目标
-        current_plan: 当前测试计划
-        completed_cases: 已完成的用例
-        page_structure: 当前UI文本结构
-        page_content_summary: 可交互元素映射（ID到元素信息的字典），可选
+        business_objectives: Overall business objectives
+        current_plan: Current test plan
+        completed_cases: Completed test cases
+        page_structure: Current UI text structure
+        page_content_summary: Interactive element mapping (dict from ID to element info), optional
 
     Returns:
         tuple: (system_prompt, user_prompt)

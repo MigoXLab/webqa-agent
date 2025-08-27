@@ -106,7 +106,7 @@ class LLMPrompt:
         * {{
             locate: {{ id: string }} | null,
             param: {{
-                direction: 'down'(default) | 'up' | 'right' | 'left',
+                direction: 'down'(default) | 'up',
                 scrollType: 'once' (default) | 'untilBottom' | 'untilTop',
                 distance: null | number
             }}
@@ -116,6 +116,12 @@ class LLMPrompt:
         - type: 'GetNewPage', get the new page
         * {{ param: null }}
         * use this action when the instruction is a "get new page" statement or "open in new tab" or "open in new window".
+        - type: 'GoToPage', navigate directly to a specific URL
+        * {{ param: {{ url: string }} }}
+        * use this action when you need to navigate to a specific web page URL, useful for returning to homepage or navigating to known pages.
+        - type: 'GoBack', navigate back to the previous page
+        * {{ param: null }}
+        * use this action when you need to go back to the previous page in the browser history, similar to clicking the browser's back button.
         - type: 'Sleep'
         * {{ param: {{ timeMs: number }} }}
         - type: 'Check'
@@ -172,7 +178,7 @@ class LLMPrompt:
 
     ### Supported Actions:
     - Tap: Click on a specified page element (such as a button or link). Typically used to trigger a click event.
-    - Scroll: Scroll the page or a specific region. You can specify the direction (down, up, left, right), the scroll distance, or scroll to the edge of the page/region.
+    - Scroll: Scroll the page or a specific region. You can specify the direction (down, up), the scroll distance, or scroll to the edge of the page/region.
     - Input: Enter text into an input field or textarea. This action will replace the current value with the specified final value.
     - Sleep: Wait for a specified amount of time (in milliseconds). Useful for waiting for page loads or asynchronous content to render.
     - Upload: Upload a file
@@ -187,7 +193,7 @@ class LLMPrompt:
           "actions": [
             {
               "thought": "Reasoning for this action and why it's feasible on the current page.",
-              "type": "Tap" | "Scroll" | "Input" | "Sleep" | "Check" | "Upload" | "KeyboardPress" | "Drag" | "SelectDropdown",
+              "type": "Tap" | "Scroll" | "Input" | "Sleep" | "Check" | "Upload" | "KeyboardPress" | "Drag" | "SelectDropdown" | "GoToPage" | "GoBack",
               "param": {...} | null,
               "locate": {...} | null
             }
@@ -364,6 +370,45 @@ class LLMPrompt:
           "taskWillBeAccomplished": true,
           "furtherPlan": null,
           "error": null
+        }
+        ```
+
+        #### Example 6: Navigate to Homepage using GoToPage
+        \"Go to the homepage to restart the test\"
+        ```json
+        {
+          \"actions\": [
+            {
+              \"type\": \"GoToPage\",
+              \"thought\": \"Navigate to homepage to restart the test from a clean state\",
+              \"param\": { \"url\": \"https://example.com\" },
+              \"locate\": null
+            }
+          ],
+          \"taskWillBeAccomplished\": true,
+          \"furtherPlan\": null,
+          \"error\": null
+        }
+        ```
+
+        #### Example 7: Go Back to Previous Page
+        \"Go back to the previous page and try again\"
+        ```json
+        {
+          \"actions\": [
+            {
+              \"type\": \"GoBack\",
+              \"thought\": \"Return to previous page to retry the operation\",
+              \"param\": null,
+              \"locate\": null
+            }
+          ],
+          \"taskWillBeAccomplished\": false,
+          \"furtherPlan\": {
+            \"whatHaveDone\": \"Navigated back to previous page\",
+            \"whatToDoNext\": \"Retry the failed action from the previous page\"
+          },
+          \"error\": null
         }
         ```
 
