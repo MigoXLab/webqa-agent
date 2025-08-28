@@ -228,8 +228,6 @@ output/
 test.py
 test_cases_*.json
 tests/*test_results/*
-*.html
-tests/*test_results/*
 
 #config
 .env
