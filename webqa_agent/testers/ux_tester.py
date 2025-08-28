@@ -199,10 +199,10 @@ class PageContentTest:
             List of SubTestResult containing layout test and image test results
         """
         # 创建两个独立的测试结果
-        layout_result = SubTestResult(name='网页布局检查')
-        image_result = SubTestResult(name='网页元素检查')
+        layout_result = SubTestResult(name='网页内容检查')
+        # image_result = SubTestResult(name='网页元素检查')
 
-        logging.info(f"{icon['running']} Running Sub Tests: {layout_result.name}, {image_result.name}")
+        logging.info(f"{icon['running']} Running Sub Tests: {layout_result.name}")
 
         dp = DeepCrawler(page)
         crawl_result = await dp.crawl(highlight=True, highlight_text = False, viewport_only=False, include_styles=True)
@@ -233,23 +233,23 @@ class PageContentTest:
                 await self._run_single_test(layout_result, layout_case, id_map, browser_screenshot, page_img)
                 logging.info(f"{icon['check']} Sub Tests Completed: {layout_result.name}")
 
-            with Display.display('用户体验测试 - 元素检查'):
-                # 执行元素检查
-                try:
-                    await self._run_single_test(image_result, image_case, id_map, browser_screenshot, page_img)
-                    logging.info(f"{icon['check']} Sub Tests Completed: {image_result.name}")
-                except Exception as e:
-                    error_message = f'Image test error: {str(e)}'
-                    logging.error(error_message)
-                    image_result.status = TestStatus.FAILED
-                    image_result.messages = {'page': str(e)}
+            # with Display.display('用户体验测试 - 元素检查'):
+            #     # 执行元素检查
+            #     try:
+            #         await self._run_single_test(image_result, image_case, id_map, browser_screenshot, page_img)
+            #         logging.info(f"{icon['check']} Sub Tests Completed: {image_result.name}")
+            #     except Exception as e:
+            #         error_message = f'Image test error: {str(e)}'
+            #         logging.error(error_message)
+            #         image_result.status = TestStatus.FAILED
+            #         image_result.messages = {'page': str(e)}
 
         except Exception as e:
             error_message = f'PageContentTest general error: {str(e)}'
             logging.error(error_message)
             raise
 
-        return [layout_result, image_result]
+        return [layout_result]
 
     async def _run_single_test(self, result: SubTestResult, user_case: str, id_map: dict, browser_screenshot: List, page_img: bool):
         """执行单个测试."""
@@ -413,7 +413,7 @@ class PageContentTest:
             issues_text = '无发现问题'
             logging.debug(f'LLM returned no content, treating as PASSED')
 
-        result.report.append(SubTestReport(title=user_case[:4], issues=issues_text))
+        # result.report.append(SubTestReport(title=user_case[:4], issues=issues_text))
         # aggregate overall status: any WARNING -> WARNING; else PASSED
         if case_status == TestStatus.WARNING and overall_status != TestStatus.WARNING:
             overall_status = TestStatus.WARNING
