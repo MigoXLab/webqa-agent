@@ -102,8 +102,16 @@ class UITester:
             # Remove marker
             await dp.remove_marker()
 
-            # Prepare LLM input
-            user_prompt = self._prepare_prompt_action(test_step, prev.to_llm_json(), LLMPrompt.planner_output_prompt)
+            # Prepare LLM input with comprehensive element data for better planning
+            # Include ATTRIBUTES for input types, placeholders, and other action-relevant info
+            planning_template = [
+                str(ElementKey.TAG_NAME),
+                str(ElementKey.INNER_TEXT),
+                str(ElementKey.ATTRIBUTES),
+                str(ElementKey.CENTER_X),
+                str(ElementKey.CENTER_Y)
+            ]
+            user_prompt = self._prepare_prompt_action(test_step, prev.to_llm_json(template=planning_template), LLMPrompt.planner_output_prompt)
 
             # Generate plan
             plan_json = await self._generate_plan(LLMPrompt.planner_system_prompt, user_prompt, marker_screenshot)
