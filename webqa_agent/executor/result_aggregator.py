@@ -283,7 +283,7 @@ class ResultAggregator:
         try:
             # Determine report directory
             if report_dir is None:
-                timestamp = os.getenv("WEBQA_TIMESTAMP")
+                timestamp = os.getenv("WEBQA_REPORT_TIMESTAMP") or os.getenv("WEBQA_TIMESTAMP")
                 report_dir = f"./reports/test_{timestamp}"
             os.makedirs(report_dir, exist_ok=True)
 
@@ -379,7 +379,7 @@ class ResultAggregator:
                 )
 
             if report_dir is None:
-                timestamp = os.getenv("WEBQA_TIMESTAMP")
+                timestamp = os.getenv("WEBQA_REPORT_TIMESTAMP") or os.getenv("WEBQA_TIMESTAMP")
                 report_dir = f"./reports/test_{timestamp}"
             # Ensure report dir exists; if creation fails, fallback to tmp
             try:

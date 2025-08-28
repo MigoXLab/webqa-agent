@@ -684,7 +684,8 @@ def create_gradio_interface():
                         api_key = gr.Textbox(
                             label="API Key",
                             value="",
-                            info="LLM服务的API密钥"
+                            info="LLM服务的API密钥",
+                            type="password"
                         )
                         base_url = gr.Textbox(
                             label="Base URL",

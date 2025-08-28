@@ -1,5 +1,7 @@
 import logging
 import uuid
+import os
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Coroutine
 
 from webqa_agent.browser.config import DEFAULT_CONFIG
@@ -50,6 +52,10 @@ class ParallelMode:
 
             # Create test session
             test_session = ParallelTestSession(session_id=str(uuid.uuid4()), target_url=url, llm_config=llm_config)
+
+            # Use a fresh per-task timestamp for reports and keep logs separate
+            report_ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")
+            os.environ["WEBQA_REPORT_TIMESTAMP"] = report_ts
 
             # Configure tests based on input or legacy test objects
             if test_configurations:
