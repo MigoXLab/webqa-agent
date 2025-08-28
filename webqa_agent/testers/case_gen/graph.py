@@ -104,9 +104,17 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
         remaining_objectives=state.get("remaining_objectives"),
     )
 
+    # Use explicit template for planning to include element attributes
+    planning_template = [
+        str(ElementKey.TAG_NAME),
+        str(ElementKey.INNER_TEXT),
+        str(ElementKey.ATTRIBUTES),
+        str(ElementKey.CENTER_X),
+        str(ElementKey.CENTER_Y)
+    ]
     user_prompt = get_test_case_planning_user_prompt(
         state_url=state["url"],
-        page_content_summary=page_content_summary.clean_dict(),
+        page_content_summary=page_content_summary.clean_dict(template=planning_template),
         page_structure=page_structure,
         completed_cases=completed_cases,
         reflection_history=state.get("reflection_history"),
@@ -273,7 +281,15 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
     logging.info(f"Deep crawling page structure and elements for reflection and replanning analysis...")
     dp = DeepCrawler(page)
     curr = await dp.crawl(highlight=True, viewport_only=True)
-    page_content_summary = curr.clean_dict([str(ElementKey.TAG_NAME), str(ElementKey.INNER_TEXT), str(ElementKey.ATTRIBUTES)])
+    # Include position information for better replanning decisions
+    reflect_template = [
+        str(ElementKey.TAG_NAME),
+        str(ElementKey.INNER_TEXT),
+        str(ElementKey.ATTRIBUTES),
+        str(ElementKey.CENTER_X),
+        str(ElementKey.CENTER_Y)
+    ]
+    page_content_summary = curr.clean_dict(reflect_template)
     logging.debug(f"current page crawled result: {page_content_summary}")
     screenshot = await ui_tester._actions.b64_page_screenshot(file_name="reflection", save_to_log=False, full_page=False)
     await dp.remove_marker()

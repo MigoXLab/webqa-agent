@@ -1,22 +1,22 @@
-"""执行代理相关的提示词模板."""
+"""Prompt templates for execution agent."""
 
 
 def get_execute_system_prompt(case: dict) -> str:
-    """生成执行代理的详细系统提示词."""
+    """Generate detailed system prompt for execution agent."""
 
-    # 核心字段（原有）
+    # Core fields (original)
     objective = case.get("objective", "Not specified")
     success_criteria = case.get("success_criteria", ["Not specified"])
     steps_list = case.get("steps", [])
-    
-    # 增强字段（新增）
+
+    # Enhanced fields (new)
     priority = case.get("priority", "Medium")
     business_context = case.get("business_context", "")
     test_category = case.get("test_category", "Functional_General")
     domain_specific_rules = case.get("domain_specific_rules", "")
     test_data_requirements = case.get("test_data_requirements", "")
 
-    # 格式化步骤信息
+    # Format step information
     formatted_steps = []
     for i, step in enumerate(steps_list):
         if "action" in step:
@@ -56,9 +56,9 @@ You have access to two specialized testing tools:
 
 ### Complex Instruction Detection
 An instruction is considered complex if it contains:
-- **Multiple action verbs**: "click A and B", "填写X和Y", "打开并点击"
-- **Sequential indicators**: "依次", "然后", "之后", "next", "then"
-- **Multiple target elements**: "链接A、B、C", "fields X, Y, Z"
+- **Multiple action verbs**: "click A and B", "fill X and Y", "open and click"
+- **Sequential indicators**: "sequentially", "then", "after", "next", "afterwards"
+- **Multiple target elements**: "links A, B, C", "fields X, Y, Z"
 - **Compound operations**: "fill form and submit", "navigate and click"
 
 ### Decomposition and Execution Strategy
@@ -71,24 +71,24 @@ When encountering a complex instruction:
 
 #### Example Complex Instruction Handling:
 
-**Received**: `"action": "依次点击底部的关于百度、About Baidu、使用百度前必读链接"`
+**Received**: `"action": "Click the bottom links sequentially: About Baidu, About Baidu (English), Terms of Use"`
 
 **Execution Approach**:
-1. **First Action**: Execute `execute_ui_action(action='click', target='关于百度链接')`
+1. **First Action**: Execute `execute_ui_action(action='click', target='About Baidu link')`
 2. **Wait for Completion**: Report result and assess new page state
-3. **Second Action**: Execute `execute_ui_action(action='click', target='About Baidu链接')`
+3. **Second Action**: Execute `execute_ui_action(action='click', target='About Baidu English link')`
 4. **Wait for Completion**: Report result and assess new page state
-5. **Third Action**: Execute `execute_ui_action(action='click', target='使用百度前必读链接')`
+5. **Third Action**: Execute `execute_ui_action(action='click', target='Terms of Use link')`
 6. **Final Report**: Summarize completion of all actions
 
-**Received**: `"action": "填写用户名和密码并点击登录"`
+**Received**: `"action": "Fill in username and password and click login"`
 
 **Execution Approach**:
-1. **First Action**: Execute `execute_ui_action(action='type', target='用户名字段', value='testuser')`
+1. **First Action**: Execute `execute_ui_action(action='type', target='username field', value='testuser')`
 2. **Wait for Completion**: Report result
-3. **Second Action**: Execute `execute_ui_action(action='type', target='密码字段', value='password123')`
+3. **Second Action**: Execute `execute_ui_action(action='type', target='password field', value='password123')`
 4. **Wait for Completion**: Report result
-5. **Third Action**: Execute `execute_ui_action(action='click', target='登录按钮')`
+5. **Third Action**: Execute `execute_ui_action(action='click', target='login button')`, 
 6. **Final Report**: Summarize completion of all actions
 
 ### Important Notes:
@@ -104,7 +104,7 @@ When encountering a complex instruction:
 **Critical Rule**: Each instruction MUST contain exactly ONE discrete user action. If an instruction contains multiple actions (e.g., "click A, B, and C"), you MUST break it down and execute only the first action, then report completion.
 
 **Multi-Action Detection Patterns**:
-- Instructions containing "、", "，", "和", "及", "并" or multiple verbs
+- Instructions containing "and", "&", "also", "as well as", "along with" or multiple verbs
 - Lists of elements to interact with
 - Sequential action descriptions
 - Numbered steps or bullet points
@@ -243,14 +243,14 @@ When encountering a complex instruction:
 ### Example 1: Form Field Validation Recovery
 **Context**: Registration form with character length requirements
 **Initial Action**: `execute_ui_action(action='type', target='usage scenario field', value='test', description='Enter usage scenario')`
-**Tool Response**: `[FAILURE] Validation error detected: 使用场景 至少30个字符`
+**Tool Response**: `[FAILURE] Validation error detected: Usage scenario must be at least 30 characters`
 **Recovery Action**: `execute_ui_action(action='type', target='usage scenario field', value='This is a comprehensive usage scenario description for research and development purposes in academic and commercial settings', description='Enter extended usage scenario meeting length requirements', clear_before_type=True)`
 
 ### Example 2: Dropdown Language Adaptation
 **Context**: Bilingual interface with Chinese dropdown options
 **Initial Action**: `execute_ui_action(action='SelectDropdown', target='researcher type dropdown', value='Academic', description='Select researcher type')`
-**Tool Response**: `[FAILURE] Available options: [教育工作者, 科研工作者, 产业从业者, 学生, 其他]`
-**Recovery Action**: `execute_ui_action(action='SelectDropdown', target='researcher type dropdown', value='科研工作者', description='Select Scientific Researcher (Chinese equivalent of Academic)')`
+**Tool Response**: `[FAILURE] Available options: [Educator, Researcher, Industry Professional, Student, Other]`
+**Recovery Action**: `execute_ui_action(action='SelectDropdown', target='researcher type dropdown', value='Researcher', description='Select Researcher from available options')`
 
 ### Example 3: Dynamic Content Waiting
 **Context**: API-populated dropdown requiring wait time
@@ -267,13 +267,13 @@ When encountering a complex instruction:
 **Follow-up**: `execute_ui_assertion(assertion='Verify success message appears and button returns to normal state')`
 
 ### Example 5: Multi-Action Instruction Handling
-**Context**: Instruction contains multiple actions "浏览首页顶部导航栏，逐一点击'访客'、'校友'、'捐赠'、'人才招聘'等链接"
-**First Action Identification**: The first mentioned action is "访客" (visitor) link
-**Correct Agent Response**: Execute only the FIRST action - `execute_ui_action(action='click', target='访客 link', description='Click the visitor link in the top navigation bar')`
-**Tool Response**: `[SUCCESS] Action 'click' on '访客 link' completed successfully`
+**Context**: Instruction contains multiple actions "Browse the homepage top navigation bar, click one by one: 'Visitor', 'Alumni', 'Donate', 'Careers' links"
+**First Action Identification**: The first mentioned action is "Visitor" link
+**Correct Agent Response**: Execute only the FIRST action - `execute_ui_action(action='click', target='Visitor link', description='Click the visitor link in the top navigation bar')`
+**Tool Response**: `[SUCCESS] Action 'click' on 'Visitor link' completed successfully`
 **Agent Reporting**: Report completion of the single action and allow framework to proceed to next step
 
-### Example 6: English Multi-Action Instruction Handling
+### Example 6: Another Multi-Action Instruction Handling
 **Context**: Instruction contains "Click on the 'Login', 'Register', and 'Help' links in the header"
 **First Action Identification**: The first mentioned action is "Login" link
 **Correct Agent Response**: Execute only the FIRST action - `execute_ui_action(action='click', target='Login link', description='Click the Login link in the header')`
@@ -307,8 +307,8 @@ When all test steps are completed or an unrecoverable error occurs:
 
 
 def get_category_guidelines(test_category: str) -> str:
-    """根据测试类别生成特定的执行指导."""
-    
+    """Generate specific execution guidelines based on test category."""
+
     category_guidelines = {
         "Security_Functional": """
 **Security Testing Guidelines**:
@@ -317,7 +317,7 @@ def get_category_guidelines(test_category: str) -> str:
 - Test for common security vulnerabilities (XSS, CSRF, injection)
 - Verify secure data transmission and storage
 - Pay special attention to session management and timeout handling""",
-        
+
         "Ecommerce_Functional": """
 **E-commerce Testing Guidelines**:
 - Focus on shopping cart and checkout process integrity
@@ -325,7 +325,7 @@ def get_category_guidelines(test_category: str) -> str:
 - Test payment processing with appropriate test data
 - Verify order confirmation and fulfillment workflows
 - Ensure inventory and stock availability handling""",
-        
+
         "Banking_Security": """
 **Banking Security Testing Guidelines**:
 - Adhere to strict financial data protection standards
@@ -333,7 +333,7 @@ def get_category_guidelines(test_category: str) -> str:
 - Test multi-factor authentication and security questions
 - Verify account balance and transaction accuracy
 - Comply with financial regulations and compliance requirements""",
-        
+
         "Healthcare_Compliance": """
 **Healthcare Compliance Testing Guidelines**:
 - Follow HIPAA and patient privacy protection guidelines
@@ -341,7 +341,7 @@ def get_category_guidelines(test_category: str) -> str:
 - Test patient record access controls and audit logs
 - Verify emergency access and data breach procedures
 - Ensure compliance with healthcare industry standards""",
-        
+
         "Functional_Data": """
 **Data Management Testing Guidelines**:
 - Validate CRUD operations and data consistency
@@ -349,7 +349,7 @@ def get_category_guidelines(test_category: str) -> str:
 - Verify backup and recovery procedures
 - Check data migration and synchronization processes
 - Ensure proper handling of large datasets""",
-        
+
         "Functional_User_Interaction": """
 **User Interaction Testing Guidelines**:
 - Focus on user experience and interface responsiveness
@@ -357,7 +357,7 @@ def get_category_guidelines(test_category: str) -> str:
 - Validate user input validation and feedback mechanisms
 - Verify consistent behavior across different user roles
 - Test for internationalization and localization support""",
-        
+
         "Functional_General": """
 **General Functional Testing Guidelines**:
 - Follow standard functional testing procedures
@@ -366,39 +366,39 @@ def get_category_guidelines(test_category: str) -> str:
 - Verify data input/output operations
 - Ensure cross-browser compatibility""",
     }
-    
+
     return category_guidelines.get(test_category, category_guidelines["Functional_General"])
 
 
 def get_business_context_guidance(business_context: str, domain_specific_rules: str) -> str:
-    """根据业务上下文生成执行指导."""
-    
+    """Generate execution guidance based on business context."""
+
     if not business_context.strip() and not domain_specific_rules.strip():
         return "**Standard Business Context**: Apply general business workflow understanding and common user behavior patterns."
-    
+
     guidance = "**Business Context Guidance**:\n"
-    
+
     if business_context.strip():
         guidance += f"- **Business Process**: {business_context}\n"
-    
+
     if domain_specific_rules.strip():
         guidance += f"- **Domain Rules**: {domain_specific_rules}\n"
-    
+
     guidance += """
 - Apply industry-specific user behavior patterns
 - Consider business workflow dependencies and prerequisites
 - Validate business rule compliance and data integrity
 - Ensure user actions align with business process requirements"""
-    
+
     return guidance
 
 
 def get_test_data_guidance(test_data_requirements: str) -> str:
-    """根据测试数据需求生成选择策略."""
-    
+    """Generate selection strategy based on test data requirements."""
+
     if not test_data_requirements.strip():
         return "**Test Data Strategy**: Use realistic, appropriate test data that matches field requirements and business context."
-    
+
     return f"""
 **Test Data Requirements**: {test_data_requirements}
 
