@@ -5,7 +5,7 @@ import json
 import logging
 import uuid
 from io import BytesIO
-from typing import List
+from typing import List, Dict, Any, Optional
 
 from html2text import html2text
 from playwright.async_api import Page
@@ -86,7 +86,7 @@ class PageTextTest:
                     has_issues = test_page_content and 'None' not in str(test_page_content)
                     if has_issues:
                         result.status = TestStatus.FAILED
-                        issues = test_page_content
+                        issues = self.format_issues_to_markdown(test_page_content)
                     else:
                         result.status = TestStatus.PASSED
                         issues = '无发现问题'
@@ -116,8 +116,70 @@ class PageTextTest:
                 - 用户用例：${user_case}
                 输出要求：
                 - 如果没有发现错误，请只输出 None ，不要包含任何解释。
-                - 如果发现了错误，请使用以下JSON格式输出：  {{'error': '', 'reason': ''}}； error表示错误点，reason给出具体错误的原因和更改结果。
+                - 如果发现了错误，请使用以下JSON格式输出：
+                {{
+                    "error": [
+                        {{
+                            "location": "错误位置描述",
+                            "current": "当前错误内容",
+                            "suggested": "建议修改内容",
+                            "type": "错误类型"
+                        }}
+                    ],
+                    "reason": "总体问题原因说明"
+                }}
                 """
+    
+    @staticmethod
+    def format_issues_to_markdown(issues_content: str) -> str:
+        # Format issues to markdown
+        if not issues_content or issues_content == '无发现问题':
+            return issues_content
+        
+        try:
+            if isinstance(issues_content, str):
+                if issues_content.strip().startswith('{'):
+                    data = json.loads(issues_content)
+                else:
+                    return issues_content
+            else:
+                data = issues_content
+                
+            if 'error' in data and 'reason' in data:
+                errors = data['error']
+                reason_summary = data['reason']
+                
+                if not errors:
+                    return '无发现问题'
+                
+                if reason_summary:
+                    markdown_content = f"**总体问题：** {reason_summary}\n\n"
+                
+                if isinstance(errors, list):
+                    for i, error_item in enumerate(errors, 1):
+                        if isinstance(error_item, dict):
+                            location = error_item.get('location', '未知位置')
+                            current = error_item.get('current', '')
+                            suggested = error_item.get('suggested', '')
+                            error_type = error_item.get('type', '未知类型')
+                            
+                            markdown_content += f"### {i}. 问题详情\n\n"
+                            markdown_content += f"**位置：** {location}\n\n"
+                            markdown_content += f"**错误内容：** `{current}`\n\n"
+                            markdown_content += f"**建议修改：** `{suggested}`\n\n"
+                            markdown_content += f"**错误类型：** {error_type}\n\n"
+                        else:
+                            markdown_content += f"### {i}. 问题详情\n\n"
+                            markdown_content += f"**错误内容：** {error_item}\n\n"
+                else:
+                    markdown_content += f"**错误内容：** {errors}\n\n"
+                
+                return markdown_content
+            else:
+                return issues_content
+                
+        except (json.JSONDecodeError, KeyError, TypeError):
+            return issues_content
 
 
 class PageContentTest:
