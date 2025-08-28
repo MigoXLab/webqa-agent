@@ -11,3 +11,5 @@ pytest-asyncio
 python-dotenv
 requests
 pillow
+gradio
+pyyaml
