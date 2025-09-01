@@ -99,6 +99,10 @@ After configuring `config/config.yaml` (refer to "Usage > Test Configuration"), 
 python webqa-agent.py
 ```
 
+## Online Demo
+
+Experience online: [WebQA-Agent on ModelScope](https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary)
+
 ## Usage
 
 ### Test Configuration
@@ -156,6 +160,12 @@ Test results will be generated in the `reports` directory. Open the HTML report 
 2. Functional traversal and page validation: Verify business logic correctness and data integrity
 3. Interaction and visualization: Test case visualization and local service real-time reasoning process display
 4. Capability expansion: Multi-model integration and more evaluation dimensions
+
+## Acknowledgements
+
+- [natbot](https://github.com/nat/natbot): Drive a browser with GPT-3
+- [Midscene.js](https://github.com/web-infra-dev/midscene/): AI Operator for Web, Android, Automation & Testing
+- [browser-use](https://github.com/browser-use/browser-use/): AI Agent for Browser control
 
 ## Open Source License
 
