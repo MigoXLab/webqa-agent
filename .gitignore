@@ -227,7 +227,7 @@ output/
 .pytest*
 test.py
 test_cases_*.json
-*.html
+tests/*test_results/*
 
 #config
 .env

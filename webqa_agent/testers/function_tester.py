@@ -8,7 +8,7 @@ from webqa_agent.actions.action_executor import ActionExecutor
 from webqa_agent.actions.action_handler import ActionHandler
 from webqa_agent.browser.check import ConsoleCheck, NetworkCheck
 from webqa_agent.browser.session import BrowserSession
-from webqa_agent.crawler.deep_crawler import DeepCrawler
+from webqa_agent.crawler.deep_crawler import DeepCrawler, ElementKey
 from webqa_agent.llm.llm_api import LLMAPI
 from webqa_agent.llm.prompt import LLMPrompt
 
@@ -92,9 +92,9 @@ class UITester:
 
             # Crawl current page state
             dp = DeepCrawler(self.page)
-            _, id_map = await dp.crawl(highlight=True, viewport_only=True)
-            await self._actions.update_element_buffer(id_map)
-            logging.debug(f"action id_map: {id_map}")
+            prev = await dp.crawl(highlight=True, viewport_only=True, cache_dom=True)
+            await self._actions.update_element_buffer(prev.raw_dict())
+            logging.debug(f"previous dom before action : {prev.to_llm_json()}")
 
             # Take screenshot
             marker_screenshot = await self._actions.b64_page_screenshot(file_name="marker")
@@ -102,8 +102,16 @@ class UITester:
             # Remove marker
             await dp.remove_marker()
 
-            # Prepare LLM input
-            user_prompt = self._prepare_prompt_action(test_step, id_map, LLMPrompt.planner_output_prompt)
+            # Prepare LLM input with comprehensive element data for better planning
+            # Include ATTRIBUTES for input types, placeholders, and other action-relevant info
+            planning_template = [
+                str(ElementKey.TAG_NAME),
+                str(ElementKey.INNER_TEXT),
+                str(ElementKey.ATTRIBUTES),
+                str(ElementKey.CENTER_X),
+                str(ElementKey.CENTER_Y)
+            ]
+            user_prompt = self._prepare_prompt_action(test_step, prev.to_llm_json(template=planning_template), LLMPrompt.planner_output_prompt)
 
             # Generate plan
             plan_json = await self._generate_plan(LLMPrompt.planner_system_prompt, user_prompt, marker_screenshot)
@@ -114,6 +122,11 @@ class UITester:
             execution_steps, execution_result = await self._execute_plan(test_step, plan_json, file_path)
 
             end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            curr = await dp.crawl(highlight=True, viewport_only=True, cache_dom=True)
+            diff_elems = curr.diff_dict([str(ElementKey.TAG_NAME), str(ElementKey.INNER_TEXT), str(ElementKey.ATTRIBUTES)])
+            if diff_elems:
+                logging.debug(f"Diff element map after action: {diff_elems}")
 
             # Aggregate screenshots: first is page marker screenshot, rest are screenshots after each action
             screenshots_list = [{"type": "base64", "data": marker_screenshot}] + [
@@ -186,7 +199,7 @@ class UITester:
 
             # Crawl current page
             dp = DeepCrawler(self.page)
-            _, id_map = await dp.crawl(highlight=True, highlight_text=True, viewport_only=True)
+            await dp.crawl(highlight=True, highlight_text=True, viewport_only=True)
 
             marker_screenshot = await self._actions.b64_page_screenshot(file_name="marker")
             await dp.remove_marker()

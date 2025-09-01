@@ -90,6 +90,60 @@
         }
 
         /**
+         * Return a compact subset of computed styles for model consumption
+         */
+        function getStyleSubset(elem) {
+            if (!window._includeStyles) return null;
+            try {
+                const s = getCachedStyle(elem);
+                return {
+                    display: s.display,
+                    visibility: s.visibility,
+                    opacity: s.opacity,
+                    position: s.position,
+                    zIndex: s.zIndex,
+                    overflowX: s.overflowX,
+                    overflowY: s.overflowY,
+                    textOverflow: s.textOverflow,
+                    whiteSpace: s.whiteSpace,
+                    wordBreak: s.wordBreak,
+                    wordWrap: s.wordWrap,
+                    fontSize: s.fontSize,
+                    fontWeight: s.fontWeight,
+                    lineHeight: s.lineHeight,
+                    color: s.color,
+                    backgroundColor: s.backgroundColor,
+                    pointerEvents: s.pointerEvents,
+                    cursor: s.cursor,
+                    // 布局相关
+                    width: s.width,
+                    height: s.height,
+                    maxWidth: s.maxWidth,
+                    maxHeight: s.maxHeight,
+                    margin: s.margin,
+                    padding: s.padding,
+                    // 对齐相关
+                    textAlign: s.textAlign,
+                    verticalAlign: s.verticalAlign,
+                    justifyContent: s.justifyContent,
+                    alignItems: s.alignItems,
+                    flexDirection: s.flexDirection,
+                    gap: s.gap,
+                    // 边框和背景
+                    border: s.border,
+                    borderColor: s.borderColor,
+                    borderWidth: s.borderWidth,
+                    outline: s.outline,
+                    backgroundImage: s.backgroundImage,
+                    backgroundSize: s.backgroundSize,
+                    objectFit: s.objectFit,
+                };
+            } catch (e) {
+                return null;
+            }
+        }
+
+        /**
          * Determines if an element is heuristically interactive based on various signals.
          *
          * This function uses heuristic analysis to identify elements that may be interactive
@@ -733,7 +787,8 @@
 
                 isParentHighlighted: isParentHighlighted,
                 xpath: generateXPath(elem),
-                selector: generateSelector(elem)
+                selector: generateSelector(elem),
+                styles: getStyleSubset(elem)
             };
         }
 

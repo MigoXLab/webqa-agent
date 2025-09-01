@@ -156,7 +156,7 @@ class WebAccessibilityTest:
 class PageButtonTest:
 
     @staticmethod
-    async def run(url: str, page: Page, clickable_elements: list, **kwargs) -> SubTestResult:
+    async def run(url: str, page: Page, clickable_elements: dict, **kwargs) -> SubTestResult:
         """Run page button test.
 
         Args:
@@ -182,10 +182,10 @@ class PageButtonTest:
             total, total_failed = 0, 0
 
             if clickable_elements:
-                for i, element in enumerate(clickable_elements):
+                for highlight_id, element in clickable_elements.items():
                     # Run single test with the provided browser configuration
                     element_text = element.get("selector", "Unknown")
-                    logging.info(f"Testing clickable element {i + 1}...")
+                    logging.info(f"Testing clickable element {highlight_id}...")
 
                     try:
                         current_url = page.url
@@ -194,7 +194,7 @@ class PageButtonTest:
                             await asyncio.sleep(0.5)  # Wait for page to stabilize
 
                         screenshots = []
-                        click_result = await click_handler.click_and_screenshot(page, element, i)
+                        click_result = await click_handler.click_and_screenshot(page, element, highlight_id)
                         if click_result.get("screenshot_after"):
                             scr = click_result["screenshot_after"]
                             if isinstance(scr, str):
@@ -210,7 +210,7 @@ class PageButtonTest:
 
                         business_success = click_result["success"]
                         step = SubTestStep(
-                            id=int(i + 1), description=f"点击元素: {element_text}", screenshots=screenshots
+                            id=int(highlight_id), description=f"点击元素: {element_text}", screenshots=screenshots
                         )
                         # Determine step status based on business result
                         step_status = TestStatus.PASSED if business_success else TestStatus.FAILED

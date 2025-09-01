@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from webqa_agent.data import ParallelTestSession, TestStatus
@@ -282,7 +283,7 @@ class ResultAggregator:
         try:
             # Determine report directory
             if report_dir is None:
-                timestamp = os.getenv("WEBQA_TIMESTAMP")
+                timestamp = os.getenv("WEBQA_REPORT_TIMESTAMP") or os.getenv("WEBQA_TIMESTAMP")
                 report_dir = f"./reports/test_{timestamp}"
             os.makedirs(report_dir, exist_ok=True)
 
@@ -303,13 +304,24 @@ class ResultAggregator:
             logging.error(f"Failed to generate JSON report: {e}")
             return ""
 
+    def _get_static_dir(self) -> Path:
+        """Resolve the static assets directory in a robust way.
+
+        This uses the source file location of this module instead of the working
+        directory to avoid issues on hosted platforms.
+        """
+        # __file__ → .../webqa_agent/executor/result_aggregator.py
+        # static dir → .../webqa_agent/static
+        executor_dir = Path(__file__).resolve().parent
+        static_dir = (executor_dir.parent / "static").resolve()
+        return static_dir
+
     def _read_css_content(self) -> str:
         """Read and return CSS content."""
         try:
-            css_path = os.path.join(os.path.dirname(__file__), "../static/assets/style.css")
-            if os.path.exists(css_path):
-                with open(css_path, "r", encoding="utf-8") as f:
-                    return f.read()
+            css_path = self._get_static_dir() / "assets" / "style.css"
+            if css_path.exists():
+                return css_path.read_text(encoding="utf-8")
         except Exception as e:
             logging.warning(f"Failed to read CSS file: {e}")
         return ""
@@ -317,61 +329,75 @@ class ResultAggregator:
     def _read_js_content(self) -> str:
         """Read and return JavaScript content."""
         try:
-            js_path = os.path.join(os.path.dirname(__file__), "../static/assets/index.js")
-            if os.path.exists(js_path):
-                with open(js_path, "r", encoding="utf-8") as f:
-                    return f.read()
+            js_path = self._get_static_dir() / "assets" / "index.js"
+            if js_path.exists():
+                return js_path.read_text(encoding="utf-8")
         except Exception as e:
             logging.warning(f"Failed to read JS file: {e}")
         return ""
 
-    def generate_html_report_fully_inlined(self, test_session, report_dir: str | None = None, template_path: str = None) -> str:
+    def generate_html_report_fully_inlined(self, test_session, report_dir: str | None = None) -> str:
         """Generate a fully inlined HTML report for the test session."""
         import re
         import json
         import re
 
         try:
-            if template_path is None:
-                template_path = os.path.join(os.path.dirname(__file__), "../static/index.html")
-            with open(template_path, "r", encoding="utf-8") as f:
-                html_template = f.read()
+            template_file = self._get_static_dir() / "index.html"
 
-            css_content = self._read_css_content()
-            js_content = self._read_js_content()
+            template_found = template_file.exists()
+            if template_found:
+                html_template = template_file.read_text(encoding="utf-8")
+            else:
+                logging.warning(
+                    f"Report template not found at {template_file}. Falling back to minimal inline template."
+                )
+
             datajs_content = (
                 "window.testResultData = " + json.dumps(test_session.to_dict(), ensure_ascii=False, default=str) + ";"
             )
 
-            html_out = html_template
-            html_out = re.sub(
-                r'<link\s+rel="stylesheet"\s+href="/assets/style.css"\s*>',
-                lambda m: f"<style>\n{css_content}\n</style>",
-                html_out,
-            )
-            html_out = re.sub(
-                r'<script\s+src="/data.js"\s*>\s*</script>',
-                lambda m: f"<script>\n{datajs_content}\n</script>",
-                html_out,
-            )
-            html_out = re.sub(
-                r'<script\s+type="module"\s+crossorigin\s+src="/assets/index.js"\s*>\s*</script>',
-                lambda m: f'<script type="module">\n{js_content}\n</script>',
-                html_out,
-            )
+            if template_found:
+                css_content = self._read_css_content()
+                js_content = self._read_js_content()
+
+                html_out = html_template
+                html_out = re.sub(
+                    r'<link\s+rel="stylesheet"\s+href="/assets/style.css"\s*>',
+                    lambda m: f"<style>\n{css_content}\n</style>",
+                    html_out,
+                )
+                html_out = re.sub(
+                    r'<script\s+src="/data.js"\s*>\s*</script>',
+                    lambda m: f"<script>\n{datajs_content}\n</script>",
+                    html_out,
+                )
+                html_out = re.sub(
+                    r'<script\s+type="module"\s+crossorigin\s+src="/assets/index.js"\s*>\s*</script>',
+                    lambda m: f'<script type="module">\n{js_content}\n</script>',
+                    html_out,
+                )
 
             if report_dir is None:
-                timestamp = os.getenv("WEBQA_TIMESTAMP")
+                timestamp = os.getenv("WEBQA_REPORT_TIMESTAMP") or os.getenv("WEBQA_TIMESTAMP")
                 report_dir = f"./reports/test_{timestamp}"
-            os.makedirs(report_dir, exist_ok=True)
-            html_path = os.path.join(report_dir, "test_report.html")
-            with open(html_path, "w", encoding="utf-8") as f:
-                f.write(html_out)
-            absolute_path = os.path.abspath(html_path)
+            # Ensure report dir exists; if creation fails, fallback to tmp
+            try:
+                os.makedirs(report_dir, exist_ok=True)
+                report_dir_path = Path(report_dir).resolve()
+            except Exception as mk_err:
+                logging.warning(f"Cannot create report dir '{report_dir}': {mk_err}. Falling back to /tmp/webqa-reports.")
+                report_dir_path = Path("/tmp/webqa-reports").resolve()
+                report_dir_path.mkdir(parents=True, exist_ok=True)
+
+            html_path = report_dir_path / "test_report.html"
+            html_path.write_text(html_out, encoding="utf-8")
+
+            absolute_path = str(html_path)
             if os.getenv("DOCKER_ENV"):
-                host_path = absolute_path.replace("/app/reports", "./reports")
-                logging.debug(f"HTML report generated: {host_path}")
-                return host_path
+                mapped = absolute_path.replace("/app/reports", "./reports")
+                logging.debug(f"HTML report generated: {mapped}")
+                return mapped
             else:
                 logging.debug(f"HTML report generated: {absolute_path}")
                 return absolute_path

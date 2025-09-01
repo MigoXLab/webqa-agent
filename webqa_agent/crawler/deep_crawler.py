@@ -1,12 +1,23 @@
 import asyncio
 import datetime
 import json
+import time
+import logging
+import re
 
 from pathlib import Path
 from playwright.async_api import Page, async_playwright
 from webqa_agent.crawler.dom_tree import DomTreeNode as dtree
-from typing import List, Dict, Optional, Any, Tuple
+from webqa_agent.crawler.dom_cacher import DomCacher
+from typing import List, Dict, Optional, Any, Tuple, TypedDict, Union, Iterable
+from pydantic import BaseModel, Field
+from enum import Enum
+from itertools import groupby
 
+
+# ============================================================================
+# UTILITY FUNCTIONS
+# ============================================================================
 
 def get_time() -> str:
     """
@@ -16,129 +27,485 @@ def get_time() -> str:
     return datetime.datetime.now().strftime("%Y%m%d_%H_%M_%S")
 
 
+def _normalize_keys(template: Optional[Iterable[Union[str, "ElementKey"]]]) -> Optional[List[str]]:
+    """
+    Normalize template keys to string format.
+    
+    Args:
+        template: Template containing ElementKey enums or strings.
+        
+    Returns:
+        List of normalized string keys, or None if template is None.
+    """
+    if template is None:
+        return None
+
+    normalized = []
+    for key in template:
+        try:
+            # Handle both Enum and string types
+            normalized.append(key.value if hasattr(key, "value") else str(key))
+        except Exception:
+            normalized.append(str(key))
+    return normalized
+
+
+# ============================================================================
+# ENUMS AND CONSTANTS
+# ============================================================================
+
+class ElementKey(Enum):
+    """Enumeration for element attribute keys."""
+    NODE = "node"
+    TAG_NAME = "tagName"
+    CLASS_NAME = "className"
+    INNER_TEXT = "innerText"
+    ATTRIBUTES = "attributes"
+    VIEWPORT = "viewport"
+    CENTER_X = "center_x"
+    CENTER_Y = "center_y"
+    IS_VISIBLE = "isVisible"
+    IS_INTERACTIVE = "isInteractive"
+    IS_VALID_TEXT = "isValidText"
+    IS_TOP_ELEMENT = "isTopElement"
+    IS_IN_VIEWPORT = "isInViewport"
+    XPATH = "xpath"
+    SELECTOR = "selector"
+
+    def __str__(self) -> str:
+        """Return the string representation of the enum value."""
+        return self.value
+
+
+DEFAULT_OUTPUT_TEMPLATE = [
+    ElementKey.TAG_NAME.value,
+    ElementKey.INNER_TEXT.value,
+    ElementKey.CENTER_X.value,
+    ElementKey.CENTER_Y.value
+]
+
+
+# ============================================================================
+# DATA MODELS
+# ============================================================================
+
+class ElementMap(BaseModel):
+    """A wrapper for a dictionary of elements that provides a cleansing method."""
+    data: Dict[str, Any] = Field(default_factory=dict)
+
+    def clean(self, output_template: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        Cleanses the element map, returning a new dictionary with filtered attributes.
+    
+        This method filters element data based on the output template and applies
+        additional cleaning logic to remove unwanted attributes like 'class' from
+        the attributes field.
+    
+        Args:
+            output_template: A list of keys to include in the cleansed output.
+                             If None, DEFAULT_OUTPUT_TEMPLATE is used.
+    
+        Returns:
+            A dictionary with the cleansed element data.
+        """
+        if output_template is None:
+            output_template = DEFAULT_OUTPUT_TEMPLATE
+    
+        def to_key(k):
+            """Convert key to string format."""
+            return k.value if hasattr(k, "value") else str(k)
+    
+        def clean_attributes(attrs):
+            """Remove 'class' key from attributes."""
+            if not isinstance(attrs, dict):
+                return attrs
+            
+            # Create a copy and remove 'class' key
+            cleaned_attrs = {k: v for k, v in attrs.items() if k != 'class'}
+            return cleaned_attrs
+    
+        keys = [to_key(k) for k in output_template]
+        result = {}
+    
+        for e_id, element_data in self.data.items():
+            cleaned_element = {}
+    
+            for key in keys:
+                value = element_data.get(key)
+                if value is not None:
+                    # Apply special cleaning for attributes field
+                    if key == str(ElementKey.ATTRIBUTES):
+                        cleaned_element[key] = clean_attributes(value)
+                    else:
+                        cleaned_element[key] = value
+    
+            # Only include elements that have at least one valid field
+            if cleaned_element:
+                result[e_id] = cleaned_element
+    
+        return result
+
+
+class CrawlResultModel(BaseModel):
+    """Model for crawl results containing flattened and hierarchical element data."""
+    element_tree: Dict[str, Any] = Field(default_factory=dict)
+    flat_element_map: ElementMap = Field(default_factory=ElementMap)
+    diff_element_map: ElementMap = Field(default_factory=ElementMap)
+
+    def raw_dict(self) -> Dict[str, Any]:
+        """Get raw flattened element data with all fields."""
+        return self.flat_element_map.data
+
+    def clean_dict(self, template: Optional[Iterable[Union[str, "ElementKey"]]] = None) -> Dict[str, Any]:
+        """Get cleaned flattened element data with fields filtered by template."""
+        return self.flat_element_map.clean(output_template=_normalize_keys(template))
+
+    def diff_dict(self, template: Optional[Iterable[Union[str, "ElementKey"]]] = None) -> Dict[str, Any]:
+        """Get DOM difference element data with specified template."""
+        return self.diff_element_map.clean(output_template=_normalize_keys(template))
+
+    def to_llm_json(self, template: Optional[Iterable[Union[str, "ElementKey"]]] = None) -> str:
+        """Convert filtered elements to LLM-compatible JSON format."""
+        return json.dumps(self.clean_dict(template=template), ensure_ascii=False, separators=(",", ":"))
+
+
+# ============================================================================
+# MAIN CRAWLER CLASS
+# ============================================================================
+
 class DeepCrawler:
     """
-    A deep crawler for recursively extracting structured element data from a web page.
+    A deep crawler for recursively extracting structured element data from web pages.
 
-    This class injects a JavaScript payload (`element_detector.js`) into a Playwright
-    page to build a hierarchical tree of DOM elements, capturing properties like
-    visibility, interactivity, and position. It can also highlight elements on the
-    page for debugging purposes.
+    This class injects JavaScript payloads into Playwright pages to build hierarchical
+    DOM element trees, capturing properties such as visibility, interactivity, and
+    positioning. It supports element highlighting for debugging and provides comprehensive
+    DOM change detection capabilities.
 
-    Key functionalities include:
-    - Crawling a page to get a nested dictionary representing the DOM.
-    - Identifying clickable elements and extracting text content.
-    - Taking screenshots and saving crawl results to JSON files.
-    - Removing visual markers added during highlighting.
+    Key functionalities:
+    - Recursive DOM crawling with structured data extraction
+    - Interactive element identification and filtering
+    - Visual element highlighting for debugging purposes
+    - DOM change detection between crawl operations
+    - Screenshot capture and result serialization
     """
+
+    # Class-level constants for file and directory paths
     default_dir = Path(__file__).parent
-    # File paths
+
+    # JavaScript injection files
     DETECTOR_JS = default_dir / "js" / "element_detector.js"
     REMOVER_JS = default_dir / "js" / "marker_remover.js"
 
-    # Directory paths
+    # Output directories
     RESULTS_DIR = default_dir / "results"
     SCREENSHOTS_DIR = default_dir / "screenshots"
 
-    # Parameters
-    MAX_DEPTH = 2
-
-    # Configuration for filtering elements to be considered clickable.
-    # An element is kept if it satisfies all conditions in `KeepNodeType`.
-    # `href` is currently not used but reserved for future filtering logic.
-    CRAWL_CONFIG = {
-        "KeepNodeType": ["isVisible", "isInteractive", "isTopElement"],
-    }
-
     def __init__(self, page: Page, depth: int = 0):
         """
-        Initialize the DeepCrawler.
-
+        Initialize the DeepCrawler instance.
+    
         Args:
             page: The Playwright Page object to crawl.
-            depth: The current crawling depth.
+            depth: The current crawling depth level.
+            
+        Raises:
+            ValueError: If page is not a valid Playwright Page object.
         """
         if not isinstance(page, Page):
-            raise ValueError("Crawler page MUST BE a Playwright Page object")
+            raise ValueError("Crawler page must be a Playwright Page object")
+
         self.page = page
         self.depth = depth
-        self.crawled_result = None
+        self.element_tree = None  # Hierarchical element tree structure
+        self.dom_cacher = DomCacher()  # DOM change detection manager
+        self._cached_element_tree = None  # Cached DOM tree for comparison
+        self._last_crawl_time = None  # Timestamp of last crawl operation
 
-    @staticmethod
-    def read_js(file_path: Path) -> str:
-        """Reads and returns the content of a JavaScript file."""
-        with open(file_path, "r", encoding="utf-8") as file:
-            return file.read()
+    # ------------------------------------------------------------------------
+    # CORE CRAWLING METHODS
+    # ------------------------------------------------------------------------
 
     async def crawl(
             self,
             page: Optional[Page] = None,
             highlight: bool = False,
             highlight_text: bool = False,
-            viewport_only: bool = False
-    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """
-        Injects JavaScript to crawl the page and returns a structured element tree.
+            viewport_only: bool = False,
+            include_styles: bool = False,
+            cache_dom: bool = False,
+    ) -> CrawlResultModel:
+        """Inject JavaScript to crawl the page and return structured element
+        data.
 
-        This method executes the `element_detector.js` script in the browser context,
-        which builds and returns a hierarchical representation of the DOM. It can also
-        pass parameters to control highlighting and viewport-only processing.
+        This method executes the element detector script in the browser context,
+        building a hierarchical representation of the DOM with detailed element
+        properties and optional visual highlighting.
 
         Args:
-            page: The Playwright Page to crawl. If None, uses the instance's page.
-            highlight: If True, visually highlights detected elements on the page.
-            highlight_text: If True, highlights text nodes. Requires `highlight` to be True.
-            viewport_only: If True, restricts element detection to the current viewport.
+            page: The Playwright Page to crawl. Defaults to instance page.
+            highlight: Whether to visually highlight detected elements.
+            highlight_text: Whether to highlight text nodes (requires highlight=True).
+            viewport_only: Whether to restrict detection to current viewport.
+            include_styles: Whether to include styles in the result.
+            cache_dom: Whether to cache the DOM tree for change detection.
 
         Returns:
-            A tuple containing:
-            - A dictionary representing the root of the crawled element tree.
-            - A dictionary mapping highlight IDs to element information.
+            CrawlResultModel containing the structured crawl data.
         """
         if page is None:
             page = self.page
 
         try:
+            # Build JavaScript payload for element detection
             payload = (
                 f"(() => {{"
                 f"window._highlight = {str(highlight).lower()};"
                 f"window._highlightText = {str(highlight_text).lower()};\n"
                 f"window._viewportOnly = {str(viewport_only).lower()};\n"
+                f"window._includeStyles = {str(include_styles).lower()};\n"
                 f"\n{self.read_js(self.DETECTOR_JS)}"
                 f"\nreturn buildElementTree();"
                 f"}})()"
             )
-            self.crawled_result, highlight_id_map = await page.evaluate(payload)
-            return self.crawled_result, highlight_id_map
+
+            # Execute JavaScript and extract results
+            self.element_tree, flat_elements = await page.evaluate(payload)
+
+            # Create result model with extracted data
+            result = CrawlResultModel(
+                flat_element_map=ElementMap(data=flat_elements or {}),
+                element_tree=self.element_tree or {}
+            )
+
+            # Perform DOM change detection if caching is enabled
+            if cache_dom and self.element_tree:
+                dom_tree = dtree.build_root(self.element_tree)
+                self._cached_element_tree = dom_tree
+                self._last_crawl_time = time.time()
+
+                diff_elements = self.dom_cacher.detect_dom_diff(
+                    current_tree=dom_tree,
+                    current_url=page.url
+                )
+
+                logging.debug(f"DOM change result: {diff_elements}")
+
+                result.diff_element_map = ElementMap(data=self.extract_interactive_elements(get_new_elems=True))
+
+            return result
 
         except Exception as e:
-            print(f"Error during JavaScript(DeepCrawler.DETECTOR_JS) injection or evaluation: {e}")
-            return {}, {}
+            logging.error(f"JavaScript injection failed during element detection: {e}")
+            return CrawlResultModel()
+
+    def extract_interactive_elements(self, get_new_elems: bool = False) -> Dict:
+        """
+        Extract interactive elements with comprehensive attribute information.
+
+        Filters DOM nodes based on interactivity, visibility, and positioning
+        criteria to identify actionable elements on the page.
+
+        Args:
+            get_new_elems: Whether to return only newly detected elements.
+            
+        Returns:
+            Dictionary mapping element IDs to their attribute dictionaries.
+        """
+        # Determine data source based on operation mode
+        if get_new_elems:
+            if not self._cached_element_tree:
+                return {}
+            root = self._cached_element_tree
+        else:
+            if not self.element_tree:
+                return {}
+            root = dtree.build_root(self.element_tree)
+
+        elements = {}
+
+        if root:
+            for node in root.pre_iter():
+                # Apply basic element filtering criteria
+                if not all([
+                    node.isInteractive,
+                    node.isVisible,
+                    node.isTopElement,
+                    node.center_x is not None,
+                    node.center_y is not None
+                ]):
+                    continue
+
+                # Filter for new elements when requested
+                if get_new_elems and not node.is_new:
+                    continue
+
+                # Validate viewport dimensions
+                viewport = node.viewport or {}
+                if viewport.get("width") is None or viewport.get("height") is None:
+                    continue
+
+                # Build comprehensive element attribute dictionary
+                elements[str(node.highlightIndex)] = {
+                    str(ElementKey.TAG_NAME): node.tagName,
+                    str(ElementKey.CLASS_NAME): node.className,
+                    str(ElementKey.INNER_TEXT): node.innerText[:200],
+                    str(ElementKey.ATTRIBUTES): node.attributes,
+                    str(ElementKey.VIEWPORT): node.viewport,
+                    str(ElementKey.CENTER_X): node.center_x,
+                    str(ElementKey.CENTER_Y): node.center_y,
+                    str(ElementKey.IS_VISIBLE): node.isVisible,
+                    str(ElementKey.IS_INTERACTIVE): node.isInteractive,
+                    str(ElementKey.IS_TOP_ELEMENT): node.isTopElement,
+                    str(ElementKey.IS_IN_VIEWPORT): node.isInViewport,
+                    str(ElementKey.XPATH): node.xpath,
+                    str(ElementKey.SELECTOR): node.selector
+                }
+
+        return elements
+
+    def get_text(self, fmt: str = "json") -> str:
+        """
+        Extract and concatenate all text content from the crawled DOM tree.
+        
+        This method intelligently filters text content to avoid duplicates and wrapper nodes,
+        collecting only meaningful leaf text nodes and deduplicating consecutive identical texts.
+        
+        Args:
+            fmt: Output format, currently supports "json" (default).
+            
+        Returns:
+            JSON string containing array of extracted text content.
+        """
+
+        def _normalize_text(s: str) -> str:
+            """Normalize text by collapsing whitespace and trimming."""
+            s = re.sub(r'\s+', ' ', s).strip()
+            return s
+
+        def _has_text(n) -> bool:
+            """Check if a node has meaningful text content."""
+            return bool(getattr(n, "innerText", None) and n.innerText.strip())
+
+        def _is_leaf_text_node(n) -> bool:
+            """Determine if a node is a leaf text node (no children with text)."""
+            children = getattr(n, "children", None) or []
+            return not any(_has_text(c) for c in children)
+
+        def _dedupe_consecutive(seq):
+            """Remove consecutive duplicate items from sequence."""
+            return [k for k, _ in groupby(seq)]
+
+        # Early return if no element tree available
+        if not self.element_tree:
+            return ""
+
+        # Build DOM tree from hierarchical data
+        root = dtree.build_root(self.element_tree)
+        if root is None:
+            return ""
+
+        # Collect only leaf text nodes and skip wrapper nodes
+        items = []
+        for n in root.pre_iter():
+            # Skip nodes without meaningful text
+            if not _has_text(n):
+                continue
+
+            # For non-leaf nodes, check if they're wrapper nodes
+            if not _is_leaf_text_node(n):
+                # Skip "wrapper" nodes: parent text identical to any direct child text
+                normalized_text = _normalize_text(n.innerText)
+                child_texts = [
+                    _normalize_text(c.innerText)
+                    for c in (n.children or [])
+                    if _has_text(c)
+                ]
+                # Skip if parent text matches any child text (wrapper node)
+                if normalized_text in child_texts:
+                    continue
+
+            # Add normalized text to collection
+            items.append(_normalize_text(n.innerText))
+
+        # Final deduplication: collapse adjacent duplicates
+        items = _dedupe_consecutive(items)
+
+        # Return as compact JSON array
+        return json.dumps(items, ensure_ascii=False, separators=(",", ":"))
+
+    # ------------------------------------------------------------------------
+    # DOM CACHE MANAGEMENT
+    # ------------------------------------------------------------------------
+
+    def clear_dom_cache(self) -> None:
+        """Clear the DOM change detection cache and reset internal state."""
+        self.dom_cacher.clear_cache()
+        self._cached_element_tree = None
+        self._last_crawl_time = None
+
+    # ------------------------------------------------------------------------
+    # UTILITY METHODS
+    # ------------------------------------------------------------------------
+
+    @staticmethod
+    def read_js(file_path: Path) -> str:
+        """
+        Read and return the content of a JavaScript file.
+        
+        Args:
+            file_path: Path to the JavaScript file.
+            
+        Returns:
+            The content of the JavaScript file as a string.
+        """
+        with open(file_path, "r", encoding="utf-8") as file:
+            return file.read()
+
+    @staticmethod
+    def dump_json(node: Dict[str, Any], path: Path) -> None:
+        """
+        Serialize a dictionary to a JSON file with proper formatting.
+        
+        Args:
+            node: The dictionary to serialize.
+            path: The output file path.
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(node, f, ensure_ascii=False, indent=2)
+
+    # ------------------------------------------------------------------------
+    # VISUAL DEBUGGING METHODS
+    # ------------------------------------------------------------------------
 
     async def remove_marker(self, page: Optional[Page] = None) -> None:
-        """Removes the highlight markers from the page."""
+        """
+        Remove visual highlight markers from the page.
+        
+        Args:
+            page: The Playwright Page to clean. Defaults to instance page.
+        """
         if page is None:
             page = self.page
         try:
             script = self.read_js(self.REMOVER_JS)
             await page.evaluate(script)
-
         except Exception as e:
-            print(f"Error while removing markers: {e}")
-
-    @staticmethod
-    def dump_json(node: Dict[str, Any], path: Path) -> None:
-        """Saves a dictionary to a JSON file."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(node, f, ensure_ascii=False, indent=2)
+            logging.error(f"Failed to remove highlight markers: {e}")
 
     async def take_screenshot(
             self,
             page: Optional[Page] = None,
             screenshot_path: Optional[str] = None
     ) -> None:
-        """Takes a screenshot of the page and saves it to a file."""
+        """
+        Capture a full-page screenshot and save it to disk.
+        
+        Args:
+            page: The Playwright Page to screenshot. Defaults to instance page.
+            screenshot_path: Custom path for the screenshot. Auto-generated if None.
+        """
         if page is None:
             page = self.page
 
@@ -148,112 +515,5 @@ class DeepCrawler:
             path = self.SCREENSHOTS_DIR / f"{get_time()}_marker.png"
 
         path.parent.mkdir(parents=True, exist_ok=True)
-
         await page.screenshot(path=str(path), full_page=True)
-        print(f"Saved screenshot to {path}")
-
-    def get_clickable_elements(self) -> List[Dict[str, Any]]:
-        """
-        Filters and returns a list of clickable elements from the crawled data.
-
-        This method traverses the DOM tree built from the crawled result and identifies
-        elements that meet the criteria defined in `CRAWL_CONFIG`. It extracts key
-        information such as element ID, tag, position, and selectors.
-
-        Returns:
-            A list of dictionaries, where each dictionary represents a clickable element.
-        """
-        if not self.crawled_result:
-            return []
-
-        _root = dtree.build_root(self.crawled_result)
-
-        coords = []
-        if _root:
-            for n in _root.pre_iter():
-                if not all(getattr(n, attr) for attr in DeepCrawler.CRAWL_CONFIG["KeepNodeType"]):
-                    continue
-
-                if n.center_x is not None and n.center_y is not None:
-                    vp = n.viewport or {}
-                    w = vp.get("width")
-                    h = vp.get("height")
-                    if w is not None and h is not None:
-                        coords.append({
-                            # "id": n.id,
-                            "tag": n.tag,
-                            "center_x": n.center_x,
-                            "center_y": n.center_y,
-                            "width": w,
-                            "height": h,
-                            "selector": n.selector,
-                            "xpath": n.xpath,
-                            "text": n.inner_text[:200]
-                        })
-        return coords
-
-    def get_text(self) -> str:
-        """
-        Extracts and concatenates the inner text of all nodes in the crawled DOM tree.
-
-        Returns:
-            A single string containing all the text from the page, with nodes separated by newlines.
-        """
-        if not self.crawled_result:
-            return ""
-
-        root = dtree.build_root(self.crawled_result)
-        if root is None:
-            return ""
-
-        texts = (
-            node.inner_text.strip()
-            for node in root.pre_iter()
-            if node.inner_text and node.inner_text.strip()
-        )
-
-        return "\n".join(texts)
-
-
-async def main(url: str):
-    """
-    An example function to demonstrate the usage of the DeepCrawler.
-
-    This function initializes a Playwright browser, navigates to a URL, and uses
-    the DeepCrawler to extract element data. It then prints the extracted text
-    and saves the raw data to a JSON file.
-
-    Args:
-        url: The URL to crawl.
-    """
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=False)
-        context = await browser.new_context()
-        page = await context.new_page()
-        page.set_default_navigation_timeout(60000)
-        await page.goto(url, wait_until="networkidle")
-
-        # create DeepCrawler instance
-        dp = DeepCrawler(page)
-
-        # crawl page elements and highlight
-        rawdata, highlight_id_map = await dp.crawl(page,
-                                                   highlight=True,
-                                                   highlight_text=False,
-                                                   viewport_only=True)
-        # crawl page content
-        txt_info = dp.get_text()
-        # print(txt_info)
-
-        # get page clickable elements
-        clickable_elements = dp.get_clickable_elements()
-        # print(clickable_elements)
-
-        # screenshot
-        await dp.take_screenshot()
-
-        # dump crawled data into json format
-        dp.dump_json(rawdata, dp.RESULTS_DIR / "rawdata.json")
-
-        # keep browser opened
-        # await asyncio.Event().wait()
+        logging.debug(f"Screenshot saved to {path}")

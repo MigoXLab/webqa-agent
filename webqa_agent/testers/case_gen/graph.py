@@ -14,7 +14,7 @@ from typing import Any, Dict, List
 from langgraph.graph import END, StateGraph
 
 from webqa_agent.actions.action_handler import ActionHandler
-from webqa_agent.crawler.deep_crawler import DeepCrawler
+from webqa_agent.crawler.deep_crawler import DeepCrawler, ElementKey
 from webqa_agent.testers.case_gen.agents.execute_agent import agent_worker_node
 from webqa_agent.testers.case_gen.prompts.planning_prompts import get_reflection_prompt, get_test_case_planning_system_prompt, get_test_case_planning_user_prompt
 from webqa_agent.testers.case_gen.state.schemas import MainGraphState
@@ -65,7 +65,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
 
         # Save updated cases to cases.json
         try:
-            timestamp = os.getenv("WEBQA_TIMESTAMP")
+            timestamp = os.getenv("WEBQA_REPORT_TIMESTAMP")
             report_dir = f"./reports/test_{timestamp}"
             os.makedirs(report_dir, exist_ok=True)
             cases_path = os.path.join(report_dir, "cases.json")
@@ -85,7 +85,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
     logging.info(f"Deep crawling page structure and elements for initial test plan...")
     page = await ui_tester.get_current_page()
     dp = DeepCrawler(page)
-    _, page_content_summary = await dp.crawl(highlight=True, viewport_only=True)
+    page_content_summary = await dp.crawl(highlight=True, viewport_only=True)
     screenshot = await ui_tester._actions.b64_page_screenshot(
         file_name="plan_or_replan", save_to_log=False, full_page=False
     )
@@ -103,10 +103,18 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
         reflection_history=state.get("reflection_history"),
         remaining_objectives=state.get("remaining_objectives"),
     )
-    
+
+    # Use explicit template for planning to include element attributes
+    planning_template = [
+        str(ElementKey.TAG_NAME),
+        str(ElementKey.INNER_TEXT),
+        str(ElementKey.ATTRIBUTES),
+        str(ElementKey.CENTER_X),
+        str(ElementKey.CENTER_Y)
+    ]
     user_prompt = get_test_case_planning_user_prompt(
         state_url=state["url"],
-        page_content_summary=page_content_summary,
+        page_content_summary=page_content_summary.clean_dict(template=planning_template),
         page_structure=page_structure,
         completed_cases=completed_cases,
         reflection_history=state.get("reflection_history"),
@@ -160,7 +168,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             case["url"] = state["url"]
 
         try:
-            timestamp = os.getenv("WEBQA_TIMESTAMP")
+            timestamp = os.getenv("WEBQA_REPORT_TIMESTAMP")
             report_dir = f"./reports/test_{timestamp}"
             os.makedirs(report_dir, exist_ok=True)
             cases_path = os.path.join(report_dir, "cases.json")
@@ -272,7 +280,17 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
     # Use DeepCrawler to get interactive elements mapping and highlighted screenshot
     logging.info(f"Deep crawling page structure and elements for reflection and replanning analysis...")
     dp = DeepCrawler(page)
-    _, page_content_summary = await dp.crawl(highlight=True, viewport_only=True)
+    curr = await dp.crawl(highlight=True, viewport_only=True)
+    # Include position information for better replanning decisions
+    reflect_template = [
+        str(ElementKey.TAG_NAME),
+        str(ElementKey.INNER_TEXT),
+        str(ElementKey.ATTRIBUTES),
+        str(ElementKey.CENTER_X),
+        str(ElementKey.CENTER_Y)
+    ]
+    page_content_summary = curr.clean_dict(reflect_template)
+    logging.debug(f"current page crawled result: {page_content_summary}")
     screenshot = await ui_tester._actions.b64_page_screenshot(file_name="reflection", save_to_log=False, full_page=False)
     await dp.remove_marker()
     await dp.crawl(highlight=False, highlight_text=True, viewport_only=True)

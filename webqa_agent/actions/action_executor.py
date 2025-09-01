@@ -20,6 +20,8 @@ class ActionExecutor:
             "Upload": self._execute_upload,
             "SelectDropdown": self._execute_select_dropdown,
             "Drag": self._execute_drag,
+            "GoToPage": self._execute_go_to_page,  # Added missing action
+            "GoBack": self._execute_go_back,  # Added browser back navigation
         }
 
     async def initialize(self):
@@ -293,3 +295,44 @@ class ActionExecutor:
             return {"success": True, "message": "Drag action successful."}
         else:
             return {"success": False, "message": "Drag action failed."}
+
+    async def _execute_go_to_page(self, action):
+        """Execute go to page action - the missing navigation action."""
+        url = action.get("param", {}).get("url")
+        if not url:
+            return {"success": False, "message": "Missing URL parameter for go to page action"}
+
+        try:
+            # Use smart navigation if available
+            if hasattr(self._actions, 'smart_navigate_to_page'):
+                page = getattr(self._actions, 'page', None)
+                if page:
+                    navigation_performed = await self._actions.smart_navigate_to_page(page, url)
+                    message = "Navigated to page" if navigation_performed else "Already on target page"
+                    return {"success": True, "message": message}
+
+            # Fallback to regular navigation
+            if hasattr(self._actions, 'go_to_page') and hasattr(self._actions, 'page'):
+                await self._actions.go_to_page(self._actions.page, url)
+                return {"success": True, "message": "Successfully navigated to page"}
+
+            return {"success": False, "message": "Navigation method not available"}
+
+        except Exception as e:
+            logging.error(f"Go to page action failed: {str(e)}")
+            return {"success": False, "message": f"Navigation failed: {str(e)}", "playwright_error": str(e)}
+
+    async def _execute_go_back(self, action):
+        """Execute browser back navigation action."""
+        try:
+            if hasattr(self._actions, 'go_back'):
+                success = await self._actions.go_back()
+                if success:
+                    return {"success": True, "message": "Successfully navigated back to previous page"}
+                else:
+                    return {"success": False, "message": "Go back navigation failed"}
+            else:
+                return {"success": False, "message": "Go back action not supported by action handler"}
+        except Exception as e:
+            logging.error(f"Go back action failed: {str(e)}")
+            return {"success": False, "message": f"Go back failed: {str(e)}", "playwright_error": str(e)}

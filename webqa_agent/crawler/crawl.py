@@ -4,7 +4,7 @@ from urllib.parse import urljoin, urlparse
 
 from playwright.async_api import Page
 
-from webqa_agent.crawler.deep_crawler import DeepCrawler
+from webqa_agent.crawler.deep_crawler import DeepCrawler, ElementKey
 
 
 class CrawlHandler:
@@ -88,8 +88,8 @@ class CrawlHandler:
     async def clickable_elements_detection(self, page: Page):
         try:
             dp = DeepCrawler(page)
-            await dp.crawl()
-            clickable_elements = dp.get_clickable_elements()
+            result = await dp.crawl()
+            clickable_elements = result.clean_dict([str(ElementKey.XPATH), str(ElementKey.SELECTOR)])
             return clickable_elements
 
         except Exception as e:
