@@ -92,7 +92,7 @@ class PageTextTest:
                         issues = '无发现问题'
                     result.report.append(
                         SubTestReport(
-                            title=user_case[:4],
+                            title="文本检查",
                             issues=issues,
                         )
                     )
@@ -413,7 +413,7 @@ class PageContentTest:
             issues_text = '无发现问题'
             logging.debug(f'LLM returned no content, treating as PASSED')
 
-        # result.report.append(SubTestReport(title=user_case[:4], issues=issues_text))
+        result.report.append(SubTestReport(title="内容检查", issues=issues_text))
         # aggregate overall status: any WARNING -> WARNING; else PASSED
         if case_status == TestStatus.WARNING and overall_status != TestStatus.WARNING:
             overall_status = TestStatus.WARNING

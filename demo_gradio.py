@@ -473,7 +473,7 @@ def create_gradio_interface():
     #html-report { border: 1px solid #e1e5e9; border-radius: 8px; padding: 0; background: #fff; }
     #html-report iframe { width: 100%; height: 1800px; border: none; overflow: hidden; }
     
-    .gradio-container { max-width: 1400px !important; margin: 0 auto !important; }
+    .gradio-container { max-width: 1500px !important; margin: 0 auto !important; width: 100% !important; }
     
     /* 防止布局缩小 */
     .tab-nav {
@@ -514,13 +514,13 @@ def create_gradio_interface():
     .gh-cta:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(0,0,0,.16); }
 
     /* 三列紧凑栅格与间距优化 */
-    .config-grid { gap: 16px; }
-    .config-card { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:16px; }
+    .config-grid { gap: 16px; flex-wrap: wrap; }
+    .config-card { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:16px; flex: 1 1 calc(50% - 8px); min-width: 300px; }
     .config-card h3 { margin:0 0 12px; font-size:16px; border-bottom:1px solid #f1f5f9; padding-bottom:8px; }
     .config-card .gradio-checkbox, .config-card .gradio-radio, .config-card .gradio-textbox { margin-bottom:10px; }
 
     /* 统一内容宽度容器（用于各个Tab） */
-    .content-wrapper { width: 1200px; margin: 0 auto; }
+    .content-wrapper { max-width: 1500px; margin: 0 auto; width: 100%; overflow-x: auto; }
     
     /* 表格宽度限制，使用更强的选择器防止拉宽容器 */
     .fixed-width-table,
@@ -531,8 +531,8 @@ def create_gradio_interface():
     .content-wrapper .gradio-dataframe > div,
     .content-wrapper .gradio-dataframe .table-wrap,
     .content-wrapper .gradio-dataframe .overflow-x-auto { 
-        max-width: 1200px !important; 
-        width: 1200px !important;
+        max-width: 100% !important; 
+        width: 100% !important; /* Ensure it takes available width */
         overflow-x: auto !important; 
         box-sizing: border-box !important;
     }
@@ -540,8 +540,8 @@ def create_gradio_interface():
     .fixed-width-table table,
     .content-wrapper .gradio-dataframe table { 
         width: 100% !important; 
-        table-layout: fixed !important;
-        max-width: 1200px !important;
+        table-layout: auto !important; /* Allow table to size naturally or be forced by content */
+        max-width: none !important; /* Remove max-width to allow content to dictate width */
     }
     
     /* 各列宽度分配 */
@@ -549,32 +549,32 @@ def create_gradio_interface():
     .fixed-width-table td:nth-child(1),
     .content-wrapper .gradio-dataframe th:nth-child(1), 
     .content-wrapper .gradio-dataframe td:nth-child(1) { 
-        width: 15% !important; 
-        max-width: 220px !important; 
+        width: auto !important; /* Allow auto width for scrolling */
+        max-width: none !important; /* Remove max-width constraint */
         min-width: 180px !important; 
     }
     .fixed-width-table th:nth-child(2), 
     .fixed-width-table td:nth-child(2),
     .content-wrapper .gradio-dataframe th:nth-child(2), 
     .content-wrapper .gradio-dataframe td:nth-child(2) { 
-        width: 30% !important; 
-        max-width: 350px !important; 
+        width: auto !important; 
+        max-width: none !important; 
         min-width: 280px !important; 
     }
     .fixed-width-table th:nth-child(3), 
     .fixed-width-table td:nth-child(3),
     .content-wrapper .gradio-dataframe th:nth-child(3), 
     .content-wrapper .gradio-dataframe td:nth-child(3) { 
-        width: 30% !important; 
-        max-width: 400px !important; 
+        width: auto !important; 
+        max-width: none !important; 
         min-width: 300px !important; 
     }
     .fixed-width-table th:nth-child(4), 
     .fixed-width-table td:nth-child(4),
     .content-wrapper .gradio-dataframe th:nth-child(4), 
     .content-wrapper .gradio-dataframe td:nth-child(4) { 
-        width: 8% !important; 
-        max-width: 90px !important; 
+        width: auto !important; 
+        max-width: none !important; 
         min-width: 70px !important; 
         text-align: center !important;
     }
@@ -582,8 +582,8 @@ def create_gradio_interface():
     .fixed-width-table td:nth-child(5),
     .content-wrapper .gradio-dataframe th:nth-child(5), 
     .content-wrapper .gradio-dataframe td:nth-child(5) { 
-        width: 9% !important; 
-        max-width: 100px !important; 
+        width: auto !important; 
+        max-width: none !important; 
         min-width: 80px !important; 
         text-align: center !important;
     }
@@ -591,8 +591,8 @@ def create_gradio_interface():
     .fixed-width-table td:nth-child(6),
     .content-wrapper .gradio-dataframe th:nth-child(6), 
     .content-wrapper .gradio-dataframe td:nth-child(6) { 
-        width: 7% !important; 
-        max-width: 90px !important; 
+        width: auto !important; 
+        max-width: none !important; 
         min-width: 70px !important; 
         text-align: center !important;
     }
@@ -665,8 +665,8 @@ def create_gradio_interface():
             # 配置标签页
             with gr.TabItem("📝 测试配置"):
                 # 两列布局：左侧（目标配置 + LLM配置叠放），右侧（测试类型）
-                with gr.Row(elem_classes=["config-grid", "content-wrapper"]):
-                    with gr.Column(scale=1, elem_classes=["config-card"]):
+                with gr.Row(elem_classes=["config-grid"]):
+                    with gr.Column(elem_classes=["config-card"], min_width=300, scale=0):
                         gr.Markdown("### 🎯 目标配置")
                         url = gr.Textbox(
                             label="目标URL",
@@ -679,7 +679,7 @@ def create_gradio_interface():
                         model = gr.Textbox(
                             label="模型名称",
                             value="gpt-4.1-mini",
-                            info="使用的语言模型"
+                            info="使用的语言模型 (OPENAI SDK 兼容格式)"
                         )
                         api_key = gr.Textbox(
                             label="API Key",
@@ -693,7 +693,7 @@ def create_gradio_interface():
                             info="LLM服务的基础URL"
                         )
 
-                    with gr.Column(scale=1, elem_classes=["config-card"]):
+                    with gr.Column(elem_classes=["config-card"], min_width=300, scale=0):
                         gr.Markdown("### 🧪 测试类型")
                         function_test_enabled = gr.Checkbox(label="功能测试", value=True)
                         
@@ -706,9 +706,9 @@ def create_gradio_interface():
                             )
                             business_objectives = gr.Textbox(
                                 label="功能测试业务目标",
-                                placeholder="测试聊天功能，生成2个用例",
-                                value="Test chat function, generating 2 cases",
-                                info="ai: 智能测试的具体目标"
+                                placeholder="测试对话功能，生成2个用例",
+                                # value="生成两个测试用例",
+                                info="ai: 智能测试的具体目标，可以修改以定义不同的测试场景"
                             )
                         
                         ux_test_enabled = gr.Checkbox(label="用户体验测试", value=False)
@@ -744,16 +744,16 @@ def create_gradio_interface():
             
             # 状态查询标签页
             with gr.TabItem("📊 任务状态"):
-                with gr.Column(elem_classes=["task-status-container", "content-wrapper"]):
+                with gr.Column(elem_classes=["task-status-container"]):
                     gr.Markdown("### 查询任务执行状态")
-                    with gr.Row():
-                        with gr.Column(scale=3):
+                    with gr.Row(variant="compact"):
+                        with gr.Column(min_width=300):
                             task_id_input = gr.Textbox(
                                 label="任务ID",
                                 placeholder="输入任务ID查询状态",
                                 info="从测试配置页面获取的任务ID"
                             )
-                        with gr.Column(scale=1):
+                        with gr.Column(min_width=100):
                             check_btn = gr.Button("🔍 查询状态", variant="secondary", size="lg")
                     
                     task_status_output = gr.Textbox(
@@ -765,7 +765,7 @@ def create_gradio_interface():
                     # HTML报告显示 + 下载（按钮在预览上方）
                     gr.Markdown("### 📋 测试报告")
                     download_file = gr.File(
-                        label="下载HTML报告",
+                        label="HTML报告",
                         interactive=False,
                         visible=False,
                         file_types=[".html"],
@@ -779,7 +779,7 @@ def create_gradio_interface():
                     )
 
             # 历史记录
-            with gr.TabItem("🗂️ 提交历史"):
+            with gr.TabItem("🗂️ 提交历史") as history_tab:
                 with gr.Column(elem_classes=["content-wrapper"]):
                     gr.Markdown("### 提交记录")
                 history_table = gr.Dataframe(
@@ -841,6 +841,13 @@ def create_gradio_interface():
 
         # 绑定“提交历史”Tab内的刷新按钮
         refresh_history_btn.click(
+            fn=lambda: get_history_rows(),
+            inputs=[],
+            outputs=[history_table]
+        )
+        
+        # 绑定“提交历史”Tab选中事件，自动刷新历史记录
+        history_tab.select(
             fn=lambda: get_history_rows(),
             inputs=[],
             outputs=[history_table]

@@ -65,7 +65,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
 
         # Save updated cases to cases.json
         try:
-            timestamp = os.getenv("WEBQA_TIMESTAMP")
+            timestamp = os.getenv("WEBQA_REPORT_TIMESTAMP")
             report_dir = f"./reports/test_{timestamp}"
             os.makedirs(report_dir, exist_ok=True)
             cases_path = os.path.join(report_dir, "cases.json")
@@ -168,7 +168,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             case["url"] = state["url"]
 
         try:
-            timestamp = os.getenv("WEBQA_TIMESTAMP")
+            timestamp = os.getenv("WEBQA_REPORT_TIMESTAMP")
             report_dir = f"./reports/test_{timestamp}"
             os.makedirs(report_dir, exist_ok=True)
             cases_path = os.path.join(report_dir, "cases.json")
