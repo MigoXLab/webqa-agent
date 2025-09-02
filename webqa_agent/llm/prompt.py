@@ -610,7 +610,7 @@ class LLMPrompt:
     # You are a web content quality inspector. You need to carefully read the text content of the webpage and complete the task based on the user's test objective. Please ensure that the output JSON format does not contain any code blocks or backticks.
 
     TEXT_USER_CASES = [
-        """内容纠错: Carefully inspect the text on the current page and identify any spelling, grammar, or character errors.
+        """Carefully inspect the text on the current page and identify any spelling, grammar, or character errors.
         Text Accuracy: Spelling errors, grammatical errors, punctuation errors; inconsistent formatting of numbers, units, and currency.
         Wording & Tone: Consistent wording; consistent terminology and abbreviations; consistent tone of voice with the product.
         Language Consistency: Inappropriate mixing of languages ​​within the page (e.g., mixing Chinese and English without spacing).
@@ -626,7 +626,7 @@ class LLMPrompt:
         """
     ]
     CONTENT_USER_CASES = [
-        """布局检查: Rigorously review each screenshot at the current viewport for layout issues, and provide specific, actionable recommendations.
+        """Rigorously review each screenshot at the current viewport for layout issues, and provide specific, actionable recommendations.
 
       [Checklist]
       1. Text alignment: Misaligned headings/paragraphs/lists; inconsistent margins or baselines
@@ -644,7 +644,7 @@ class LLMPrompt:
       - If multiple layout issues exist in the same screenshot, merge them into a single object and list them in the 'issue' field separated by semicolons
       - If no issues are found, output strictly None (no explanation)
       """,
-      """元素检查: Rigorously check each screenshot for missing key functional/content/navigation elements, loading failures, or display anomalies, and provide fix suggestions.
+      """Rigorously check each screenshot for missing key functional/content/navigation elements, loading failures, or display anomalies, and provide fix suggestions.
 
       [Checklist]
       1. Functional elements: Buttons/links/inputs/dropdowns/pagination/search etc. missing or misplaced

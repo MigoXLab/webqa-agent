@@ -97,11 +97,13 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
     business_objectives = state.get("business_objectives", "No specific business objectives provided.")
     completed_cases = state.get("completed_cases")
 
+    language = state.get('language', 'zh-CN')
     system_prompt = get_test_case_planning_system_prompt(
         business_objectives=business_objectives,
         completed_cases=completed_cases,
         reflection_history=state.get("reflection_history"),
         remaining_objectives=state.get("remaining_objectives"),
+        language=language,
     )
 
     # Use explicit template for planning to include element attributes
@@ -300,12 +302,14 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
     logging.debug(f"Reflection analysis enhanced with {len(page_content_summary)} interactive elements")
 
     # 使用新的反思提示词函数，传入page_content_summary
+    language = state.get('language', 'zh-CN')
     system_prompt, user_prompt = get_reflection_prompt(
         business_objectives=state.get("business_objectives"),
         current_plan=state["test_cases"],
         completed_cases=state["completed_cases"],
         page_structure=page_structure,
         page_content_summary=page_content_summary,
+        language=language,
     )
 
     logging.info("Reflection and Replanning analysis - Sending request to LLM...")
@@ -380,7 +384,11 @@ async def execute_single_case(state: MainGraphState) -> dict:
     ui_tester_instance = state["ui_tester_instance"]
     case_name = case.get("name")
 
-    with Display.display(f"智能功能测试 - {case_name}"):
+    language = state.get('language', 'zh-CN')
+    logging.debug(f"Execute case language: {language}")
+    default_text = '智能功能测试' if language == 'zh-CN' else 'AI Function Test'
+
+    with Display.display(f"{default_text} - {case_name}"):
         # === 开始跟踪case数据 ===
         # 使用start_case来同时设置名称和开始数据跟踪
         ui_tester_instance.start_case(case_name, case)

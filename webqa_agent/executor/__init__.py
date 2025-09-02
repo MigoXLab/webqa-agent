@@ -2,17 +2,16 @@ from .parallel_executor import ParallelTestExecutor
 from .parallel_mode import ParallelMode
 from .result_aggregator import ResultAggregator
 from .test_runners import (
-    BaseTestRunner,
+    BasicTestRunner,
     LighthouseTestRunner,
     UIAgentLangGraphRunner,
-    UXTestRunner,
-    WebBasicCheckRunner,
+    UXTestRunner
 )
 
 __all__ = [
     "ParallelMode",
     "ParallelTestExecutor",
-    "BaseTestRunner",
+    "BasicTestRunner",
     "UIAgentLangGraphRunner",
     "UXTestRunner",
     "LighthouseTestRunner",

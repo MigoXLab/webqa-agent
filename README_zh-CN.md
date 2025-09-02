@@ -139,7 +139,6 @@ browser_config:
   headless: False                                 # Docker环境会自动覆盖为True
   language: zh-CN
   cookies: []
-
 ```
 
 在配置和运行测试时，请注意以下重要事项：

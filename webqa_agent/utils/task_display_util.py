@@ -11,6 +11,7 @@ from typing import Optional, List
 from collections import deque
 
 from webqa_agent.utils.get_log import COLORS
+from webqa_agent.utils import i18n
 
 
 @dataclass
@@ -51,14 +52,14 @@ class Display:
     display = None
 
     @classmethod
-    def init(cls):
-        cls.display = _Display()
+    def init(cls, language: str = 'zh-CN'):
+        cls.display = _Display(language=language)
 
 
 class _Display:
     SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
-    def __init__(self, refresh_interval: float = 0.1):
+    def __init__(self, refresh_interval: float = 0.1, language: str = 'zh-CN'):
         self.logger = logging.getLogger()
         self.logger_handlers = []
         self.running: List[TaskInfo] = []
@@ -71,6 +72,11 @@ class _Display:
         self.captured_output = StringIO()
         self._log_queue = deque(maxlen=1000)
         self.num_log = 5  # TODO: Make it configurable
+        self.language = language
+        self.localized_strings = {
+            "zh-CN": i18n.get_lang_data('zh-CN').get('display', {}),
+            "en-US": i18n.get_lang_data('en-US').get('display', {}),
+        }
 
         for hdr in self.logger.handlers:
             if isinstance(hdr, logging.StreamHandler) and hdr.name == "stream":
@@ -78,6 +84,10 @@ class _Display:
                 self.logger_handlers.append(hdr)
 
         self.log_pattern = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d+)(\s+)(\w+)(\s+\[.*?]\s+\[.*?]\s+-\s+)(.*)")
+
+    def _get_text(self, key: str) -> str:
+        """Get localized text for the given key."""
+        return self.localized_strings.get(self.language, {}).get(key, key)
 
     def __call__(self, name: str):
         return _Tracker(self, name)
@@ -113,7 +123,7 @@ class _Display:
         out = sys.stdout
         out.write("\x1b[H\x1b[J")
         with self._lock:
-            out.write("🎉 已完成任务\n")
+            out.write(self._get_text("completed_tasks") + "\n")
             for t in self.completed:
                 if t.end is None:
                     continue
@@ -124,7 +134,7 @@ class _Display:
 
             out.write("════════════════════════════════════════\n")
 
-            out.write("🚀 正在执行任务\n")
+            out.write(self._get_text("running_tasks") + "\n")
             now = time.monotonic()
             for t in self.running:
                 elapsed = now - t.start
@@ -156,7 +166,7 @@ class _Display:
         # captured = self.captured_output.getvalue()
         # if captured:
         #     out.write(captured)
-        out.write("📊 任务执行统计面板\n")
+        out.write(self._get_text("task_execution_summary") + "\n")
         out.write("════════════════════════════════════════\n")
 
         total = len(self.completed)
@@ -167,13 +177,13 @@ class _Display:
         # out.write(f"🔢 总任务数：{total}\n")
         # out.write(f"✅ 成功任务：{success}\n")
         # out.write(f"❌ 失败任务：{failed}\n")
-        out.write(f"⏱️ 总共耗时：{total_time:.2f}s\n")
+        out.write(f"{self._get_text('total_time')}：{total_time:.2f}s\n")
 
         if failed > 0:
-            out.write("⚠️ 错误任务列表：\n")
+            out.write(self._get_text("error_tasks") + "\n")
             for t in self.completed:
                 if t.error:
-                    out.write(f"  ❌ {t.name} 错误信息：{t.error}\n")
+                    out.write(f"  ❌ {t.name} {self._get_text('error_message')}：{t.error}\n")
 
         # out.write("════════════════════════════════════════\n")
         # out.write("🎯 Done！\n")

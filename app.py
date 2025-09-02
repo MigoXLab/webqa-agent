@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-WebQA Agent Gradio启动脚本
+WebQA Agent Gradio Launch Script
 """
 
 import sys
@@ -8,20 +8,36 @@ import os
 import subprocess
 import asyncio
 
-# 添加项目路径到Python路径
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add project path to Python path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# 导入并启动Gradio应用
+# Language configuration from environment variable
+def get_gradio_language():
+    """Get Gradio interface language from environment variable with validation"""
+    supported_languages = ["zh-CN", "en-US"]
+    env_lang = os.getenv("GRADIO_LANGUAGE", "en-US")  # Default to English
+    
+    if env_lang in supported_languages:
+        return env_lang
+    else:
+        print(f"⚠️  Warning: Unsupported language '{env_lang}', falling back to 'en-US'")
+        return "en-US"
+
+GRADIO_LANGUAGE = get_gradio_language()
+
+# Import and launch Gradio application
 if __name__ == "__main__":
     try:
-        from demo_gradio import create_gradio_interface, queue_manager, process_queue
+        from app_gradio.demo_gradio import create_gradio_interface, queue_manager, process_queue
         import threading
         from playwright.async_api import async_playwright, Error as PlaywrightError
         
-        print("🚀 启动WebQA Agent Gradio界面...")
-        print("📱 界面将在 http://localhost:7860 启动")
-        print("⚠️  注意：请确保已安装所有依赖包 (pip install -r requirements.txt)")
-        print("🔍 正在检查 Playwright 浏览器依赖...")
+        print("🚀 Starting WebQA Agent Gradio interface...")
+        print("📱 Interface will start at http://localhost:7860")
+        print(f"🌐 Interface language: {GRADIO_LANGUAGE}")
+        print("💡 Tip: Set environment variable GRADIO_LANGUAGE=en-US for English or GRADIO_LANGUAGE=zh-CN for Chinese")
+        print("⚠️  Note: Please ensure all dependencies are installed (pip install -r requirements.txt)")
+        print("🔍 Checking Playwright browser dependencies...")
 
         async def _check_playwright():
             try:
@@ -36,53 +52,53 @@ if __name__ == "__main__":
 
         ok = asyncio.run(_check_playwright())
         if not ok:
-            print("⚠️  检测到 Playwright 浏览器未安装，正在自动安装...")
+            print("⚠️  Detected Playwright browsers not installed, installing automatically...")
             try:
                 cmd = [sys.executable, "-m", "playwright", "install"]
                 result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
                 print(result.stdout)
             except Exception as e:
-                print(f"❌ 自动安装失败：{e}\n请手动执行：playwright install")
+                print(f"❌ Automatic installation failed: {e}\nPlease run manually: playwright install")
                 sys.exit(1)
 
-            # 安装后再次校验
+            # Verify again after installation
             ok_after = asyncio.run(_check_playwright())
             if not ok_after:
-                print("❌ Playwright 浏览器仍不可用，请手动执行：playwright install")
+                print("❌ Playwright browsers still unavailable, please run manually: playwright install")
                 sys.exit(1)
-        print("✅ Playwright 浏览器可用")
+        print("✅ Playwright browsers available")
         
-        # 启动队列处理器
+        # Start queue processor
         def run_queue_processor():
-            """在后台线程中运行队列处理器"""
+            """Run queue processor in background thread"""
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             loop.run_until_complete(process_queue())
         
         queue_thread = threading.Thread(target=run_queue_processor, daemon=True)
         queue_thread.start()
-        print("✅ 任务队列处理器已启动")
+        print("✅ Task queue processor started")
         
-        # 创建并启动Gradio应用
-        app = create_gradio_interface()
-        print("✅ Gradio界面已创建")
+        # Create and launch Gradio application with language configuration
+        app = create_gradio_interface(language=GRADIO_LANGUAGE)
+        print(f"✅ Gradio interface created with language: {GRADIO_LANGUAGE}")
         
         app.launch(
             server_name="0.0.0.0",
             server_port=7860,
             share=False,
             show_error=True,
-            inbrowser=True  # 自动打开浏览器
+            inbrowser=True  # Auto open browser
         )
         
     except ImportError as e:
-        print(f"❌ 导入错误: {e}")
-        print("请确保已安装所有依赖包:")
+        print(f"❌ Import error: {e}")
+        print("Please ensure all dependencies are installed:")
         print("pip install -r requirements.txt")
         sys.exit(1)
     
     except Exception as e:
-        print(f"❌ 启动失败: {e}")
+        print(f"❌ Startup failed: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
