@@ -9,6 +9,7 @@ class MainGraphState(TypedDict):
 
     url: str
     business_objectives: Optional[str]
+    language: Optional[str]
     cookies: Optional[str]
     test_cases: List[dict]
     # To manage the loop
