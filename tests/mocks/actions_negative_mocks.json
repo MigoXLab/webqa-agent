@@ -1,0 +1,89 @@
+{
+  "SelectDropdown_Negative": [
+    {
+      "name": "native select: option not found",
+      "url": "__LOCAL_DROPDOWN_PAGE__",
+      "id_map": { "13": { "center_x": 210, "center_y": 116 } },
+      "actions": [
+        {
+          "type": "SelectDropdown",
+          "locate": { "dropdown_id": "13" },
+          "param": { "selection_path": "Non-Existing-Option" }
+        }
+      ]
+    },
+    {
+      "name": "ant-select: option not found",
+      "url": "__LOCAL_DROPDOWN_PAGE__",
+      "id_map": { "101": { "center_x": 210, "center_y": 217 } },
+      "actions": [
+        {
+          "type": "SelectDropdown",
+          "locate": { "dropdown_id": "101" },
+          "param": { "selection_path": "Nonexistent Model" }
+        }
+      ]
+    },
+    {
+      "name": "ant-select: option_id missing in buffer, fallback still not found",
+      "url": "__LOCAL_DROPDOWN_PAGE__",
+      "id_map": { "101": { "center_x": 210, "center_y": 217 } },
+      "actions": [
+        {
+          "type": "SelectDropdown",
+          "locate": { "dropdown_id": "101", "option_id": "9999" },
+          "param": { "selection_path": "Nonexistent Model" }
+        }
+      ]
+    },
+    {
+      "name": "cascader: level 1 option not found",
+      "url": "__LOCAL_DROPDOWN_PAGE__",
+      "id_map": { "301": { "center_x": 210, "center_y": 317 } },
+      "actions": [
+        {
+          "type": "SelectDropdown",
+          "locate": { "dropdown_id": "301" },
+          "param": { "selection_path": ["Asia", "Korea"] }
+        }
+      ]
+    },
+    {
+      "name": "cascader: exceeds maximum levels",
+      "url": "__LOCAL_DROPDOWN_PAGE__",
+      "id_map": { "301": { "center_x": 210, "center_y": 317 } },
+      "actions": [
+        {
+          "type": "SelectDropdown",
+          "locate": { "dropdown_id": "301" },
+          "param": { "selection_path": ["Asia", "China", "Beijing", "Street-Not-Exists"] }
+        }
+      ]
+    }
+  ],
+  "Scroll_Negative": [
+    {
+      "url": "https://arxiv.org/list/astro-ph/new",
+      "actions": [
+        {
+          "type": "Scroll",
+          "locate": null,
+          "param": {
+            "direction": "right",
+            "scrollType": "once"
+          }
+        },
+        {
+          "type": "Scroll",
+          "locate": null,
+          "param": {
+            "direction": "down",
+            "scrollType": "untilRight",
+            "distance": null
+          }
+        }
+      ],
+      "id_map": {}
+    }
+  ]
+}

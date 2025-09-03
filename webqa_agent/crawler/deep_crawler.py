@@ -232,22 +232,24 @@ class DeepCrawler:
             highlight: bool = False,
             highlight_text: bool = False,
             viewport_only: bool = False,
+            include_styles: bool = False,
             cache_dom: bool = False,
     ) -> CrawlResultModel:
-        """
-        Inject JavaScript to crawl the page and return structured element data.
-    
+        """Inject JavaScript to crawl the page and return structured element
+        data.
+
         This method executes the element detector script in the browser context,
         building a hierarchical representation of the DOM with detailed element
         properties and optional visual highlighting.
-    
+
         Args:
             page: The Playwright Page to crawl. Defaults to instance page.
             highlight: Whether to visually highlight detected elements.
             highlight_text: Whether to highlight text nodes (requires highlight=True).
             viewport_only: Whether to restrict detection to current viewport.
+            include_styles: Whether to include styles in the result.
             cache_dom: Whether to cache the DOM tree for change detection.
-    
+
         Returns:
             CrawlResultModel containing the structured crawl data.
         """
@@ -261,6 +263,7 @@ class DeepCrawler:
                 f"window._highlight = {str(highlight).lower()};"
                 f"window._highlightText = {str(highlight_text).lower()};\n"
                 f"window._viewportOnly = {str(viewport_only).lower()};\n"
+                f"window._includeStyles = {str(include_styles).lower()};\n"
                 f"\n{self.read_js(self.DETECTOR_JS)}"
                 f"\nreturn buildElementTree();"
                 f"}})()"

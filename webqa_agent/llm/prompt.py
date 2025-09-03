@@ -106,8 +106,8 @@ class LLMPrompt:
         * {{
             locate: {{ id: string }} | null,
             param: {{
-                direction: 'down'(default) | 'up' | 'right' | 'left',
-                scrollType: 'once' (default) | 'untilBottom' | 'untilTop' | 'untilRight' | 'untilLeft',
+                direction: 'down'(default) | 'up',
+                scrollType: 'once' (default) | 'untilBottom' | 'untilTop',
                 distance: null | number
             }}
             }}
@@ -116,6 +116,12 @@ class LLMPrompt:
         - type: 'GetNewPage', get the new page
         * {{ param: null }}
         * use this action when the instruction is a "get new page" statement or "open in new tab" or "open in new window".
+        - type: 'GoToPage', navigate directly to a specific URL
+        * {{ param: {{ url: string }} }}
+        * use this action when you need to navigate to a specific web page URL, useful for returning to homepage or navigating to known pages.
+        - type: 'GoBack', navigate back to the previous page
+        * {{ param: null }}
+        * use this action when you need to go back to the previous page in the browser history, similar to clicking the browser's back button.
         - type: 'Sleep'
         * {{ param: {{ timeMs: number }} }}
         - type: 'Check'
@@ -172,7 +178,7 @@ class LLMPrompt:
 
     ### Supported Actions:
     - Tap: Click on a specified page element (such as a button or link). Typically used to trigger a click event.
-    - Scroll: Scroll the page or a specific region. You can specify the direction (down, up, left, right), the scroll distance, or scroll to the edge of the page/region.
+    - Scroll: Scroll the page or a specific region. You can specify the direction (down, up), the scroll distance, or scroll to the edge of the page/region.
     - Input: Enter text into an input field or textarea. This action will replace the current value with the specified final value.
     - Sleep: Wait for a specified amount of time (in milliseconds). Useful for waiting for page loads or asynchronous content to render.
     - Upload: Upload a file
@@ -187,7 +193,7 @@ class LLMPrompt:
           "actions": [
             {
               "thought": "Reasoning for this action and why it's feasible on the current page.",
-              "type": "Tap" | "Scroll" | "Input" | "Sleep" | "Check" | "Upload" | "KeyboardPress" | "Drag" | "SelectDropdown",
+              "type": "Tap" | "Scroll" | "Input" | "Sleep" | "Check" | "Upload" | "KeyboardPress" | "Drag" | "SelectDropdown" | "GoToPage" | "GoBack",
               "param": {...} | null,
               "locate": {...} | null
             }
@@ -364,6 +370,45 @@ class LLMPrompt:
           "taskWillBeAccomplished": true,
           "furtherPlan": null,
           "error": null
+        }
+        ```
+
+        #### Example 6: Navigate to Homepage using GoToPage
+        \"Go to the homepage to restart the test\"
+        ```json
+        {
+          \"actions\": [
+            {
+              \"type\": \"GoToPage\",
+              \"thought\": \"Navigate to homepage to restart the test from a clean state\",
+              \"param\": { \"url\": \"https://example.com\" },
+              \"locate\": null
+            }
+          ],
+          \"taskWillBeAccomplished\": true,
+          \"furtherPlan\": null,
+          \"error\": null
+        }
+        ```
+
+        #### Example 7: Go Back to Previous Page
+        \"Go back to the previous page and try again\"
+        ```json
+        {
+          \"actions\": [
+            {
+              \"type\": \"GoBack\",
+              \"thought\": \"Return to previous page to retry the operation\",
+              \"param\": null,
+              \"locate\": null
+            }
+          ],
+          \"taskWillBeAccomplished\": false,
+          \"furtherPlan\": {
+            \"whatHaveDone\": \"Navigated back to previous page\",
+            \"whatToDoNext\": \"Retry the failed action from the previous page\"
+          },
+          \"error\": null
         }
         ```
 
@@ -565,87 +610,136 @@ class LLMPrompt:
     # You are a web content quality inspector. You need to carefully read the text content of the webpage and complete the task based on the user's test objective. Please ensure that the output JSON format does not contain any code blocks or backticks.
 
     TEXT_USER_CASES = [
-    f"""内容纠错: Carefully inspect the text on the current page and identify any English spelling mistakes and Chinese character errors.
-        Notes: 
-        - First, verify whether the page content is readable by the user.
-        - List all English spelling mistakes and Chinese character errors separately. 
-        - For each error, provide its location and the correct form."""
+        """内容纠错: Carefully inspect the text on the current page and identify any spelling, grammar, or character errors.
+        Text Accuracy: Spelling errors, grammatical errors, punctuation errors; inconsistent formatting of numbers, units, and currency.
+        Wording & Tone: Consistent wording; consistent terminology and abbreviations; consistent tone of voice with the product.
+        Language Consistency: Inappropriate mixing of languages ​​within the page (e.g., mixing Chinese and English without spacing).
+
+        Notes:
+        - First, verify whether the page content is readable by the user
+        - List all spelling mistakes and grammatical errors separately
+        - For each error, provide:
+          * Location in the text
+          * Current incorrect form
+          * Suggested correction
+          * Type of error (spelling/grammar/punctuation)
+        """
     ]
     CONTENT_USER_CASES = [
-      f"""排版检查: Rigorously review each screenshot at the current viewport for layout issues, and provide specific, actionable recommendations.
+        """布局检查: Rigorously review each screenshot at the current viewport for layout issues, and provide specific, actionable recommendations.
 
       [Checklist]
-      1. Text alignment: Misaligned headings/paragraphs/lists; inconsistent margins or baselines  
-      2. Spacing: Intra- and inter-component spacing too large/too small/uneven; inconsistent spacing in lists or card grids  
-      3. Obstruction & overflow: Text/buttons obscured; content overflowing containers causing truncation, awkward wrapping, or unintended ellipses; sticky header/footer covering content; incorrect z-index stacking  
-      4. Responsive breakpoints: Broken layout at current width; wrong column count; unexpected line wraps; horizontal scrollbar appearing/disappearing incorrectly  
-      5. Visual hierarchy: Important information not prominent; hierarchy confusion; insufficient contrast between headings and content; font size/weight/color not reflecting hierarchy  
-      6. Consistency: Uneven card heights breaking grid rhythm; inconsistent button styles/sizes; misaligned keylines  
-      7. Readability: Insufficient contrast; font too small; improper line-height; poor paragraph spacing; long words/URLs not breaking and causing layout stretch  
-      8. Images & media: Distorted aspect ratio; improper cropping; blurry/pixelated; placeholder not replaced; video container letterboxing  
+      1. Text alignment: Misaligned headings/paragraphs/lists; inconsistent margins or baselines
+      2. Spacing: Intra- and inter-component spacing too large/too small/uneven; inconsistent spacing in lists or card grids
+      3. Obstruction & overflow: Text/buttons obscured; content overflowing containers causing truncation, awkward wrapping, or unintended ellipses; sticky header/footer covering content; incorrect z-index stacking
+      4. Responsive breakpoints: Broken layout at current width; wrong column count; unexpected line wraps; horizontal scrollbar appearing/disappearing incorrectly
+      5. Visual hierarchy: Important information not prominent; hierarchy confusion; insufficient contrast between headings and content; font size/weight/color not reflecting hierarchy
+      6. Consistency: Uneven card heights breaking grid rhythm; inconsistent button styles/sizes; misaligned keylines
+      7. Readability: Insufficient contrast; font too small; improper line-height; poor paragraph spacing; long words/URLs not breaking and causing layout stretch
+      8. Images & media: Distorted aspect ratio; improper cropping; blurry/pixelated; placeholder not replaced; video container letterboxing
+      9. Text completeness: Words or numbers truncated mid-word due to insufficient container width; missing last characters without ellipsis.
 
       [Decision & Output Rules]
-      - Base conclusions only on the current screenshot; if uncertain, state the most likely cause and an actionable fix  
-      - If multiple layout issues exist in the same screenshot, merge them into a single object and list them in the 'issue' field separated by semicolons  
+      - Base conclusions only on the current screenshot; if uncertain, state the most likely cause and an actionable fix
+      - If multiple layout issues exist in the same screenshot, merge them into a single object and list them in the 'issue' field separated by semicolons
       - If no issues are found, output strictly None (no explanation)
       """,
-      f"""元素缺失: Rigorously check each screenshot for missing key functional/content/navigation elements, loading failures, or display anomalies, and provide fix suggestions.
+      """元素检查: Rigorously check each screenshot for missing key functional/content/navigation elements, loading failures, or display anomalies, and provide fix suggestions.
 
       [Checklist]
-      1. Functional elements: Buttons/links/inputs/dropdowns/pagination/search etc. missing or misplaced  
-      2. Content elements: Images/icons/headings/body text/lists/tables/placeholder copy missing  
-      3. Navigation elements: Top nav/sidebar/breadcrumb/back entry/navigation links missing  
-      4. Loading/error states: Broken images, 404, blank placeholders, skeleton not replaced, overly long loading, empty states lacking hints/guidance/actions  
-      5. Image display: Display anomalies, low-quality/blurry/pixelated, wrong cropping, aspect-ratio distortion, lazy-load failure  
-      6. Business-critical: Core CTAs missing/unusable; price/stock/status missing; required form fields missing; no submission feedback  
-      7. Interaction usability: Element visible but not clickable/disabled state incorrect; tappable/clickable area too small  
+      1. Functional elements: Buttons/links/inputs/dropdowns/pagination/search etc. missing or misplaced
+      2. Content elements: Images/icons/headings/body text/lists/tables/placeholder copy missing
+      3. Navigation elements: Top nav/sidebar/breadcrumb/back entry/navigation links missing
+      4. Loading/error states: Broken images, 404, blank placeholders, skeleton not replaced, overly long loading, empty states lacking hints/guidance/actions
+      5. Image display: Display anomalies, low-quality/blurry/pixelated, wrong cropping, aspect-ratio distortion, lazy-load failure
+      6. Business-critical: Core CTAs missing/unusable; price/stock/status missing; required form fields missing; no submission feedback
+      7. Interaction usability: Element visible but not clickable/disabled state incorrect; tappable/clickable area too small
 
       [Decision & Output Rules]
-      - When unsure whether it's not rendered or late loading, still provide the best evidence-based judgment and suggestion  
-      - If multiple missing/anomaly issues exist in the same screenshot, merge them into a single object and separate in the 'issue' field with semicolons  
+      - When unsure whether it's not rendered or late loading, still provide the best evidence-based judgment and suggestion
+      - If multiple missing/anomaly issues exist in the same screenshot, merge them into a single object and separate in the 'issue' field with semicolons
       - If no issues are found, output strictly None (no explanation)
-        """
+      """
     ]
 
     OUTPUT_FORMAT = """
     Output Requirements
-    1. **If no errors are found**: Output only None with no explanations; avoid vague words such as "maybe" or "probably".
-    2. **If errors are found**: Output a **JSON array** with the following structure:
-       - The first element SHOULD be an object providing an overall summary, e.g. {"summary": "..."}. If you prefer, you may also output a plain string like "summary: ..." as the first element.
-       - After the summary element, include one object per screenshot (merge all issues for the same screenshot into a single object). Field definitions are as follows:
+
+    **CRITICAL: You must choose ONE of the following two output formats based on your findings:**
+
+    **Format 1: NO ISSUES FOUND**
+    If you find no issues or problems, output exactly this JSON structure:
+    ```json
+    {
+        "status": "no_issues",
+        "message": "No issues detected"
+    }
+    ```
+
+    **Format 2: ISSUES FOUND**
+    If you find any issues, output a JSON array with the following structure:
+    ```json
     [
         { "summary": "Concise overall findings across screenshots" },
         {
-            "screenshotid": <number>, # 1-based index of the input screenshot
+            "screenshotid": <number>, # 0-based index of the input screenshot
             "element": "<string>", # core element where the issue occurs (e.g., title, button, image, paragraph)
             "issue": "<string>", # concise problem description stating the exact cause (if multiple issues exist for the same screenshot, summarize them here)
+            "coordinates": [x1, y1, x2, y2], # pixel coordinates on the screenshot. Origin at top-left; integers only; ensure 0 <= x1 <= x2 <= width-1 and 0 <= y1 <= y2 <= height-1. For text or single-line elements, y1 can equal y2.
             "suggestion": "<string>", # suggestions / expected solutions (multiple points, separated by ";")
-            "confidence": "<high|medium|low>" # confidence level, values: *high* / *medium* / *low* 
+            "confidence": "<high|medium|low>" # confidence level, values: *high* / *medium* / *low*
         }
     ]
-    3.  **Example format** (only for reference, replace with actual content when outputting)  
-        ```json
-        [
-            { "summary": "Page issues: 1) navbar overlap; 2) grid spacing inconsistent" },
-            {
-                "screenshotid": 2,
-                "element": "Main Navigation Bar",
-                "issue": "Navigation items overlap with the logo, making the text unreadable",
-                "suggestion": "Reduce logo width; add min-width to nav items; adjust flex-wrap",
-                "confidence": "medium"
-            },
-            {
-                "screenshotid": 3,
-                "element": "Product List Card",
-                "issue": "Excess vertical whitespace between cards prevents the first screen from displaying completely",
-                "suggestion": "Normalize card min-height; unify grid gap; reduce top/bottom padding",
-                "confidence": "low"
-            }
-        ]
-        ```
-    Notes:
-    If multiple issues exist in the same screenshot, list them in a single object; do not split them.
-    If you are unsure whether a problem is due to incomplete rendering, still provide your best guess and suggestion.
-    Keep descriptions concise; the issue field should state the problem in one sentence, and the suggestion field should provide actionable improvements.
-    Focus on whether it meets business logic and user expectations.
+    ```
+
+    **⚠️ CRITICAL FORMAT RULES:**
+    - The FIRST object in the array MUST be the summary object: `{ "summary": "..." }`
+    - The summary object CANNOT contain any other fields besides "summary"
+    - All issue objects (with screenshotid, element, issue, coordinates, suggestion, confidence) MUST come AFTER the summary object
+    - NEVER put "summary" field inside issue objects
+
+    **Examples:**
+
+    **Example 1 - No Issues:**
+    ```json
+    {
+        "status": "no_issues",
+        "message": "No issues detected"
+    }
+    ```
+
+    **Example 2 - Issues Found (CORRECT FORMAT):**
+    ```json
+    [
+        { "summary": "Page issues: 1) navbar overlap; 2) grid spacing inconsistent" },
+        {
+            "screenshotid": 2,
+            "element": "Main Navigation Bar",
+            "issue": "Navigation items overlap with the logo, making the text unreadable",
+            "coordinates": [240, 122, 270, 122],
+            "suggestion": "Reduce logo width; add min-width to nav items; adjust flex-wrap",
+            "confidence": "medium"
+        },
+        {
+            "screenshotid": 3,
+            "element": "Product List Card",
+            "issue": "Excess vertical whitespace between cards prevents the first screen from displaying completely",
+            "coordinates": [80, 540, 920, 720],
+            "suggestion": "Normalize card min-height; unify grid gap; reduce top/bottom padding",
+            "confidence": "low"
+        }
+    ]
+    ```
+
+    **Important Rules:**
+    - NEVER output plain text without JSON structure
+    - If no issues are found, use Format 1 with "status": "no_issues"
+    - If issues are found, use Format 2 with the array structure
+    - **MANDATORY: Array structure must be [summary_object, issue_object1, issue_object2, ...]**
+    - **MANDATORY: Summary object must be FIRST and contain ONLY the "summary" field**
+    - **MANDATORY: Issue objects must NOT contain "summary" field**
+    - If multiple issues exist in the same screenshot, merge them into a single object
+    - Coordinates must be measured on the provided screenshot for the current viewport
+    - Keep descriptions concise and actionable
+    - Focus on business logic and user expectations
     """

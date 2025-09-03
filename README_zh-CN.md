@@ -102,6 +102,10 @@ nuclei -version        # 验证安装成功
 python webqa-agent.py
 ```
 
+## 在线演示
+
+进入ModelScope体验：[WebQA-Agent on ModelScope](https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary)
+
 ## 使用说明
 
 ### 测试配置
@@ -160,6 +164,12 @@ UX（用户体验）测试专注于评估网站的交互设计、可用性和用
 2. 功能遍历与页面校验：校验业务逻辑正确性与数据完整性
 3. 交互与可视化：用例可视化与本地服务实时展示推理过程
 4. 能力扩展：多模型接入与更多评估维度集成
+
+## 致谢
+
+- [natbot](https://github.com/nat/natbot): 通过GPT-3驱动浏览器
+- [Midscene.js](https://github.com/web-infra-dev/midscene/)：Web、Android、自动化和测试的AI Operator
+- [browser-use](https://github.com/browser-use/browser-use/)：用于浏览器控制的AI Agent
 
 ## 开源许可证
 
