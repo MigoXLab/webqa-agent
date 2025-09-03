@@ -230,6 +230,19 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
     )
     update = {"current_test_case_index": new_index}
 
+    # Check if we should skip reflection due to critical failure
+    if state.get("skip_reflection", False):
+        logging.info("Skipping reflection due to critical failure. Moving directly to next test case.")
+        update["skip_reflection"] = False  # Reset the flag
+        update["reflection_history"] = [
+            {
+                "decision": "CONTINUE",
+                "reasoning": "Critical failure detected in previous test case. Skipping reflection and continuing with next test case to avoid wasting time on unrecoverable errors.",
+                "new_plan": [],
+            }
+        ]
+        return update
+
     # FUSE MECHANISM: Check if the replan limit has been reached.
     MAX_REPLANS = 2
     if state.get("replan_count", 0) >= MAX_REPLANS:
@@ -424,6 +437,17 @@ async def execute_single_case(state: MainGraphState) -> dict:
         final_summary = case_result.get("final_summary", "") if case_result else "No summary available"
 
         ui_tester_instance.finish_case(final_status, final_summary)
+
+        # Check if this is a critical failure that should skip reflection
+        if case_result and case_result.get("status") == "failed":
+            failure_type = case_result.get("failure_type")
+            case_name = case_result.get("case_name", "Unknown")
+            
+            if failure_type == "critical":
+                logging.warning(f"Critical failure detected in test case '{case_name}'. Skipping reflection and moving to next case.")
+                return {"completed_cases": [case_result], "skip_reflection": True}
+            else:
+                logging.info(f"Recoverable failure in test case '{case_name}'. Will proceed with reflection for potential replan.")
 
         # Return the single result in a list to be appended by the graph state
         return {"completed_cases": [case_result] if case_result else []}
