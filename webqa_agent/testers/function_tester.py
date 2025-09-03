@@ -335,6 +335,7 @@ class UITester:
                     raise ValueError(f"Invalid JSON response: {str(je)}")
 
                 if not plan_json.get("actions"):
+                    logging.error(f"No valid actions found in plan: {test_plan}")
                     raise ValueError("No valid actions found in plan")
 
                 return plan_json
@@ -477,8 +478,14 @@ class UITester:
             )
             self.finish_case("interrupted", "Case was interrupted by new case start")
 
+        # Calculate case index (1-based)
+        case_index = len(self.all_cases_data) + 1
+        formatted_case_name = f"{case_index}: {case_name}"
+
         self.current_case_data = {
-            "name": case_name,
+            "name": formatted_case_name,
+            "original_name": case_name,  # Keep original name for reference
+            "case_index": case_index,
             "start_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "case_info": case_data or {},
             "steps": [],
@@ -494,7 +501,7 @@ class UITester:
         }
         self.current_case_steps = []
         self.step_counter = 0  # Reset step counter
-        logging.debug(f"Started tracking case: {case_name} (step counter reset)")
+        logging.debug(f"Started tracking case: {formatted_case_name} (step counter reset)")
 
     def add_step_data(self, step_data: Dict[str, Any], step_type: str = "action"):
         """Add step data to current case."""
@@ -547,6 +554,7 @@ class UITester:
             return
 
         case_name = self.current_case_data.get("name", "Unknown")
+        original_name = self.current_case_data.get("original_name", case_name)
         steps_count = len(self.current_case_steps)
 
         # Get monitoring data
@@ -624,7 +632,7 @@ class UITester:
         total_steps = 0
         for i, case in enumerate(self.all_cases_data):
             case_steps = case.get("steps", [])
-            case_name = case.get("name", f"Case_{i}")
+            case_name = case.get("name", f"Case_{i + 1}")  # Use 1-based indexing as fallback
             total_steps += len(case_steps)
             logging.debug(
                 f"Report validation - Case '{case_name}': {len(case_steps)} steps, status: {case.get('status', 'unknown')}"
