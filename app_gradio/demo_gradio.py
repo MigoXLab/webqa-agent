@@ -157,6 +157,16 @@ def create_config_dict(
     report_language: str = "zh-CN"
 ) -> Dict[str, Any]:
     """Create configuration dictionary"""
+    
+    final_business_objectives = business_objectives.strip()
+    default_constraint = get_text(report_language, "config.default_business_objectives")
+    
+    if final_business_objectives:
+        separator = ","
+        final_business_objectives = f"{final_business_objectives}{separator}{default_constraint}"
+    else:
+        final_business_objectives = default_constraint
+    
     config = {
         "target": {
             "url": url,
@@ -166,7 +176,7 @@ def create_config_dict(
             "function_test": {
                 "enabled": function_test_enabled,
                 "type": function_test_type,
-                "business_objectives": business_objectives
+                "business_objectives": final_business_objectives
             },
             "ux_test": {
                 "enabled": ux_test_enabled
@@ -321,10 +331,6 @@ def submit_test(
     if not any([function_test_enabled, ux_test_enabled, performance_test_enabled, security_test_enabled]):
         return get_text(interface_language, "messages.error_no_tests"), "", False
     
-    # If function test is enabled but no business objectives set
-    if function_test_enabled and function_test_type == "ai" and not business_objectives.strip():
-        return get_text(interface_language, "messages.error_no_business_objectives"), "", False
-    
     # Validate LLM configuration
     valid, msg = validate_llm_config(api_key, base_url, model, interface_language)
     if not valid:
@@ -357,6 +363,7 @@ def submit_test(
         "tests": {
             "function": function_test_enabled,
             "function_type": function_test_type,
+            "business_objectives": business_objectives,
             "ux": ux_test_enabled,
         },
         "submitted_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -632,6 +639,15 @@ def create_gradio_interface(language: str = "zh-CN"):
     .content-wrapper .gradio-dataframe td:nth-child(6) { 
         width: auto !important; 
         max-width: none !important; 
+        min-width: 200px !important; 
+        text-align: left !important;
+    }
+    .fixed-width-table th:nth-child(7), 
+    .fixed-width-table td:nth-child(7),
+    .content-wrapper .gradio-dataframe th:nth-child(7), 
+    .content-wrapper .gradio-dataframe td:nth-child(7) { 
+        width: auto !important; 
+        max-width: none !important; 
         min-width: 70px !important; 
         text-align: center !important;
     }
@@ -866,12 +882,21 @@ def create_gradio_interface(language: str = "zh-CN"):
         def get_history_rows(lang):
             rows = []
             for item in reversed(submission_history[-100:]):
+                business_objectives = item["tests"].get("business_objectives", "")
+                function_type = item["tests"]["function_type"]
+                
+                if function_type == "ai" and business_objectives:
+                    business_display = business_objectives[:30] + "..." if len(business_objectives) > 30 else business_objectives
+                else:
+                    business_display = "-"
+                
                 rows.append([
                     item["submitted_at"],
                     item["task_id"],
                     item["url"],
                     "✅" if item["tests"]["function"] else "-",
                     item["tests"]["function_type"],
+                    business_display,
                     "✅" if item["tests"]["ux"] else "-"
                 ])
             return rows

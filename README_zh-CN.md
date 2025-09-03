@@ -1,7 +1,7 @@
-# WebQA Agent
+<h1 align="center">WebQA Agent</h1>
 
 <!-- badges -->
-<p align="left">
+<p align="center">
   <a href="https://github.com/MigoXLab/webqa-agent/blob/main/LICENSE"><img src="https://img.shields.io/github/license/MigoXLab/webqa-agent" alt="License"></a>
   <a href="https://github.com/MigoXLab/webqa-agent/stargazers"><img src="https://img.shields.io/github/stars/MigoXLab/webqa-agent" alt="GitHub stars"></a>
   <a href="https://github.com/MigoXLab/webqa-agent/network/members"><img src="https://img.shields.io/github/forks/MigoXLab/webqa-agent" alt="GitHub forks"></a>
@@ -9,9 +9,14 @@
   <a href="https://deepwiki.com/MigoXLab/webqa-agent"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 </p>
 
-[English](README.md) · [简体中文](README_zh-CN.md) 
+<p align="center">
+  体验Demo 🤗<a href="https://huggingface.co/spaces/mmmay0722/WebQA-Agent">HuggingFace</a> | 🚀<a href="https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary">ModelScope</a><br>
+  加入我们 🎮<a href="https://discord.gg/K5TtkVcx">Discord</a> | 💬<a href="https://aicarrier.feishu.cn/docx/NRNXdIirXoSQEHxhaqjchUfenzd">微信群</a>
+</p>
 
-**WebQA Agent** 是全自动网页评估测试 Agent，一键诊断性能、安全、功能与交互体验
+<p align="center"><a href="README.md">English</a> · <a href="README_zh-CN.md">简体中文</a></p>
+
+<p align="center">🤖 <strong>WebQA Agent</strong> 是全自动网页评估测试 Agent，一键完成性能、功能与交互体验的测试评估 ✨</p>
 
 ## 🚀 核心特性
 
@@ -104,7 +109,9 @@ python webqa-agent.py
 
 ## 在线演示
 
-进入ModelScope体验：[WebQA-Agent on ModelScope](https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary)
+🚀 **在线体验 WebQA Agent:**
+- **Hugging Face Spaces**: [WebQA-Agent on Hugging Face](https://huggingface.co/spaces/mmmay0722/WebQA-Agent)
+- **ModelScope Studio**: [WebQA-Agent on ModelScope](https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary)
 
 ## 使用说明
 
