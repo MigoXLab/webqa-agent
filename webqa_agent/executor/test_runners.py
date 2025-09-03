@@ -70,6 +70,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                     'remaining_objectives': business_objectives,
                     'ui_tester_instance': parallel_tester,
                     'current_test_case_index': 0,
+                    'skip_reflection': False,  # Initialize skip reflection flag
                     'language': test_config.report_config.get('language', 'zh-CN'),
                 }
 
@@ -519,7 +520,7 @@ class SecurityTestRunner(BaseTestRunner):
     def _get_text(self, key: str) -> str:
         """Get localized text for the current language."""
         return self.localized_strings.get(self.language, {}).get(key, key)
-    
+
     def get_scan_tags(self, language: str) -> Dict[str, str]:
         """Get scan tags with localized descriptions."""
         return {

@@ -25,3 +25,5 @@ class MainGraphState(TypedDict):
     remaining_objectives: Optional[str]
     ui_tester_instance: Any
     final_report: Optional[dict]
+    # For critical failure handling
+    skip_reflection: bool

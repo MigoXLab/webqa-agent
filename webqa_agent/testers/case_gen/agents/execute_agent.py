@@ -347,6 +347,13 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 failed_steps.append(i + 1)
                 logging.warning(f"Step {i+1} detected as failed based on output")
 
+            # Check for critical failures that should immediately stop execution
+            if _is_critical_failure_step(tool_output, instruction_to_execute):
+                failed_steps.append(i + 1)
+                final_summary = f"FINAL_SUMMARY: Critical failure at step {i+1}: '{instruction_to_execute}'. Error details: {tool_output[:200]}..."
+                logging.error(f"Critical failure detected at step {i+1}, aborting remaining steps to save time")
+                break
+
             # Check for max iterations, which indicates a failure to complete the step.
             if "Agent stopped due to max iterations." in tool_output:
                 failed_steps.append(i + 1)
@@ -479,16 +486,129 @@ FINAL_SUMMARY: Test case "{case_name}" failed at step [X]. Error: [description].
 
     logging.debug(f"Test case '{case_name}' final status: {status} (success indicators: {has_success}, failure indicators: {has_failure})")
 
+    # Classify failure type if the test case failed
+    failure_type = None
+    if status == "failed":
+        failure_type = _classify_failure_type(final_summary, failed_steps)
+        logging.info(f"Test case '{case_name}' failed with type: {failure_type}")
+
     case_result = {
         "case_name": case_name,
         "final_summary": final_summary,
         "status": status,
+        "failure_type": failure_type,
     }
 
     logging.debug(f"=== Agent Worker Completed for {case_name}. ===")
 
     # Return only the result of the current case
     return {"case_result": case_result}
+
+
+def _is_critical_failure_step(tool_output: str, step_instruction: str = "") -> bool:
+    """Check if a single step output indicates a critical failure that should stop execution.
+    
+    Args:
+        tool_output: The output from the step execution
+        step_instruction: The instruction that was executed (for context)
+    
+    Returns:
+        bool: True if this is a critical failure that should stop execution
+    """
+    if not tool_output:
+        return False
+    
+    output_lower = tool_output.lower()
+    
+    # Critical failure patterns for immediate exit
+    critical_step_patterns = [
+        "element not found",
+        "cannot find",
+        "page crashed", 
+        "permission denied",
+        "access denied",
+        "network timeout",
+        "browser error",
+        "navigation failed",
+        "session expired",
+        "server error", 
+        "connection timeout",
+        "unable to load",
+        "page not accessible",
+        "critical error"
+    ]
+    
+    # Check for critical patterns
+    for pattern in critical_step_patterns:
+        if pattern in output_lower:
+            logging.debug(f"Critical failure detected in step: pattern '{pattern}' found")
+            return True
+    
+    return False
+
+
+def _classify_failure_type(final_summary: str, failed_steps: list = None) -> str:
+    """Classify failure type as 'critical' or 'recoverable'.
+    
+    Args:
+        final_summary: The final summary text containing failure information
+        failed_steps: List of failed step numbers
+    
+    Returns:
+        str: 'critical' for unrecoverable failures, 'recoverable' for failures that might be fixed via replan
+    """
+    if not final_summary:
+        return "recoverable"
+    
+    summary_lower = final_summary.lower()
+    
+    # Check for early critical failure exit (from immediate step detection)
+    if "critical failure at step" in summary_lower:
+        logging.debug("Early critical failure exit detected - classified as critical")
+        return "critical"
+    
+    # Critical failure patterns - these indicate unrecoverable issues
+    critical_patterns = [
+        "element not found",
+        "cannot find",
+        "page crashed",
+        "permission denied", 
+        "access denied",
+        "network timeout",
+        "max iterations",
+        "exception:",
+        "cannot proceed",
+        "preamble action",
+        "raised exception",
+        "agent stopped due to max iterations",
+        "element not available",
+        "page not accessible",
+        "browser error",
+        "navigation failed",
+        "session expired",
+        "server error",
+        "connection timeout",
+        "unable to load",
+        "critical error"
+    ]
+    
+    # Check if any critical pattern is present
+    for pattern in critical_patterns:
+        if pattern in summary_lower:
+            logging.debug(f"Critical failure detected: pattern '{pattern}' found in summary")
+            return "critical"
+    
+    # Additional heuristics for critical failures
+    # If too many steps failed, it might indicate a fundamental issue
+    if failed_steps and len(failed_steps) > 0:
+        total_failed = len(failed_steps)
+        if total_failed >= 3:  # If 3 or more steps failed, likely critical
+            logging.debug(f"Critical failure detected: {total_failed} steps failed")
+            return "critical"
+    
+    # Default to recoverable for validation failures, partial failures, etc.
+    logging.debug("Failure classified as recoverable")
+    return "recoverable"
 
 
 def _is_navigation_instruction(instruction: str) -> bool:
