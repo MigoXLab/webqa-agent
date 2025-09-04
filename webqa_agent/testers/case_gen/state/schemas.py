@@ -27,3 +27,4 @@ class MainGraphState(TypedDict):
     final_report: Optional[dict]
     # For critical failure handling
     skip_reflection: bool
+    dynamic_step_generation: dict

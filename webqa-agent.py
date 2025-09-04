@@ -222,6 +222,7 @@ def build_test_configurations(cfg, cookies=None):
                     "test_specific_config": {
                         "cookies": cookies,
                         "business_objectives": tconf["function_test"].get("business_objectives", ""),
+                        "dynamic_step_generation": tconf["function_test"].get("dynamic_step_generation", {}),
                     },
                 }
             )

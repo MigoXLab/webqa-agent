@@ -59,6 +59,13 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                 business_objectives = test_config.test_specific_config.get('business_objectives', '')
                 logging.info(f"{icon['running']} Running test: {test_config.test_name} with business objectives: {business_objectives}")
 
+                # Extract dynamic step generation configuration
+                dynamic_step_config = test_config.test_specific_config.get('dynamic_step_generation', {
+                    "enabled": False,
+                    "max_dynamic_steps": 5,
+                    "min_elements_threshold": 2
+                })
+
                 cookies = test_config.test_specific_config.get('cookies')
 
                 initial_state = {
@@ -72,6 +79,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                     'current_test_case_index': 0,
                     'skip_reflection': False,  # Initialize skip reflection flag
                     'language': test_config.report_config.get('language', 'zh-CN'),
+                    'dynamic_step_generation': dynamic_step_config,  # Pass dynamic step generation config
                 }
 
                 graph_config = {'configurable': {'ui_tester_instance': parallel_tester}, 'recursion_limit': 100}
