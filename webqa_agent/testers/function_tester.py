@@ -124,7 +124,7 @@ class UITester:
             end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             curr = await dp.crawl(highlight=True, viewport_only=True, cache_dom=True)
-            diff_elems = curr.diff_dict([str(ElementKey.TAG_NAME), str(ElementKey.INNER_TEXT), str(ElementKey.ATTRIBUTES)])
+            diff_elems = curr.diff_dict([str(ElementKey.TAG_NAME), str(ElementKey.INNER_TEXT), str(ElementKey.ATTRIBUTES), str(ElementKey.CENTER_X), str(ElementKey.CENTER_Y)])
             if diff_elems:
                 logging.debug(f"Diff element map after action: {diff_elems}")
 
@@ -144,7 +144,11 @@ class UITester:
                 "status": status_str,
                 "start_time": start_time,
                 "end_time": end_time,
+                "dom_diff": diff_elems,  # 新增：DOM差异信息
             }
+
+            # 在execution_result中也添加DOM差异信息
+            execution_result["dom_diff"] = diff_elems
 
             # Automatically store step data
             self.add_step_data(execution_steps_dict, step_type="action")

@@ -424,13 +424,48 @@ async def execute_single_case(state: MainGraphState) -> dict:
 
         # Invoke the agent worker for the single case
         # Pass the current completed cases to the worker so it can append
-        worker_input_state = {"test_case": case, "completed_cases": state.get("completed_cases", [])}
+        worker_input_state = {
+            "test_case": case, 
+            "completed_cases": state.get("completed_cases", []),
+            "dynamic_step_generation": state.get("dynamic_step_generation", {
+                "enabled": True,
+                "max_dynamic_steps": 5,
+                "min_elements_threshold": 2
+            })
+        }
         result = await agent_worker_node(
             worker_input_state, config={"configurable": {"ui_tester_instance": ui_tester_instance}}
         )
 
         # The result from the worker now contains the single case result
         case_result = result.get("case_result")
+        modified_case = result.get("modified_case")
+
+        # Handle case modification when dynamic steps were added
+        if modified_case:
+            logging.info(f"Test case '{case_name}' was modified with dynamic steps, updating test_cases and saving to case.json")
+            
+            # Find the current case in the test_cases list and update it
+            test_cases = state.get("test_cases", [])
+            current_index = state.get("current_test_case_index", 0)
+            
+            if current_index < len(test_cases):
+                # Update the case in the test_cases array
+                test_cases[current_index] = modified_case
+                
+                # Save updated test_cases to case.json
+                try:
+                    timestamp = os.getenv("WEBQA_REPORT_TIMESTAMP")
+                    report_dir = f"./reports/test_{timestamp}"
+                    os.makedirs(report_dir, exist_ok=True)
+                    cases_path = os.path.join(report_dir, "cases.json")
+                    with open(cases_path, "w", encoding="utf-8") as f:
+                        json.dump(test_cases, f, ensure_ascii=False, indent=4)
+                    logging.info(f"Successfully updated case.json with {modified_case.get('_dynamic_steps_count', 0)} dynamic steps")
+                except Exception as e:
+                    logging.error(f"Failed to save updated test cases to case.json: {e}")
+            else:
+                logging.warning(f"Current test case index {current_index} out of range for test_cases array (length: {len(test_cases)})")
 
         # === 结束case跟踪并获取详细数据 ===
         final_status = case_result.get("status", "completed") if case_result else "failed"
@@ -445,12 +480,18 @@ async def execute_single_case(state: MainGraphState) -> dict:
             
             if failure_type == "critical":
                 logging.warning(f"Critical failure detected in test case '{case_name}'. Skipping reflection and moving to next case.")
-                return {"completed_cases": [case_result], "skip_reflection": True}
+                return_value = {"completed_cases": [case_result], "skip_reflection": True}
             else:
                 logging.info(f"Recoverable failure in test case '{case_name}'. Will proceed with reflection for potential replan.")
+                return_value = {"completed_cases": [case_result] if case_result else []}
+        else:
+            return_value = {"completed_cases": [case_result] if case_result else []}
 
-        # Return the single result in a list to be appended by the graph state
-        return {"completed_cases": [case_result] if case_result else []}
+        # Include updated test_cases if case was modified
+        if modified_case:
+            return_value["test_cases"] = test_cases
+
+        return return_value
 
 
 def should_replan_or_continue(state: MainGraphState) -> str:

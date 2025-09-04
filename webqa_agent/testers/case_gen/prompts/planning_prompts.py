@@ -832,3 +832,281 @@ def get_reflection_prompt(
         business_objectives, current_plan, completed_cases, page_structure, page_content_summary
     )
     return system_prompt, user_prompt
+
+
+def get_dynamic_step_generation_prompt() -> str:
+    """Generate prompt template for LLM-based dynamic step generation.
+    
+    This prompt enables the LLM to analyze newly appeared UI elements and generate
+    appropriate test steps that align with the current test objective and existing
+    test case structure.
+    """
+    return """You are an intelligent test step generation expert. Based on new UI elements that appear after user actions, generate corresponding test steps that enhance test coverage and align with business objectives.
+
+## Previous Action Success Context
+
+**IMPORTANT**: The action that triggered new UI elements has already been SUCCESSFULLY EXECUTED. You are analyzing the results of a successful action, not planning how to perform it.
+
+### Success Indicators
+- The last action completed without errors
+- New UI elements appeared as a result of this successful action
+- The page state has changed positively in response to the action
+- **DO NOT re-plan or duplicate the already successful action**
+
+## Test Case Context Analysis
+
+When provided with test case context information, use it to:
+
+### Context Integration Guidelines
+- **Executed Steps Review**: Study the already completed steps to understand the current test state and user journey
+- **Remaining Steps Awareness**: Consider how new steps will interact with planned future steps
+- **Flow Continuity**: Ensure generated steps maintain the logical progression from executed steps to remaining steps
+- **Redundancy Avoidance**: Do not generate steps that duplicate functionality already tested or planned
+- **Narrative Consistency**: Maintain the overall test story and user scenario coherence
+
+### Insertion Strategy Decision Framework
+You must decide between two strategies for integrating new steps:
+
+#### Strategy: "insert"
+- **When to use**: New elements complement existing remaining steps
+- **Behavior**: Add new steps while keeping all remaining steps intact
+- **Use cases**: 
+  - New elements don't overlap with planned remaining steps
+  - Additional verification or interaction opportunities
+  - Sequential workflow enhancements
+
+#### Strategy: "replace"  
+- **When to use**: New elements make remaining steps redundant or conflicting
+- **Behavior**: Replace all remaining steps with new steps
+- **Use cases**:
+  - New elements achieve the same goals as remaining steps
+  - Remaining steps become invalid due to page state changes  
+  - More efficient path discovered through new elements
+  - Significant overlap or conflicts detected
+
+### Strategic Placement Guidelines
+- **Logical Placement**: Generate steps that make sense at the current insertion point
+- **State Awareness**: Consider the current page/application state after the last executed action
+- **Natural Progression**: Ensure steps feel like a natural next move in the user journey
+- **Impact Assessment**: Consider how new steps might affect the execution of remaining steps
+
+## Analysis Requirements
+
+### 1. Business Understanding
+- Understand the business meaning and user scenarios of new elements
+- Consider the element's role in the overall application workflow
+- Identify the business value and user impact of testing these elements
+
+### 2. Context Awareness and Test Flow Continuity
+- Consider the current test context and objectives
+- Understand the relationship between new elements and existing test steps
+- Maintain consistency with the overall test case design patterns
+- **Flow Integration**: Ensure generated steps fit naturally into the existing test narrative
+- **Coherence**: Avoid generating steps that conflict with or duplicate existing/remaining steps
+- **Positioning**: Consider where steps will be inserted and how they affect the overall flow
+- **Test Completeness**: Help maintain the test case as a unified, complete scenario
+
+### 3. User Behavior Simulation
+- Generate natural user interaction steps that reflect real user behavior patterns
+- Consider typical user mental models and interaction flows
+- Ensure steps represent realistic user scenarios rather than technical testing
+
+### 4. Test Coverage Value
+- Ensure steps contribute to improved test coverage and potential issue discovery
+- Focus on functional validation and user experience verification
+- Prioritize testing of critical business paths and user workflows
+
+## Element Type Classification and Testing Strategies
+
+### High Priority Interactive Elements
+1. **Dropdowns and Select Elements** (dropdown, select)
+   - Verify options are correctly loaded
+   - Test option selection and state changes
+   - Validate selection impacts on related UI components
+   - Test search/filter functionality if available
+
+2. **Modals and Dialogs** (modal, dialog)
+   - Verify modal content and title display
+   - Test close button functionality (X button, Cancel button)
+   - Validate overlay click behavior
+   - Test form functionality within modals
+
+3. **Buttons and Interactive Controls** (button, submit)
+   - Test button click functionality and responses
+   - Verify button state changes (enabled/disabled)
+   - Validate button actions and their effects
+
+4. **Form Controls** (input, textarea)
+   - Test input validation rules
+   - Verify required field indicators and validation messages
+   - Test data format requirements and boundary conditions
+
+5. **Navigation Links** (link, anchor)
+   - Test link navigation functionality
+   - Verify link destinations and page transitions
+   - Test link states and accessibility
+
+### Medium Priority Elements
+1. **Tab Interfaces** (tab, tabpanel)
+   - Switch between available tabs
+   - Verify tab content loading
+   - Test default activation state
+
+2. **Menu Items** (menu, menuitem)
+   - Test menu item selection and navigation
+   - Verify menu hierarchy and submenu functionality
+   - Test menu accessibility and keyboard navigation
+
+3. **Checkboxes and Radio Buttons** (checkbox, radio)
+   - Test selection state changes
+   - Verify group behavior for radio buttons
+   - Test form submission with selected values
+
+4. **Sliders and Range Controls** (slider, range)
+   - Test value adjustment functionality
+   - Verify range boundaries and step increments
+   - Test value display and feedback
+
+### Lower Priority Elements
+- Pure display content without interaction
+- Decorative elements
+- Static text elements
+
+## Generation Rules and Constraints
+
+### 1. Quantity Management
+- Generate at most the specified number of steps
+- Focus on the most valuable and relevant elements first
+- Avoid generating steps for trivial or non-functional elements
+
+### 2. Relevance and Focus
+- Prioritize elements related to the current test objective
+- Consider the business context and user workflow
+- Skip elements that are not relevant to the test goals
+
+### 3. Avoid Redundancy
+- Do not repeat testing of already verified functionality
+- Build upon existing test coverage rather than duplicating
+- Focus on new functionality and interactions
+
+### 4. Quality Assurance
+- Each step should have a clear validation objective
+- Steps should be executable and measurable
+- Ensure steps contribute to overall test effectiveness
+
+## Business Scenario Considerations
+
+### E-commerce Scenarios
+- Focus on shopping cart, checkout, and payment-related new elements
+- Test product selection, quantity controls, and price calculations
+- Verify promotional elements, discounts, and shipping options
+
+### Form-Heavy Scenarios
+- Prioritize form validation, input controls, and data entry elements
+- Test field dependencies, conditional logic, and validation messages
+- Focus on form submission workflows and error handling
+
+### Navigation Scenarios
+- Test menu systems, breadcrumbs, and navigation controls
+- Verify page transitions, deep linking, and back/forward functionality
+- Focus on user wayfinding and site structure
+
+### Search and Discovery Scenarios
+- Test search suggestions, filters, and faceted navigation
+- Verify result display, sorting, and pagination controls
+- Focus on content discovery and refinement workflows
+
+## Output Requirements
+
+### Content Guidelines
+- **Strategy Decision Required**: Always specify "insert" or "replace" strategy with clear reasoning
+- **Context-Aware Generation**: Use provided test case context to ensure steps fit naturally into the existing test flow
+- **Coherence Check**: Verify generated steps don't conflict with or duplicate existing/remaining steps
+- Each step must include clear action instructions and execution rationale
+- High-priority elements should be listed first
+- Ensure generated steps reflect realistic user behavior patterns
+- **Flow Integration**: Generate steps that maintain test narrative continuity and user journey logic
+- Return empty steps array if elements are not important, irrelevant to test objectives, or insufficient in quantity
+
+### Step Structure
+Each generated step should follow the established test case format:
+- **action**: Natural language description of the user action to perform
+- **verify**: (Optional) Natural language description of what to validate after the action
+
+### Format Requirements
+**MANDATORY**: Always return response in this exact format:
+```json
+{
+  "strategy": "insert" or "replace",
+  "reason": "Clear explanation for why you chose this strategy based on analysis of remaining steps and new elements",
+  "steps": [
+    {
+      "action": "Natural language description of the user action to perform"
+    },
+    {
+      "verify": "Natural language description of what to validate after the action"
+    }
+  ]
+}
+```
+
+**Empty Response Format** (when no meaningful steps needed):
+```json
+{
+  "strategy": "insert",
+  "reason": "New elements are not relevant to test objectives or provide insufficient value",
+  "steps": []
+}
+```
+
+## Example Output
+
+For a scenario where a dropdown menu appears after clicking a region selector:
+
+```json
+{
+  "strategy": "insert",
+  "reason": "The city dropdown complements remaining steps without conflicts. The remaining steps test other page functionality that doesn't overlap with city selection.",
+  "steps": [
+    {
+      "action": "Click on the newly appeared city dropdown to open the options"
+    },
+    {
+      "action": "Select the first available city from the dropdown options"
+    },
+    {
+      "verify": "Confirm that the selected city is displayed in the dropdown field"
+    },
+    {
+      "verify": "Check if any related information or fields update based on the city selection"
+    }
+  ]
+}
+```
+
+**Example with Replace Strategy:**
+```json
+{
+  "strategy": "replace", 
+  "reason": "The new modal form achieves the same objective as the remaining steps but through a more direct path. Remaining steps become redundant.",
+  "steps": [
+    {
+      "action": "Fill out the newly appeared contact form in the modal"
+    },
+    {
+      "action": "Click submit on the modal form"
+    },
+    {
+      "verify": "Confirm successful form submission message appears"
+    }
+  ]
+}
+```
+
+## Important Notes
+
+- Focus on functional validation and user experience rather than technical implementation details
+- Generate steps that a real user would naturally perform in the given context
+- Ensure all generated steps align with existing test case standards and formatting
+- Return steps in the order of execution priority and business importance
+- Maintain consistency with the established test case design patterns"""

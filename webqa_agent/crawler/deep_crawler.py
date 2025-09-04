@@ -289,7 +289,8 @@ class DeepCrawler:
                     current_url=page.url
                 )
 
-                logging.debug(f"DOM change result: {diff_elements}")
+                if diff_elements["has_changes"]:
+                    logging.debug(f"DOM change result: {diff_elements}")
 
                 result.diff_element_map = ElementMap(data=self.extract_interactive_elements(get_new_elems=True))
 

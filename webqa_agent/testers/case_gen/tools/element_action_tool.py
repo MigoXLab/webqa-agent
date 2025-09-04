@@ -240,6 +240,12 @@ class UITool(BaseTool):
                 success_response += f" Status: {result['message']}"
                 logging.debug(f"Action status message: {result['message']}")
 
+            # Include DOM diff information for dynamic step generation
+            dom_diff = result.get("dom_diff", {})
+            if dom_diff:
+                logging.debug(f"DOM diff detected with {len(dom_diff)} new/changed elements")
+                success_response += f"\n\nDOM_DIFF_DETECTED: {json.dumps(dom_diff, ensure_ascii=False, separators=(',', ':'))}"
+
             # Include essential page structure information for next step planning
             context_preview = page_structure[:1500] + "..." if len(page_structure) > 1500 else page_structure
             success_response += f"\n\nCurrent Page State:\n{context_preview}"
