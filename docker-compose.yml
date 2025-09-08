@@ -5,19 +5,19 @@ services:
     image: mmmay0722/webqa-agent:latest
     container_name: webqa-agent
     volumes:
-      # 挂载配置文件
+      # Mount configuration file
       - ./config:/app/config:ro
-      # 挂载日志目录
+      # Mount logs directory
       - ./logs:/app/logs
-      # 挂载测试结果目录
+      # Mount test results directory
       - ./reports:/app/reports
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY} #优先使用环境变量
+      - OPENAI_API_KEY=${OPENAI_API_KEY} # Use environment variable with priority
       - OPENAI_BASE_URL=${OPENAI_BASE_URL}
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
-      - DOCKER_ENV=true  # 标识Docker环境，强制headless模式
-    restart: "no"    # 开发模式不自动重启，便于调试
+      - DOCKER_ENV=true  # Identify Docker environment, force headless mode
+    restart: "no"    # Development mode no auto-restart for easier debugging
     networks:
       - app-network
 

@@ -3,18 +3,22 @@
 import json
 
 
-def get_shared_test_design_standards() -> str:
+def get_shared_test_design_standards(language: str = 'zh-CN') -> str:
     """Get shared test case design standards for reuse in plan and reflect modules.
+
+    Args:
+        language: Language for test case naming (zh-CN or en-US)
 
     Returns:
         String containing complete test case design standards
     """
-    return """## Enhanced Test Case Design Standards
+    name_language = '中文' if language == 'zh-CN' else 'English'
+    return f"""## Enhanced Test Case Design Standards
 
 ### Domain-Aware Test Case Structure Requirements
 Each test case must include these standardized components with enhanced business context:
 
-- **`name`**: 简洁直观的中文测试名称，反映业务场景和测试目的
+- **`name`**: 简洁直观的测试名称，反映业务场景和测试目的 (使用{name_language}命名)
 - **`objective`**: Clear statement linking the test to specific business requirements and domain context
 - **`test_category`**: Enhanced classification including domain-specific categories (Ecommerce_Functional, Banking_Security, Healthcare_Compliance, etc.)
 - **`priority`**: Test priority level based on comprehensive impact assessment (Critical, High, Medium, Low):
@@ -174,12 +178,14 @@ def get_test_case_planning_system_prompt(
     completed_cases: list = None,
     reflection_history: list = None,
     remaining_objectives: str = None,
+    language: str = 'zh-CN',
 ) -> str:
     """Generate system prompt for test case planning.
 
     Args:
         business_objectives: Business objectives
         completed_cases: Completed test cases (for replanning)
+        language: Language for test case naming (zh-CN or en-US)
         reflection_history: Reflection history (for replanning)
         remaining_objectives: Remaining objectives (for replanning)
 
@@ -380,7 +386,7 @@ Leverage deeper business domain insights and execution learnings to generate ref
  3. The most valuable next action
 """
 
-    shared_standards = get_shared_test_design_standards()
+    shared_standards = get_shared_test_design_standards(language)
 
     system_prompt = f"""
 {role_and_objective}
@@ -534,14 +540,17 @@ Example 1:
     return user_prompt
 
 
-def get_reflection_system_prompt() -> str:
+def get_reflection_system_prompt(language: str = 'zh-CN') -> str:
     """Generate system prompt for reflection and replanning (static part).
+
+    Args:
+        language: Language for test case naming (zh-CN or en-US)
 
     Returns:
         Formatted system prompt containing role definition, decision framework, and output format
     """
-
-    shared_standards = get_shared_test_design_standards()
+    name_language = '中文' if language == 'zh-CN' else 'English'
+    shared_standards = get_shared_test_design_standards(language)
 
     return f"""## Role
 You are a Senior QA Testing Professional responsible for dynamic test execution oversight with enhanced business domain awareness and contextual understanding. Your expertise includes business process analysis, domain-specific testing, user experience evaluation, and strategic decision-making based on comprehensive execution insights.
@@ -650,7 +659,7 @@ IF (len(completed_cases) < len(current_plan)
   }},
   "new_plan": [
     {{
-      "name": "修订后的测试用例（中文命名）",
+      "name": "修订后的测试用例（{name_language}命名）",
       "objective": "clear_test_purpose_aligned_with_remaining_business_objectives",
       "test_category": "enhanced_category_classification",
       "priority": "priority_based_on_business_impact",
@@ -803,11 +812,13 @@ def get_reflection_prompt(
     completed_cases: list,
     page_structure: str,
     page_content_summary: dict = None,
+    language: str = 'zh-CN',
 ) -> tuple[str, str]:
     """Generate prompts for reflection and replanning (returns system and user prompt).
 
     Args:
         business_objectives: Overall business objectives
+        language: Language for test case naming (zh-CN or en-US)
         current_plan: Current test plan
         completed_cases: Completed test cases
         page_structure: Current UI text structure
@@ -816,7 +827,7 @@ def get_reflection_prompt(
     Returns:
         tuple: (system_prompt, user_prompt)
     """
-    system_prompt = get_reflection_system_prompt()
+    system_prompt = get_reflection_system_prompt(language)
     user_prompt = get_reflection_user_prompt(
         business_objectives, current_plan, completed_cases, page_structure, page_content_summary
     )

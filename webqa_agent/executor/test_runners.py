@@ -16,6 +16,7 @@ from webqa_agent.testers import (LighthouseMetricsTest, PageButtonTest,
                                  WebAccessibilityTest)
 from webqa_agent.utils import Display
 from webqa_agent.utils.log_icon import icon
+from webqa_agent.utils import i18n
 
 
 class BaseTestRunner(ABC):
@@ -69,6 +70,8 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                     'remaining_objectives': business_objectives,
                     'ui_tester_instance': parallel_tester,
                     'current_test_case_index': 0,
+                    'skip_reflection': False,  # Initialize skip reflection flag
+                    'language': test_config.report_config.get('language', 'zh-CN'),
                 }
 
                 graph_config = {'configurable': {'ui_tester_instance': parallel_tester}, 'recursion_limit': 100}
@@ -242,11 +245,11 @@ class UXTestRunner(BaseTestRunner):
                 logging.info(f"{icon['running']} Running UX test: {test_config.test_name}")
                 page = session.get_page()
 
-                text_test = PageTextTest(llm_config)
+                text_test = PageTextTest(llm_config, report_config=test_config.report_config)
                 text_result: SubTestResult = await text_test.run(page=page)
 
                 # Run ParallelPageContentTest
-                content_test = PageContentTest(llm_config)
+                content_test = PageContentTest(llm_config, report_config=test_config.report_config)
                 content_results: List[SubTestResult] = await content_test.run(page=page)
 
                 result.sub_tests = content_results + [text_result]
@@ -309,7 +312,7 @@ class LighthouseTestRunner(BaseTestRunner):
                     return result
 
                 # Run Lighthouse test
-                lighthouse_test = LighthouseMetricsTest()
+                lighthouse_test = LighthouseMetricsTest(report_config=test_config.report_config)
                 lighthouse_results: SubTestResult = await lighthouse_test.run(target_url, browser_config=browser_config)
 
                 result.sub_tests = [lighthouse_results]
@@ -326,13 +329,13 @@ class LighthouseTestRunner(BaseTestRunner):
             return result
 
 
-class ButtonTestRunner(BaseTestRunner):
-    """Runner dedicated to button click tests."""
+class BasicTestRunner(BaseTestRunner):
+    """Runner for Traversal tests."""
 
     async def run_test(
         self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
     ) -> TestResult:
-        """Run Button test."""
+        """Run UX tests with enhanced screenshot and data collection."""
 
         with Display.display(test_config.test_name):
             result = TestResult(
@@ -359,16 +362,38 @@ class ButtonTestRunner(BaseTestRunner):
                     clickable_elements = dict(islice(clickable_elements.items(), 50))
                     logging.warning(f'Clickable elements number is too large, only keep the first 50')
 
-                button_test = PageButtonTest()
+                button_test = PageButtonTest(report_config=test_config.report_config)
                 button_test_result = await button_test.run(
                     target_url, page=page, clickable_elements=clickable_elements, browser_config=browser_config
                 )
 
-                # Second subtest: each clickable result? keep detailed reports if needed; here we only include traverse test
-                result.sub_tests = [button_test_result]
+                crawler = CrawlHandler(target_url)
+                links = await crawler.extract_links(page)
+                logging.info(f'Crawled {len(links)} links')
+                # WebAccessibilityTest
+                accessibility_test = WebAccessibilityTest(report_config=test_config.report_config)
+                accessibility_result = await accessibility_test.run(target_url, links)
 
-                # Overall metrics/status
-                result.status = button_test_result.status
+
+                # Combine test results into a list
+                result.sub_tests = [button_test_result, accessibility_result]
+
+                # Extract metrics
+                button_status = button_test_result.status if button_test_result else TestStatus.FAILED
+                accessibility_status = accessibility_result.status if accessibility_result else TestStatus.FAILED
+
+                # Determine overall status
+                if button_status == TestStatus.PASSED and accessibility_status == TestStatus.PASSED:
+                    result.status = TestStatus.PASSED
+                else:
+                    result.status = TestStatus.FAILED
+
+                    # Collect errors from all tests
+                    all_results = [button_test_result, accessibility_result]
+                    errors = [r.messages.get('page') for r in all_results if r and r.messages and 'page' in r.messages]
+
+                    if errors:
+                        result.error_message = '; '.join(errors)
 
                 logging.info(f"{icon['check']} Test completed: {test_config.test_name}")
 
@@ -381,82 +406,156 @@ class ButtonTestRunner(BaseTestRunner):
 
             return result
 
+# class ButtonTestRunner(BaseTestRunner):
+#     """Runner dedicated to button click tests."""
 
-class WebBasicCheckRunner(BaseTestRunner):
-    """Runner for Web Basic Check tests."""
+#     async def run_test(
+#         self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
+#     ) -> TestResult:
+#         """Run Button test."""
 
-    async def run_test(
-        self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
-    ) -> TestResult:
-        """Run Web Basic Check tests."""
+#         with Display.display(test_config.test_name):
+#             result = TestResult(
+#                 test_id=test_config.test_id,
+#                 test_type=test_config.test_type,
+#                 test_name=test_config.test_name,
+#                 status=TestStatus.RUNNING,
+#                 category=get_category_for_test_type(test_config.test_type),
+#             )
 
-        with Display.display(test_config.test_name):
-            result = TestResult(
-                test_id=test_config.test_id,
-                test_type=test_config.test_type,
-                test_name=test_config.test_name,
-                status=TestStatus.RUNNING,
-                category=get_category_for_test_type(test_config.test_type),
-            )
+#             try:
+#                 logging.info(f"{icon['running']} Running test: {test_config.test_name}")
+#                 page = session.get_page()
+#                 browser_config = session.browser_config
 
-            try:
-                logging.info(f"{icon['running']} Running test: {test_config.test_name}")
-                page = session.get_page()
+#                 # Discover clickable elements via crawler
+#                 from webqa_agent.crawler.crawl import CrawlHandler
 
-                # Discover page elements
-                from webqa_agent.crawler.crawl import CrawlHandler
+#                 crawler = CrawlHandler(target_url)
+#                 clickable_elements = await crawler.clickable_elements_detection(page)
+#                 logging.info(f'Crawled {len(clickable_elements)} clickable elements')
+#                 if len(clickable_elements) > 50:
+#                     from itertools import islice
+#                     clickable_elements = dict(islice(clickable_elements.items(), 50))
+#                     logging.warning(f'Clickable elements number is too large, only keep the first 50')
 
-                crawler = CrawlHandler(target_url)
-                links = await crawler.extract_links(page)
-                logging.info(f'Crawled {len(links)} links')
-                # WebAccessibilityTest
-                accessibility_test = WebAccessibilityTest()
-                accessibility_result = await accessibility_test.run(target_url, links)
+#                 button_test = PageButtonTest()
+#                 button_test_result = await button_test.run(
+#                     target_url, page=page, clickable_elements=clickable_elements, browser_config=browser_config
+#                 )
 
-                result.sub_tests = [accessibility_result]
-                result.status = accessibility_result.status
-                logging.info(f"{icon['check']} Test completed: {test_config.test_name}")
+#                 # Second subtest: each clickable result? keep detailed reports if needed; here we only include traverse test
+#                 result.sub_tests = [button_test_result]
 
-            except Exception as e:
-                error_msg = f'Web Basic Check test failed: {str(e)}'
-                result.status = TestStatus.FAILED
-                result.error_message = error_msg
-                logging.error(error_msg)
-                raise
+#                 # Overall metrics/status
+#                 result.status = button_test_result.status
 
-            return result
+#                 logging.info(f"{icon['check']} Test completed: {test_config.test_name}")
 
+#             except Exception as e:
+#                 error_msg = f'Button test failed: {str(e)}'
+#                 result.status = TestStatus.FAILED
+#                 result.error_message = error_msg
+#                 logging.error(error_msg)
+#                 raise
+
+#             return result
+
+
+# class WebBasicCheckRunner(BaseTestRunner):
+#     """Runner for Web Basic Check tests."""
+
+#     async def run_test(
+#         self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
+#     ) -> TestResult:
+#         """Run Web Basic Check tests."""
+
+#         with Display.display(test_config.test_name):
+#             result = TestResult(
+#                 test_id=test_config.test_id,
+#                 test_type=test_config.test_type,
+#                 test_name=test_config.test_name,
+#                 status=TestStatus.RUNNING,
+#                 category=get_category_for_test_type(test_config.test_type),
+#             )
+
+#             try:
+#                 logging.info(f"{icon['running']} Running test: {test_config.test_name}")
+#                 page = session.get_page()
+
+#                 # Discover page elements
+#                 from webqa_agent.crawler.crawl import CrawlHandler
+
+#                 crawler = CrawlHandler(target_url)
+#                 links = await crawler.extract_links(page)
+#                 logging.info(f'Crawled {len(links)} links')
+#                 # WebAccessibilityTest
+#                 accessibility_test = WebAccessibilityTest(self.llm_config, report_config=self.report_config)
+#                 accessibility_result = await accessibility_test.run(target_url, links)
+
+#                 result.sub_tests = [accessibility_result]
+#                 result.status = accessibility_result.status
+#                 logging.info(f"{icon['check']} Test completed: {test_config.test_name}")
+
+#             except Exception as e:
+#                 error_msg = f'Web Basic Check test failed: {str(e)}'
+#                 result.status = TestStatus.FAILED
+#                 result.error_message = error_msg
+#                 logging.error(error_msg)
+#                 raise
+
+#             return result
 
 class SecurityTestRunner(BaseTestRunner):
     """Runner for Security tests using Nuclei-based scanning."""
 
-    # 常见网络扫描标签配置
-    SCAN_TAGS = {
-        'cve': '已知CVE漏洞扫描',
-        'xss': '跨站脚本攻击检测',
-        'sqli': 'SQL注入检测',
-        'rce': '远程代码执行检测',
-        'lfi': '本地文件包含检测',
-        'ssrf': '服务端请求伪造检测',
-        'redirect': '开放重定向检测',
-        'exposure': '敏感信息泄露检测',
-        'config': '配置错误检测',
-        'default-login': '默认凭据检测',
-        'ssl': 'SSL/TLS配置检测',
-        'dns': 'DNS相关检测',
-        'subdomain-takeover': '子域名接管检测',
-        'tech': '技术栈识别',
-        'panel': '管理面板检测',
-    }
+    def __init__(self):
+        super().__init__()
+        self.language = 'zh-CN'  # Default language
+        self.localized_strings = {
+            'zh-CN': i18n.get_lang_data('zh-CN').get('testers', {}).get('security', {}),
+            'en-US': i18n.get_lang_data('en-US').get('testers', {}).get('security', {}),
+        }
 
-    # 协议类型扫描
-    PROTOCOL_SCANS = {'http': 'HTTP协议扫描', 'dns': 'DNS协议扫描', 'tcp': 'TCP协议扫描', 'ssl': 'SSL协议扫描'}
+    def _get_text(self, key: str) -> str:
+        """Get localized text for the current language."""
+        return self.localized_strings.get(self.language, {}).get(key, key)
+
+    def get_scan_tags(self, language: str) -> Dict[str, str]:
+        """Get scan tags with localized descriptions."""
+        return {
+            'cve': self._get_text('cve_scan'),
+            'xss': self._get_text('xss_scan'),
+            'sqli': self._get_text('sqli_scan'),
+            'rce': self._get_text('rce_scan'),
+            'lfi': self._get_text('lfi_scan'),
+            'ssrf': self._get_text('ssrf_scan'),
+            'redirect': self._get_text('redirect_scan'),
+            'exposure': self._get_text('exposure_scan'),
+            'config': self._get_text('config_scan'),
+            'default-login': self._get_text('default_login_scan'),
+            'ssl': self._get_text('ssl_scan'),
+            'dns': self._get_text('dns_scan'),
+            'subdomain-takeover': self._get_text('subdomain_takeover_scan'),
+            'tech': self._get_text('tech_scan'),
+            'panel': self._get_text('panel_scan'),
+        }
+
+    def get_protocol_scans(self, language: str) -> Dict[str, str]:
+        """Get protocol scans with localized descriptions."""
+        return {
+            'http': self._get_text('http_protocol'),
+            'dns': self._get_text('dns_protocol'),
+            'tcp': self._get_text('tcp_protocol'),
+            'ssl': self._get_text('ssl_protocol'),
+        }
 
     async def run_test(
         self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
     ) -> TestResult:
         """Run Security tests using Nuclei scanning."""
 
+        self.language = test_config.report_config.get('language', 'zh-CN')
         with Display.display(test_config.test_name):
             result = TestResult(
                 test_id=test_config.test_id,
@@ -475,7 +574,7 @@ class SecurityTestRunner(BaseTestRunner):
 
                 if not nuclei_available:
                     result.status = TestStatus.FAILED
-                    result.error_message = 'Nuclei tool not found. Please install nuclei: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest'
+                    result.error_message = self._get_text('nuclei_not_found')
                     return result
 
                 # 执行安全扫描
@@ -514,33 +613,38 @@ class SecurityTestRunner(BaseTestRunner):
 
                     # 构建报告内容
                     if count == 0:
-                        issues_text = f'未发现{severity.upper()}级别安全问题'
+                        issues_text = self._get_text('no_severity_issues').format(severity=severity.upper())
                     else:
                         # 取前3个问题的名称作为示例
                         sample_issues = [f['name'] for f in severity_findings[:3]]
-                        issues_text = f'发现{count}个{severity.upper()}级别安全问题'
+                        issues_text = self._get_text('found_severity_issues').format(count=count, severity=severity.upper())
                         if sample_issues:
-                            issues_text += f"：{', '.join(sample_issues)}"
+                            issues_text += f": {', '.join(sample_issues)}"
                             if count > 3:
-                                issues_text += f' 等{count}个问题'
+                                issues_text += f" {self._get_text('and_more')}"
 
                     sub_tests.append(
                         SubTestResult(
-                            name=f'{severity.upper()}级别安全问题扫描',
+                            name=self._get_text('severity_level_scan').format(severity=severity.upper()),
                             status=TestStatus.PASSED,
                             metrics={'findings_count': count},
-                            report=[SubTestReport(title=f'{severity.upper()}级别安全漏洞扫描', issues=issues_text)],
+                            report=[SubTestReport(
+                                title=self._get_text('severity_level_vulnerability').format(severity=severity.upper()),
+                                issues=issues_text
+                            )],
                         )
                     )
 
                 # 创建扫描类型的子测试
-                for scan_type, description in {**self.SCAN_TAGS, **self.PROTOCOL_SCANS}.items():
+                scan_tags = self.get_scan_tags(self.language)
+                protocol_scans = self.get_protocol_scans(self.language)
+                for scan_type, description in {**scan_tags, **protocol_scans}.items():
                     type_findings = [f for f in finding_details if scan_type in f.get('template_id', '').lower()]
                     type_count = len(type_findings)
 
                     # 构建扫描类型报告内容
                     if type_count == 0:
-                        issues_text = f'{description}：未发现相关安全问题'
+                        issues_text = f"{description}: {self._get_text('no_security_issues')}"
                     else:
                         # 按严重程度统计该类型的发现
                         type_severity_counts = {}
@@ -551,24 +655,27 @@ class SecurityTestRunner(BaseTestRunner):
                         severity_summary = []
                         for sev in ['critical', 'high', 'medium', 'low', 'info']:
                             if type_severity_counts.get(sev, 0) > 0:
-                                severity_summary.append(f'{sev.upper()}级{type_severity_counts[sev]}个')
+                                severity_summary.append(f"{sev.upper()} {i18n.t(self.language, 'common.level', 'level')} {type_severity_counts[sev]} {i18n.t(self.language, 'common.issues', 'issues')}")
 
-                        issues_text = f'{description}：发现{type_count}个问题'
+                        issues_text = f"{description}: {self._get_text('found_issues').format(count=type_count)}"
                         if severity_summary:
-                            issues_text += f"（{', '.join(severity_summary)}）"
+                            issues_text += f" ({', '.join(severity_summary)})"
 
                         # 添加具体问题示例（最多3个）
                         if type_findings:
                             sample_names = [f['name'] for f in type_findings[:2]]
                             if sample_names:
-                                issues_text += f"，包括：{', '.join(sample_names)}"
+                                issues_text += f", {self._get_text('including')}: {', '.join(sample_names)}"
                                 if type_count > 2:
-                                    issues_text += ' 等'
+                                    issues_text += f" {self._get_text('and_more')}"
 
                     combined_reports = []
                     if not finding_details:
                         # No security issues found
-                        combined_reports.append(SubTestReport(title='安全检查', issues='无发现问题'))
+                        combined_reports.append(SubTestReport(
+                            title=self._get_text('security_check'),
+                            issues=self._get_text('no_issues_found')
+                        ))
                     else:
                         for fd in finding_details:
                             title = f"[{fd.get('severity', 'unknown').upper()}] {fd.get('name')}"
@@ -576,15 +683,15 @@ class SecurityTestRunner(BaseTestRunner):
                             if fd.get('description'):
                                 details_parts.append(fd['description'])
                             if fd.get('matched_at'):
-                                details_parts.append(f"Matched at: {fd['matched_at']}")
+                                details_parts.append(f"{self._get_text('matched_at')}: {fd['matched_at']}")
                             if fd.get('extracted_results'):
-                                details_parts.append(f"Extracted: {', '.join(map(str, fd['extracted_results']))}")
-                            issues_text = ' | '.join(details_parts) if details_parts else 'No further details.'
+                                details_parts.append(f"{self._get_text('extracted')}: {', '.join(map(str, fd['extracted_results']))}")
+                            issues_text = ' | '.join(details_parts) if details_parts else self._get_text('no_details')
                             combined_reports.append(SubTestReport(title=title, issues=issues_text))
 
                     sub_tests = [
                         SubTestResult(
-                            name='nuclei检查',
+                            name=self._get_text('nuclei_check'),
                             status=TestStatus.PASSED,
                             metrics={
                                 'total_findings': len(finding_details),
@@ -655,14 +762,18 @@ class SecurityTestRunner(BaseTestRunner):
         temp_dir.mkdir(parents=True, exist_ok=True)
 
         # 配置扫描任务
-        scan_configs = {'tag': self.SCAN_TAGS, 'protocol': self.PROTOCOL_SCANS}
+        scan_configs = {'tag': self.get_scan_tags(self.language), 'protocol': self.get_protocol_scans(self.language)}
 
         # 从测试配置中获取自定义参数
         custom_config = test_config.test_specific_config or {}
         include_severity_scans = custom_config.get('include_severity_scans', True)
 
         if include_severity_scans:
-            scan_configs['severity'] = {'critical': '严重漏洞扫描', 'high': '高危漏洞扫描', 'medium': '中危漏洞扫描'}
+            scan_configs['severity'] = {
+                'critical': self._get_text('critical_vulnerability'),
+                'high': self._get_text('high_risk_vulnerability'),
+                'medium': self._get_text('medium_risk_vulnerability')
+            }
 
         # 执行并行扫描
         scan_results = await self._execute_scan_batch(target_url, scan_configs, temp_dir)

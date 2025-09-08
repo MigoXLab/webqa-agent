@@ -11,12 +11,11 @@ from webqa_agent.data import ParallelTestSession, TestConfiguration, TestResult,
 from webqa_agent.data.test_structures import get_category_for_test_type
 from webqa_agent.executor.result_aggregator import ResultAggregator
 from webqa_agent.executor.test_runners import (
-    ButtonTestRunner,
+    BasicTestRunner,
     LighthouseTestRunner,
     SecurityTestRunner,
     UIAgentLangGraphRunner,
     UXTestRunner,
-    WebBasicCheckRunner,
 )
 from webqa_agent.utils.log_icon import icon
 
@@ -27,15 +26,15 @@ class ParallelTestExecutor:
     def __init__(self, max_concurrent_tests: int = 4):
         self.max_concurrent_tests = max_concurrent_tests
         self.session_manager = BrowserSessionManager()
-        self.result_aggregator = ResultAggregator()
 
         # Test runners mapping
         self.test_runners = {
             TestType.UI_AGENT_LANGGRAPH: UIAgentLangGraphRunner(),
             TestType.UX_TEST: UXTestRunner(),
             TestType.PERFORMANCE: LighthouseTestRunner(),
-            TestType.WEB_BASIC_CHECK: WebBasicCheckRunner(),
-            TestType.BUTTON_TEST: ButtonTestRunner(),
+            TestType.BASIC_TEST: BasicTestRunner(),
+            # TestType.WEB_BASIC_CHECK: WebBasicCheckRunner(),
+            # TestType.BUTTON_TEST: ButtonTestRunner(),
             TestType.SECURITY_TEST: SecurityTestRunner(),
         }
 
@@ -85,7 +84,12 @@ class ParallelTestExecutor:
 
         # Resolve dependencies and create execution order
         execution_batches = self._resolve_test_dependencies(enabled_tests)
-
+        # Get report_config from the first test configuration if available
+        report_config = None
+        if test_session.test_configurations:
+            report_config = test_session.test_configurations[0].report_config
+        self.result_aggregator = ResultAggregator(report_config)
+        
         for batch_idx, test_batch in enumerate(execution_batches):
             logging.debug(f"Executing batch {batch_idx + 1}/{len(execution_batches)} with {len(test_batch)} tests")
 
@@ -174,8 +178,9 @@ class ParallelTestExecutor:
                 if test_config.test_type in [
                     TestType.UI_AGENT_LANGGRAPH,
                     TestType.UX_TEST,
-                    TestType.BUTTON_TEST,
-                    TestType.WEB_BASIC_CHECK,
+                    TestType.BASIC_TEST
+                    # TestType.BUTTON_TEST,
+                    # TestType.WEB_BASIC_CHECK,
                 ]:
 
                     # Create isolated browser session

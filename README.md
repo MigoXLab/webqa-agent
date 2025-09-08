@@ -1,7 +1,7 @@
-# WebQA Agent
+<h1 align="center">WebQA Agent</h1>
 
 <!-- badges -->
-<p align="left">
+<p align="center">
   <a href="https://github.com/MigoXLab/webqa-agent/blob/main/LICENSE"><img src="https://img.shields.io/github/license/MigoXLab/webqa-agent" alt="License"></a>
   <a href="https://github.com/MigoXLab/webqa-agent/stargazers"><img src="https://img.shields.io/github/stars/MigoXLab/webqa-agent" alt="GitHub stars"></a>
   <a href="https://github.com/MigoXLab/webqa-agent/network/members"><img src="https://img.shields.io/github/forks/MigoXLab/webqa-agent" alt="GitHub forks"></a>
@@ -9,9 +9,14 @@
   <a href="https://deepwiki.com/MigoXLab/webqa-agent"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 </p>
 
-[English](README.md) · [简体中文](README_zh-CN.md) 
+<p align="center">
+  Try Demo 🤗<a href="https://huggingface.co/spaces/mmmay0722/WebQA-Agent">HuggingFace</a> | 🚀<a href="https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary">ModelScope</a><br>
+  Join us on 🎮<a href="https://discord.gg/K5TtkVcx">Discord</a> | 💬<a href="https://aicarrier.feishu.cn/docx/NRNXdIirXoSQEHxhaqjchUfenzd">WeChat</a>
+</p>
 
-**WebQA Agent** is an autonomous web agent that audits performance, functionality, and UX for any web product.
+<p align="center"><a href="README.md">English</a> · <a href="README_zh-CN.md">简体中文</a></p>
+
+<p align="center">🤖 <strong>WebQA Agent</strong> is an autonomous web browser agent that audits performance, functionality & UX for engineers and vibe-coding creators. ✨</p>
 
 ## 🚀 Core Features
 
@@ -101,7 +106,9 @@ python webqa-agent.py
 
 ## Online Demo
 
-Experience online: [WebQA-Agent on ModelScope](https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary)
+🚀 **Try WebQA Agent Online:**
+- **Hugging Face Spaces**: [WebQA-Agent on Hugging Face](https://huggingface.co/spaces/mmmay0722/WebQA-Agent)
+- **ModelScope Studio**: [WebQA-Agent on ModelScope](https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary)
 
 ## Usage
 

@@ -97,11 +97,13 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
     business_objectives = state.get("business_objectives", "No specific business objectives provided.")
     completed_cases = state.get("completed_cases")
 
+    language = state.get('language', 'zh-CN')
     system_prompt = get_test_case_planning_system_prompt(
         business_objectives=business_objectives,
         completed_cases=completed_cases,
         reflection_history=state.get("reflection_history"),
         remaining_objectives=state.get("remaining_objectives"),
+        language=language,
     )
 
     # Use explicit template for planning to include element attributes
@@ -228,6 +230,19 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
     )
     update = {"current_test_case_index": new_index}
 
+    # Check if we should skip reflection due to critical failure
+    if state.get("skip_reflection", False):
+        logging.info("Skipping reflection due to critical failure. Moving directly to next test case.")
+        update["skip_reflection"] = False  # Reset the flag
+        update["reflection_history"] = [
+            {
+                "decision": "CONTINUE",
+                "reasoning": "Critical failure detected in previous test case. Skipping reflection and continuing with next test case to avoid wasting time on unrecoverable errors.",
+                "new_plan": [],
+            }
+        ]
+        return update
+
     # FUSE MECHANISM: Check if the replan limit has been reached.
     MAX_REPLANS = 2
     if state.get("replan_count", 0) >= MAX_REPLANS:
@@ -300,12 +315,14 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
     logging.debug(f"Reflection analysis enhanced with {len(page_content_summary)} interactive elements")
 
     # 使用新的反思提示词函数，传入page_content_summary
+    language = state.get('language', 'zh-CN')
     system_prompt, user_prompt = get_reflection_prompt(
         business_objectives=state.get("business_objectives"),
         current_plan=state["test_cases"],
         completed_cases=state["completed_cases"],
         page_structure=page_structure,
         page_content_summary=page_content_summary,
+        language=language,
     )
 
     logging.info("Reflection and Replanning analysis - Sending request to LLM...")
@@ -380,7 +397,11 @@ async def execute_single_case(state: MainGraphState) -> dict:
     ui_tester_instance = state["ui_tester_instance"]
     case_name = case.get("name")
 
-    with Display.display(f"智能功能测试 - {case_name}"):
+    language = state.get('language', 'zh-CN')
+    logging.debug(f"Execute case language: {language}")
+    default_text = '智能功能测试' if language == 'zh-CN' else 'AI Function Test'
+
+    with Display.display(f"{default_text} - {case_name}"):
         # === 开始跟踪case数据 ===
         # 使用start_case来同时设置名称和开始数据跟踪
         ui_tester_instance.start_case(case_name, case)
@@ -416,6 +437,17 @@ async def execute_single_case(state: MainGraphState) -> dict:
         final_summary = case_result.get("final_summary", "") if case_result else "No summary available"
 
         ui_tester_instance.finish_case(final_status, final_summary)
+
+        # Check if this is a critical failure that should skip reflection
+        if case_result and case_result.get("status") == "failed":
+            failure_type = case_result.get("failure_type")
+            case_name = case_result.get("case_name", "Unknown")
+            
+            if failure_type == "critical":
+                logging.warning(f"Critical failure detected in test case '{case_name}'. Skipping reflection and moving to next case.")
+                return {"completed_cases": [case_result], "skip_reflection": True}
+            else:
+                logging.info(f"Recoverable failure in test case '{case_name}'. Will proceed with reflection for potential replan.")
 
         # Return the single result in a list to be appended by the graph state
         return {"completed_cases": [case_result] if case_result else []}

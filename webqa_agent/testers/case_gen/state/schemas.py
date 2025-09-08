@@ -9,6 +9,7 @@ class MainGraphState(TypedDict):
 
     url: str
     business_objectives: Optional[str]
+    language: Optional[str]
     cookies: Optional[str]
     test_cases: List[dict]
     # To manage the loop
@@ -24,3 +25,5 @@ class MainGraphState(TypedDict):
     remaining_objectives: Optional[str]
     ui_tester_instance: Any
     final_report: Optional[dict]
+    # For critical failure handling
+    skip_reflection: bool

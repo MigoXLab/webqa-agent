@@ -1,9 +1,9 @@
 FROM mcr.microsoft.com/playwright/python:v1.52.0-noble
 
-# 设置工作目录
+# Set working directory
 WORKDIR /app
 
-# 安装 Node.js 和 npm，以及必要的工具
+# Install Node.js, npm, and necessary tools
 RUN apt-get update && apt-get install -y \
     curl \
     unzip \
@@ -12,13 +12,13 @@ RUN apt-get update && apt-get install -y \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# 优化pip配置和网络设置
+# Optimize pip configuration and network settings
 RUN pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple && \
     pip config set global.trusted-host mirrors.tuna.tsinghua.edu.cn && \
     pip config set global.timeout 300 && \
     pip config set global.retries 5
 
-# 1. 先安装nuclei
+# 1. Install nuclei first
 RUN ARCH=$(dpkg --print-architecture) && \
     if [ "$ARCH" = "amd64" ]; then \
         NUCLEI_ARCH="amd64"; \
@@ -35,19 +35,19 @@ RUN ARCH=$(dpkg --print-architecture) && \
     chmod +x /usr/local/bin/nuclei && \
     rm -rf /tmp/nuclei /tmp/nuclei.zip
 
-# 2. 复制Python依赖文件并安装
+# 2. Copy Python dependency file and install
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir --default-timeout=300 -r requirements.txt
 
-# 3. 复制Node.js依赖文件并安装
+# 3. Copy Node.js dependency file and install
 COPY package.json /app/
 RUN npm install
 
-# 4. 复制项目文件
+# 4. Copy project files
 COPY . /app
 
-# 更新nuclei模板
+# Update nuclei templates
 RUN nuclei -ut -v
 
-# 设置运行webqa-agent
+# Set to run webqa-agent
 CMD ["python", "webqa-agent.py"]
