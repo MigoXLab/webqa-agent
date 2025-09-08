@@ -726,14 +726,15 @@ def create_gradio_interface(language: str = "zh-CN"):
                         url = gr.Textbox(
                             label=get_text(language, "config.target_url"),
                             placeholder=get_text(language, "config.target_url_placeholder"),
-                            value="https://demo.chat-sdk.dev/",
+                            # value="https://demo.chat-sdk.dev/",
                             info=get_text(language, "config.target_url_info")
                         )
                     
                         gr.Markdown(f"### {get_text(language, 'config.llm_config')}")
                         model = gr.Textbox(
                             label=get_text(language, "config.model_name"),
-                            value="gpt-4.1-mini",
+                            # value="gpt-4.1-mini",
+                            placeholder="eg. gpt-4.1-mini",
                             info=get_text(language, "config.model_name_info")
                         )
                         api_key = gr.Textbox(
@@ -761,7 +762,7 @@ def create_gradio_interface(language: str = "zh-CN"):
                             )
                             business_objectives = gr.Textbox(
                                 label=get_text(language, "config.business_objectives"),
-                                placeholder=get_text(language, "config.business_objectives_placeholder"),
+                                placeholder="eg. "+get_text(language, "config.business_objectives_placeholder"),
                                 info=get_text(language, "config.business_objectives_info")
                             )
                         
