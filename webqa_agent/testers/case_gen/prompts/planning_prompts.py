@@ -864,25 +864,96 @@ When provided with test case context information, use it to:
 - **Redundancy Avoidance**: Do not generate steps that duplicate functionality already tested or planned
 - **Narrative Consistency**: Maintain the overall test story and user scenario coherence
 
-### Insertion Strategy Decision Framework
+### Test Objective Achievement Analysis with Quantitative Framework
+
+#### Step 1: Calculate Objective Completion Score
+
+Analyze what percentage of the remaining test objective can be achieved using ONLY the new elements:
+
+**Completion Score Definitions:**
+- **100%**: New elements can fully complete ALL remaining test objectives independently
+- **75-99%**: New elements achieve most objectives but need minor supplementary actions
+- **25-74%**: New elements contribute significantly but require original steps for completion
+- **0-24%**: New elements provide minimal or supplementary value only
+
+#### Step 2: Structured Analysis Process
+
+Use this exact analysis format:
+
+<objective_analysis>
+Test Objective: [State the original test objective]
+Current Progress: [X]% complete based on executed steps
+Remaining Objective: [What specifically still needs to be achieved]
+</objective_analysis>
+
+<element_assessment>
+New Elements Found: [List element types]
+Primary Function: [What these elements do]
+Objective Relevance: [How they relate to remaining objective]
+Completion Capability: [Can they complete the objective alone? YES/NO]
+Completion Score: [0-100]%
+</element_assessment>
+
+<strategy_decision>
+Completion Score: [X]%
+Different Aspects Test: [Do remaining steps test different aspects? YES/NO]
+Decision Rule Applied: [State which rule from framework]
+Final Strategy: ["insert" or "replace"]
+Confidence Level: [HIGH/MEDIUM/LOW]
+</strategy_decision>
+
+#### Step 3: Apply Decision Rules
+
+**Primary Decision Rules:**
+- Score ≥ 75% AND remaining steps don't test different aspects → "replace"
+- Score < 75% OR remaining steps test different aspects → "insert"
+
+**Exception Handling:**
+- If remaining steps test DIFFERENT aspects (security, performance, edge cases) that new elements don't cover, use "insert" regardless of score
+
+### Objective-Based Strategy Decision Framework
 You must decide between two strategies for integrating new steps:
 
 #### Strategy: "insert"
-- **When to use**: New elements complement existing remaining steps
+- **When to use**: New elements enhance or supplement the test without fully achieving the original objective
 - **Behavior**: Add new steps while keeping all remaining steps intact
 - **Use cases**: 
-  - New elements don't overlap with planned remaining steps
-  - Additional verification or interaction opportunities
-  - Sequential workflow enhancements
+  - New elements provide additional validation opportunities
+  - Elements contribute to partial objective achievement
+  - Supplementary features that enhance test coverage
+  - New elements test edge cases or additional scenarios
 
 #### Strategy: "replace"  
-- **When to use**: New elements make remaining steps redundant or conflicting
+- **When to use**: New elements provide a complete alternative path to achieve the test objective
 - **Behavior**: Replace all remaining steps with new steps
 - **Use cases**:
-  - New elements achieve the same goals as remaining steps
-  - Remaining steps become invalid due to page state changes  
-  - More efficient path discovered through new elements
-  - Significant overlap or conflicts detected
+  - New elements offer a direct path to the test goal
+  - Original remaining steps become unnecessary after using new elements
+  - New workflow completely satisfies the test objective
+  - More efficient route to objective achievement discovered
+
+### Binary Decision Validation Checklist
+
+For increased reliability, validate your strategy choice using this simple YES/NO checklist:
+
+**Strategy Validation Questions:**
+□ Can new elements complete the test objective independently? [YES/NO]
+□ Do remaining steps become unnecessary after using new elements? [YES/NO]  
+□ Do new elements test the SAME aspects as remaining steps? [YES/NO]
+□ Is there a more efficient path through new elements? [YES/NO]
+
+**Binary Scoring:**
+- **3+ YES answers** → Confirm "replace" strategy
+- **2 or fewer YES answers** → Confirm "insert" strategy
+
+**Final Verification:**
+Before finalizing, ask yourself:
+1. "Can the test objective be marked as 'PASSED' using ONLY the new element steps?"
+   - YES → Confirm "replace" 
+   - NO → Confirm "insert"
+2. "Do remaining steps become redundant after new element interactions?"
+   - YES → Confirm "replace"
+   - NO → Confirm "insert"
 
 ### Strategic Placement Guidelines
 - **Logical Placement**: Generate steps that make sense at the current insertion point
@@ -1016,6 +1087,52 @@ You must decide between two strategies for integrating new steps:
 - Verify result display, sorting, and pagination controls
 - Focus on content discovery and refinement workflows
 
+## Edge Case Handling and Fallback Strategies
+
+When facing ambiguous or challenging scenarios, apply these fallback strategies:
+
+### 1. Multiple Valid Paths
+**Scenario**: Both "insert" and "replace" strategies seem equally valid
+**Action**: 
+- Default to "insert" to preserve test coverage
+- Document uncertainty in reason field: "Multiple paths viable, chose insert for coverage preservation"
+- Include confidence level: LOW
+
+### 2. Unclear Test Objective
+**Scenario**: Test objective is vague or poorly defined
+**Action**: 
+- Focus on most likely user intent based on context
+- Prefer "insert" to avoid removing potentially important validations
+- Document assumption in reason: "Objective unclear, assumed [interpretation]"
+
+### 3. Mixed Element Types
+**Scenario**: New elements serve different purposes (some high-impact, some low-impact)
+**Action**: 
+- Evaluate the PRIMARY elements that directly relate to objective
+- Secondary elements influence strategy only if primary elements are insufficient
+- Use highest completion score among primary elements for decision
+
+### 4. Insufficient Information
+**Scenario**: Context is missing or test case information is incomplete
+**Action**: 
+- Request clarification in reason field: "Insufficient context for optimal decision"
+- Default to "insert" with minimal steps (1-2 maximum)
+- Set confidence level: LOW
+
+### 5. No Meaningful Elements
+**Scenario**: New elements are decorative, static, or non-functional
+**Action**: 
+- Return empty steps array
+- Reason: "New elements provide no functional value for testing"
+- Strategy: "insert" (default)
+
+### 6. Technical Constraints
+**Scenario**: Elements appear complex or potentially unstable
+**Action**: 
+- Focus on basic, reliable interactions first
+- Limit to 1-2 simple steps
+- Document technical concerns in reason
+
 ## Output Requirements
 
 ### Content Guidelines
@@ -1061,12 +1178,42 @@ Each generated step should follow the established test case format:
 
 ## Example Output
 
-For a scenario where a dropdown menu appears after clicking a region selector:
+### Example 1: Insert Strategy - User Registration Enhancement
+**Test Objective**: "Complete user registration process"
+**New Elements**: City dropdown after selecting region
+**Quantitative Analysis**:
+
+<objective_analysis>
+Test Objective: Complete user registration process
+Current Progress: 40% complete based on executed steps (region selected)
+Remaining Objective: Fill personal info, password, email verification, submit form
+</objective_analysis>
+
+<element_assessment>
+New Elements Found: [City dropdown]
+Primary Function: Location specification enhancement
+Objective Relevance: Supplements location data, doesn't complete registration
+Completion Capability: NO - Cannot complete registration alone
+Completion Score: 15%
+</element_assessment>
+
+<strategy_decision>
+Completion Score: 15%
+Different Aspects Test: YES - Remaining steps test form validation, authentication
+Decision Rule Applied: Score < 75% AND different aspects → "insert"
+Final Strategy: "insert"
+Confidence Level: HIGH
+</strategy_decision>
 
 ```json
 {
+  "analysis": {
+    "objective_completion_score": 15,
+    "can_complete_objective_alone": false,
+    "remaining_steps_redundant": false
+  },
   "strategy": "insert",
-  "reason": "The city dropdown complements remaining steps without conflicts. The remaining steps test other page functionality that doesn't overlap with city selection.",
+  "reason": "Based on 15% completion score, city dropdown supplements location validation but cannot complete the registration objective independently. Remaining steps for personal info, password, and email verification are still required.",
   "steps": [
     {
       "action": "Click on the newly appeared city dropdown to open the options"
@@ -1076,28 +1223,112 @@ For a scenario where a dropdown menu appears after clicking a region selector:
     },
     {
       "verify": "Confirm that the selected city is displayed in the dropdown field"
-    },
-    {
-      "verify": "Check if any related information or fields update based on the city selection"
     }
   ]
 }
 ```
 
-**Example with Replace Strategy:**
+### Example 2: Replace Strategy - E-commerce Checkout
+**Test Objective**: "Complete purchase transaction"
+**New Elements**: Express checkout modal with payment and shipping
+**Quantitative Analysis**:
+
+<objective_analysis>
+Test Objective: Complete purchase transaction
+Current Progress: 30% complete based on executed steps (items added to cart)
+Remaining Objective: Enter payment details, shipping info, confirm purchase
+</objective_analysis>
+
+<element_assessment>
+New Elements Found: [Express checkout modal, payment form, shipping options, purchase button]
+Primary Function: Complete transaction processing
+Objective Relevance: Directly achieves purchase completion
+Completion Capability: YES - Contains all necessary transaction elements
+Completion Score: 90%
+</element_assessment>
+
+<strategy_decision>
+Completion Score: 90%
+Different Aspects Test: NO - Remaining steps test same transaction functionality
+Decision Rule Applied: Score ≥ 75% AND no different aspects → "replace"
+Final Strategy: "replace"
+Confidence Level: HIGH
+</strategy_decision>
+
 ```json
 {
-  "strategy": "replace", 
-  "reason": "The new modal form achieves the same objective as the remaining steps but through a more direct path. Remaining steps become redundant.",
+  "analysis": {
+    "objective_completion_score": 90,
+    "can_complete_objective_alone": true,
+    "remaining_steps_redundant": true
+  },
+  "strategy": "replace",
+  "reason": "Based on 90% completion score, the express checkout modal provides a complete alternative path to achieve the purchase objective. The original multi-step checkout process becomes redundant.",
   "steps": [
     {
-      "action": "Fill out the newly appeared contact form in the modal"
+      "action": "Fill out payment information in the express checkout modal"
     },
     {
-      "action": "Click submit on the modal form"
+      "action": "Select shipping method from the modal options"
     },
     {
-      "verify": "Confirm successful form submission message appears"
+      "action": "Click the 'Complete Purchase' button"
+    },
+    {
+      "verify": "Confirm successful purchase confirmation message appears"
+    },
+    {
+      "verify": "Verify order number is displayed"
+    }
+  ]
+}
+```
+
+### Example 3: Insert Strategy - Search Enhancement  
+**Test Objective**: "Find specific product using search"
+**New Elements**: Advanced filter panel
+**Quantitative Analysis**:
+
+<objective_analysis>
+Test Objective: Find specific product using search
+Current Progress: 60% complete (basic search performed)
+Remaining Objective: Refine results, verify product found
+</objective_analysis>
+
+<element_assessment>
+New Elements Found: [Filter panel, category filters, price range, rating filter]
+Primary Function: Search result refinement
+Objective Relevance: Enhances search capability significantly
+Completion Capability: PARTIAL - Can improve search but needs verification
+Completion Score: 45%
+</element_assessment>
+
+<strategy_decision>
+Completion Score: 45%
+Different Aspects Test: NO - Remaining steps also test search functionality
+Decision Rule Applied: Score < 75% → "insert"
+Final Strategy: "insert"
+Confidence Level: MEDIUM
+</strategy_decision>
+
+```json
+{
+  "analysis": {
+    "objective_completion_score": 45,
+    "can_complete_objective_alone": false,
+    "remaining_steps_redundant": false
+  },
+  "strategy": "insert",
+  "reason": "Based on 45% completion score, advanced filters significantly enhance search capability but cannot fully achieve the objective without verification steps. Remaining result validation steps are still needed.",
+  "steps": [
+    {
+      "action": "Open the advanced filter panel"
+    },
+    {
+      "action": "Set price range filter to narrow results"
+    },
+    {
+      "verify": "Confirm filtered results are displayed"
     }
   ]
 }
