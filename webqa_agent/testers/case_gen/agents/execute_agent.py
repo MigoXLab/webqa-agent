@@ -175,7 +175,7 @@ Test Case Context:
 Executed Steps (for context):
 {json.dumps(executed_steps_detail, ensure_ascii=False, indent=2) if executed_steps_detail else "None"}
 
-Remaining Steps (may need adjustment after insertion):
+Remaining Steps (may need adjustment after replan):
 {json.dumps(remaining_steps, ensure_ascii=False, indent=2) if remaining_steps else "None"}
 """
 
@@ -201,19 +201,43 @@ After the successful action execution, {len(new_elements)} new UI elements appea
 
 {test_case_context}
 
-## Generation Requirements
+## Structured Analysis Requirements
 Max steps to generate: {max_steps}
+Test Objective: "{test_objective}"
 
-Please analyze these new elements and decide on the best strategy:
-1. **STRATEGY DECISION**: Choose "insert" to add steps alongside existing ones, or "replace" to override remaining steps
-2. **STEP GENERATION**: Create test steps that enhance coverage without duplicating completed work
-3. **FLOW INTEGRATION**: Ensure steps fit naturally into the test narrative
+### Step 1: Calculate Objective Completion Score
+Assess what percentage of the remaining test objective can be achieved using ONLY these new elements:
+- **100%**: New elements fully complete ALL remaining objectives independently
+- **75-99%**: Elements achieve most objectives with minor gaps
+- **25-74%**: Significant contribution but requires original steps
+- **0-24%**: Minimal or supplementary value only
 
-Return your response in this exact format:
+### Step 2: Apply Quantitative Decision Framework
+**Primary Decision Rules:**
+- Score ≥ 75% AND remaining steps don't test different aspects → "replace"
+- Score < 75% OR remaining steps test different aspects → "insert"
+
+### Step 3: Binary Validation Checklist
+Answer these YES/NO questions:
+□ Can new elements complete the test objective independently?
+□ Do remaining steps become unnecessary after using new elements?
+□ Do new elements test the SAME aspects as remaining steps?
+□ Is there a more efficient path through new elements?
+
+**Scoring**: 3+ YES → "replace", ≤2 YES → "insert"
+
+### Step 4: Generate Structured Response
+Return your analysis in this EXACT format:
 ```json
 {{
+  "analysis": {{
+    "objective_completion_score": [0-100],
+    "can_complete_objective_alone": [true/false],
+    "remaining_steps_redundant": [true/false],
+    "confidence_level": ["HIGH"|"MEDIUM"|"LOW"]
+  }},
   "strategy": "insert" or "replace",
-  "reason": "Clear explanation for why you chose this strategy",
+  "reason": "Based on [X]% completion score: [detailed explanation of decision logic]",
   "steps": [
     {{"action": "specific action description"}},
     {{"verify": "specific verification description"}}
@@ -221,7 +245,7 @@ Return your response in this exact format:
 }}
 ```
 
-If elements are not important or irrelevant, return: {{"strategy": "insert", "reason": "explanation", "steps": []}}
+**For irrelevant elements**: {{"analysis": {{"objective_completion_score": 0, "can_complete_objective_alone": false, "remaining_steps_redundant": false, "confidence_level": "HIGH"}}, "strategy": "insert", "reason": "Elements provide no functional value", "steps": []}}
         """
         
         logging.debug(f"Requesting LLM to generate dynamic steps for {len(new_elements)} new elements")
@@ -265,10 +289,27 @@ If elements are not important or irrelevant, return: {{"strategy": "insert", "re
                 reason = result.get("reason", "No reason provided")
                 steps = result.get("steps", [])
                 
+                # Extract and validate analysis fields (new format)
+                analysis = result.get("analysis", {})
+                completion_score = analysis.get("objective_completion_score", 0) if isinstance(analysis, dict) else 0
+                can_complete_alone = analysis.get("can_complete_objective_alone", False) if isinstance(analysis, dict) else False
+                steps_redundant = analysis.get("remaining_steps_redundant", False) if isinstance(analysis, dict) else False
+                confidence = analysis.get("confidence_level", "MEDIUM") if isinstance(analysis, dict) else "MEDIUM"
+                
                 # Validate strategy value
                 if strategy not in ["insert", "replace"]:
                     logging.warning(f"Invalid strategy '{strategy}', defaulting to 'insert'")
                     strategy = "insert"
+                
+                # Validate completion score if provided
+                if not isinstance(completion_score, (int, float)) or not (0 <= completion_score <= 100):
+                    logging.debug(f"Invalid completion score {completion_score}, defaulting to 0")
+                    completion_score = 0
+                
+                # Validate confidence level
+                if confidence not in ["HIGH", "MEDIUM", "LOW"]:
+                    logging.debug(f"Invalid confidence level {confidence}, defaulting to MEDIUM")
+                    confidence = "MEDIUM"
                 
                 # Validate and limit step count
                 valid_steps = []
@@ -277,14 +318,33 @@ If elements are not important or irrelevant, return: {{"strategy": "insert", "re
                         if isinstance(step, dict) and ("action" in step or "verify" in step):
                             valid_steps.append(step)
                 
-                logging.info(f"Generated {len(valid_steps)} dynamic steps with strategy '{strategy}' from {len(new_elements)} new elements")
-                logging.debug(f"Strategy reason: {reason}")
+                # Enhanced logging with analysis data
+                if completion_score > 0:
+                    logging.info(f"Generated {len(valid_steps)} dynamic steps with strategy '{strategy}' (score: {completion_score}%, confidence: {confidence}) from {len(new_elements)} new elements")
+                else:
+                    logging.info(f"Generated {len(valid_steps)} dynamic steps with strategy '{strategy}' from {len(new_elements)} new elements")
                 
-                return {
+                logging.debug(f"Strategy reason: {reason}")
+                if analysis:
+                    logging.debug(f"Analysis: completion_score={completion_score}%, can_complete_alone={can_complete_alone}, steps_redundant={steps_redundant}, confidence={confidence}")
+                
+                # Return enhanced result with analysis
+                result_data = {
                     "strategy": strategy,
                     "reason": reason,
                     "steps": valid_steps
                 }
+                
+                # Include analysis if provided (backward compatibility)
+                if analysis:
+                    result_data["analysis"] = {
+                        "objective_completion_score": completion_score,
+                        "can_complete_objective_alone": can_complete_alone,
+                        "remaining_steps_redundant": steps_redundant,
+                        "confidence_level": confidence
+                    }
+                
+                return result_data
             else:
                 logging.warning("LLM response missing required fields (strategy, steps)")
                 return {"strategy": "insert", "reason": "Invalid response format", "steps": []}
