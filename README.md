@@ -33,17 +33,6 @@
 - **🎯 Precise Diagnostics**: Performs deep testing in real browser environments and provides actionable optimization recommendations.
 - **📈 Visual Reports**: Generates detailed HTML test reports with a multi-dimensional visual presentation of results for easy analysis and tracking.
 
-## 📌 Test Cases
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/b75f18bf-8b92-498e-b5e1-7c4dc5cd33f5" alt="AI Functional Testing" width="45%"/>
-  &nbsp;
-  <img src="https://github.com/user-attachments/assets/560cd99d-1213-47b9-82dc-52d3f2d1c1e7" alt="Other Tests" width="45%"/>
-</p>
-
-<p align="center">
-  <b>Left: AI Functional Testing</b>　|　<b>Right: Multiple Test Scenarios Coverage</b>
-</p>
 
 ## Installation & Configuration
 
