@@ -1,0 +1,4 @@
+assign:
+  strategy:
+    # random
+    daily-shift-based
