@@ -21,6 +21,7 @@ from webqa_agent.testers.case_gen.tools.element_action_tool import UIAssertTool,
 from webqa_agent.testers.case_gen.utils.message_converter import convert_intermediate_steps_to_messages
 from webqa_agent.utils.log_icon import icon
 
+LONG_STEPS = 10
 
 # ============================================================================
 # Dynamic Step Generation Helper Functions
@@ -126,19 +127,23 @@ async def generate_dynamic_steps_with_llm(
     max_steps: int,
     llm: any,
     current_case: dict = None,
-    screenshot: str = None
+    screenshot: str = None,
+    tool_output: str = None,
+    step_success: bool = True
 ) -> dict:
     """Generate dynamic test steps using LLM with full test case context and visual information
     
     Args:
         dom_diff: New DOM elements detected
-        last_action: The action that triggered the new elements (successfully executed)
+        last_action: The action that triggered the new elements
         test_objective: Overall test objective
         executed_steps: Number of steps executed so far
         max_steps: Maximum number of steps to generate
         llm: LLM instance for generation
         current_case: Complete test case containing all steps for context
         screenshot: Base64 screenshot of current page state for visual context
+        tool_output: Output from the tool execution for context (optional)
+        step_success: Whether the previous step executed successfully (default: True)
         
     Returns:
         Dict containing strategy ("insert" or "replace") and generated test steps
@@ -179,78 +184,59 @@ Remaining Steps (may need adjustment after replan):
 {json.dumps(remaining_steps, ensure_ascii=False, indent=2) if remaining_steps else "None"}
 """
 
-        # Build multi-modal user prompt with success context and insertion strategy
+        # Build multi-modal user prompt with dynamic status context
         visual_context_section = ""
         if screenshot:
+            execution_context = "AFTER the execution of the last action" if step_success else "AFTER the attempted execution of the last action"
             visual_context_section = f"""
 ## Current Page Visual Context
-The attached screenshot shows the current state of the page AFTER the successful execution of the last action.
+The attached screenshot shows the current state of the page {execution_context}.
 Use this visual information along with the DOM diff to understand the complete UI state.
+"""
+
+        # Build context based on actual execution result
+        if step_success:
+            action_status = f"✅ SUCCESSFULLY EXECUTED: \"{last_action}\""
+            status_context = "The above action has been completed successfully. Do NOT re-plan or duplicate this action."
+            execution_description = "After the successful action execution"
+        else:
+            action_status = f"⚠️ FAILED/PARTIAL EXECUTION: \"{last_action}\""
+            status_context = "The above action failed or partially succeeded. Consider recovery steps or alternative approaches."
+            execution_description = "After the failed/partial action execution"
+
+        # Include tool output for better context
+        tool_output_section = ""
+        if tool_output:
+            # Truncate if too long to prevent prompt overflow
+            tool_output_section = f"""
+
+## Execution Details
+{tool_output}
 """
 
         user_prompt = f"""
 ## Previous Action Status
-✅ SUCCESSFULLY EXECUTED: "{last_action}"
-The above action has been completed successfully. Do NOT re-plan or duplicate this action.
+{action_status}
+{status_context}{tool_output_section}
 
 ## New UI Elements Detected
-After the successful action execution, {len(new_elements)} new UI elements appeared:
+{execution_description}, {len(new_elements)} new UI elements appeared:
 {json.dumps(new_elements, ensure_ascii=False, indent=2)}
 
 {visual_context_section}
 
 {test_case_context}
 
-## Structured Analysis Requirements
+## Analysis Context
 Max steps to generate: {max_steps}
 Test Objective: "{test_objective}"
 
-### Step 1: Calculate Objective Completion Score
-Assess what percentage of the remaining test objective can be achieved using ONLY these new elements:
-- **100%**: New elements fully complete ALL remaining objectives independently
-- **75-99%**: Elements achieve most objectives with minor gaps
-- **25-74%**: Significant contribution but requires original steps
-- **0-24%**: Minimal or supplementary value only
-
-### Step 2: Apply Quantitative Decision Framework
-**Primary Decision Rules:**
-- Score ≥ 75% AND remaining steps don't test different aspects → "replace"
-- Score < 75% OR remaining steps test different aspects → "insert"
-
-### Step 3: Binary Validation Checklist
-Answer these YES/NO questions:
-□ Can new elements complete the test objective independently?
-□ Do remaining steps become unnecessary after using new elements?
-□ Do new elements test the SAME aspects as remaining steps?
-□ Is there a more efficient path through new elements?
-
-**Scoring**: 3+ YES → "replace", ≤2 YES → "insert"
-
-### Step 4: Generate Structured Response
-Return your analysis in this EXACT format:
-```json
-{{
-  "analysis": {{
-    "objective_completion_score": [0-100],
-    "can_complete_objective_alone": [true/false],
-    "remaining_steps_redundant": [true/false],
-    "confidence_level": ["HIGH"|"MEDIUM"|"LOW"]
-  }},
-  "strategy": "insert" or "replace",
-  "reason": "Based on [X]% completion score: [detailed explanation of decision logic]",
-  "steps": [
-    {{"action": "specific action description"}},
-    {{"verify": "specific verification description"}}
-  ]
-}}
-```
-
-**For irrelevant elements**: {{"analysis": {{"objective_completion_score": 0, "can_complete_objective_alone": false, "remaining_steps_redundant": false, "confidence_level": "HIGH"}}, "strategy": "insert", "reason": "Elements provide no functional value", "steps": []}}
+Please analyze these new UI elements using the QAG methodology and generate appropriate test steps if needed.
         """
         
         logging.debug(f"Requesting LLM to generate dynamic steps for {len(new_elements)} new elements")
         
-        # Call LLM with multi-modal context if screenshot available
+        # Call LLM with proper message structure
         if screenshot:
             # Multi-modal call with screenshot
             messages = [
@@ -266,10 +252,14 @@ Return your analysis in this EXACT format:
                     ]
                 }
             ]
-            response = await llm.ainvoke(messages)
         else:
-            # Text-only call
-            response = await llm.ainvoke(system_prompt + "\\n" + user_prompt)
+            # Text-only call with proper message structure
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ]
+        
+        response = await llm.ainvoke(messages)
         
         # Parse response
         if hasattr(response, 'content'):
@@ -289,27 +279,29 @@ Return your analysis in this EXACT format:
                 reason = result.get("reason", "No reason provided")
                 steps = result.get("steps", [])
                 
-                # Extract and validate analysis fields (new format)
+                # Extract and validate analysis fields (QAG format)
                 analysis = result.get("analysis", {})
-                completion_score = analysis.get("objective_completion_score", 0) if isinstance(analysis, dict) else 0
-                can_complete_alone = analysis.get("can_complete_objective_alone", False) if isinstance(analysis, dict) else False
-                steps_redundant = analysis.get("remaining_steps_redundant", False) if isinstance(analysis, dict) else False
-                confidence = analysis.get("confidence_level", "MEDIUM") if isinstance(analysis, dict) else "MEDIUM"
+                q1_can_complete_alone = analysis.get("q1_can_complete_alone", False) if isinstance(analysis, dict) else False
+                q2_different_aspects = analysis.get("q2_different_aspects", False) if isinstance(analysis, dict) else False
+                q3_remaining_redundant = analysis.get("q3_remaining_redundant", False) if isinstance(analysis, dict) else False
                 
                 # Validate strategy value
                 if strategy not in ["insert", "replace"]:
                     logging.warning(f"Invalid strategy '{strategy}', defaulting to 'insert'")
                     strategy = "insert"
                 
-                # Validate completion score if provided
-                if not isinstance(completion_score, (int, float)) or not (0 <= completion_score <= 100):
-                    logging.debug(f"Invalid completion score {completion_score}, defaulting to 0")
-                    completion_score = 0
+                # Validate QAG analysis fields
+                if not isinstance(q1_can_complete_alone, bool):
+                    logging.debug(f"Invalid q1_can_complete_alone {q1_can_complete_alone}, defaulting to False")
+                    q1_can_complete_alone = False
                 
-                # Validate confidence level
-                if confidence not in ["HIGH", "MEDIUM", "LOW"]:
-                    logging.debug(f"Invalid confidence level {confidence}, defaulting to MEDIUM")
-                    confidence = "MEDIUM"
+                if not isinstance(q2_different_aspects, bool):
+                    logging.debug(f"Invalid q2_different_aspects {q2_different_aspects}, defaulting to False")
+                    q2_different_aspects = False
+                
+                if not isinstance(q3_remaining_redundant, bool):
+                    logging.debug(f"Invalid q3_remaining_redundant {q3_remaining_redundant}, defaulting to False")
+                    q3_remaining_redundant = False
                 
                 # Validate and limit step count
                 valid_steps = []
@@ -318,30 +310,26 @@ Return your analysis in this EXACT format:
                         if isinstance(step, dict) and ("action" in step or "verify" in step):
                             valid_steps.append(step)
                 
-                # Enhanced logging with analysis data
-                if completion_score > 0:
-                    logging.info(f"Generated {len(valid_steps)} dynamic steps with strategy '{strategy}' (score: {completion_score}%, confidence: {confidence}) from {len(new_elements)} new elements")
-                else:
-                    logging.info(f"Generated {len(valid_steps)} dynamic steps with strategy '{strategy}' from {len(new_elements)} new elements")
+                # Enhanced logging with QAG analysis data
+                logging.info(f"Generated {len(valid_steps)} dynamic steps with strategy '{strategy}' from {len(new_elements)} new elements")
                 
                 logging.debug(f"Strategy reason: {reason}")
                 if analysis:
-                    logging.debug(f"Analysis: completion_score={completion_score}%, can_complete_alone={can_complete_alone}, steps_redundant={steps_redundant}, confidence={confidence}")
+                    logging.debug(f"QAG Analysis: q1_can_complete_alone={q1_can_complete_alone}, q2_different_aspects={q2_different_aspects}, q3_remaining_redundant={q3_remaining_redundant}")
                 
-                # Return enhanced result with analysis
+                # Return enhanced result with QAG analysis
                 result_data = {
                     "strategy": strategy,
                     "reason": reason,
                     "steps": valid_steps
                 }
                 
-                # Include analysis if provided (backward compatibility)
+                # Include QAG analysis if provided
                 if analysis:
                     result_data["analysis"] = {
-                        "objective_completion_score": completion_score,
-                        "can_complete_objective_alone": can_complete_alone,
-                        "remaining_steps_redundant": steps_redundant,
-                        "confidence_level": confidence
+                        "q1_can_complete_alone": q1_can_complete_alone,
+                        "q2_different_aspects": q2_different_aspects,
+                        "q3_remaining_redundant": q3_remaining_redundant
                     }
                 
                 return result_data
@@ -583,6 +571,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     total_steps = len(case.get("steps", []))
     failed_steps = []  # Track failed steps for summary generation
     case_modified = False  # Track if case was modified with dynamic steps
+    dynamic_generation_count = 0  # Track how many times dynamic generation occurred
 
     for i, step in enumerate(case.get("steps", [])):
         instruction_to_execute = step.get("action") or step.get("verify")
@@ -707,7 +696,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
             # --- Dynamic Step Generation ---
             # Check if dynamic step generation is enabled and current step succeeded
-            if (i+1) not in failed_steps and step_type == "Action" and "[success]" in result['intermediate_steps'][0][1].lower():
+            if step_type == "Action":
                 # Get dynamic step generation config from state
                 dynamic_config = state.get("dynamic_step_generation", {
                     "enabled": False,
@@ -731,16 +720,28 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                             logging.debug("Capturing screenshot for dynamic step generation context")
                             screenshot = await ui_tester_instance._actions.b64_page_screenshot()
                             
+                            # Enhance objective with generation context for smarter LLM decision-making
+                            enhanced_objective = case.get("objective", "")
+                            if dynamic_generation_count > 0:
+                                enhanced_objective += f" (Context: Already generated {dynamic_generation_count} rounds of dynamic steps, be selective about additional generation)"
+                            if i+1 > LONG_STEPS:  # Long test indicator
+                                enhanced_objective += f" (Context: Test already has {i+1} steps, consider if more steps add meaningful value)"
+                            
+                            # Determine if current step succeeded based on failed_steps list
+                            step_success = (i + 1) not in failed_steps
+                            
                             # Generate dynamic test steps with complete context and visual information
                             dynamic_result = await generate_dynamic_steps_with_llm(
                                 dom_diff=dom_diff,
                                 last_action=instruction_to_execute,
-                                test_objective=case.get("objective", ""),
+                                test_objective=enhanced_objective,
                                 executed_steps=i+1,
                                 max_steps=max_dynamic_steps,
                                 llm=llm,
                                 current_case=case,
-                                screenshot=screenshot
+                                screenshot=screenshot,
+                                tool_output=tool_output,
+                                step_success=step_success
                             )
                             
                             # Handle dynamic steps based on LLM strategy decision
@@ -752,13 +753,35 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 logging.info(f"Generated {len(dynamic_steps)} dynamic test steps with strategy '{strategy}': {reason}")
                                 case_steps = case.get("steps", [])
                                 
-                                # Convert dynamic steps to the standard format
+                                # Increment generation count since we're actually adding steps
+                                dynamic_generation_count += 1
+                                
+                                # Convert dynamic steps to the standard format and filter duplicates
+                                def is_similar_step(step1: dict, step2: dict) -> bool:
+                                    """Check if two steps are similar to avoid duplicates"""
+                                    if "action" in step1 and "action" in step2:
+                                        return step1["action"].lower().strip() == step2["action"].lower().strip()
+                                    if "verify" in step1 and "verify" in step2:
+                                        return step1["verify"].lower().strip() == step2["verify"].lower().strip()
+                                    return False
+                                
                                 formatted_dynamic_steps = []
+                                executed_and_remaining = case_steps[:i+1] + case_steps[i+1:]  # All existing steps
+                                
                                 for dyn_step in dynamic_steps:
-                                    if "action" in dyn_step:
-                                        formatted_dynamic_steps.append({"action": dyn_step["action"]})
-                                    if "verify" in dyn_step:
-                                        formatted_dynamic_steps.append({"verify": dyn_step["verify"]})
+                                    # Check for duplicates before adding
+                                    is_duplicate = False
+                                    for existing_step in executed_and_remaining:
+                                        if is_similar_step(dyn_step, existing_step):
+                                            logging.debug(f"Skipping duplicate step: {dyn_step}")
+                                            is_duplicate = True
+                                            break
+                                    
+                                    if not is_duplicate:
+                                        if "action" in dyn_step:
+                                            formatted_dynamic_steps.append({"action": dyn_step["action"]})
+                                        if "verify" in dyn_step:
+                                            formatted_dynamic_steps.append({"verify": dyn_step["verify"]})
                                 
                                 # Apply strategy: insert or replace
                                 if strategy == "replace":

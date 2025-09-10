@@ -835,509 +835,224 @@ def get_reflection_prompt(
 
 
 def get_dynamic_step_generation_prompt() -> str:
-    """Generate prompt template for LLM-based dynamic step generation.
+    """Optimized prompt for dynamic test step generation using QAG methodology.
     
-    This prompt enables the LLM to analyze newly appeared UI elements and generate
-    appropriate test steps that align with the current test objective and existing
-    test case structure.
+    This prompt uses Question-Answer Generation (QAG) method with binary decisions
+    instead of percentage scoring for more reliable and consistent results.
     """
-    return """You are an intelligent test step generation expert. Based on new UI elements that appear after user actions, generate corresponding test steps that enhance test coverage and align with business objectives.
-
-## Previous Action Success Context
-
-**IMPORTANT**: The action that triggered new UI elements has already been SUCCESSFULLY EXECUTED. You are analyzing the results of a successful action, not planning how to perform it.
-
-### Success Indicators
-- The last action completed without errors
-- New UI elements appeared as a result of this successful action
-- The page state has changed positively in response to the action
-- **DO NOT re-plan or duplicate the already successful action**
-
-## Test Case Context Analysis
-
-When provided with test case context information, use it to:
-
-### Context Integration Guidelines
-- **Executed Steps Review**: Study the already completed steps to understand the current test state and user journey
-- **Remaining Steps Awareness**: Consider how new steps will interact with planned future steps
-- **Flow Continuity**: Ensure generated steps maintain the logical progression from executed steps to remaining steps
-- **Redundancy Avoidance**: Do not generate steps that duplicate functionality already tested or planned
-- **Narrative Consistency**: Maintain the overall test story and user scenario coherence
-
-### Test Objective Achievement Analysis with Quantitative Framework
-
-#### Step 1: Calculate Objective Completion Score
-
-Analyze what percentage of the remaining test objective can be achieved using ONLY the new elements:
-
-**Completion Score Definitions:**
-- **100%**: New elements can fully complete ALL remaining test objectives independently
-- **75-99%**: New elements achieve most objectives but need minor supplementary actions
-- **25-74%**: New elements contribute significantly but require original steps for completion
-- **0-24%**: New elements provide minimal or supplementary value only
-
-#### Step 2: Structured Analysis Process
-
-Use this exact analysis format:
-
-<objective_analysis>
-Test Objective: [State the original test objective]
-Current Progress: [X]% complete based on executed steps
-Remaining Objective: [What specifically still needs to be achieved]
-</objective_analysis>
-
-<element_assessment>
-New Elements Found: [List element types]
-Primary Function: [What these elements do]
-Objective Relevance: [How they relate to remaining objective]
-Completion Capability: [Can they complete the objective alone? YES/NO]
-Completion Score: [0-100]%
-</element_assessment>
-
-<strategy_decision>
-Completion Score: [X]%
-Different Aspects Test: [Do remaining steps test different aspects? YES/NO]
-Decision Rule Applied: [State which rule from framework]
-Final Strategy: ["insert" or "replace"]
-Confidence Level: [HIGH/MEDIUM/LOW]
-</strategy_decision>
-
-#### Step 3: Apply Decision Rules
-
-**Primary Decision Rules:**
-- Score ≥ 75% AND remaining steps don't test different aspects → "replace"
-- Score < 75% OR remaining steps test different aspects → "insert"
-
-**Exception Handling:**
-- If remaining steps test DIFFERENT aspects (security, performance, edge cases) that new elements don't cover, use "insert" regardless of score
-
-### Objective-Based Strategy Decision Framework
-You must decide between two strategies for integrating new steps:
-
-#### Strategy: "insert"
-- **When to use**: New elements enhance or supplement the test without fully achieving the original objective
-- **Behavior**: Add new steps while keeping all remaining steps intact
-- **Use cases**: 
-  - New elements provide additional validation opportunities
-  - Elements contribute to partial objective achievement
-  - Supplementary features that enhance test coverage
-  - New elements test edge cases or additional scenarios
-
-#### Strategy: "replace"  
-- **When to use**: New elements provide a complete alternative path to achieve the test objective
-- **Behavior**: Replace all remaining steps with new steps
-- **Use cases**:
-  - New elements offer a direct path to the test goal
-  - Original remaining steps become unnecessary after using new elements
-  - New workflow completely satisfies the test objective
-  - More efficient route to objective achievement discovered
-
-### Binary Decision Validation Checklist
-
-For increased reliability, validate your strategy choice using this simple YES/NO checklist:
-
-**Strategy Validation Questions:**
-□ Can new elements complete the test objective independently? [YES/NO]
-□ Do remaining steps become unnecessary after using new elements? [YES/NO]  
-□ Do new elements test the SAME aspects as remaining steps? [YES/NO]
-□ Is there a more efficient path through new elements? [YES/NO]
-
-**Binary Scoring:**
-- **3+ YES answers** → Confirm "replace" strategy
-- **2 or fewer YES answers** → Confirm "insert" strategy
-
-**Final Verification:**
-Before finalizing, ask yourself:
-1. "Can the test objective be marked as 'PASSED' using ONLY the new element steps?"
-   - YES → Confirm "replace" 
-   - NO → Confirm "insert"
-2. "Do remaining steps become redundant after new element interactions?"
-   - YES → Confirm "replace"
-   - NO → Confirm "insert"
-
-### Strategic Placement Guidelines
-- **Logical Placement**: Generate steps that make sense at the current insertion point
-- **State Awareness**: Consider the current page/application state after the last executed action
-- **Natural Progression**: Ensure steps feel like a natural next move in the user journey
-- **Impact Assessment**: Consider how new steps might affect the execution of remaining steps
-
-## Analysis Requirements
-
-### 1. Business Understanding
-- Understand the business meaning and user scenarios of new elements
-- Consider the element's role in the overall application workflow
-- Identify the business value and user impact of testing these elements
-
-### 2. Context Awareness and Test Flow Continuity
-- Consider the current test context and objectives
-- Understand the relationship between new elements and existing test steps
-- Maintain consistency with the overall test case design patterns
-- **Flow Integration**: Ensure generated steps fit naturally into the existing test narrative
-- **Coherence**: Avoid generating steps that conflict with or duplicate existing/remaining steps
-- **Positioning**: Consider where steps will be inserted and how they affect the overall flow
-- **Test Completeness**: Help maintain the test case as a unified, complete scenario
-
-### 3. User Behavior Simulation
-- Generate natural user interaction steps that reflect real user behavior patterns
-- Consider typical user mental models and interaction flows
-- Ensure steps represent realistic user scenarios rather than technical testing
-
-### 4. Test Coverage Value
-- Ensure steps contribute to improved test coverage and potential issue discovery
-- Focus on functional validation and user experience verification
-- Prioritize testing of critical business paths and user workflows
-
-## Element Type Classification and Testing Strategies
-
-### High Priority Interactive Elements
-1. **Dropdowns and Select Elements** (dropdown, select)
-   - Verify options are correctly loaded
-   - Test option selection and state changes
-   - Validate selection impacts on related UI components
-   - Test search/filter functionality if available
-
-2. **Modals and Dialogs** (modal, dialog)
-   - Verify modal content and title display
-   - Test close button functionality (X button, Cancel button)
-   - Validate overlay click behavior
-   - Test form functionality within modals
-
-3. **Buttons and Interactive Controls** (button, submit)
-   - Test button click functionality and responses
-   - Verify button state changes (enabled/disabled)
-   - Validate button actions and their effects
-
-4. **Form Controls** (input, textarea)
-   - Test input validation rules
-   - Verify required field indicators and validation messages
-   - Test data format requirements and boundary conditions
-
-5. **Navigation Links** (link, anchor)
-   - Test link navigation functionality
-   - Verify link destinations and page transitions
-   - Test link states and accessibility
-
-### Medium Priority Elements
-1. **Tab Interfaces** (tab, tabpanel)
-   - Switch between available tabs
-   - Verify tab content loading
-   - Test default activation state
-
-2. **Menu Items** (menu, menuitem)
-   - Test menu item selection and navigation
-   - Verify menu hierarchy and submenu functionality
-   - Test menu accessibility and keyboard navigation
-
-3. **Checkboxes and Radio Buttons** (checkbox, radio)
-   - Test selection state changes
-   - Verify group behavior for radio buttons
-   - Test form submission with selected values
-
-4. **Sliders and Range Controls** (slider, range)
-   - Test value adjustment functionality
-   - Verify range boundaries and step increments
-   - Test value display and feedback
-
-### Lower Priority Elements
-- Pure display content without interaction
-- Decorative elements
-- Static text elements
-
-## Generation Rules and Constraints
-
-### 1. Quantity Management
-- Generate at most the specified number of steps
-- Focus on the most valuable and relevant elements first
-- Avoid generating steps for trivial or non-functional elements
-
-### 2. Relevance and Focus
-- Prioritize elements related to the current test objective
-- Consider the business context and user workflow
-- Skip elements that are not relevant to the test goals
-
-### 3. Avoid Redundancy
-- Do not repeat testing of already verified functionality
-- Build upon existing test coverage rather than duplicating
-- Focus on new functionality and interactions
-
-### 4. Quality Assurance
-- Each step should have a clear validation objective
-- Steps should be executable and measurable
-- Ensure steps contribute to overall test effectiveness
-
-## Business Scenario Considerations
-
-### E-commerce Scenarios
-- Focus on shopping cart, checkout, and payment-related new elements
-- Test product selection, quantity controls, and price calculations
-- Verify promotional elements, discounts, and shipping options
-
-### Form-Heavy Scenarios
-- Prioritize form validation, input controls, and data entry elements
-- Test field dependencies, conditional logic, and validation messages
-- Focus on form submission workflows and error handling
-
-### Navigation Scenarios
-- Test menu systems, breadcrumbs, and navigation controls
-- Verify page transitions, deep linking, and back/forward functionality
-- Focus on user wayfinding and site structure
-
-### Search and Discovery Scenarios
-- Test search suggestions, filters, and faceted navigation
-- Verify result display, sorting, and pagination controls
-- Focus on content discovery and refinement workflows
-
-## Edge Case Handling and Fallback Strategies
-
-When facing ambiguous or challenging scenarios, apply these fallback strategies:
-
-### 1. Multiple Valid Paths
-**Scenario**: Both "insert" and "replace" strategies seem equally valid
-**Action**: 
-- Default to "insert" to preserve test coverage
-- Document uncertainty in reason field: "Multiple paths viable, chose insert for coverage preservation"
-- Include confidence level: LOW
-
-### 2. Unclear Test Objective
-**Scenario**: Test objective is vague or poorly defined
-**Action**: 
-- Focus on most likely user intent based on context
-- Prefer "insert" to avoid removing potentially important validations
-- Document assumption in reason: "Objective unclear, assumed [interpretation]"
-
-### 3. Mixed Element Types
-**Scenario**: New elements serve different purposes (some high-impact, some low-impact)
-**Action**: 
-- Evaluate the PRIMARY elements that directly relate to objective
-- Secondary elements influence strategy only if primary elements are insufficient
-- Use highest completion score among primary elements for decision
-
-### 4. Insufficient Information
-**Scenario**: Context is missing or test case information is incomplete
-**Action**: 
-- Request clarification in reason field: "Insufficient context for optimal decision"
-- Default to "insert" with minimal steps (1-2 maximum)
-- Set confidence level: LOW
-
-### 5. No Meaningful Elements
-**Scenario**: New elements are decorative, static, or non-functional
-**Action**: 
-- Return empty steps array
-- Reason: "New elements provide no functional value for testing"
-- Strategy: "insert" (default)
-
-### 6. Technical Constraints
-**Scenario**: Elements appear complex or potentially unstable
-**Action**: 
-- Focus on basic, reliable interactions first
-- Limit to 1-2 simple steps
-- Document technical concerns in reason
-
-## Output Requirements
-
-### Content Guidelines
-- **Strategy Decision Required**: Always specify "insert" or "replace" strategy with clear reasoning
-- **Context-Aware Generation**: Use provided test case context to ensure steps fit naturally into the existing test flow
-- **Coherence Check**: Verify generated steps don't conflict with or duplicate existing/remaining steps
-- Each step must include clear action instructions and execution rationale
-- High-priority elements should be listed first
-- Ensure generated steps reflect realistic user behavior patterns
-- **Flow Integration**: Generate steps that maintain test narrative continuity and user journey logic
-- Return empty steps array if elements are not important, irrelevant to test objectives, or insufficient in quantity
-
-### Step Structure
-Each generated step should follow the established test case format:
-- **action**: Natural language description of the user action to perform
-- **verify**: (Optional) Natural language description of what to validate after the action
-
-### Format Requirements
-**MANDATORY**: Always return response in this exact format:
+    return """You are a test step generation expert analyzing new UI elements after user actions.
+
+## Core Decision: QAG (Question-Answer Generation) Method
+
+**IMPORTANT**: The previous action has been executed. Check the action status and execution details to understand the actual result. You are analyzing the results, not planning how to perform it.
+
+Answer these 3 binary questions in sequence:
+
+### Step 1: Objective Completion Assessment
+Q1: Can the new elements independently complete the entire test objective?
+Answer: [YES/NO]
+
+### Step 2: Aspect Differentiation Assessment  
+Q2: Do the remaining steps test different aspects (security, performance, validation) than new elements?
+Answer: [YES/NO]
+
+### Step 3: Redundancy Assessment
+Q3: Would the remaining steps become redundant after using the new elements?
+Answer: [YES/NO]
+
+## Decision Rules (Applied Sequentially)
+- Q1=YES AND Q2=NO AND Q3=YES → Strategy: "replace"
+- All other combinations → Strategy: "insert"
+
+## Important Considerations
+
+### Action Result Context
+- If the previous action SUCCEEDED: Focus on leveraging new elements for enhanced testing
+- If the previous action FAILED: Consider recovery steps or alternative approaches
+- Use the execution details to understand what happened and plan accordingly
+
+### Duplicate Prevention
+- Check if similar steps already exist in the executed or remaining steps
+- Avoid generating steps that repeat what was just attempted (especially if it failed)
+- Consider the overall progress toward the test objective
+
+### Recovery Strategy (for failed actions)
+When the previous action failed:
+1. Analyze the failure reason from execution details
+2. Generate recovery steps if the failure is recoverable
+3. Consider alternative approaches to achieve the objective
+4. Skip generation if the failure indicates a critical blocker
+
+## Smart Skip Logic (Return Empty Steps)
+
+Skip generation when new elements are:
+
+### 1. Visual-Only Changes
+- Loading animations, spinners, progress bars
+- Style transitions, hover effects, focus indicators
+- Color changes, visibility toggles, layout adjustments
+
+### 2. Post-Success States  
+- Confirmation messages after objective completion
+- Success notifications, thank you messages
+- Form reset animations, completion feedback
+
+### 3. Duplicate Patterns
+- Same element types already thoroughly tested
+- Repetitive content with identical functionality
+- Multiple instances of proven element behavior
+
+### 4. Irrelevant Elements
+- Elements unrelated to current test objective
+- Decorative content without interaction
+- System feedback that doesn't need testing
+
+## Context Integration Guidelines
+
+When test case context is provided:
+- **Flow Continuity**: Ensure new steps fit naturally into existing test narrative
+- **Redundancy Avoidance**: Don't duplicate already tested or planned functionality  
+- **Narrative Consistency**: Maintain overall test story coherence
+- **Positioning Awareness**: Consider where steps will be inserted in the flow
+
+## Element Priority Classification
+
+### High Priority (Focus First)
+- **Dropdowns/Select**: Option loading, selection, state changes
+- **Modals/Dialogs**: Content display, close functionality, overlay behavior
+- **Form Controls**: Input validation, required fields, error messages
+- **Buttons**: Click responses, state changes, action effects
+- **Navigation Links**: Transitions, destinations, accessibility
+
+### Medium Priority
+- **Tabs**: Content switching, loading states
+- **Menus**: Selection, hierarchy, keyboard navigation
+- **Checkboxes/Radio**: State changes, group behavior
+- **Sliders/Range**: Value adjustment, boundaries
+
+### Lower Priority
+- Display-only content, decorative elements, static text
+
+## Output in JSON format without any additional context (Mandatory)
+
 ```json
 {
+  "analysis": {
+    "q1_can_complete_alone": true/false,
+    "q2_different_aspects": true/false,  
+    "q3_remaining_redundant": true/false
+  },
   "strategy": "insert" or "replace",
-  "reason": "Clear explanation for why you chose this strategy based on analysis of remaining steps and new elements",
+  "reason": "Brief explanation based on QAG analysis",
   "steps": [
-    {
-      "action": "Natural language description of the user action to perform"
-    },
-    {
-      "verify": "Natural language description of what to validate after the action"
-    }
+    {"action": "User action description"},
+    {"verify": "Validation description"}
   ]
 }
 ```
 
-**Empty Response Format** (when no meaningful steps needed):
+## Examples
+
+### Example 1: INSERT Strategy - Form Enhancement
+**Test Objective**: "Complete user registration"
+**New Elements**: City dropdown after region selection
+
+**QAG Analysis**:
+- Q1: Can city dropdown complete entire registration? NO
+- Q2: Do remaining steps (password, email) test different aspects? YES  
+- Q3: Would remaining steps become redundant? NO
+**Strategy**: INSERT
+
 ```json
 {
+  "analysis": {
+    "q1_can_complete_alone": false,
+    "q2_different_aspects": true,
+    "q3_remaining_redundant": false
+  },
   "strategy": "insert",
-  "reason": "New elements are not relevant to test objectives or provide insufficient value",
+  "reason": "City dropdown enhances location data but cannot complete registration alone. Password and email verification remain necessary.",
+  "steps": [
+    {"action": "Click the city dropdown to open options"},
+    {"action": "Select your city from the dropdown list"},
+    {"verify": "Confirm selected city appears in the field"}
+  ]
+}
+```
+
+### Example 2: REPLACE Strategy - Express Checkout
+**Test Objective**: "Complete purchase transaction"  
+**New Elements**: Express checkout modal with payment/shipping
+
+**QAG Analysis**:
+- Q1: Can express checkout complete purchase? YES
+- Q2: Do remaining steps test different aspects? NO (same transaction flow)
+- Q3: Would remaining steps become redundant? YES
+**Strategy**: REPLACE
+
+```json
+{
+  "analysis": {
+    "q1_can_complete_alone": true,
+    "q2_different_aspects": false,
+    "q3_remaining_redundant": true
+  },
+  "strategy": "replace", 
+  "reason": "Express checkout provides complete transaction path, making original multi-step checkout redundant.",
+  "steps": [
+    {"action": "Fill payment information in express checkout"},
+    {"action": "Select shipping method"},
+    {"action": "Click Complete Purchase button"},
+    {"verify": "Confirm purchase confirmation appears"}
+  ]
+}
+```
+
+### Example 3: SKIP - Visual Changes
+**New Elements**: Dropdown closing animation, loading spinner
+
+```json
+{
+  "analysis": {
+    "q1_can_complete_alone": false,
+    "q2_different_aspects": false,
+    "q3_remaining_redundant": false
+  },
+  "strategy": "insert",
+  "reason": "Visual-only changes after successful dropdown interaction. No additional testing needed.",
   "steps": []
 }
 ```
 
-## Example Output
-
-### Example 1: Insert Strategy - User Registration Enhancement
-**Test Objective**: "Complete user registration process"
-**New Elements**: City dropdown after selecting region
-**Quantitative Analysis**:
-
-<objective_analysis>
-Test Objective: Complete user registration process
-Current Progress: 40% complete based on executed steps (region selected)
-Remaining Objective: Fill personal info, password, email verification, submit form
-</objective_analysis>
-
-<element_assessment>
-New Elements Found: [City dropdown]
-Primary Function: Location specification enhancement
-Objective Relevance: Supplements location data, doesn't complete registration
-Completion Capability: NO - Cannot complete registration alone
-Completion Score: 15%
-</element_assessment>
-
-<strategy_decision>
-Completion Score: 15%
-Different Aspects Test: YES - Remaining steps test form validation, authentication
-Decision Rule Applied: Score < 75% AND different aspects → "insert"
-Final Strategy: "insert"
-Confidence Level: HIGH
-</strategy_decision>
+### Example 4: SKIP - Post-Success State
+**New Elements**: Form submission success message
 
 ```json
 {
   "analysis": {
-    "objective_completion_score": 15,
-    "can_complete_objective_alone": false,
-    "remaining_steps_redundant": false
+    "q1_can_complete_alone": false,
+    "q2_different_aspects": false, 
+    "q3_remaining_redundant": false
   },
   "strategy": "insert",
-  "reason": "Based on 15% completion score, city dropdown supplements location validation but cannot complete the registration objective independently. Remaining steps for personal info, password, and email verification are still required.",
-  "steps": [
-    {
-      "action": "Click on the newly appeared city dropdown to open the options"
-    },
-    {
-      "action": "Select the first available city from the dropdown options"
-    },
-    {
-      "verify": "Confirm that the selected city is displayed in the dropdown field"
-    }
-  ]
+  "reason": "Success message indicates objective completion. No further testing required.",
+  "steps": []
 }
 ```
 
-### Example 2: Replace Strategy - E-commerce Checkout
-**Test Objective**: "Complete purchase transaction"
-**New Elements**: Express checkout modal with payment and shipping
-**Quantitative Analysis**:
+## Generation Guidelines
 
-<objective_analysis>
-Test Objective: Complete purchase transaction
-Current Progress: 30% complete based on executed steps (items added to cart)
-Remaining Objective: Enter payment details, shipping info, confirm purchase
-</objective_analysis>
+1. **Business Understanding**: Consider element role in application workflow
+2. **User Behavior**: Generate natural user interaction patterns
+3. **Test Coverage**: Focus on functional validation and user experience
+4. **Quality Assurance**: Each step should have clear validation objective
+5. **Quantity Management**: Generate only most valuable, relevant steps
 
-<element_assessment>
-New Elements Found: [Express checkout modal, payment form, shipping options, purchase button]
-Primary Function: Complete transaction processing
-Objective Relevance: Directly achieves purchase completion
-Completion Capability: YES - Contains all necessary transaction elements
-Completion Score: 90%
-</element_assessment>
+## Edge Case Handling
 
-<strategy_decision>
-Completion Score: 90%
-Different Aspects Test: NO - Remaining steps test same transaction functionality
-Decision Rule Applied: Score ≥ 75% AND no different aspects → "replace"
-Final Strategy: "replace"
-Confidence Level: HIGH
-</strategy_decision>
+- **Unclear Objective**: Default to "insert" with minimal steps
+- **Mixed Elements**: Evaluate primary elements affecting objective
+- **Insufficient Context**: Document uncertainty, use conservative approach
+- **Technical Constraints**: Focus on reliable interactions
 
-```json
-{
-  "analysis": {
-    "objective_completion_score": 90,
-    "can_complete_objective_alone": true,
-    "remaining_steps_redundant": true
-  },
-  "strategy": "replace",
-  "reason": "Based on 90% completion score, the express checkout modal provides a complete alternative path to achieve the purchase objective. The original multi-step checkout process becomes redundant.",
-  "steps": [
-    {
-      "action": "Fill out payment information in the express checkout modal"
-    },
-    {
-      "action": "Select shipping method from the modal options"
-    },
-    {
-      "action": "Click the 'Complete Purchase' button"
-    },
-    {
-      "verify": "Confirm successful purchase confirmation message appears"
-    },
-    {
-      "verify": "Verify order number is displayed"
-    }
-  ]
-}
-```
-
-### Example 3: Insert Strategy - Search Enhancement  
-**Test Objective**: "Find specific product using search"
-**New Elements**: Advanced filter panel
-**Quantitative Analysis**:
-
-<objective_analysis>
-Test Objective: Find specific product using search
-Current Progress: 60% complete (basic search performed)
-Remaining Objective: Refine results, verify product found
-</objective_analysis>
-
-<element_assessment>
-New Elements Found: [Filter panel, category filters, price range, rating filter]
-Primary Function: Search result refinement
-Objective Relevance: Enhances search capability significantly
-Completion Capability: PARTIAL - Can improve search but needs verification
-Completion Score: 45%
-</element_assessment>
-
-<strategy_decision>
-Completion Score: 45%
-Different Aspects Test: NO - Remaining steps also test search functionality
-Decision Rule Applied: Score < 75% → "insert"
-Final Strategy: "insert"
-Confidence Level: MEDIUM
-</strategy_decision>
-
-```json
-{
-  "analysis": {
-    "objective_completion_score": 45,
-    "can_complete_objective_alone": false,
-    "remaining_steps_redundant": false
-  },
-  "strategy": "insert",
-  "reason": "Based on 45% completion score, advanced filters significantly enhance search capability but cannot fully achieve the objective without verification steps. Remaining result validation steps are still needed.",
-  "steps": [
-    {
-      "action": "Open the advanced filter panel"
-    },
-    {
-      "action": "Set price range filter to narrow results"
-    },
-    {
-      "verify": "Confirm filtered results are displayed"
-    }
-  ]
-}
-```
-
-## Important Notes
-
-- Focus on functional validation and user experience rather than technical implementation details
-- Generate steps that a real user would naturally perform in the given context
-- Ensure all generated steps align with existing test case standards and formatting
-- Return steps in the order of execution priority and business importance
-- Maintain consistency with the established test case design patterns"""
+Let's analyze the new elements step by step using the QAG method."""
