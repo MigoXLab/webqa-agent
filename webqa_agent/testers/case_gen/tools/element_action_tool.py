@@ -50,70 +50,6 @@ class UITool(BaseTool):
         logging.debug(f"Page structure length: {len(page_structure)} characters")
         return page_structure, screenshot
 
-    async def _check_for_ui_error(
-        self, action: str, target: str, value: Optional[str], intent: str, page_structure: str, screenshot: str
-    ) -> Dict[str, Any]:
-        """Uses an LLM to check for a UI validation error after an action."""
-        logging.debug(f"Starting UI error detection for action: {action} on {target}")
-        logging.debug(f"Error detection intent: {intent}")
-
-        prompt = get_error_detection_prompt()
-        llm_input = (
-            f"Action Intent: {intent}\n"
-            f"Action: {action} on element '{target}' with value '{value}'.\n\n"
-            f"Page Text Structure:\n{page_structure}"
-        )
-
-        logging.debug(f"Error detection LLM input length: {len(llm_input)} characters")
-        logging.debug(
-            f"Error detection page structure: {page_structure[:500]}{'...' if len(page_structure) > 500 else ''}"
-        )
-
-        # Use the same LLM instance from the ui_tester
-        llm = self.ui_tester_instance.llm
-        try:
-            logging.debug("Starting UI error detection - Sending request to LLM...")
-            start_time = datetime.datetime.now()
-
-            response_str = await llm.get_llm_response(system_prompt=prompt, prompt=llm_input, images=screenshot)
-
-            end_time = datetime.datetime.now()
-            duration = (end_time - start_time).total_seconds()
-
-            logging.debug(f"UI error detection completed in {duration:.2f} seconds")
-            logging.debug(f"Error detection response: {response_str[:500]}...")
-
-            result = json.loads(response_str)
-            error_detected = result.get("error_detected", False)
-            error_message = result.get("error_message", "")
-
-            logging.debug(f"Error detection result: {'ERROR' if error_detected else 'NO ERROR'}")
-            if error_detected:
-                logging.debug(f"UI error detected: {error_message}")
-            else:
-                logging.debug("No UI validation errors detected")
-
-            return result
-
-        except json.JSONDecodeError as e:
-            logging.error(f"Failed to decode JSON from error detection LLM: {e}")
-            logging.error(f"Raw response: {response_str}")
-            # Fallback to a safe default if LLM response is invalid
-            fallback_result = {
-                "error_detected": False,
-                "error_message": "Invalid response from error detection model.",
-                "reasoning": "JSON parsing failed",
-            }
-            logging.warning("Using fallback error detection result")
-            return fallback_result
-        except Exception as e:
-            logging.error(f"Exception during UI error detection: {str(e)}")
-            return {
-                "error_detected": False,
-                "error_message": f"Error detection failed: {str(e)}",
-                "reasoning": "Exception during error detection process",
-            }
-
     def _run(self, action: str, target: str, **kwargs) -> str:
         raise NotImplementedError("Use arun for asynchronous execution.")
 
@@ -200,34 +136,6 @@ class UITool(BaseTool):
                 error_msg = f"Action did not return a dictionary. Got: {type(result)}"
                 logging.error(error_msg)
                 return f"[FAILURE] Error: {error_msg}"
-
-            # --- Enhanced LLM-based UI Error Detection ---
-            logging.debug("Starting enhanced UI error detection")
-            error_check_result = await self._check_for_ui_error(
-                action, target, value, description or f"{action} {target}", page_structure, screenshot
-            )
-
-            # Process error detection result and format output accordingly
-            if error_check_result.get("error_detected", False):
-                error_msg = error_check_result.get("error_message", "Validation error detected")
-                reasoning = error_check_result.get("reasoning", "")
-
-                logging.debug(f"UI validation error detected: {error_msg}")
-                logging.debug(f"Error reasoning: {reasoning}")
-
-                # Format as expected by execution agent
-                failure_response = f"[FAILURE] Action '{action}' on '{target}' appeared to succeed, but a validation error was detected on the page. You MUST resolve this before proceeding."
-                if error_msg:
-                    failure_response += f" Error Details: {error_msg}"
-                if reasoning:
-                    failure_response += f" Analysis: {reasoning}"
-
-                # Include truncated page context for agent analysis
-                context_preview = page_structure[:2000] + "..." if len(page_structure) > 2000 else page_structure
-                failure_response += f"\n\nPage Context Preview:\n{context_preview}"
-
-                logging.debug("Returning failure response due to UI validation error")
-                return failure_response
 
             # --- Success Response with Context ---
             logging.debug("Action completed successfully with no validation errors")

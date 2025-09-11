@@ -7,7 +7,6 @@ def get_execute_system_prompt(case: dict) -> str:
     # Core fields (original)
     objective = case.get("objective", "Not specified")
     success_criteria = case.get("success_criteria", ["Not specified"])
-    steps_list = case.get("steps", [])
 
     # Enhanced fields (new)
     priority = case.get("priority", "Medium")
@@ -15,14 +14,6 @@ def get_execute_system_prompt(case: dict) -> str:
     test_category = case.get("test_category", "Functional_General")
     domain_specific_rules = case.get("domain_specific_rules", "")
     test_data_requirements = case.get("test_data_requirements", "")
-
-    # Format step information
-    formatted_steps = []
-    for i, step in enumerate(steps_list):
-        if "action" in step:
-            formatted_steps.append(f"{i+1}. Action: {step['action']}")
-        elif "verify" in step:
-            formatted_steps.append(f"{i+1}. Assert: {step['verify']}")
 
     system_prompt = f"""You are an intelligent UI test execution agent specialized in web application testing. Your role is to execute individual test cases by performing UI interactions and validations in a systematic, reliable manner following established QA best practices.
 
@@ -139,7 +130,28 @@ When encountering a complex instruction:
    - UI state errors: Navigate back to expected state
 4. **Resume test plan** only after successful error resolution
 
-### 3. Test Plan Adherence (THIRD PRIORITY)
+### 3. Objective Achievement Detection (THIRD PRIORITY)
+**Critical Rule**: After completing each step, evaluate whether the test objective has been fully achieved. 
+If the objective is complete and remaining steps would be redundant, signal early completion.
+
+**Objective Achievement Criteria**:
+- All success criteria have been validated through executed actions
+- Core functionality has been thoroughly tested and verified
+- Remaining steps would provide no additional value or coverage
+- The test objective is comprehensively fulfilled based on actual results
+
+**Early Completion Signal Format**:
+When you determine the test objective is achieved, output this exact signal:
+`OBJECTIVE_ACHIEVED: Test objective "[objective]" completed at step [X]. Remaining [Y] steps are redundant. Reason: [detailed explanation of why objective is complete and remaining steps unnecessary].`
+
+**Decision Guidelines**:
+- **Be Conservative**: Only signal when absolutely certain objective is achieved
+- **Evaluate Coverage**: Consider if remaining steps test unique aspects not yet covered
+- **Base on Results**: Evaluate based on actual execution results, not assumptions
+- **Dynamic Context**: This is especially relevant after dynamic steps that may have covered the original test intent
+- **Unique Value Assessment**: Focus on whether remaining steps add genuine testing value
+
+### 4. Test Plan Adherence (FOURTH PRIORITY)
 **Execution Strategy**:
 - Execute test steps in the defined sequence
 - Use appropriate tools based on step type:
@@ -148,8 +160,8 @@ When encountering a complex instruction:
 - Maintain clear action descriptions for test documentation
 - Track progress through the test plan systematically
 
-### 4. Test Objective Achievement (FOURTH PRIORITY)
-**Goal-Oriented Execution**:
+### 5. Adaptive Goal Execution (FIFTH PRIORITY)
+**Goal-Oriented Adaptation**:
 - Keep the test objective as the ultimate success criterion
 - If the standard test steps cannot achieve the objective due to UI changes, adapt the approach while maintaining test integrity
 - Document any deviations from the planned approach with clear justification

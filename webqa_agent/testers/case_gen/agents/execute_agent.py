@@ -279,11 +279,12 @@ Please analyze these new UI elements using the QAG methodology and generate appr
                 reason = result.get("reason", "No reason provided")
                 steps = result.get("steps", [])
                 
-                # Extract and validate analysis fields (QAG format)
+                # Extract and validate analysis fields (Enhanced QAG format)
                 analysis = result.get("analysis", {})
                 q1_can_complete_alone = analysis.get("q1_can_complete_alone", False) if isinstance(analysis, dict) else False
                 q2_different_aspects = analysis.get("q2_different_aspects", False) if isinstance(analysis, dict) else False
                 q3_remaining_redundant = analysis.get("q3_remaining_redundant", False) if isinstance(analysis, dict) else False
+                q4_abstraction_gap = analysis.get("q4_abstraction_gap", False) if isinstance(analysis, dict) else False
                 
                 # Validate strategy value
                 if strategy not in ["insert", "replace"]:
@@ -303,6 +304,10 @@ Please analyze these new UI elements using the QAG methodology and generate appr
                     logging.debug(f"Invalid q3_remaining_redundant {q3_remaining_redundant}, defaulting to False")
                     q3_remaining_redundant = False
                 
+                if not isinstance(q4_abstraction_gap, bool):
+                    logging.debug(f"Invalid q4_abstraction_gap {q4_abstraction_gap}, defaulting to False")
+                    q4_abstraction_gap = False
+                
                 # Validate and limit step count
                 valid_steps = []
                 if isinstance(steps, list):
@@ -315,7 +320,7 @@ Please analyze these new UI elements using the QAG methodology and generate appr
                 
                 logging.debug(f"Strategy reason: {reason}")
                 if analysis:
-                    logging.debug(f"QAG Analysis: q1_can_complete_alone={q1_can_complete_alone}, q2_different_aspects={q2_different_aspects}, q3_remaining_redundant={q3_remaining_redundant}")
+                    logging.debug(f"Enhanced QAG Analysis: q1_can_complete_alone={q1_can_complete_alone}, q2_different_aspects={q2_different_aspects}, q3_remaining_redundant={q3_remaining_redundant}, q4_abstraction_gap={q4_abstraction_gap}")
                 
                 # Return enhanced result with QAG analysis
                 result_data = {
@@ -324,12 +329,13 @@ Please analyze these new UI elements using the QAG methodology and generate appr
                     "steps": valid_steps
                 }
                 
-                # Include QAG analysis if provided
+                # Include Enhanced QAG analysis if provided
                 if analysis:
                     result_data["analysis"] = {
                         "q1_can_complete_alone": q1_can_complete_alone,
                         "q2_different_aspects": q2_different_aspects,
-                        "q3_remaining_redundant": q3_remaining_redundant
+                        "q3_remaining_redundant": q3_remaining_redundant,
+                        "q4_abstraction_gap": q4_abstraction_gap
                     }
                 
                 return result_data
@@ -572,6 +578,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     failed_steps = []  # Track failed steps for summary generation
     case_modified = False  # Track if case was modified with dynamic steps
     dynamic_generation_count = 0  # Track how many times dynamic generation occurred
+    dom_diff_cache = []
 
     for i, step in enumerate(case.get("steps", [])):
         instruction_to_execute = step.get("action") or step.get("verify")
@@ -692,10 +699,16 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 logging.error(f"Step {i+1} failed due to max iterations.")
                 break
 
+            # Check for objective achievement signal
+            is_achieved, achievement_reason = _is_objective_achieved(tool_output)
+            if is_achieved:
+                logging.info(f"Test objective achieved at step {i+1}: {achievement_reason}")
+                final_summary = f"FINAL_SUMMARY: Test case completed successfully with early termination at step {i+1}. {achievement_reason}"
+                break
+
             logging.debug(f"Step {i+1} completed {'successfully' if (i+1) not in failed_steps else 'with issues'}.")
 
             # --- Dynamic Step Generation ---
-            # Check if dynamic step generation is enabled and current step succeeded
             if step_type == "Action":
                 # Get dynamic step generation config from state
                 dynamic_config = state.get("dynamic_step_generation", {
@@ -712,7 +725,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     # Extract DOM diff from tool output
                     dom_diff = extract_dom_diff_from_output(result['intermediate_steps'][0][1])
                     
-                    if dom_diff and len(dom_diff) >= min_elements_threshold:
+                    if dom_diff and len(dom_diff) >= min_elements_threshold and dom_diff not in dom_diff_cache:
                         logging.info(f"Detected {len(dom_diff)} new elements, starting dynamic test step generation")
                         
                         try:
@@ -817,6 +830,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                             logging.debug(f"Detected {len(dom_diff)} new elements, but below threshold {min_elements_threshold}, skipping dynamic step generation")
                         else:
                             logging.debug("No DOM changes detected, skipping dynamic step generation")
+                    dom_diff_cache.append(dom_diff)
+
                 else:
                     logging.debug("Dynamic step generation not enabled")
             # --- Dynamic Step Generation End ---
@@ -966,6 +981,32 @@ FINAL_SUMMARY: Test case "{case_name}" failed at step [X]. Error: [description].
 
     # Return only the result of the current case
     return result
+
+
+def _is_objective_achieved(tool_output: str) -> tuple[bool, str]:
+    """Check if the agent has signaled that the test objective is achieved.
+    
+    Args:
+        tool_output: The output from the step execution
+    
+    Returns:
+        tuple: (is_achieved: bool, reason: str)
+    """
+    if not tool_output or "OBJECTIVE_ACHIEVED:" not in tool_output:
+        return False, ""
+    
+    try:
+        # Extract the reason after the signal
+        parts = tool_output.split("OBJECTIVE_ACHIEVED:")
+        if len(parts) > 1:
+            reason = parts[1].split("\n")[0].strip()
+            # Only return True if there's actual content after the signal
+            if reason:
+                return True, reason
+    except Exception as e:
+        logging.debug(f"Error parsing objective achievement signal: {e}")
+    
+    return False, ""
 
 
 def _is_critical_failure_step(tool_output: str, step_instruction: str = "") -> bool:
