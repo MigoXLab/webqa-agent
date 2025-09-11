@@ -574,13 +574,16 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         )
     ]
     final_summary = "No summary provided."
-    total_steps = len(case.get("steps", []))
+    case_steps = case.get("steps", [])  # Get reference to steps list
+    total_steps = len(case_steps)
     failed_steps = []  # Track failed steps for summary generation
     case_modified = False  # Track if case was modified with dynamic steps
     dynamic_generation_count = 0  # Track how many times dynamic generation occurred
     dom_diff_cache = []
 
-    for i, step in enumerate(case.get("steps", [])):
+    i = 0
+    while i < len(case_steps):
+        step = case_steps[i]
         instruction_to_execute = step.get("action") or step.get("verify")
         step_type = "Action" if step.get("action") else "Assertion"
 
@@ -841,6 +844,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             failed_steps.append(i + 1)
             final_summary = f"FINAL_SUMMARY: Step '{instruction_to_execute}' raised an exception: {str(e)}"
             break
+            
+        # Move to next step
+        i += 1
 
     # If the loop finishes without an early exit, generate a final summary
     if "FINAL_SUMMARY:" not in final_summary:
