@@ -30,6 +30,7 @@
         window._highlight = window._highlight ?? true;                          // RenderHighlight Switch
         window._highlightText = window._highlightText ?? false;                 // RenderTextHighlight Switch
         window._viewportOnly = window._viewportOnly ?? false;                   // Viewport Highlight Only
+        window._highlightMedia = window._highlightMedia ?? false;               // Media Element Highlight Switch
         let idCounter = 1;
         let highlightIndex = 1;
         const elementToId = new WeakMap();
@@ -39,6 +40,7 @@
         const _elementHighlightColorMap = new WeakMap();
         const INTERACTIVE_TAGS = new Set(['a', 'button', 'input', 'select', 'textarea', 'summary', 'details', 'label', 'option']);
         const INTERACTIVE_ROLES = new Set(['button', 'link', 'menuitem', 'menuitemradio', 'menuitemcheckbox', 'radio', 'checkbox', 'tab', 'switch', 'slider', 'spinbutton', 'combobox', 'searchbox', 'textbox', 'listbox', 'option', 'scrollbar']);
+        const MEDIA_TAGS = new Set(['img', 'svg']);  // extended media tags: 'canvas', 'video', 'audio', 'embed'
         const palette = ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe', '#008080', '#e6beff'];  // highlighting colors
         const overlayContainer = document.getElementById('__marker_container__') || (() => {  // highlight container
             const c = document.createElement('div');
@@ -115,26 +117,26 @@
                     backgroundColor: s.backgroundColor,
                     pointerEvents: s.pointerEvents,
                     cursor: s.cursor,
-                    // 布局相关
+                    // Layout related
                     width: s.width,
                     height: s.height,
                     maxWidth: s.maxWidth,
                     maxHeight: s.maxHeight,
                     margin: s.margin,
                     padding: s.padding,
-                    // 对齐相关
+                    // Alignment related
                     textAlign: s.textAlign,
                     verticalAlign: s.verticalAlign,
                     justifyContent: s.justifyContent,
                     alignItems: s.alignItems,
                     flexDirection: s.flexDirection,
                     gap: s.gap,
-                    // 边框和背景
+                    // Border and background
                     border: s.border,
                     borderColor: s.borderColor,
                     borderWidth: s.borderWidth,
                     outline: s.outline,
-                    backgroundImage: s.backgroundImage,
+                    hasBackgroundImage: s.backgroundImage && s.backgroundImage !== 'none' && !s.backgroundImage.includes('gradient'),
                     backgroundSize: s.backgroundSize,
                     objectFit: s.objectFit,
                 };
@@ -268,6 +270,176 @@
         }
 
         /**
+         * Unified media element detection function
+         * @param {HTMLElement} element Element to check
+         * @returns {object} Media element info {isMedia: boolean, type: string, hasBackground: boolean}
+         */
+        function detectMediaElement(element) {
+            if (!element || element.nodeType !== Node.ELEMENT_NODE) {
+                return {isMedia: false, type: null, hasBackground: false};
+            }
+
+            const tagName = element.tagName.toLowerCase();
+
+            // Standard media tags
+            if (MEDIA_TAGS.has(tagName)) {
+                return {isMedia: true, type: 'standard', hasBackground: false};
+            }
+
+            // Background image detection
+            const backgroundInfo = detectBackgroundImage(element);
+            if (backgroundInfo.hasBackground) {
+                return {isMedia: true, type: 'background', hasBackground: true};
+            }
+
+            // Image container detection
+            if (isImageContainer(element)) {
+                return {isMedia: true, type: 'container', hasBackground: false};
+            }
+
+            return {isMedia: false, type: null, hasBackground: false};
+        }
+
+        /**
+         * Simplified media element detection entry point
+         * @param {HTMLElement} element Element to check
+         * @returns {boolean} Whether it is a media element
+         */
+        function isMediaElement(element) {
+            return detectMediaElement(element).isMedia;
+        }
+
+        /**
+         * Enhanced background image detection function (supports depth detection)
+         * @param {HTMLElement} element Element to check
+         * @param {number} maxDepth Maximum detection depth
+         * @returns {object} Background image info {hasBackground: boolean, hasDeepBackground: boolean, source: string}
+         */
+        function detectBackgroundImage(element, maxDepth = 0) {
+            const style = getComputedStyle(element);
+            const backgroundImage = style.backgroundImage;
+
+            // Standard background image
+            if (backgroundImage && backgroundImage !== 'none' && !backgroundImage.includes('gradient')) {
+                return {hasBackground: true, hasDeepBackground: false, source: 'css'};
+            }
+
+            // CSS variables
+            const cssVars = ['--background-image', '--bg-image', '--image']
+                .map(prop => style.getPropertyValue(prop))
+                .find(val => val && val.includes('url('));
+            if (cssVars) {
+                return {hasBackground: true, hasDeepBackground: false, source: 'variable'};
+            }
+
+            // Inline styles
+            const inlineStyle = element.getAttribute('style') || '';
+            if (inlineStyle.includes('background-image') && inlineStyle.includes('url(')) {
+                return {hasBackground: true, hasDeepBackground: false, source: 'inline'};
+            }
+
+            // Pseudo elements
+            try {
+                const pseudoElements = ['::before', '::after'];
+                for (const pseudo of pseudoElements) {
+                    const pseudoStyle = getComputedStyle(element, pseudo);
+                    if (pseudoStyle.backgroundImage && pseudoStyle.backgroundImage !== 'none') {
+                        return {hasBackground: true, hasDeepBackground: false, source: 'pseudo'};
+                    }
+                }
+            } catch (e) {
+                // Ignore errors
+            }
+
+            // Deep detection of child elements
+            if (maxDepth > 0) {
+                for (const child of element.children) {
+                    const childResult = detectBackgroundImage(child, maxDepth - 1);
+                    if (childResult.hasBackground || childResult.hasDeepBackground) {
+                        return {hasBackground: false, hasDeepBackground: true, source: childResult.source};
+                    }
+                }
+            }
+
+            return {hasBackground: false, hasDeepBackground: false, source: null};
+        }
+
+        /**
+         * Check if element is an image container
+         * @param {HTMLElement} element Element to check
+         * @returns {boolean} Whether it is an image container
+         */
+        function isImageContainer(element) {
+            const className = element.className || '';
+            const id = element.id || '';
+
+            // Check for image-related keywords in class names and IDs
+            const imageKeywords = [
+                'image', 'img', 'photo', 'picture', 'pic', 'gallery',
+                'hero', 'banner', 'product', 'thumbnail', 'avatar',
+                'background', 'bg', 'visual', 'media'
+            ];
+
+            const text = (className + ' ' + id).toLowerCase();
+            const hasImageKeyword = imageKeywords.some(keyword => text.includes(keyword));
+
+            if (hasImageKeyword) {
+                // Use unified detection function
+                const backgroundInfo = detectBackgroundImage(element, 2); // Check 2 levels deep
+                if (backgroundInfo.hasBackground || backgroundInfo.hasDeepBackground) {
+                    return true;
+                }
+
+                // Check if it contains img tags
+                if (element.querySelector('img')) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /**
+         * Unified media element visibility detection
+         * @param {HTMLElement} element Element to check
+         * @param {object} mediaInfo Media element information
+         * @returns {boolean} Whether it is visible
+         */
+        function isMediaElementVisible(element, mediaInfo) {
+            const style = getComputedStyle(element);
+
+            // Basic visibility check
+            if (style?.visibility === "hidden" || style?.display === "none" || parseFloat(style?.opacity || '1') === 0) {
+                return false;
+            }
+
+            const tagName = element.tagName.toLowerCase();
+            const rect = element.getBoundingClientRect();
+
+            // Use different detection strategies based on media type
+            switch (mediaInfo.type) {
+                case 'standard':
+                    if (tagName === 'svg') {
+                        return rect.width > 0 || rect.height > 0 ||
+                            element.hasAttribute('viewBox') ||
+                            element.hasAttribute('width') ||
+                            element.hasAttribute('height');
+                    }
+                    return element.offsetWidth > 0 && element.offsetHeight > 0;
+
+                case 'background':
+                    return rect.width > 0 && rect.height > 0 &&
+                        style.backgroundSize !== '0px' && style.backgroundSize !== '0';
+
+                case 'container':
+                    return rect.width > 0 && rect.height > 0;
+
+                default:
+                    return element.offsetWidth > 0 && element.offsetHeight > 0;
+            }
+        }
+
+        /**
          * Determines if an element is considered interactive.
          *
          * An element is deemed interactive if it meets any of the following criteria:
@@ -277,6 +449,7 @@
          * 4. Has specific event listeners attached (e.g., 'click', 'keydown').
          * 5. Has a 'pointer' cursor style, suggesting it's clickable.
          * 6. Is content-editable.
+         * 7. Is a media element when media highlighting is enabled.
          *
          * @param {HTMLElement} element The element to evaluate.
          * @returns {boolean} `true` if the element is interactive, otherwise `false`.
@@ -663,15 +836,18 @@
         }
 
         /**
-         * Checks if an element is currently visible in the DOM.
-         *
-         * Visibility is determined by the element's dimensions (width and height > 0) and
-         * its CSS properties (`display`, `visibility`, `opacity`).
-         *
-         * @param {HTMLElement} element The element to check.
-         * @returns {boolean} `true` if the element is visible, otherwise `false`.
+         * Simplified visibility detection entry point
+         * @param {HTMLElement} element Element to check
+         * @returns {boolean} Whether it is visible
          */
         function isVisible(element) {
+            const mediaInfo = detectMediaElement(element);
+
+            if (mediaInfo.isMedia) {
+                return isMediaElementVisible(element, mediaInfo);
+            }
+
+            // Standard element visibility detection
             const style = getComputedStyle(element);
             return (
                 element.offsetWidth > 0 &&
@@ -746,6 +922,123 @@
         }
 
         /**
+         * Clean and optimize element attributes to reduce token consumption
+         * @param {HTMLElement} elem The element to process
+         * @returns {Array} Cleaned attributes array
+         */
+        function getCleanedAttributes(elem) {
+            // Configuration constants
+            const CONFIG = {
+                excludedAttrs: ['data-zr-dom-id', 'data-reactid', 'data-react-checksum', 'data-react-root', 'data-testid'],
+                maxLengths: {
+                    style: 500,
+                    srcHref: 200,
+                    other: 300
+                },
+                truncateLengths: {
+                    style: 200,
+                    srcHref: 100,
+                    other: 150
+                },
+                importantStyleProps: ['position', 'display', 'width', 'height', 'left', 'top', 'z-index', 'opacity']
+            };
+
+            /**
+             * Clean style attribute value
+             * @param {string} styleValue Original style value
+             * @returns {string} Cleaned style value
+             */
+            function cleanStyleValue(styleValue) {
+                // Unified processing of all background image URLs
+                let cleaned = styleValue
+                    // Base64 images with comments
+                    .replace(/background-image:\s*\/\*[^*]*original URL:\s*`([^`]+)`[^*]*\*\/\s*url\(data:image\/[^)]+\)/gi,
+                        'background-image:url([base64 from: $1])')
+                    // Regular base64 images
+                    .replace(/background-image:\s*url\(data:image\/([^;)]+);base64,[^)]+\)/gi,
+                        'background-image:url(data:image/$1;base64,[data]...)')
+                    // Long URLs
+                    .replace(/background-image:\s*url\(([^)]{50,})\)/gi,
+                        (match, url) => `background-image:url(${url.substring(0, 50)}...)`);
+
+                // If still too long, keep important attributes
+                if (cleaned.length > CONFIG.maxLengths.style) {
+                    const styles = cleaned.split(';').map(s => s.trim()).filter(s => s);
+                    const important = styles.filter(style => {
+                        const prop = style.split(':')[0].trim();
+                        return CONFIG.importantStyleProps.some(p => prop.includes(p)) ||
+                            style.includes('background-image');
+                    });
+
+                    cleaned = important.length > 0
+                        ? important.join('; ') + '; /* [truncated] */'
+                        : cleaned.substring(0, CONFIG.truncateLengths.style) + '...[truncated]';
+                }
+
+                return cleaned;
+            }
+
+            /**
+             * Clean data URL attributes
+             * @param {string} value Original attribute value
+             * @param {string} attrName Attribute name
+             * @returns {string} Cleaned attribute value
+             */
+            function cleanDataUrl(value, attrName) {
+                if (value.startsWith('data:image/') && value.includes('base64,')) {
+                    const [header] = value.split('base64,');
+                    return `${header}base64,[data]...`;
+                }
+
+                if (value.length > CONFIG.maxLengths.srcHref) {
+                    return value.substring(0, CONFIG.truncateLengths.srcHref) + '...[truncated]';
+                }
+
+                return value;
+            }
+
+            /**
+             * Process single attribute
+             * @param {Object} attr Attribute object with name and value
+             * @returns {Object|null} Processed attribute or null if excluded
+             */
+            function processAttribute(attr) {
+                // Exclude unimportant attributes
+                if (CONFIG.excludedAttrs.includes(attr.name)) {
+                    return null;
+                }
+
+                let value = attr.value;
+
+                // Process based on attribute type
+                switch (attr.name) {
+                    case 'style':
+                        value = cleanStyleValue(value);
+                        break;
+
+                    case 'src':
+                    case 'href':
+                        value = cleanDataUrl(value, attr.name);
+                        break;
+
+                    default:
+                        // General length limitation
+                        if (value && value.length > CONFIG.maxLengths.other) {
+                            value = value.substring(0, CONFIG.truncateLengths.other) + '...[truncated]';
+                        }
+                }
+
+                return {name: attr.name, value};
+            }
+
+            // Main processing logic
+            return Array.from(elem.attributes)
+                .map(a => ({name: a.name, value: a.value}))
+                .map(processAttribute)
+                .filter(attr => attr !== null);
+        }
+
+        /**
          * Gathers comprehensive information about a DOM element.
          *
          * This function collects a wide range of properties for an element, including its identity,
@@ -773,7 +1066,7 @@
                 className: elem.getAttribute('class') || null,
                 type: elem.getAttribute('type') || null, placeholder: elem.getAttribute('placeholder') || null,
                 innerText: txt || (elem.innerText || elem.value || '').trim(),
-                attributes: Array.from(elem.attributes).map(a => ({name: a.name, value: a.value})),
+                attributes: getCleanedAttributes(elem),
 
                 viewport: {x: r.left + sx, y: r.top + sy, width: r.width, height: r.height},
                 center_x: r.left + r.width / 2 + sx,
@@ -782,6 +1075,7 @@
                 isVisible: isVisible(elem),
                 isInteractive: isInteractiveElement(elem),
                 isValidText: isValidTextElement(elem),
+                isMediaElement: isMediaElement(elem),
                 isTopElement: isTopElement(elem),
                 isInViewport: !(r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth),
 
@@ -817,32 +1111,36 @@
          */
         function handleHighlighting(elemInfo, elemObj, isParentHighlighted) {
             function shouldHighlightElem(nodeInfo) {
-                const role = elemObj.getAttribute('role');
-                const isMenuContainer = role === 'menu' || role === 'menubar' || role === 'listbox';
-                if (isMenuContainer) return true;
-                // if (window._viewportOnly === true && !nodeInfo.isInViewport) return false;
+                // Media element highlighting mode
+                if (window._highlightMedia) {
+                    return nodeInfo.isMediaElement && nodeInfo.isVisible && nodeInfo.isTopElement;
+                }
 
+                // Special handling for menu containers
+                const role = elemObj.getAttribute('role');
+                if (['menu', 'menubar', 'listbox'].includes(role)) return true;
+
+                // Text highlighting mode
                 if (window._highlightText) {
                     return nodeInfo.isVisible && nodeInfo.isTopElement && nodeInfo.isValidText;
-                } else {
-                    return nodeInfo.isVisible && nodeInfo.isTopElement && nodeInfo.isInteractive;
                 }
+
+                // Interactive element highlighting mode (default)
+                return nodeInfo.isVisible && nodeInfo.isTopElement && nodeInfo.isInteractive;
             }
 
-            // 1) basic filter
+            // 1) Basic filter
             if (!shouldHighlightElem(elemInfo)) return false;
 
+            // 2) Nested filtering logic
+            // Media element mode: skip if parent is highlighted and current is not distinct interaction boundary
             if (window._highlightText) {
-                if (isParentHighlighted && !elemInfo.isInteractive) return false
+                if (isParentHighlighted && !elemInfo.isInteractive) return false;
             } else {
-                if (isParentHighlighted && !isElementDistinctInteraction(elemObj)) return false;
+                if (!window._highlightMedia) {
+                    if (isParentHighlighted && !isElementDistinctInteraction(elemObj)) return false;
+                }
             }
-
-            // 2) skip if parent is highlighted and is not distinct interaction
-            if (isParentHighlighted && !isElementDistinctInteraction(elemObj)) return false;
-
-            // 3) (optional) highlight only within viewport
-            // if (!elemInfo.isInViewport && elemInfo.viewportExpansion !== -1) return false;
 
             if (highlightMap.has(elemObj)) {
                 elemInfo.highlightIndex = highlightMap.get(elemObj);
