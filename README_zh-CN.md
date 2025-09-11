@@ -33,17 +33,6 @@
 - **🎯 精准诊断**：基于真实浏览器环境的深度测试，提供可操作的优化建议
 - **📈 可视化报告**：生成详细的HTML测试报告，多维度、可视化展示测试结果，便于分析与追踪
 
-## 📌 测试案例
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/b75f18bf-8b92-498e-b5e1-7c4dc5cd33f5" alt="AI 功能测试" width="45%"/>
-  &nbsp;
-  <img src="https://github.com/user-attachments/assets/560cd99d-1213-47b9-82dc-52d3f2d1c1e7" alt="其他测试" width="45%"/>
-</p>
-
-<p align="center">
-  <b>左：AI 智能测试 全自动执行流程</b>　|　<b>右：覆盖多类测试场景</b>
-</p>
 
 ## 安装与配置
 
