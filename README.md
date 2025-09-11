@@ -1,4 +1,16 @@
-<h1 align="center">WebQA Agent</h1>
+<!-- SEO Meta Information and Structured Data -->
+<div itemscope itemtype="https://schema.org/SoftwareApplication" align="center" xmlns="http://www.w3.org/1999/html">
+  <meta itemprop="name" content="WebQA Agent: Autonomous Web Testing & Quality Assurance">
+  <meta itemprop="description" content="AI-powered autonomous web browser agent that audits performance, functionality, UX, and security for comprehensive website testing and quality assurance">
+  <meta itemprop="applicationCategory" content="Web Testing Software">
+  <meta itemprop="operatingSystem" content="Cross-platform">
+  <meta itemprop="programmingLanguage" content="Python">
+  <meta itemprop="url" content="https://github.com/MigoXLab/webqa-agent">
+  <meta itemprop="softwareVersion" content="latest">
+  <meta itemprop="license" content="Apache-2.0">
+  <meta itemprop="keywords" content="vibecoding, web evaluation, autonomous, web testing, automation, AI testing, browser automation, quality assurance, performance testing, UX testing, security testing, functional testing">
+
+<h1 align="center" itemprop="name">WebQA Agent</h1>
 
 <!-- badges -->
 <p align="center">
@@ -11,12 +23,19 @@
 
 <p align="center">
   Try Demo 🤗<a href="https://huggingface.co/spaces/mmmay0722/WebQA-Agent">HuggingFace</a> | 🚀<a href="https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary">ModelScope</a><br>
-  Join us on 🎮<a href="https://discord.gg/K5TtkVcx">Discord</a> | 💬<a href="https://aicarrier.feishu.cn/docx/NRNXdIirXoSQEHxhaqjchUfenzd">WeChat</a>
+  Join us on 🎮<a href="https://discord.gg/fG5QAxYyNr">Discord</a> | 💬<a href="https://aicarrier.feishu.cn/docx/NRNXdIirXoSQEHxhaqjchUfenzd">WeChat</a>
 </p>
 
 <p align="center"><a href="README.md">English</a> · <a href="README_zh-CN.md">简体中文</a></p>
 
-<p align="center">🤖 <strong>WebQA Agent</strong> is an autonomous web browser agent that audits performance, functionality & UX for engineers and vibe-coding creators. ✨</p>
+<p align="center" itemprop="description">🤖 <strong>WebQA Agent</strong> is an autonomous web browser agent that audits performance, functionality & UX for engineers and vibe-coding creators. ✨</p>
+
+</div>
+
+<!-- Additional SEO Keywords and Context -->
+<div style="display: none;">
+  <span>vibecoding, vibe coding, web evaluation, autonomous exploration, web testing automation, browser testing tool, AI-powered QA, automated web testing, website performance analysis, functional testing automation, user experience testing, UX, security vulnerability scanning, browser testing, web application testing, quality assurance automation, automated UI testing, web accessibility testing, performance monitoring, website audit tool, vibecoding testing, web development</span>
+</div>
 
 ## 🚀 Core Features
 
@@ -28,17 +47,25 @@
 
 ### 📋 Feature Highlights
 
-- **🤖 AI-Powered Testing**: WebQA Agent autonomously conducts website testing, from page crawling and test case generation to execution, achieving end-to-end functional test automation.
-- **📊 Multi-Dimensional Test**: Covers core testing scenarios, including functionality, performance, user experience, and security, evaluating page load speed, design details, and links for comprehensive system quality assurance.
-- **🎯 Precise Diagnostics**: Performs deep testing in real browser environments and provides actionable optimization recommendations.
-- **📈 Visual Reports**: Generates detailed HTML test reports with a multi-dimensional visual presentation of results for easy analysis and tracking.
+- **🤖 AI-Powered Testing**: Performs autonomous website testing—explores pages, plans actions, and executes end-to-end flows without manual scripting.
+- **📊 Multi-Dimensional Observation**: Covers functionality, performance, user experience, and basic security; evaluates load speed, design details, and links to surface issues.
+- **🎯 Actionable Recommendations**: Runs in real browsers and provides concrete suggestions for improvement.
+- **📈 Visual Reports**: Generates detailed HTML test reports with clear, multi-dimensional views for analysis and tracking.
 
+## 📹 Examples
+
+- **🤖 Conversational UI **: [Autonomously plans goals and interacts across a dynamic chat interface](https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/%E6%99%BA%E8%83%BDCase%E7%94%9F%E6%88%90.mp4)
+- **🎨 Creative Page **: [Explores page structure, identifies elements](https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/vibecoding.mp4)
+
+Try Demo: [🤗Hugging Face](https://huggingface.co/spaces/mmmay0722/WebQA-Agent) · [🚀ModelScope](https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary)
 
 ## Installation & Configuration
 
 ### 🚀 One-Click Docker Setup
 
 Before starting, ensure Docker is installed. If not, please refer to the official installation guide: [Docker Installation Guide](https://docs.docker.com/get-started/get-docker/).
+
+Recommended versions: Docker >= 24.0, Docker Compose >= 2.32.
 
 ```bash
 # 1. Download configuration template
@@ -65,14 +92,14 @@ pip install -r requirements.txt
 playwright install
 ```
 
-Performance Testing - Lighthouse Installation (Optional)
+Performance Analysis - Lighthouse (Optional)
 
 ```bash
 # Requires Node.js >= 18.0.0
 npm install
 ```
 
-Security Testing - Nuclei Installation (Optional)
+Security Scanning - Nuclei (Optional)
 
 Download from: [Nuclei Releases](https://github.com/projectdiscovery/nuclei/releases/)
 
@@ -93,12 +120,6 @@ After configuring `config/config.yaml` (refer to "Usage > Test Configuration"), 
 python webqa-agent.py
 ```
 
-## Online Demo
-
-🚀 **Try WebQA Agent Online:**
-- **Hugging Face Spaces**: [WebQA-Agent on Hugging Face](https://huggingface.co/spaces/mmmay0722/WebQA-Agent)
-- **ModelScope Studio**: [WebQA-Agent on ModelScope](https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary)
-
 ## Usage
 
 ### Test Configuration
@@ -117,9 +138,9 @@ test_config:                                      # Test configuration
     business_objectives: example business objectives  # Recommended to include test scope, e.g., test search functionality
   ux_test:                                        # User experience testing
     enabled: True
-  performance_test:                               # Performance testing
+  performance_test:                               # Performance analysis
     enabled: False
-  security_test:                                  # Security testing
+  security_test:                                  # Security scanning
     enabled: False
 
 llm_config:                                       # Vision model configuration, currently supports OpenAI SDK compatible format only
@@ -138,13 +159,13 @@ Please note the following important considerations when configuring and running 
 
 #### 1. Functional Testing Notes
 
-- **AI Mode**: When specifying the number of test cases to generate in the configuration file, the system may re-plan based on based on actual testing conditions. This may result in the final number of executed test cases differing from the initial configuration to ensure testing accuracy and effectiveness.
+- **AI Mode**: When specifying the number of test cases to generate in the configuration file, the system may re-plan based on actual page conditions. This may result in the final number of executed test cases differing from the initial configuration to ensure coverage and effectiveness.
 
-- **Default Mode**: The `default` mode of functional testing primarily verifies whether UI element clicks execute successfully, including basic interactive functions like button clicks and link navigation.
+- **Default Mode**: The `default` mode focuses on whether UI interactions (e.g., clicks and navigations) complete successfully.
 
 #### 2. User Experience Testing Notes
 
-UX (User Experience) testing focuses on evaluating website interaction design, usability, and user-friendliness. The model output in the test results provides suggestions for improvement suggestions based on user experience best practices to guide development and design teams in optimization.
+UX (User Experience) testing focuses on usability, and user-friendliness. The model output in the results provides suggestions based on best practices to guide optimization.
 
 ## View Results
 
@@ -154,7 +175,7 @@ Test results will be generated in the `reports` directory. Open the HTML report 
 
 1. Continuous optimization of AI functional testing: Improve coverage and accuracy
 2. Functional traversal and page validation: Verify business logic correctness and data integrity
-3. Interaction and visualization: Test case visualization and local service real-time reasoning process display
+3. Interaction and visualization: Test item visualization and local service real-time reasoning process display
 4. Capability expansion: Multi-model integration and more evaluation dimensions
 
 ## Acknowledgements
