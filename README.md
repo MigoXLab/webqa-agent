@@ -166,7 +166,18 @@ Please note the following important considerations when configuring and running 
 
 UX (User Experience) testing focuses on usability, and user-friendliness. The model output in the results provides suggestions based on best practices to guide optimization.
 
-## View Results
+### 🧠 Recommended Models
+
+Based on our testing, these models work well with WebQA Agent:
+
+| Model | Key Strengths | Notes |
+|-------|---------------|-------|
+| **gpt-4.1** ⭐ | High accuracy & reliability | **Best choice** |
+| **gpt-4.1-mini** | Cost-effective, Good for UX testing | **Economical and practical**|
+| **doubao-seed-1-6-vision** | Vision capabilities | **Excellent web understanding** |
+
+
+### View Results
 
 Test results will be generated in the `reports` directory. Open the HTML report within the generated folder to view results.
 

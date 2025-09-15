@@ -52,9 +52,9 @@ Vibecoding, Vibe coding, 网页测试自动化, 浏览器测试工具, AI驱动�
 
 ## 📹 示例演示
 
-- **🤖 对话界面演示**: [AI 自主生成目标与步骤，在动态聊天页面中理解上下文并操作](https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/%E6%99%BA%E8%83%BDCase%E7%94%9F%E6%88%90.mp4)
+- **🤖 对话界面**: [AI 自主生成目标与步骤，在动态聊天页面中理解上下文并执行](https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/%E6%99%BA%E8%83%BDCase%E7%94%9F%E6%88%90.mp4)
 
-- **🎨 静态页面演示**: [AI 自主探索页面结构、识别元素](https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/vibecoding.mp4)
+- **🎨 静态页面**: [AI 自主探索页面结构、识别元素](https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/vibecoding.mp4)
 
 体验Demo： [🤗Hugging Face](https://huggingface.co/spaces/mmmay0722/WebQA-Agent) · [🚀ModelScope](https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary)
 
@@ -64,9 +64,7 @@ Vibecoding, Vibe coding, 网页测试自动化, 浏览器测试工具, AI驱动�
 
 在开始之前，请确保已安装 Docker。如未安装，请参考官方安装指南：[Docker 安装指南](https://docs.docker.com/get-started/get-docker/)。
 
-推荐版本：
-- Docker >= 24.0
-- Docker Compose >= 2.32
+推荐版本： Docker >= 24.0, Docker Compose >= 2.32.
 
 ```bash
 # 1. 下载配置文件模板
@@ -171,7 +169,17 @@ browser_config:
 
 UX（用户体验）评估关注网页可用性与友好性。结果中的模型输出基于最佳实践给出改进建议，便于设计与开发参考。
 
-## 查看结果
+### 🧠 推荐模型
+
+基于实际测试结果，以下模型表现较好，推荐使用：
+
+| 模型 | 核心优势 | 使用建议 |
+|------|----------|----------|
+| **gpt-4.1** ⭐ | 高准确性与可靠性 | **最佳选择** |
+| **gpt-4.1-mini** | 性价比高, UX测试推荐 | **经济实用** |
+| **doubao-seed-1-6-vision** | 支持视觉识别 | **网页理解优异** |
+
+### 查看结果
 
 在 `reports` 目录会生成本次测试的文件夹，打开其中的 HTML 报告即可查看结果。
 
