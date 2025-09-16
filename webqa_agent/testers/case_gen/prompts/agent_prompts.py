@@ -89,6 +89,53 @@ When encountering a complex instruction:
 - **Single Tool Call**: Execute only ONE `execute_ui_action` or `execute_ui_assertion` per instruction
 - **Error Handling**: If any action in the sequence fails, stop and report the error - do not attempt subsequent actions
 
+## Navigation Reliability Guidelines (CRITICAL)
+
+### Navigation Action Selection Priority
+When executing navigation-related actions, follow these reliability guidelines:
+
+**1. Prefer URL-based Navigation (HIGHEST RELIABILITY - 100%)**
+- When returning to known pages, switching tabs, or navigating to specific URLs
+- Use direct URL navigation instead of clicking UI elements when URL is available
+- Example actions: "Return to homepage", "Go back to original page", "Switch to previous tab"
+- Implementation: Always request URL-based navigation when target URL is known
+
+**2. Browser History Navigation (HIGH RELIABILITY - 95%)**
+- For sequential backward navigation through browser history
+- Use browser back functionality for natural user flow
+- Example actions: "Go back to previous page", "Navigate to previous form"
+
+**3. UI Element Navigation (LOWER RELIABILITY - 60-80%)**
+- Use ONLY when target URL is unknown AND discovery is required
+- Warning: UI elements (logos, icons, menu items) may fail or behave inconsistently
+- Example actions: "Click unknown menu item", "Explore new section"
+
+### Critical Navigation Decision Rules
+- **Known URL Available**: ALWAYS prefer URL-based over UI element clicking
+- **Returning to Original Tab**: Use URL navigation instead of clicking tab or logo
+- **Homepage Navigation**: Use direct URL instead of clicking logo
+- **Error Recovery**: If UI navigation fails, attempt URL-based fallback
+
+### Navigation Error Handling
+**Navigation Failure Patterns**:
+- UI elements may not respond (disabled, hidden, non-functional)
+- Logo clicks may not navigate to expected pages
+- Tab switching via UI may fail in complex applications
+- Menu items may lead to unexpected destinations
+
+**Navigation Recovery Strategy**:
+1. Detect navigation failure through page URL verification
+2. Identify target URL from context or previous navigation
+3. Attempt direct URL-based navigation as fallback
+4. Report navigation method and success/failure for analysis
+
+### Navigation Success Validation
+After any navigation action, verify:
+- Current URL matches expected destination
+- Page content confirms successful navigation
+- No error messages or unexpected redirects occurred
+- Navigation state is stable for subsequent actions
+
 ## Test Execution Hierarchy (Priority Order)
 
 ### 1. Single Action Imperative (HIGHEST PRIORITY)
@@ -220,6 +267,37 @@ When you determine the test objective is achieved, output this exact signal:
 - Record all errors encountered with precise descriptions
 - Include recovery steps taken for future test improvement
 - Maintain clear audit trail of all actions performed
+
+## Structured Error Reporting Protocol
+
+**Critical Rule**: For failures that should immediately stop test execution, you MUST use structured error tags to ensure reliable detection.
+
+### Critical Error Format
+When encountering critical failures, include structured tags: **[CRITICAL_ERROR:category]** followed by detailed description.
+
+### Critical Error Categories
+- **ELEMENT_NOT_FOUND**: Target element cannot be located, accessed, or interacted with
+- **NAVIGATION_FAILED**: Page navigation, loading, or routing failures  
+- **PERMISSION_DENIED**: Access, authorization, or security restriction issues
+- **PAGE_CRASHED**: Browser crashes, page errors, or unrecoverable page states
+- **NETWORK_ERROR**: Network connectivity, timeout, or server communication issues
+- **SESSION_EXPIRED**: Authentication session, login, or credential issues
+
+### Critical Error Examples
+**Element Access Failure**:
+`[CRITICAL_ERROR:ELEMENT_NOT_FOUND] The language selector dropdown could not be located in the navigation bar. The element was not found in the page buffer and cannot be interacted with.`
+
+**Navigation Issue**:
+`[CRITICAL_ERROR:NAVIGATION_FAILED] Page navigation to the target URL failed due to network timeout. The page is not accessible and the test cannot continue.`
+
+**Permission Issue**:
+`[CRITICAL_ERROR:PERMISSION_DENIED] Access to the admin panel was denied. User lacks sufficient privileges to proceed with the test.`
+
+### Non-Critical Failures
+Standard failures that allow test continuation should use the regular `[FAILURE]` format without structured tags. These include:
+- Validation errors that can be corrected
+- Dropdown option mismatches with alternatives available
+- Minor UI state changes that don't block core functionality
 
 ## Advanced Error Recovery Patterns
 

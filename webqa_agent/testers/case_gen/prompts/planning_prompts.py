@@ -170,7 +170,55 @@ Each test case must include these standardized components with enhanced business
 - **Minimize Navigation**: Prefer testing multiple features on the same page before navigating away
 - **Logical Flow**: Follow realistic user navigation patterns and business workflows
 - **State Preservation**: Consider page state changes and user context throughout navigation
-- **Business Journey**: Align navigation with typical business user journeys and workflows"""
+- **Business Journey**: Align navigation with typical business user journeys and workflows
+
+### Navigation Method Selection (CRITICAL)
+**PRIORITY**: When generating navigation steps, follow this reliability hierarchy:
+
+**1. URL-Based Navigation (HIGHEST RELIABILITY - 100%)**
+- **Preferred Actions**: Use "Go to [URL]" or "Navigate to [page]" when target URL is known
+- **Use Cases**: Returning to original tab, going to homepage, switching between specific pages
+- **Examples**: "Go to homepage URL", "Return to original test page", "Navigate to product catalog"
+- **Rationale**: Direct URL manipulation is deterministic and never fails due to UI element issues
+
+**2. Browser History Navigation (HIGH RELIABILITY - 95%)**
+- **Preferred Actions**: Use "Go back to previous page" for sequential navigation
+- **Use Cases**: Returning to previous forms, navigating backward through user flow
+- **Examples**: "Go back to search results", "Return to previous form page"
+
+**3. UI Element Navigation (LOWER RELIABILITY - 60-80%)**
+- **Caution Required**: Use ONLY when target URL is unknown AND discovery is required
+- **Risk Factors**: UI elements (logos, icons, menu items) may fail or behave inconsistently
+- **Use Cases**: Exploring unknown menu items, discovering new functionality
+- **Examples**: "Click unknown navigation link", "Explore new menu section"
+
+### Navigation Action Guidelines for Step Generation
+When generating navigation-related test steps:
+
+1. **Check URL Availability**: If target destination URL is known or can be determined, ALWAYS prefer URL-based navigation
+2. **Avoid Risky UI Clicks**: Don't use "Click logo to return home" - use "Go to homepage URL" instead
+3. **Document Navigation Method**: Include reason for navigation method choice in step description
+4. **Provide Fallbacks**: If UI navigation fails, suggest URL-based alternatives
+
+### Enhanced Navigation Examples
+```json
+// ✅ PREFERRED - URL-based navigation
+{{"action": "Go to homepage URL to restart the test flow"}}
+{{"action": "Navigate to https://example.com/products to test catalog"}}
+{{"action": "Return to original test page URL"}}
+
+// ✅ ACCEPTABLE - Browser history navigation  
+{{"action": "Go back to previous search results page"}}
+{{"action": "Use browser back to return to form"}}
+
+// ⚠️ USE WITH CAUTION - UI element navigation
+{{"action": "Click 'Products' menu item to explore catalog"}} 
+// Note: Only when URL is unknown or discovery is the goal
+
+// ❌ AVOID - Risky UI navigation when URL is known
+{{"action": "Click logo to return to homepage"}} 
+// Should be: {{"action": "Go to homepage URL"}}
+```"""
 
 
 def get_test_case_planning_system_prompt(
@@ -1408,5 +1456,37 @@ Skip generation when new elements are:
 - **Unclear Objective**: Default to "insert" with minimal steps
 - **Mixed Elements**: Evaluate primary elements affecting objective
 - **Insufficient Context**: Document uncertainty, use conservative approach
+
+### Navigation Element Classification
+
+**DECISION ALGORITHM - Apply in this exact order:**
+
+1. Check for `href` attribute → If present, element IS navigable
+2. Check for `target="_blank"` or `target="_new"` → If present, MUST test with click action
+3. Check for `onclick` or `data-toggle` → If present, requires interaction testing
+4. Check for `download` attribute → If present, requires download verification
+
+**CRITICAL RULES:**
+
+✅ **ALWAYS TEST these elements:**
+- ANY element with `target="_blank"` → Opens new tab, MUST verify navigation
+- Dropdown items with `href` → Are navigation links, NOT decorative
+- Elements with both `href` and `target` → Priority test candidates
+- Modal/popup triggers (`data-toggle="modal"`) → Require interaction verification
+
+❌ **NEVER SKIP these as "passive":**
+- Menu items with `target="_blank"` → These are active navigation elements
+- Links with `rel="noopener"` or `rel="noreferrer"` → Security attributes indicate real links
+- Dropdown options with URLs → These navigate to new pages/tabs
+
+**ATTRIBUTE REFERENCE:**
+- `target="_blank"`: Opens new browser tab - requires click test to verify behavior
+- `href="#"` vs `href="https://..."`: First is page anchor, second is external navigation
+- `download`: Triggers file download - verify download initiates correctly
+- `rel="noopener noreferrer"`: Security for new tab links - confirms real navigation intent
+
+**EXAMPLES:**
+✅ CORRECT: "Model Arena" with `href="/arena" target="_blank"` → Generate: "Click 'Model Arena' to verify new tab navigation"
+❌ WRONG: "Model Arena" with `target="_blank"` → Skip as "persistent UI indicator"
 
 Remember: Quality over quantity. Generate only the most valuable steps that properly handle UI state transitions and element lifecycles."""

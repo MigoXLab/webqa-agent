@@ -83,13 +83,44 @@ class LLMPrompt:
     - All plans must reflect actual context in screenshot.
     - Always output strict **valid JSON**. No comments or markdown.
 
+    ## Navigation Strategy Guidelines (CRITICAL)
+
+    ### Action Selection Priority for Navigation
+    When planning navigation actions, follow this STRICT priority order:
+
+    1. **GoToPage (HIGHEST RELIABILITY - PREFERRED)**
+       - Use when: Target URL is known or can be determined
+       - Best for: Returning to original tabs/pages, switching between known pages, going to homepage
+       - Reliability: 100% - Direct URL manipulation, no UI dependency
+       - Example: Returning to original tab with known URL
+
+    2. **GoBack (HIGH RELIABILITY)**  
+       - Use when: Browser history navigation is appropriate
+       - Best for: Sequential backward navigation
+       - Reliability: 95% - Browser-native functionality
+       - Example: Returning to previous form after submission
+
+    3. **Tap/Click (LOWER RELIABILITY - USE WITH CAUTION)**
+       - Use when: Target URL is unknown AND element interaction is required
+       - Best for: Discovering new pages, triggering dynamic content
+       - Reliability: 60-80% - Depends on element state, page load, icon behavior
+       - Example: Clicking unexplored menu items
+
+    ### Critical Decision Rule
+    **IF you know the target URL → ALWAYS use GoToPage over Tap**
+    - This includes: returning to original tab, going to homepage, switching between tabs
+    - Rationale: URL navigation is deterministic, UI element clicks are probabilistic
+
     ## Actions
 
     Each action includes `type` and `param`, optionally with `locate`.
 
         Each action has a
-        - type: 'Tap', tap the located element
+        - type: 'Tap', tap the located element [USE ONLY WHEN URL UNKNOWN]
         * {{ locate: {{ id: string }}, param: null }}
+        * WARNING: Less reliable for navigation - UI elements may fail or behave inconsistently
+        * Use ONLY when: target URL is unknown AND you need to discover new pages
+        * Do NOT use for: returning to known pages, switching tabs when URLs are available
         - type: 'Hover', move mouse over to the located element
         * {{ locate: {{ id: string }}, param: null }}
         - type: 'Input', replace the value in the input field
@@ -116,9 +147,12 @@ class LLMPrompt:
         - type: 'GetNewPage', get the new page
         * {{ param: null }}
         * use this action when the instruction is a "get new page" statement or "open in new tab" or "open in new window".
-        - type: 'GoToPage', navigate directly to a specific URL
+        - type: 'GoToPage', navigate directly to a specific URL [PREFERRED FOR RELIABLE NAVIGATION]
         * {{ param: {{ url: string }} }}
-        * use this action when you need to navigate to a specific web page URL, useful for returning to homepage or navigating to known pages.
+        * CRITICAL: This is the MOST RELIABLE navigation method - use whenever target URL is known
+        * PREFERRED for: returning to original tab/page, switching between known pages, going to homepage
+        * AVOID clicking UI elements (logos, icons) for navigation when URL is available
+        * Example: To return to original tab, use GoToPage with the original URL instead of clicking browser tabs or page icons
         - type: 'GoBack', navigate back to the previous page
         * {{ param: null }}
         * use this action when you need to go back to the previous page in the browser history, similar to clicking the browser's back button.
@@ -409,6 +443,41 @@ class LLMPrompt:
             \"whatToDoNext\": \"Retry the failed action from the previous page\"
           },
           \"error\": null
+        }
+        ```
+
+        #### Example 8: Return to Original Tab/Page (CRITICAL PATTERN)
+        "Return to the original tab/page where we started"
+        ```json
+        {
+          "actions": [
+            {
+              "type": "GoToPage",
+              "thought": "Using GoToPage for guaranteed navigation back to original URL. This is more reliable than clicking UI elements which may fail or behave unpredictably.",
+              "param": {"url": "https://original-site.com/original-page"},
+              "locate": null
+            }
+          ],
+          "taskWillBeAccomplished": true,
+          "furtherPlan": null,
+          "error": null
+        }
+        ```
+
+        #### Counter-Example: What NOT to do for Navigation
+        "Return to the original tab"
+        ```json
+        // ❌ WRONG - Unreliable approach
+        {
+          "actions": [
+            {
+              "type": "Tap",
+              "thought": "Click the site logo to return",
+              "param": null,
+              "locate": {"id": "1"}
+            }
+          ],
+          "error": "This approach is unreliable - UI elements may not achieve intended navigation"
         }
         ```
 
