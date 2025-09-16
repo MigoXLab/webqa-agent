@@ -176,8 +176,6 @@ Each test case must include these standardized components with enhanced business
 def get_test_case_planning_system_prompt(
     business_objectives: str,
     completed_cases: list = None,
-    reflection_history: list = None,
-    remaining_objectives: str = None,
     language: str = 'zh-CN',
 ) -> str:
     """Generate system prompt for test case planning.
@@ -186,8 +184,6 @@ def get_test_case_planning_system_prompt(
         business_objectives: Business objectives
         completed_cases: Completed test cases (for replanning)
         language: Language for test case naming (zh-CN or en-US)
-        reflection_history: Reflection history (for replanning)
-        remaining_objectives: Remaining objectives (for replanning)
 
     Returns:
         Formatted system prompt string
@@ -429,8 +425,6 @@ Your response must be ONLY in JSON format. Do not include any analysis, explanat
 
 def get_test_case_planning_user_prompt(
     state_url: str,
-    page_content_summary: dict,
-    page_structure: str ,
     completed_cases: list = None,
     reflection_history: list = None,
     remaining_objectives: str = None,
@@ -439,8 +433,6 @@ def get_test_case_planning_user_prompt(
 
     Args:
         state_url: Target URL
-        page_content_summary: Page content summary (interactive elements)
-        page_structure: Complete page text structure
         completed_cases: Completed test cases (for replanning)
         reflection_history: Reflection history (for replanning)
         remaining_objectives: Remaining objectives (for replanning)
@@ -464,7 +456,7 @@ def get_test_case_planning_user_prompt(
     user_prompt = f"""
 ## Application Under Test (AUT)
 - **Target URL**: {state_url}
-- **Visual Element Reference (Referenced via attached screenshot) **: The attached screenshot contains numbered markers corresponding to interactive elements. Each number in the image maps to an element ID in the Interactive Elements Map above, providing precise visual-textual correlation for comprehensive UI analysis.
+- **Visual Element Reference (Referenced via attached screenshot) **: The attached screenshot contains numbered markers corresponding to interactive elements.
 
 {context_section}
 
@@ -697,7 +689,6 @@ def get_reflection_user_prompt(
     business_objectives: str,
     current_plan: list,
     completed_cases: list,
-    page_structure: str,
     page_content_summary: dict = None,
 ) -> str:
     """Generate user prompt for reflection and replanning (dynamic part).
@@ -706,7 +697,6 @@ def get_reflection_user_prompt(
         business_objectives: Overall business objectives
         current_plan: Current test plan
         completed_cases: Completed test cases
-        page_structure: Current UI text structure
         page_content_summary: Interactive element mapping (dict from ID to element info), optional
 
     Returns:
@@ -810,7 +800,6 @@ def get_reflection_prompt(
     business_objectives: str,
     current_plan: list,
     completed_cases: list,
-    page_structure: str,
     page_content_summary: dict = None,
     language: str = 'zh-CN',
 ) -> tuple[str, str]:
@@ -821,7 +810,6 @@ def get_reflection_prompt(
         language: Language for test case naming (zh-CN or en-US)
         current_plan: Current test plan
         completed_cases: Completed test cases
-        page_structure: Current UI text structure
         page_content_summary: Interactive element mapping (dict from ID to element info), optional
 
     Returns:
@@ -829,6 +817,6 @@ def get_reflection_prompt(
     """
     system_prompt = get_reflection_system_prompt(language)
     user_prompt = get_reflection_user_prompt(
-        business_objectives, current_plan, completed_cases, page_structure, page_content_summary
+        business_objectives, current_plan, completed_cases, page_content_summary
     )
     return system_prompt, user_prompt

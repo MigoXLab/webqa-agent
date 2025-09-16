@@ -85,7 +85,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
     logging.info(f"Deep crawling page structure and elements for initial test plan...")
     page = await ui_tester.get_current_page()
     dp = DeepCrawler(page)
-    page_content_summary = await dp.crawl(highlight=True, viewport_only=True)
+    await dp.crawl(highlight=True, viewport_only=True)
     screenshot = await ui_tester._actions.b64_page_screenshot(
         file_name="plan_or_replan", save_to_log=False, full_page=False
     )
@@ -101,23 +101,11 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
     system_prompt = get_test_case_planning_system_prompt(
         business_objectives=business_objectives,
         completed_cases=completed_cases,
-        reflection_history=state.get("reflection_history"),
-        remaining_objectives=state.get("remaining_objectives"),
         language=language,
     )
 
-    # Use explicit template for planning to include element attributes
-    planning_template = [
-        str(ElementKey.TAG_NAME),
-        str(ElementKey.INNER_TEXT),
-        str(ElementKey.ATTRIBUTES),
-        str(ElementKey.CENTER_X),
-        str(ElementKey.CENTER_Y)
-    ]
     user_prompt = get_test_case_planning_user_prompt(
         state_url=state["url"],
-        page_content_summary=page_content_summary.clean_dict(template=planning_template),
-        page_structure=page_structure,
         completed_cases=completed_cases,
         reflection_history=state.get("reflection_history"),
         remaining_objectives=state.get("remaining_objectives"),
@@ -320,7 +308,6 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
         business_objectives=state.get("business_objectives"),
         current_plan=state["test_cases"],
         completed_cases=state["completed_cases"],
-        page_structure=page_structure,
         page_content_summary=page_content_summary,
         language=language,
     )
