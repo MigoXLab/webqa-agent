@@ -1,22 +1,22 @@
 #!/bin/bash
 
-# WebQA Agent Docker 启动脚本
-# 支持本地和远程部署模式
+# WebQA Agent Docker startup script
+# Supports local and remote deployment modes
 
 set -e
 
 REPO_BASE_URL="https://raw.githubusercontent.com/MigoXLab/webqa-agent"
 BRANCH="${WEBQA_BRANCH:-main}"
 
-echo "🚀 启动 WebQA Agent Docker 容器..."
+echo "🚀 Starting WebQA Agent Docker container..."
 
-# 创建必要目录
+# Create necessary directories
 mkdir -p config logs reports
 
-# 检查配置文件是否存在
+# Check if configuration file exists
 if [ ! -f "config.yaml" ] && [ ! -f "config/config.yaml" ]; then
-    echo "❌ 配置文件不存在"
-    echo "请先下载配置文件模板："
+    echo "❌ Configuration file not found"
+    echo "Please download configuration file template first:"
     if [ "$BRANCH" = "main" ]; then
         echo "curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/config/config.yaml.example -o config.yaml"
     else
@@ -25,87 +25,87 @@ if [ ! -f "config.yaml" ] && [ ! -f "config/config.yaml" ]; then
     exit 1
 fi
 
-# 下载 docker-compose.yml（如果不存在）
+# Download docker-compose.yml (if not exists)
 if [ ! -f "docker-compose.yml" ]; then
-    echo "📥 下载 docker-compose.yml..."
+    echo "📥 Downloading docker-compose.yml..."
     curl -fsSL "$REPO_BASE_URL/$BRANCH/docker-compose.yml" -o docker-compose.yml || {
-        echo "❌ 下载 docker-compose.yml 失败"
+        echo "❌ Failed to download docker-compose.yml"
         exit 1
     }
 fi
 
-# 确定配置文件路径
+# Determine configuration file path
 if [ -f "config.yaml" ]; then
     CONFIG_FILE="config.yaml"
-    echo "✅ 找到配置文件: config.yaml"
+    echo "✅ Found configuration file: config.yaml"
 elif [ -f "config/config.yaml" ]; then
     CONFIG_FILE="config/config.yaml"
-    echo "✅ 找到配置文件: config/config.yaml"
+    echo "✅ Found configuration file: config/config.yaml"
 else
-    echo "❌ 错误: 配置文件不存在"
+    echo "❌ Error: Configuration file not found"
     exit 1
 fi
 
-# 简化配置验证
-echo "🔍 验证配置文件..."
+# Simplified configuration validation
+echo "🔍 Validating configuration file..."
 
-# 检查 YAML 语法（优先使用 yq，其次使用 Python+PyYAML）
+# Check YAML syntax (prefer yq, fallback to Python+PyYAML)
 YAML_STATUS=0
 if command -v yq >/dev/null 2>&1; then
     if ! yq eval '.' "$CONFIG_FILE" >/dev/null 2>&1; then
-        echo "❌ 配置文件YAML语法错误 (yq检查)"
+        echo "❌ Configuration file YAML syntax error (yq check)"
         YAML_STATUS=1
     fi
 elif python3 -c "import yaml" >/dev/null 2>&1; then
     if ! python3 -c "import yaml; yaml.safe_load(open('$CONFIG_FILE'))" >/dev/null 2>&1; then
-        echo "❌ 配置文件YAML语法错误 (PyYAML检查)"
+        echo "❌ Configuration file YAML syntax error (PyYAML check)"
         YAML_STATUS=1
     fi
 else
-    echo "⚠️  跳过YAML语法检查 (未安装yq或PyYAML)"
+    echo "⚠️  Skipping YAML syntax check (yq or PyYAML not installed)"
 fi
 
 if [ $YAML_STATUS -ne 0 ]; then
     exit 1
 fi
 
-# 基本字段检查
+# Basic field checks
 if ! grep -q "url:" "$CONFIG_FILE"; then
-    echo "❌ 未找到 target.url 配置"
+    echo "❌ target.url configuration not found"
     exit 1
 fi
 
 if ! grep -q "llm_config:" "$CONFIG_FILE"; then
-    echo "❌ 未找到 llm_config 配置"
+    echo "❌ llm_config configuration not found"
     exit 1
 fi
 
 if ! grep -q "test_config:" "$CONFIG_FILE"; then
-    echo "❌ 未找到 test_config 配置"
+    echo "❌ test_config configuration not found"
     exit 1
 fi
 
-# 检查是否有启用的测试 (支持 True/true)
+# Check if any tests are enabled (supports True/true)
 if ! grep -i "enabled: *true" "$CONFIG_FILE"; then
-    echo "❌ 所有测试都已禁用，请至少启用一个测试项"
+    echo "❌ All tests are disabled, please enable at least one test"
     exit 1
 fi
 
-# 检查环境变量或配置文件中的API Key
+# Check API Key in environment variables or configuration file
 if [ -z "$OPENAI_API_KEY" ] && ! grep -q "api_key:" "$CONFIG_FILE"; then
-    echo "❌ LLM API Key 未配置 (需要环境变量 OPENAI_API_KEY 或配置文件中的 llm_config.api_key)"
+    echo "❌ LLM API Key not configured (requires environment variable OPENAI_API_KEY or llm_config.api_key in config file)"
     exit 1
 fi
 
-echo "✅ 基本配置检查通过"
+echo "✅ Basic configuration check passed"
 
-# 创建必要的目录
+# Create necessary directories
 mkdir -p logs reports
 
-# 启动容器
-echo "🚀 启动容器..."
+# Start container
+echo "🚀 Starting container..."
 docker-compose up
 
-echo "✅ 容器启动完成！"
-echo "📋 查看日志: docker-compose logs -f"
-echo "🛑 停止服务: docker-compose down"
+echo "✅ Container startup completed!"
+echo "📋 View logs: docker-compose logs -f"
+echo "🛑 Stop service: docker-compose down"

@@ -20,6 +20,7 @@ from webqa_agent.llm.llm_api import LLMAPI
 from webqa_agent.llm.prompt import LLMPrompt
 from webqa_agent.utils import Display
 from webqa_agent.utils.log_icon import icon
+from webqa_agent.utils import i18n
 
 try:
     from PIL import Image, ImageDraw
@@ -30,10 +31,19 @@ except Exception:
 
 class PageTextTest:
 
-    def __init__(self, llm_config: dict, user_cases: List[str] = None):
+    def __init__(self, llm_config: dict, user_cases: List[str] = None, report_config: dict = None):
         self.llm_config = llm_config
         self.user_cases = user_cases or LLMPrompt.TEXT_USER_CASES
         self.llm = LLMAPI(self.llm_config)
+        self.language = report_config["language"] if report_config else "zh-CN"
+        self.localized_strings = {
+            'zh-CN': i18n.get_lang_data('zh-CN').get('testers', {}).get('ux', {}),
+            'en-US': i18n.get_lang_data('en-US').get('testers', {}).get('ux', {}),
+        }
+    
+    def _get_text(self, key: str) -> str:
+        """Get localized text for the given key."""
+        return self.localized_strings.get(self.language, {}).get(key, key)
 
     async def get_iframe_content(self, frame):
         # get iframe content
@@ -46,10 +56,10 @@ class PageTextTest:
     async def run(self, page: Page) -> SubTestResult:
         """Runs a test to check the text content of a web page and identifies
         any issues based on predefined user cases."""
-        result = SubTestResult(name='文本检查')
+        result = SubTestResult(name=self._get_text('text_check_name'))
         logging.info(f"{icon['running']} Running Sub Test: {result.name}")
 
-        with Display.display('用户体验测试 - ' + result.name):
+        with Display.display(self._get_text('ux_test_display') + result.name):
             try:
                 # 创建ActionHandler用于截图
                 action_handler = ActionHandler()
@@ -61,7 +71,7 @@ class PageTextTest:
                 if is_blank:
                     logging.error('page is blank, no visible content')
                     result.status = TestStatus.FAILED
-                    result.messages = {'page': '页面白屏，没有任何可见内容'}
+                    result.messages = {'page': self._get_text('page_blank_error')}
                     return result
 
                 logging.debug('page is not blank, start crawling page content')
@@ -89,10 +99,10 @@ class PageTextTest:
                         issues = self.format_issues_to_markdown(test_page_content)
                     else:
                         result.status = TestStatus.PASSED
-                        issues = '无发现问题'
+                        issues = self._get_text('no_issues_found')
                     result.report.append(
                         SubTestReport(
-                            title="文本检查",
+                            title=self._get_text('report_title'),
                             issues=issues,
                         )
                     )
@@ -107,33 +117,31 @@ class PageTextTest:
 
             return result
 
-    @staticmethod
-    def _build_prompt(page_text: str, user_case: str) -> str:
-        """构建LLM提示."""
-        return f"""任务描述：根据提供的网页内容用户用例，检查是否存在任何错别字，或者英文语法错误。如果发现错误，请按照指定的JSON格式输出结果。
-                输入信息：
-                - 网页内容：${page_text}
-                - 用户用例：${user_case}
-                输出要求：
-                - 如果没有发现错误，请只输出 None ，不要包含任何解释。
-                - 如果发现了错误，请使用以下JSON格式输出：
+    def _build_prompt(self, page_text: str, user_case: str) -> str:
+        """Builds the LLM prompt in English."""
+        return f"""Task description: Based on the provided web page content and user cases, check for any typos or English grammar errors. If errors are found, output the results in the specified JSON format.
+                Input information:
+                - Web content: ${page_text}
+                - User case: ${user_case}
+                Output requirements:
+                - If no errors are found, output only None, do not include any explanations.
+                - If errors are found, please output in the following JSON format:
                 {{
                     "error": [
                         {{
-                            "location": "错误位置描述",
-                            "current": "当前错误内容",
-                            "suggested": "建议修改内容",
-                            "type": "错误类型"
+                            "location": "Description of error location",
+                            "current": "Current erroneous content",
+                            "suggested": "Suggested modification",
+                            "type": "Error type"
                         }}
                     ],
-                    "reason": "总体问题原因说明"
+                    "reason": "Overall problem description"
                 }}
                 """
     
-    @staticmethod
-    def format_issues_to_markdown(issues_content: str) -> str:
+    def format_issues_to_markdown(self, issues_content: str) -> str:
         # Format issues to markdown
-        if not issues_content or issues_content == '无发现问题':
+        if not issues_content or issues_content == self._get_text('no_issues_found'):
             return issues_content
         
         try:
@@ -150,29 +158,30 @@ class PageTextTest:
                 reason_summary = data['reason']
                 
                 if not errors:
-                    return '无发现问题'
+                    return self._get_text('no_issues_found')
                 
+                markdown_content = ''
                 if reason_summary:
-                    markdown_content = f"**总体问题：** {reason_summary}\n\n"
+                    markdown_content += f"{self._get_text('overall_problem')}{reason_summary}\n\n"
                 
                 if isinstance(errors, list):
                     for i, error_item in enumerate(errors, 1):
                         if isinstance(error_item, dict):
-                            location = error_item.get('location', '未知位置')
+                            location = error_item.get('location', self._get_text('unknown_location'))
                             current = error_item.get('current', '')
                             suggested = error_item.get('suggested', '')
-                            error_type = error_item.get('type', '未知类型')
+                            error_type = error_item.get('type', self._get_text('unknown_type'))
                             
-                            markdown_content += f"### {i}. 问题详情\n\n"
-                            markdown_content += f"**位置：** {location}\n\n"
-                            markdown_content += f"**错误内容：** `{current}`\n\n"
-                            markdown_content += f"**建议修改：** `{suggested}`\n\n"
-                            markdown_content += f"**错误类型：** {error_type}\n\n"
+                            markdown_content += f"{self._get_text('issue_details')}".format(i)
+                            markdown_content += f"{self._get_text('location')}{location}\n\n"
+                            markdown_content += f"{self._get_text('error_content')}`{current}`\n\n"
+                            markdown_content += f"{self._get_text('suggested_fix')}`{suggested}`\n\n"
+                            markdown_content += f"{self._get_text('error_type')}{error_type}\n\n"
                         else:
-                            markdown_content += f"### {i}. 问题详情\n\n"
-                            markdown_content += f"**错误内容：** {error_item}\n\n"
+                            markdown_content += f"{self._get_text('issue_details')}".format(i)
+                            markdown_content += f"{self._get_text('error_content')}{error_item}\n\n"
                 else:
-                    markdown_content += f"**错误内容：** {errors}\n\n"
+                    markdown_content += f"{self._get_text('error_content')}{errors}\n\n"
                 
                 return markdown_content
             else:
@@ -184,10 +193,19 @@ class PageTextTest:
 
 class PageContentTest:
 
-    def __init__(self, llm_config: dict, user_cases: List[str] = None):
+    def __init__(self, llm_config: dict, user_cases: List[str] = None, report_config: dict = None):
         self.llm_config = llm_config
         self.user_cases = user_cases or LLMPrompt.CONTENT_USER_CASES
         self.llm = LLMAPI(self.llm_config)
+        self.language = report_config["language"] if report_config else "zh-CN"
+        self.localized_strings = {
+            'zh-CN': i18n.get_lang_data('zh-CN').get('testers', {}).get('ux', {}),
+            'en-US': i18n.get_lang_data('en-US').get('testers', {}).get('ux', {}),
+        }
+    
+    def _get_text(self, key: str) -> str:
+        """Get localized text for the given key."""
+        return self.localized_strings.get(self.language, {}).get(key, key)
 
     async def run(self, page: Page, **kwargs) -> List[SubTestResult]:
         """run page content tests and return two separate SubTestResults
@@ -199,8 +217,8 @@ class PageContentTest:
             List of SubTestResult containing layout test and image test results
         """
         # 创建两个独立的测试结果
-        layout_result = SubTestResult(name='网页内容检查')
-        # image_result = SubTestResult(name='网页元素检查')
+        layout_result = SubTestResult(name=self._get_text('layout_check_name'))
+        # image_result = SubTestResult(name=_['element_check_name'])
 
         logging.info(f"{icon['running']} Running Sub Tests: {layout_result.name}")
 
@@ -210,10 +228,8 @@ class PageContentTest:
         logging.debug(f'id_map: {id_map}')
         await dp.remove_marker()
 
-        # 分离用户用例
+        # LAYOUT
         layout_case = self.user_cases[0]
-        image_case = self.user_cases[1]
-
 
         try:
             if not hasattr(self.llm, '_client') or self.llm._client is None:
@@ -228,13 +244,12 @@ class PageContentTest:
 
             page_img = True
 
-            with Display.display('用户体验测试 - 布局检查'):
+            with Display.display(self._get_text('ux_test_display') + self._get_text('layout_case')):
                 # 执行布局检查
                 await self._run_single_test(layout_result, layout_case, id_map, browser_screenshot, page_img)
                 logging.info(f"{icon['check']} Sub Tests Completed: {layout_result.name}")
 
-            # with Display.display('用户体验测试 - 元素检查'):
-            #     # 执行元素检查
+            # with Display.display(_['ux_test_display'] + _['element_check_name']):
             #     try:
             #         await self._run_single_test(image_result, image_case, id_map, browser_screenshot, page_img)
             #         logging.info(f"{icon['check']} Sub Tests Completed: {image_result.name}")
@@ -257,17 +272,17 @@ class PageContentTest:
         overall_status = TestStatus.PASSED
 
         prompt = self._build_prompt(user_case, id_map, len(browser_screenshot))
-        logging.debug(f'{result.name} test {user_case[:4]} prompt: {prompt}')
-        logging.info(f"Vision model: evaluating use case '{user_case[:4]}'...")
+        logging.debug(f'{result.name} test, prompt: {prompt}')
+        logging.info(f"Vision model: evaluating use case '{result.name}'...")
         test_page_content = await self._get_llm_response(prompt, page_img, browser_screenshot)
 
         # parse LLM response
         summary_text = None
         issues_list = []
-        issues_text = '无发现问题'  # initialize with default value
+        issues_text = self._get_text('no_issues_found')  # initialize with default value
         case_status = TestStatus.PASSED
 
-        logging.debug(f"LLM response for user case '{user_case[:4]}...': {test_page_content}")
+        logging.debug(f"LLM response for user case '{result.name}...': {test_page_content}")
 
         if test_page_content and str(test_page_content).strip():
             try:
@@ -282,7 +297,7 @@ class PageContentTest:
                 if isinstance(parsed, dict) and parsed.get('status') == 'no_issues':
                     # No issues found - this is the expected case
                     case_status = TestStatus.PASSED
-                    issues_text = '无发现问题'
+                    issues_text = self._get_text('no_issues_found')
                     logging.debug(f"LLM confirmed no issues found: {parsed.get('message', 'No issues detected')}")
 
                 # Check if it's the "issues found" format (array)
@@ -410,29 +425,21 @@ class PageContentTest:
         else:
             # no valid content from LLM, treat as no issues found
             case_status = TestStatus.PASSED
-            issues_text = '无发现问题'
+            issues_text = self._get_text('no_issues_found')
             logging.debug(f'LLM returned no content, treating as PASSED')
 
-        result.report.append(SubTestReport(title="内容检查", issues=issues_text))
+        result.report.append(SubTestReport(title=self._get_text('report_title'), issues=issues_text))
         # aggregate overall status: any WARNING -> WARNING; else PASSED
         if case_status == TestStatus.WARNING and overall_status != TestStatus.WARNING:
             overall_status = TestStatus.WARNING
 
         result.status = overall_status
 
-    @staticmethod
-    def _build_prompt(user_case: str, id_map: dict, screenshot_count: int = 0) -> str:
-        # 判断检查类型
-        is_layout_check = '布局检查' in user_case
-        is_missing_element_check = '元素检查' in user_case
-        is_text_check = '文字排版' in user_case
-
+    def _build_prompt(self, user_case: str, id_map: dict, screenshot_count: int = 0) -> str:
         # 构建结构化的DOM/CSS信息摘要
         structured_info = ''
 
-        # 排版检查才包含样式信息，元素缺失检查只依赖纯视觉
-        if is_layout_check and id_map:
-            # 提供基础元素信息供模型参考，不预先标记问题
+        if id_map:
             key_elements = []
 
             for element_id, info in id_map.items():
@@ -607,110 +614,110 @@ class PageContentTest:
     - When DOM signals indicate potential issues, verify visually and provide precise coordinates
     """
 
-        elif is_missing_element_check:
-            # 为元素缺失检查提供图片元素的基础信息
-            image_elements_info = ''
-            if id_map:
-                image_elements = []
-                for element_id, info in id_map.items():
-                    if not isinstance(info, dict):
-                        continue
+    #     elif is_missing_element_check:
+    #         # 为元素缺失检查提供图片元素的基础信息
+    #         image_elements_info = ''
+    #         if id_map:
+    #             image_elements = []
+    #             for element_id, info in id_map.items():
+    #                 if not isinstance(info, dict):
+    #                     continue
 
-                    tag = info.get('tagName', '')
-                    if tag in ['img', 'svg']:
-                        viewport = info.get('viewport', {})
-                        styles = info.get('styles', {}) or {}
+    #                 tag = info.get('tagName', '')
+    #                 if tag in ['img', 'svg']:
+    #                     viewport = info.get('viewport', {})
+    #                     styles = info.get('styles', {}) or {}
 
-                        img_info = {
-                            'id': element_id,
-                            'tag': tag,
-                            'position': f"({viewport.get('x', 0):.0f}, {viewport.get('y', 0):.0f})",
-                            'size': f"{viewport.get('width', 0):.0f}×{viewport.get('height', 0):.0f}",
-                            'src': info.get('src', 'N/A'),
-                            'alt': info.get('alt', 'N/A')
-                        }
+    #                     img_info = {
+    #                         'id': element_id,
+    #                         'tag': tag,
+    #                         'position': f"({viewport.get('x', 0):.0f}, {viewport.get('y', 0):.0f})",
+    #                         'size': f"{viewport.get('width', 0):.0f}×{viewport.get('height', 0):.0f}",
+    #                         'src': info.get('src', 'N/A'),
+    #                         'alt': info.get('alt', 'N/A')
+    #                     }
 
-                        # 检查可能的占位图信号
-                        placeholder_signals = []
-                        bg_image = styles.get('backgroundImage', '')
-                        if 'placeholder' in str(img_info['src']).lower() or 'placeholder' in bg_image.lower():
-                            placeholder_signals.append('PLACEHOLDER_SRC')
-                        if bg_image and bg_image != 'none':
-                            placeholder_signals.append('HAS_BACKGROUND')
-                        if viewport.get('width', 0) == viewport.get('height', 0):  # 正方形可能是占位图
-                            placeholder_signals.append('SQUARE_ASPECT')
+    #                     # 检查可能的占位图信号
+    #                     placeholder_signals = []
+    #                     bg_image = styles.get('backgroundImage', '')
+    #                     if 'placeholder' in str(img_info['src']).lower() or 'placeholder' in bg_image.lower():
+    #                         placeholder_signals.append('PLACEHOLDER_SRC')
+    #                     if bg_image and bg_image != 'none':
+    #                         placeholder_signals.append('HAS_BACKGROUND')
+    #                     if viewport.get('width', 0) == viewport.get('height', 0):  # 正方形可能是占位图
+    #                         placeholder_signals.append('SQUARE_ASPECT')
 
-                        if placeholder_signals:
-                            img_info['signals'] = placeholder_signals
+    #                     if placeholder_signals:
+    #                         img_info['signals'] = placeholder_signals
 
-                        image_elements.append(img_info)
+    #                     image_elements.append(img_info)
 
-                if image_elements:
-                    image_elements_info = f'\nImage Elements Found: {len(image_elements)}\n'
-                    for img in image_elements[:10]:  # 限制显示数量
-                        desc = f"- {img['tag']}@{img['position']} [{img['size']}]"
-                        if img['src'] != 'N/A':
-                            desc += f" src=\"{img['src'][:50]}{'...' if len(img['src']) > 50 else ''}\""
-                        if img.get('signals'):
-                            desc += f" [⚠️ {','.join(img['signals'])}]"
-                        image_elements_info += f'\n{desc}'
-                else:
-                    image_elements_info = '\nNo image elements detected in DOM.'
+    #             if image_elements:
+    #                 image_elements_info = f'\nImage Elements Found: {len(image_elements)}\n'
+    #                 for img in image_elements[:10]:  # 限制显示数量
+    #                     desc = f"- {img['tag']}@{img['position']} [{img['size']}]"
+    #                     if img['src'] != 'N/A':
+    #                         desc += f" src=\"{img['src'][:50]}{'...' if len(img['src']) > 50 else ''}\""
+    #                     if img.get('signals'):
+    #                         desc += f" [⚠️ {','.join(img['signals'])}]"
+    #                     image_elements_info += f'\n{desc}'
+    #             else:
+    #                 image_elements_info = '\nNo image elements detected in DOM.'
 
-                logging.debug(f'image_elements_info: {image_elements_info}')
-            return f"""## Missing Image Element Analysis Task
-    **Input**: Visual analysis with DOM context - {screenshot_count} screenshots (index 0-{screenshot_count-1})
+    #             logging.debug(f'image_elements_info: {image_elements_info}')
+    #         return f"""## Missing Image Element Analysis Task
+    # **Input**: Visual analysis with DOM context - {screenshot_count} screenshots (index 0-{screenshot_count-1})
 
-    **Objective**: {user_case}
+    # **Objective**: {user_case}
 
-    **Image Reference**: {image_elements_info}
+    # **Image Reference**: {image_elements_info}
 
-    ### Output Requirements
-        {LLMPrompt.OUTPUT_FORMAT}
+    # ### Output Requirements
+    #     {LLMPrompt.OUTPUT_FORMAT}
 
-    **Rules**:
-    - Focus on visual evidence, use DOM signals as supporting hints
-    - Pay special attention to elements marked with ⚠️ placeholder signals
-    - For gray blocks or obvious placeholders, identify them as missing content
-    - If unsure about rendering vs loading state, provide evidence-based judgment
-    - For multiple issues in one screenshot, create separate objects for each
-    - If no issues found, output strictly: None (no explanation needed)
+    # **Rules**:
+    # - Focus on visual evidence, use DOM signals as supporting hints
+    # - Pay special attention to elements marked with ⚠️ placeholder signals
+    # - For gray blocks or obvious placeholders, identify them as missing content
+    # - If unsure about rendering vs loading state, provide evidence-based judgment
+    # - For multiple issues in one screenshot, create separate objects for each
+    # - If no issues found, output strictly: None (no explanation needed)
 
-    **Requirements**:
-    - Coordinates must be pixel-precise [x1,y1,x2,y2] based on visual observation
-    - Clearly identify what type of content appears to be missing
-    - Fix suggestions must be actionable and specific
-                """
+    # **Requirements**:
+    # - Coordinates must be pixel-precise [x1,y1,x2,y2] based on visual observation
+    # - Clearly identify what type of content appears to be missing
+    # - Fix suggestions must be actionable and specific
+    #             """
 
-        elif is_text_check:
-            return f"""## Text Typography Analysis Task
-    **Input**: Visual analysis with DOM context - {screenshot_count} screenshots (index 0-{screenshot_count-1})
+    #     elif is_text_check:
+    #         return f"""## Text Typography Analysis Task
+    # **Input**: Visual analysis with DOM context - {screenshot_count} screenshots (index 0-{screenshot_count-1})
 
-    **Objective**: {user_case}
+    # **Objective**: {user_case}
 
-    ### Output Requirements
-        {LLMPrompt.OUTPUT_FORMAT}
+    # ### Output Requirements
+    #     {LLMPrompt.OUTPUT_FORMAT}
 
-    **Requirements**:
-    - Coordinates must be pixel-precise [x1,y1,x2,y2] based on visual observation
-    - Clearly describe the specific style or layout inconsistency observed
-    - Suggestions must be actionable and specific (e.g., "Increase line-height from 1.1 to 1.4 for better readability")
-            """
-        else:
+    # **Requirements**:
+    # - Coordinates must be pixel-precise [x1,y1,x2,y2] based on visual observation
+    # - Clearly describe the specific style or layout inconsistency observed
+    # - Suggestions must be actionable and specific (e.g., "Increase line-height from 1.1 to 1.4 for better readability")
+    #         """
+    #     else:
             # 默认情况，处理未知的检查类型
-            return f"""## General Content Analysis Task
-    **Input**: Visual analysis with DOM context - {screenshot_count} screenshots (index 0-{screenshot_count-1})
+    #         return f"""## General Content Analysis Task
+    # **Input**: Visual analysis with DOM context - {screenshot_count} screenshots (index 0-{screenshot_count-1})
 
-    **Objective**: {user_case}
+    # **Objective**: {user_case}
 
-    ### Output Requirements
-        {LLMPrompt.OUTPUT_FORMAT}
+    # ### Output Requirements
+    #     {LLMPrompt.OUTPUT_FORMAT}
 
-    **Requirements**:
-    - Coordinates must be pixel-precise [x1,y1,x2,y2] based on visual observation
-    - Clearly describe any issues found
-    - Suggestions must be actionable and specific
-            """
+    # **Requirements**:
+    # - Coordinates must be pixel-precise [x1,y1,x2,y2] based on visual observation
+    # - Clearly describe any issues found
+    # - Suggestions must be actionable and specific
+    #         """
 
     async def _get_llm_response(self, prompt: str, page_img: bool, browser_screenshot=None):
         if page_img and browser_screenshot:

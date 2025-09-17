@@ -3,18 +3,22 @@
 import json
 
 
-def get_shared_test_design_standards() -> str:
+def get_shared_test_design_standards(language: str = 'zh-CN') -> str:
     """Get shared test case design standards for reuse in plan and reflect modules.
+
+    Args:
+        language: Language for test case naming (zh-CN or en-US)
 
     Returns:
         String containing complete test case design standards
     """
-    return """## Enhanced Test Case Design Standards
+    name_language = '中文' if language == 'zh-CN' else 'English'
+    return f"""## Enhanced Test Case Design Standards
 
 ### Domain-Aware Test Case Structure Requirements
 Each test case must include these standardized components with enhanced business context:
 
-- **`name`**: 简洁直观的中文测试名称，反映业务场景和测试目的
+- **`name`**: 简洁直观的测试名称，反映业务场景和测试目的 (使用{name_language}命名)
 - **`objective`**: Clear statement linking the test to specific business requirements and domain context
 - **`test_category`**: Enhanced classification including domain-specific categories (Ecommerce_Functional, Banking_Security, Healthcare_Compliance, etc.)
 - **`priority`**: Test priority level based on comprehensive impact assessment (Critical, High, Medium, Low):
@@ -172,16 +176,14 @@ Each test case must include these standardized components with enhanced business
 def get_test_case_planning_system_prompt(
     business_objectives: str,
     completed_cases: list = None,
-    reflection_history: list = None,
-    remaining_objectives: str = None,
+    language: str = 'zh-CN',
 ) -> str:
     """Generate system prompt for test case planning.
 
     Args:
         business_objectives: Business objectives
         completed_cases: Completed test cases (for replanning)
-        reflection_history: Reflection history (for replanning)
-        remaining_objectives: Remaining objectives (for replanning)
+        language: Language for test case naming (zh-CN or en-US)
 
     Returns:
         Formatted system prompt string
@@ -380,7 +382,7 @@ Leverage deeper business domain insights and execution learnings to generate ref
  3. The most valuable next action
 """
 
-    shared_standards = get_shared_test_design_standards()
+    shared_standards = get_shared_test_design_standards(language)
 
     system_prompt = f"""
 {role_and_objective}
@@ -423,8 +425,6 @@ Your response must be ONLY in JSON format. Do not include any analysis, explanat
 
 def get_test_case_planning_user_prompt(
     state_url: str,
-    page_content_summary: dict,
-    page_structure: str ,
     completed_cases: list = None,
     reflection_history: list = None,
     remaining_objectives: str = None,
@@ -433,8 +433,6 @@ def get_test_case_planning_user_prompt(
 
     Args:
         state_url: Target URL
-        page_content_summary: Page content summary (interactive elements)
-        page_structure: Complete page text structure
         completed_cases: Completed test cases (for replanning)
         reflection_history: Reflection history (for replanning)
         remaining_objectives: Remaining objectives (for replanning)
@@ -458,7 +456,7 @@ def get_test_case_planning_user_prompt(
     user_prompt = f"""
 ## Application Under Test (AUT)
 - **Target URL**: {state_url}
-- **Visual Element Reference (Referenced via attached screenshot) **: The attached screenshot contains numbered markers corresponding to interactive elements. Each number in the image maps to an element ID in the Interactive Elements Map above, providing precise visual-textual correlation for comprehensive UI analysis.
+- **Visual Element Reference (Referenced via attached screenshot) **: The attached screenshot contains numbered markers corresponding to interactive elements.
 
 {context_section}
 
@@ -534,14 +532,17 @@ Example 1:
     return user_prompt
 
 
-def get_reflection_system_prompt() -> str:
+def get_reflection_system_prompt(language: str = 'zh-CN') -> str:
     """Generate system prompt for reflection and replanning (static part).
+
+    Args:
+        language: Language for test case naming (zh-CN or en-US)
 
     Returns:
         Formatted system prompt containing role definition, decision framework, and output format
     """
-
-    shared_standards = get_shared_test_design_standards()
+    name_language = '中文' if language == 'zh-CN' else 'English'
+    shared_standards = get_shared_test_design_standards(language)
 
     return f"""## Role
 You are a Senior QA Testing Professional responsible for dynamic test execution oversight with enhanced business domain awareness and contextual understanding. Your expertise includes business process analysis, domain-specific testing, user experience evaluation, and strategic decision-making based on comprehensive execution insights.
@@ -650,7 +651,7 @@ IF (len(completed_cases) < len(current_plan)
   }},
   "new_plan": [
     {{
-      "name": "修订后的测试用例（中文命名）",
+      "name": "修订后的测试用例（{name_language}命名）",
       "objective": "clear_test_purpose_aligned_with_remaining_business_objectives",
       "test_category": "enhanced_category_classification",
       "priority": "priority_based_on_business_impact",
@@ -688,7 +689,6 @@ def get_reflection_user_prompt(
     business_objectives: str,
     current_plan: list,
     completed_cases: list,
-    page_structure: str,
     page_content_summary: dict = None,
 ) -> str:
     """Generate user prompt for reflection and replanning (dynamic part).
@@ -697,7 +697,6 @@ def get_reflection_user_prompt(
         business_objectives: Overall business objectives
         current_plan: Current test plan
         completed_cases: Completed test cases
-        page_structure: Current UI text structure
         page_content_summary: Interactive element mapping (dict from ID to element info), optional
 
     Returns:
@@ -801,23 +800,613 @@ def get_reflection_prompt(
     business_objectives: str,
     current_plan: list,
     completed_cases: list,
-    page_structure: str,
     page_content_summary: dict = None,
+    language: str = 'zh-CN',
 ) -> tuple[str, str]:
     """Generate prompts for reflection and replanning (returns system and user prompt).
 
     Args:
         business_objectives: Overall business objectives
+        language: Language for test case naming (zh-CN or en-US)
         current_plan: Current test plan
         completed_cases: Completed test cases
-        page_structure: Current UI text structure
         page_content_summary: Interactive element mapping (dict from ID to element info), optional
 
     Returns:
         tuple: (system_prompt, user_prompt)
     """
-    system_prompt = get_reflection_system_prompt()
+    system_prompt = get_reflection_system_prompt(language)
     user_prompt = get_reflection_user_prompt(
-        business_objectives, current_plan, completed_cases, page_structure, page_content_summary
+        business_objectives, current_plan, completed_cases, page_content_summary
     )
     return system_prompt, user_prompt
+
+
+def get_dynamic_step_generation_prompt() -> str:
+    """Enhanced prompt for dynamic test step generation with state awareness and UI lifecycle understanding.
+    
+    This prompt uses the QAG (Question-Answer Generation) methodology enhanced with:
+    - State Management: Understanding UI element states (open/closed, visible/hidden)
+    - Precondition Awareness: Knowing when setup steps are needed
+    - Element Lifecycle: Understanding ephemeral elements that disappear after interaction
+    - Sequential Dependencies: Steps that depend on previous UI state
+    - Recovery Strategies: How to restore UI state for continued testing
+    """
+    return """You are an expert test step generator analyzing UI changes after user actions, with deep understanding of UI state management and element lifecycles.
+
+## Core State Awareness Principles
+
+### UI Element State Classification
+Before generating steps, classify the state of new elements:
+
+1. **Ephemeral Elements** (disappear after interaction):
+   - Dropdown menus that close after selection
+   - Modal dialogs that close on action/dismiss
+   - Tooltips that vanish on mouse leave
+   - Context menus that hide after clicking
+   - Autocomplete suggestions that clear after selection
+
+2. **Persistent Elements** (remain after interaction):
+   - Form fields that stay visible
+   - Static buttons and links
+   - Tab panels that remain displayed
+   - Expanded accordions (until explicitly collapsed)
+   - Validation messages that persist
+
+3. **State-Dependent Elements** (require specific conditions):
+   - Sub-menus requiring parent hover/click
+   - Conditional fields based on previous selections
+   - Multi-step wizard panels
+   - Dependent dropdowns (country → state → city)
+
+## Strategy Efficiency Guidelines
+
+### When "Replace" Strategy Optimizes Test Execution
+Choose "replace" when new elements provide:
+1. **Express Paths**: Shortcuts that achieve the same goal in fewer steps (>40% reduction)
+2. **Bulk Operations**: Batch actions replacing multiple individual operations
+3. **Advanced Interfaces**: Comprehensive UI superseding basic multi-step functionality
+4. **Direct Access**: Eliminating navigation sequences through shortcuts
+5. **Unified Forms**: Single form replacing multi-step wizards
+
+### When "Insert" Strategy Is Appropriate
+Choose "insert" when new elements offer:
+1. **Complementary Features**: Testing different aspects or edge cases
+2. **Progressive Enhancement**: Adding to existing functionality
+3. **Validation Variety**: Different validation paths worth exploring
+4. **Coverage Expansion**: Expanding test scope without redundancy
+
+### Efficiency Impact
+- **Replace Strategy**: Typically reduces test execution time by 30-50% when applicable (based on industry benchmarks for bulk operations)
+- **Insert Strategy**: Maintains comprehensive coverage at cost of execution time
+
+### Target Strategy Distribution
+- **Optimal Balance**: Use replace strategy in 20-30% of appropriate cases for best efficiency/coverage balance
+- **Quality Focus**: Prioritize meaningful replace opportunities over arbitrary quotas
+- **Example Distribution**: The examples below demonstrate approximately 43% replace ratio for comprehensive learning patterns
+
+## Enhanced QAG Method with State Context
+
+**CRITICAL**: The previous action has been executed. You're analyzing the CURRENT UI state after that action.
+
+### Phase 1: State Assessment
+Before the standard QAG questions, assess the UI state:
+
+**S1: Element Persistence Check**
+Are the new elements ephemeral (will disappear after interaction)?
+Answer: [EPHEMERAL/PERSISTENT/MIXED]
+
+**S2: Access Requirements Check**  
+Do the new elements require specific preconditions to access them again?
+Answer: [YES/NO] - If YES, note the precondition
+
+**S3: State Dependencies Check**
+Are there other elements whose state depends on these new elements?
+Answer: [YES/NO] - If YES, note the dependencies
+
+### Phase 2: Enhanced QAG Assessment
+Answer these 4 binary questions in sequence:
+
+**Q1: Objective Completion Assessment**
+Can the new elements independently complete the entire test objective?
+Answer: [YES/NO]
+
+**Q2: Aspect Differentiation Assessment**
+Do the remaining steps test significantly different aspects (different features, validations, or user flows) than what new elements can test?
+Answer: [YES/NO]
+
+**Q3: Redundancy Assessment**
+Would the remaining steps become redundant after using the new elements?
+Answer: [YES/NO]
+
+**Q4: Abstraction Level Gap Assessment**
+Do the new elements transform abstract/generic remaining steps into concrete/specific operations?
+Consider:
+- Were remaining steps planned as "assumptions" about hidden functionality?
+- Do new elements reveal the actual implementation of what was assumed?
+- Is there a cognitive clarity upgrade from exploratory intent to deterministic paths?
+Answer: [YES/NO]
+
+## Enhanced Decision Rules
+
+### Primary Strategy Decision (Enhanced QAG + State-based)
+**Priority Order (Higher priority rules override lower ones):**
+
+1. **Abstraction Level Priority**: Q4=YES → "replace" (cognitive clarity upgrade: concrete supersedes abstract)
+2. **Complete Alternative Path**: Q1=YES AND Q3=YES → "replace" (efficient path detected)
+3. **Same Function Better Implementation**: Q1=YES AND Q2=NO → "replace" (complete alternative path)
+4. **Efficiency Gains**: NEW ELEMENTS offer >40% step reduction → "replace" (significant efficiency gain)
+5. **Bulk Operations**: NEW ELEMENTS provide bulk operations → "replace" (batch efficiency)
+6. **Navigation Optimization**: NEW ELEMENTS eliminate navigation steps → "replace" (workflow optimization)
+7. **State-Based Decisions**:
+   - S1=EPHEMERAL AND multiple similar elements → "insert" (batch testing needed)
+   - S1=PERSISTENT AND bulk capability detected → "replace" (efficient path)
+8. **Default**: All other combinations → "insert"
+
+### State-Aware Modifications (Applied to Base Strategy)
+If Base Strategy is "insert" AND S1=EPHEMERAL:
+- **Add Restoration Steps**: Include steps to restore access to ephemeral elements if needed
+- **Group Related Actions**: Batch all interactions with ephemeral elements before they disappear
+- **Document State Changes**: Note which elements will be unavailable after interaction
+
+## Precondition Generation Rules
+
+When generating steps for state-dependent elements:
+
+### Dropdown Reopening Pattern
+If element is dropdown option AND dropdown is currently closed:
+1. First generate: "Click [dropdown trigger] to open dropdown menu"
+2. Then generate: "Select [option] from the dropdown"
+3. Add verification: "Verify [expected outcome of selection]"
+
+### Modal/Dialog Pattern
+If element is inside modal AND modal might close:
+1. Group all modal interactions together
+2. If additional modal access needed later, add: "Reopen [modal trigger] to access [element]"
+
+### Multi-Level Navigation Pattern
+If element requires navigation path:
+1. Document full path: "Navigate: Menu → Submenu → Item"
+2. Generate explicit steps for each level if not already visible
+
+### Action Result Context
+- **Success**: Leverage new elements for enhanced testing
+- **Failure**: Consider recovery steps or alternative approaches
+- **Avoid Duplicates**: Don't repeat existing or failed steps
+
+## Smart Skip Logic (Return Empty Steps)
+
+Skip generation when new elements are:
+
+### 1. Visual-Only Changes
+- Loading animations, spinners, progress bars
+- Style transitions, hover effects, focus indicators
+- Closing animations of ephemeral elements
+
+### 2. Post-Interaction Cleanup
+- Dropdown closing after selection (unless testing the closing behavior)
+- Modal fade-out after action
+- Tooltip disappearance after mouse leave
+- Autocomplete clearing after selection
+
+### 3. Already Tested States
+- Re-appearance of previously tested elements
+- Standard browser UI changes (scrollbars, etc.)
+- Repetitive feedback for similar actions
+
+### 4. Irrelevant State Changes
+- Elements unrelated to test objective
+- Background UI updates not affecting current flow
+- System-level changes outside test scope
+
+## State-Aware Step Generation Guidelines
+
+### For Ephemeral Elements (Dropdowns, Modals, Tooltips)
+1. **Batch Interactions**: Generate all necessary steps while element is accessible
+2. **Document Trigger**: Always note how to re-access the element
+3. **State Verification**: Verify both the action and resulting state change
+4. **Recovery Path**: If more interactions needed, include re-opening step
+
+**Dropdown Example**: Click dropdown → Select option → Verify selection → Reopen dropdown → Test another option
+
+### For State-Dependent Elements
+- Check prerequisites, maintain required conditions, follow dependencies
+
+### For Persistent Elements  
+- Test in any order, focus on functionality over state management
+
+## Element Priority with State Context
+
+### Critical State-Dependent Elements (Highest Priority)
+- **Dropdowns with Multiple Options**: Require systematic testing with re-opening
+- **Multi-Step Modals**: Need complete flow testing before dismissal
+- **Cascading Selections**: Dependencies must be tested in sequence
+- **Conditional Fields**: Appear/disappear based on other inputs
+
+### High Priority Interactive Elements
+- **Form Controls**: Validation, required fields, error states
+- **Navigation Elements**: Menus, tabs, breadcrumbs
+- **Action Triggers**: Buttons, links that change state
+
+### Lower Priority
+- Display content, feedback elements, static text
+
+## Output in JSON format without any additional context (Mandatory)
+
+```json
+{
+  "state_analysis": {
+    "element_persistence": "ephemeral|persistent|mixed",
+    "access_requirements": "none|description of requirements",
+    "state_dependencies": "none|description of dependencies"
+  },
+  "analysis": {
+    "q1_can_complete_alone": true/false,
+    "q2_different_aspects": true/false,  
+    "q3_remaining_redundant": true/false,
+    "q4_abstraction_gap": true/false
+  },
+  "strategy": "insert" or "replace",
+  "reason": "Brief explanation including QAG analysis and state considerations",
+  "steps": [
+    {"action": "User action description (including any state restoration)"},
+    {"verify": "Validation description (including state verification)"}
+  ]
+}
+```
+
+## Enhanced Examples with State Management
+
+### Example 1: Dropdown Selection Requiring Reopening
+**Test Objective**: "Test filtering functionality"
+**Previous Action**: "Selected 'Electronics' from category dropdown"
+**New Elements**: Subcategory dropdown appeared, but category dropdown closed
+
+```json
+{
+  "state_analysis": {
+    "element_persistence": "ephemeral",
+    "access_requirements": "Category dropdown needs to be clicked to reopen",
+    "state_dependencies": "Subcategory depends on category selection"
+  },
+  "analysis": {
+    "q1_can_complete_alone": false,
+    "q2_different_aspects": true,
+    "q3_remaining_redundant": false,
+    "q4_abstraction_gap": false
+  },
+  "strategy": "insert",
+  "reason": "QAG: Q4=No (no abstraction gap - subcategory enhances existing filtering), Q1=No (subcategory alone can't complete filtering), Q2=Yes (tests different aspects). State: Category dropdown is ephemeral, closes after selection, requiring reopening.",
+  "steps": [
+    {"action": "Click subcategory dropdown to view options"},
+    {"action": "Select 'Laptops' from subcategory dropdown"},
+    {"verify": "Verify products filtered to show only laptops"},
+    {"action": "Click category dropdown to reopen it"},
+    {"action": "Select 'Clothing' from category dropdown"},
+    {"verify": "Verify subcategory dropdown updated with clothing options"}
+  ]
+}
+```
+
+### Example 2: Modal with Multiple Actions
+**Test Objective**: "Complete user preferences setup"
+**New Elements**: Settings modal with multiple tabs
+
+```json
+{
+  "state_analysis": {
+    "element_persistence": "ephemeral",
+    "access_requirements": "Modal closes on save/cancel, needs settings button to reopen",
+    "state_dependencies": "All modal content inaccessible when closed"
+  },
+  "analysis": {
+    "q1_can_complete_alone": true,
+    "q2_different_aspects": false,
+    "q3_remaining_redundant": false,
+    "q4_abstraction_gap": true
+  },
+  "strategy": "replace",
+  "reason": "QAG: Q4=Yes (modal transforms abstract 'setup preferences' into concrete configuration options), Q1=Yes (modal can complete preferences setup), Q2=No (same preference flow). State: Modal provides complete alternative path with cognitive clarity upgrade.",
+  "steps": [
+    {"action": "Click 'Privacy' tab in settings modal"},
+    {"action": "Toggle 'Share Analytics' to off"},
+    {"action": "Click 'Notifications' tab"},
+    {"action": "Set email frequency to 'Weekly'"},
+    {"action": "Click 'Save' to apply all settings"},
+    {"verify": "Verify modal closes and settings are saved"},
+    {"action": "Click settings button to reopen modal"},
+    {"verify": "Verify previously selected settings are persisted"}
+  ]
+}
+```
+
+### Example 3: Cascading Dropdowns
+**Test Objective**: "Test address form"
+**New Elements**: State dropdown after country selection
+
+```json
+{
+  "state_analysis": {
+    "element_persistence": "persistent",
+    "access_requirements": "State dropdown requires country selection",
+    "state_dependencies": "City dropdown will depend on state selection"
+  },
+  "analysis": {
+    "q1_can_complete_alone": false,
+    "q2_different_aspects": false,
+    "q3_remaining_redundant": false,
+    "q4_abstraction_gap": false
+  },
+  "strategy": "insert",
+  "reason": "QAG: Q4=No (no abstraction gap - state selection is part of expected address flow), Q1=No (state dropdown alone can't complete address), Q2=No (all address-related), Q3=No (city selection needed). State: Persistent cascading pattern.",
+  "steps": [
+    {"action": "Click state dropdown to view available states"},
+    {"action": "Select 'California' from state dropdown"},
+    {"verify": "Verify city dropdown becomes enabled"},
+    {"action": "Click city dropdown to view California cities"},
+    {"action": "Select 'San Francisco' from city dropdown"},
+    {"verify": "Verify complete address hierarchy is selected"}
+  ]
+}
+```
+
+### Example 4: Skip - Dropdown Closing Animation
+**New Elements**: Dropdown closing animation after selection
+
+```json
+{
+  "state_analysis": {
+    "element_persistence": "ephemeral",
+    "access_requirements": "none",
+    "state_dependencies": "none"
+  },
+  "analysis": {
+    "q1_can_complete_alone": false,
+    "q2_different_aspects": false, 
+    "q3_remaining_redundant": false,
+    "q4_abstraction_gap": false
+  },
+  "strategy": "insert",
+  "reason": "QAG: Q4=No (no abstraction gap - just visual animation), Q1=No (animation can't complete any objective), Q2=No (no functional aspects). State: Ephemeral visual-only change with no functional impact, safe to skip generation.",
+  "steps": []
+}
+```
+
+### Example 5: Express Checkout Replacing Multi-Step Flow
+**Test Objective**: "Complete purchase transaction"
+**New Elements**: Express checkout button that consolidates payment and shipping
+
+```json
+{
+  "state_analysis": {
+    "element_persistence": "persistent",
+    "access_requirements": "none",
+    "state_dependencies": "none"
+  },
+  "analysis": {
+    "q1_can_complete_alone": true,
+    "q2_different_aspects": false,
+    "q3_remaining_redundant": true,
+    "q4_abstraction_gap": true
+  },
+  "strategy": "replace",
+  "reason": "QAG: Q4=Yes (transforms abstract 'complete purchase' into concrete express flow), Q1=Yes (express checkout completes entire purchase), Q2=No (same checkout process), Q3=Yes (multi-step flow becomes redundant)."
+  "steps": [
+    {"action": "Click 'Express Checkout' button"},
+    {"action": "Confirm payment method and shipping address"},
+    {"action": "Click 'Complete Purchase' to finalize order"},
+    {"verify": "Verify order confirmation and receipt displayed"}
+  ]
+}
+```
+
+### Example 6: Bulk Select Replacing Individual Selections
+**Test Objective**: "Delete multiple items from list"
+**New Elements**: Select-all checkbox appears for bulk operations
+
+```json
+{
+  "state_analysis": {
+    "element_persistence": "persistent",
+    "access_requirements": "none",
+    "state_dependencies": "affects all item checkboxes"
+  },
+  "analysis": {
+    "q1_can_complete_alone": true,
+    "q2_different_aspects": false,
+    "q3_remaining_redundant": true,
+    "q4_abstraction_gap": false
+  },
+  "strategy": "replace",
+  "reason": "QAG: Q4=No (both approaches are concrete selections), Q1=Yes (select-all achieves selection objective), Q2=No (same selection functionality), Q3=Yes (individual selections redundant). State: Bulk operation is more efficient."
+  "steps": [
+    {"action": "Click 'Select All' checkbox"},
+    {"verify": "Verify all items are selected"},
+    {"action": "Click 'Delete Selected' button"},
+    {"verify": "Verify bulk deletion completed successfully"}
+  ]
+}
+```
+
+### Example 7: Bulk Edit Enhancing Individual Operations
+**Test Objective**: "Update product information for multiple items"
+**New Elements**: Bulk edit panel with batch update options
+
+```json
+{
+  "state_analysis": {
+    "element_persistence": "persistent",
+    "access_requirements": "none",
+    "state_dependencies": "affects multiple product records"
+  },
+  "analysis": {
+    "q1_can_complete_alone": false,
+    "q2_different_aspects": true,
+    "q3_remaining_redundant": false,
+    "q4_abstraction_gap": false
+  },
+  "strategy": "insert",
+  "reason": "QAG: Q4=No (both bulk and individual edits are concrete operations), Q1=No (bulk edit handles common fields but individual validation still needed), Q2=Yes (different aspects like specific item validation), Q3=No (remaining validation steps not redundant)."
+  "steps": [
+    {"action": "Select multiple products using checkboxes"},
+    {"action": "Click 'Bulk Edit' button to open batch editor"},
+    {"action": "Update common fields (category, status, discount) for all selected items"},
+    {"action": "Click 'Apply Changes' to save bulk updates"},
+    {"verify": "Verify all selected products reflect the batch changes"}
+  ]
+}
+```
+
+### Example 8: Theme/Display Options - Generic Button Reveal Pattern
+**Test Objective**: "Test display customization functionality"
+**Previous Action**: "Clicked 'Display Options' button"
+**New Elements**: Theme selector menu with Dark/Light/Auto options
+
+```json
+{
+  "state_analysis": {
+    "element_persistence": "ephemeral",
+    "access_requirements": "Display Options button needs to be clicked to reopen menu",
+    "state_dependencies": "Theme selection affects entire page appearance"
+  },
+  "analysis": {
+    "q1_can_complete_alone": false,
+    "q2_different_aspects": false,
+    "q3_remaining_redundant": false,
+    "q4_abstraction_gap": true
+  },
+  "strategy": "replace",
+  "reason": "QAG: Q4=Yes (transforms abstract 'test display customization' into concrete theme options), Q1=No (each theme needs separate testing), Q2=No (same display functionality), Q3=No (verification still needed). State: Concrete theme options replace generic display assumptions.",
+  "steps": [
+    {"action": "Select 'Dark' theme from the options menu"},
+    {"verify": "Verify page switches to dark mode with good contrast"},
+    {"action": "Click 'Display Options' button to reopen menu"},
+    {"action": "Select 'Light' theme from the options menu"},
+    {"verify": "Verify page switches to light mode with clear readability"},
+    {"action": "Click 'Display Options' button to reopen menu"},
+    {"action": "Select 'Auto' theme from the options menu"},
+    {"verify": "Verify page follows system theme preference"}
+  ]
+}
+```
+
+### Example 9: Advanced Form Fields - Configuration Expansion Pattern  
+**Test Objective**: "Configure application settings"
+**Previous Action**: "Clicked 'Advanced Settings' toggle"
+**New Elements**: Detailed configuration fields that were previously hidden
+
+```json
+{
+  "state_analysis": {
+    "element_persistence": "persistent",
+    "access_requirements": "none",
+    "state_dependencies": "Advanced fields depend on toggle state"
+  },
+  "analysis": {
+    "q1_can_complete_alone": true,
+    "q2_different_aspects": false,
+    "q3_remaining_redundant": true,
+    "q4_abstraction_gap": true
+  },
+  "strategy": "replace",
+  "reason": "QAG: Q4=Yes (replaces abstract 'configure settings' with specific field operations), Q1=Yes (advanced fields provide complete configuration), Q2=No (same configuration functionality), Q3=Yes (generic settings steps become redundant).",
+  "steps": [
+    {"action": "Set 'Cache Duration' to 24 hours"},
+    {"action": "Enable 'Debug Logging' checkbox"},
+    {"action": "Configure 'API Timeout' to 30 seconds"},
+    {"action": "Set 'Max Connections' to 100"},
+    {"action": "Save configuration changes"},
+    {"verify": "Verify all advanced settings are persisted correctly"}
+  ]
+}
+```
+
+### Example 10: Data Loading - Content Materialization Pattern
+**Test Objective**: "Validate data display functionality"
+**Previous Action**: "Clicked 'Load Data' button"
+**New Elements**: Data table with actual records, pagination controls, filter options
+
+```json
+{
+  "state_analysis": {
+    "element_persistence": "persistent",
+    "access_requirements": "none", 
+    "state_dependencies": "Pagination and filters depend on data presence"
+  },
+  "analysis": {
+    "q1_can_complete_alone": true,
+    "q2_different_aspects": false,
+    "q3_remaining_redundant": true,
+    "q4_abstraction_gap": true
+  },
+  "strategy": "replace",
+  "reason": "QAG: Q4=Yes (concrete data records replace abstract 'data display' expectations), Q1=Yes (loaded data provides complete validation capability), Q2=No (same data validation functionality), Q3=Yes (generic data checks become redundant).",
+  "steps": [
+    {"verify": "Verify data table displays correct column headers"},
+    {"verify": "Verify first page shows expected number of records"},
+    {"action": "Click pagination 'Next' button"},
+    {"verify": "Verify second page loads with different records"},
+    {"action": "Use search filter to find specific records"},
+    {"verify": "Verify filtered results match search criteria"}
+  ]
+}
+```
+
+### Example 11: Search Results - Query Materialization Pattern
+**Test Objective**: "Test search functionality effectiveness"
+**Previous Action**: "Performed search for 'user management'"
+**New Elements**: Search results with specific items, suggested filters, result counts
+
+```json
+{
+  "state_analysis": {
+    "element_persistence": "persistent",
+    "access_requirements": "none",
+    "state_dependencies": "Filters and sorting depend on search results"
+  },
+  "analysis": {
+    "q1_can_complete_alone": true,
+    "q2_different_aspects": false,
+    "q3_remaining_redundant": true,
+    "q4_abstraction_gap": true
+  },
+  "strategy": "replace", 
+  "reason": "QAG: Q4=Yes (specific search results replace abstract 'verify search works' assumptions), Q1=Yes (actual results enable comprehensive search testing), Q2=No (same search validation functionality), Q3=Yes (generic search steps become obsolete).",
+  "steps": [
+    {"verify": "Verify search returned relevant results for 'user management'"},
+    {"verify": "Verify result count is displayed accurately"},
+    {"action": "Click first result to test result linking"},
+    {"verify": "Verify result leads to correct content"},
+    {"action": "Return to search and try suggested filter"},
+    {"verify": "Verify filtered results are more specific"}
+  ]
+}
+```
+
+## Generation Guidelines
+
+**State Management:**
+- Batch ephemeral interactions while element is accessible
+- Document how to restore access to closed elements  
+- Follow dependency hierarchies and verify state transitions
+
+**Step Quality:**
+- Generate natural user interaction patterns
+- Focus on functional validation and user experience
+- Each step should have clear validation objective
+- Generate only most valuable, relevant steps
+
+## Edge Case Handling
+
+**State-Specific Edge Cases:**
+- **Timeout-Based Closures**: Elements that auto-close after time (tooltips, notifications)
+- **Keyboard vs Mouse States**: Different states based on interaction method
+- **Cross-Element Dependencies**: Multiple elements affecting each other's states
+- **Async State Updates**: Elements updating after network requests
+
+**Generation Edge Cases:**
+- **Unclear Objective**: Default to "insert" with minimal steps
+- **Mixed Elements**: Evaluate primary elements affecting objective
+- **Insufficient Context**: Document uncertainty, use conservative approach
+
+Remember: Quality over quantity. Generate only the most valuable steps that properly handle UI state transitions and element lifecycles."""

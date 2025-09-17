@@ -5,10 +5,22 @@ import os
 import tempfile
 
 from webqa_agent.data import TestStatus
+from webqa_agent.utils import i18n
 from webqa_agent.data.test_structures import SubTestReport, SubTestResult
 
 
 class LighthouseMetricsTest:
+
+    def __init__(self, report_config: dict = None):
+        self.language = report_config.get("language", "zh-CN") if report_config else "zh-CN"
+        self.localized_strings = {
+            'zh-CN': i18n.get_lang_data('zh-CN').get('testers', {}).get('performance', {}),
+            'en-US': i18n.get_lang_data('en-US').get('testers', {}).get('performance', {}),
+        }
+
+    def _get_text(self, key: str) -> str:
+        """Get localized text for the given key."""
+        return self.localized_strings.get(self.language, {}).get(key, key)
 
     async def run(self, url: str, browser_config: dict = None, **kwargs) -> SubTestResult:
         """Run Lighthouse test on the given URL.
@@ -17,7 +29,7 @@ class LighthouseMetricsTest:
             url: The URL to test
             browser_config: Config of browser
         """
-        test_name = f"Lighthouse检查_{browser_config['viewport']['width']}x{browser_config['viewport']['height']}"
+        test_name = f"Lighthouse_{browser_config['viewport']['width']}x{browser_config['viewport']['height']}"
         result = SubTestResult(name=test_name)
 
         try:
@@ -502,7 +514,7 @@ class LighthouseMetricsTest:
 
         # 7. Generate prioritized recommendations (including performance and SEO)
         prioritized_recommendations = self._generate_recommendations(
-            core_vitals, opportunities, diagnostics, page_stats, seo_issues
+            core_vitals, opportunities, diagnostics, page_stats, seo_issues, self.language
         )
 
         # 8. Summarize scores for each category
@@ -523,17 +535,17 @@ class LighthouseMetricsTest:
 
         # 9.1 Four category scores
         score_str = "\n".join([f"- {k}: {v}" for k, v in category_scores.items()])
-        simple_report = [{"title": "整体评分", "issues": score_str}]
+        simple_report = [{"title": self._get_text('overall_score'), "issues": score_str}]
 
         # 9.2 Prioritized recommendations / potential issues
         if prioritized_recommendations:
             simple_report.append(
-                {"title": "待改进问题", "issues": "\n".join([f"- {rec}" for rec in prioritized_recommendations])}
+                {"title": self._get_text('issues_to_improve'), "issues": "\n".join([f"- {rec}" for rec in prioritized_recommendations])}
             )
 
         # 9.3 Key performance metrics
         perf_metrics_str = "\n".join([f"- {m['name']}: {m['display_value']}" for m in performance_metrics.values()])
-        simple_report.append({"title": "性能指标", "issues": perf_metrics_str})
+        simple_report.append({"title": self._get_text('performance_metrics'), "issues": perf_metrics_str})
 
         # 9.4 Return comprehensive results
         result = {
@@ -674,8 +686,8 @@ class LighthouseMetricsTest:
             return "moderate"
         else:
             return "minor"
-    @staticmethod
-    def _generate_recommendations(core_vitals, opportunities, diagnostics, page_stats, seo_issues):
+
+    def _generate_recommendations(self, core_vitals, opportunities, diagnostics, page_stats, seo_issues, language="zh-CN"):
         """Generate prioritized recommendations."""
         recommendations = []
 
@@ -689,7 +701,7 @@ class LighthouseMetricsTest:
         for vital_id, info in vitals_thresholds.items():
             if vital_id in core_vitals and not core_vitals[vital_id].get("passes_threshold"):
                 recommendations.append(
-                    f"核心指标: 改进{info['name']}（当前值：{core_vitals[vital_id].get('display_value')}, 目标：< {info['threshold']}{info['unit']}）"
+                    f"{self._get_text('core_metrics')}: {self._get_text('improve')}{info['name']}（{self._get_text('current_value')}：{core_vitals[vital_id].get('display_value')}, {self._get_text('target')}：< {info['threshold']}{info['unit']}）"
                 )
 
         # 2. Time-saving based opportunity recommendations (maximum 3)
@@ -697,22 +709,22 @@ class LighthouseMetricsTest:
         for opportunity in sorted_opportunities[:3]:
             savings = ""
             if opportunity.get("savings_ms"):
-                savings = f"（潜在节省：{opportunity.get('savings_ms')}ms）"
-            recommendations.append(f"性能优化: {opportunity.get('title')}{savings}")
+                savings = f"（{self._get_text('potential_savings')}：{opportunity.get('savings_ms')}ms）"
+            recommendations.append(f"{self._get_text('performance_optimization')}: {opportunity.get('title')}{savings}")
 
         # 3. Page statistics based recommendations
         if page_stats.get("total_size_kb", 0) > 3000:  # 超过3MB
-            recommendations.append(f"资源优化: 减少页面总大小（当前：{page_stats.get('total_size_kb') / 1024:.1f}MB）")
+            recommendations.append(f"{self._get_text('resource_optimization')}: {self._get_text('reduce_total_size')}（{self._get_text('current')}：{page_stats.get('total_size_kb') / 1024:.1f}MB）")
 
         if page_stats.get("third_party_size_kb", 0) > 500:  # 第三方资源超过500KB
             recommendations.append(
-                f"资源优化: 优化第三方资源使用（当前：{page_stats.get('third_party_size_kb') / 1024:.1f}MB）"
+                f"{self._get_text('resource_optimization')}: {self._get_text('optimize_third_party')}（{self._get_text('current')}：{page_stats.get('third_party_size_kb') / 1024:.1f}MB）"
             )
 
         # 4. Diagnostic issue recommendations (maximum 2 critical issues)
         critical_diagnostics = [d for d in diagnostics if d.get("impact") == "critical"]
         for diagnostic in critical_diagnostics:
-            recommendations.append(f"性能诊断: {diagnostic.get('title')}")
+            recommendations.append(f"{self._get_text('performance_diagnosis')}: {diagnostic.get('title')}")
 
         # 5. SEO issue recommendations (sorted by impact level)
         seo_issues_sorted = sorted(
@@ -722,16 +734,16 @@ class LighthouseMetricsTest:
         )
 
         for seo_issue in seo_issues_sorted[:5]:  # 最多显示5个SEO问题
-            recommendation = f"SEO: {seo_issue.get('title')}"
+            recommendation = f"{self._get_text('seo')}: {seo_issue.get('title')}"
 
             # 添加具体的详情信息（如果有的话）
             details = seo_issue.get("details", {})
             if details.get("images_count"):
-                recommendation += f" ({details['images_count']} 个图片)"
+                recommendation += f" ({details['images_count']} {self._get_text('images')})"
             elif details.get("links_count"):
-                recommendation += f" ({details['links_count']} 个链接)"
+                recommendation += f" ({details['links_count']} {self._get_text('links')})"
             elif details.get("problematic_links"):
-                recommendation += f" (例如: {', '.join(details['problematic_links'][:2])})"
+                recommendation += f" ({self._get_text('example')}: {', '.join(details['problematic_links'][:2])})"
 
             recommendations.append(recommendation)
 

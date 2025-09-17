@@ -24,7 +24,8 @@ class ParallelMode:
         llm_config: Dict[str, Any],
         browser_config: Optional[Dict[str, Any]] = None,
         test_configurations: Optional[List[Dict[str, Any]]] = None,
-        log_cfg: Optional[Dict[str, Any]] = None
+        log_cfg: Optional[Dict[str, Any]] = None,
+        report_cfg: Optional[Dict[str, Any]] = None
     ) -> Tuple[Dict[str, Any], str]:
         """Run tests in parallel mode with configurable test types.
 
@@ -34,6 +35,7 @@ class ParallelMode:
             browser_config: Default browser configuration
             test_configurations: Custom test configurations for parallel execution
             log_cfg: Configuration for logger
+            report_cfg: Configuration for report
 
         Returns:
             Tuple of (aggregated_results, report_path)
@@ -41,7 +43,7 @@ class ParallelMode:
         try:
 
             GetLog.get_log(log_level=log_cfg["level"])
-            Display.init()
+            Display.init(language=report_cfg["language"])
             Display.display.start()
 
             logging.info(f"{icon['rocket']} Starting tests for URL: {url}, parallel mode {self.max_concurrent_tests}")
@@ -59,7 +61,7 @@ class ParallelMode:
 
             # Configure tests based on input or legacy test objects
             if test_configurations:
-                self._configure_tests_from_config(test_session, test_configurations, browser_config)
+                self._configure_tests_from_config(test_session, test_configurations, browser_config, report_cfg)
 
             # Execute tests in parallel
             completed_session = await self.executor.execute_parallel_tests(test_session)
@@ -86,10 +88,11 @@ class ParallelMode:
         test_session: ParallelTestSession,
         test_configurations: List[Dict[str, Any]],
         default_browser_config: Dict[str, Any],
+        report_cfg: Dict[str, Any]
     ):
         """Configure tests from provided configuration."""
         for config in test_configurations:
-            test_type_str = config.get("test_type", "web_basic_check")
+            test_type_str = config.get("test_type", "basic_test")
 
             # Map string to TestType enum
             test_type = self._map_test_type(test_type_str)
@@ -100,9 +103,10 @@ class ParallelMode:
             test_config = TestConfiguration(
                 test_id=str(uuid.uuid4()),
                 test_type=test_type,
-                test_name=get_default_test_name(test_type),
+                test_name=get_default_test_name(test_type, report_cfg["language"]),
                 enabled=config.get("enabled", True),
                 browser_config=browser_config,
+                report_config=report_cfg,
                 test_specific_config=config.get("test_specific_config", {}),
                 timeout=config.get("timeout", 300),
                 retry_count=config.get("retry_count", 0),
@@ -117,10 +121,11 @@ class ParallelMode:
             "ui_agent_langgraph": TestType.UI_AGENT_LANGGRAPH,
             "ux_test": TestType.UX_TEST,
             "performance": TestType.PERFORMANCE,
-            "web_basic_check": TestType.WEB_BASIC_CHECK,
-            "button_test": TestType.BUTTON_TEST,
+            "basic_test": TestType.BASIC_TEST,
+            # "web_basic_check": TestType.WEB_BASIC_CHECK,
+            # "button_test": TestType.BUTTON_TEST,
             "security": TestType.SECURITY_TEST,
             "security_test": TestType.SECURITY_TEST,
         }
 
-        return mapping.get(test_type_str, TestType.WEB_BASIC_CHECK)
+        return mapping.get(test_type_str, TestType.BASIC_TEST)

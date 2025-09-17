@@ -17,15 +17,50 @@ import re
 import gradio as gr
 import yaml
 
-# 导入项目模块
+# Import project modules
 from webqa_agent.executor import ParallelMode
 
-# 简单的提交历史（仅当前会话内存保存）
+# Simple submission history (in-memory storage for current session only)
 submission_history: list = []
+
+# Load i18n data
+def load_i18n() -> Dict[str, Dict]:
+    """Load internationalization data from JSON file"""
+    i18n_path = Path(__file__).parent / "gradio_i18n.json"
+    try:
+        with open(i18n_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Failed to load i18n file: {e}")
+        return {"zh-CN": {}, "en-US": {}}
+
+I18N_DATA = load_i18n()
+
+def get_text(lang: str, key: str, **kwargs):
+    """Get localized text by key"""
+    keys = key.split('.')
+    data = I18N_DATA.get(lang, I18N_DATA.get("zh-CN", {}))
+    
+    for k in keys:
+        if isinstance(data, dict) and k in data:
+            data = data[k]
+        else:
+            return key  # Return key if not found
+    
+    if isinstance(data, str):
+        # Support simple string formatting
+        try:
+            return data.format(**kwargs)
+        except (KeyError, ValueError):
+            return data
+    elif isinstance(data, list):
+        # Return list as-is for components that expect lists
+        return data
+    return key
 
 
 class QueueManager:
-    """任务队列管理器，确保同时只有一个任务在执行"""
+    """Task queue manager to ensure only one task executes at a time"""
     
     def __init__(self):
         self.current_task: Optional[str] = None
@@ -34,7 +69,7 @@ class QueueManager:
         self.lock = Lock()
     
     def add_task(self, task_id: str, user_info: Dict) -> int:
-        """添加任务到队列，返回队列位置"""
+        """Add task to queue, return queue position"""
         with self.lock:
             self.task_status[task_id] = {
                 "status": "queued",
@@ -47,7 +82,7 @@ class QueueManager:
             return self.task_queue.qsize()
     
     def get_next_task(self) -> Optional[str]:
-        """获取下一个待执行的任务"""
+        """Get next task to execute"""
         with self.lock:
             if self.current_task is None and not self.task_queue.empty():
                 task_id = self.task_queue.get()
@@ -58,7 +93,7 @@ class QueueManager:
             return None
     
     def complete_task(self, task_id: str, result: Any = None, error: Any = None):
-        """标记任务完成"""
+        """Mark task as completed"""
         with self.lock:
             if task_id in self.task_status:
                 self.task_status[task_id]["status"] = "completed" if result else "failed"
@@ -69,49 +104,47 @@ class QueueManager:
                 self.current_task = None
     
     def get_queue_position(self, task_id: str) -> int:
-        """获取任务在队列中的位置"""
+        """Get task position in queue"""
         with self.lock:
             if task_id == self.current_task:
-                return 0  # 当前正在执行
+                return 0  # Currently executing
             
             queue_list = list(self.task_queue.queue)
             try:
                 return queue_list.index(task_id) + 1
             except ValueError:
-                return -1  # 任务不在队列中
+                return -1  # Task not in queue
     
     def get_task_status(self, task_id: str) -> Dict:
-        """获取任务状态"""
+        """Get task status"""
         with self.lock:
             return self.task_status.get(task_id, {"status": "not_found"})
 
 
-# 全局队列管理器
+# Global queue manager
 queue_manager = QueueManager()
 
 
-def validate_llm_config(api_key: str, base_url: str, model: str) -> Tuple[bool, str]:
-    """验证LLM配置"""
+def validate_llm_config(api_key: str, base_url: str, model: str, lang: str = "zh-CN") -> Tuple[bool, str]:
+    """Validate LLM configuration"""
     if not api_key.strip():
-        return False, "API Key不能为空"
+        return False, get_text(lang, "messages.error_api_key_empty")
     
     if not base_url.strip():
-        return False, "Base URL不能为空"
+        return False, get_text(lang, "messages.error_base_url_empty")
     
     if not model.strip():
-        return False, "模型名称不能为空"
+        return False, get_text(lang, "messages.error_model_empty")
     
-    # 简单的URL格式检查
+    # Simple URL format check
     if not (base_url.startswith("http://") or base_url.startswith("https://")):
-        return False, "Base URL格式不正确，应以http://或https://开头"
+        return False, get_text(lang, "messages.error_base_url_format")
     
-    return True, "配置验证通过"
+    return True, get_text(lang, "messages.config_valid")
 
 
 def create_config_dict(
     url: str,
-    # description: str,
-    # max_concurrent_tests: int,
     function_test_enabled: bool,
     function_test_type: str,
     business_objectives: str,
@@ -120,24 +153,30 @@ def create_config_dict(
     security_test_enabled: bool,
     api_key: str,
     base_url: str,
-    model: str
-    # viewport_width: int,
-    # viewport_height: int,
-    # headless: bool,
-    # language: str
+    model: str,
+    report_language: str = "zh-CN"
 ) -> Dict[str, Any]:
-    """创建配置字典"""
+    """Create configuration dictionary"""
+    
+    final_business_objectives = business_objectives.strip()
+    default_constraint = get_text(report_language, "config.default_business_objectives")
+    
+    if final_business_objectives:
+        separator = ","
+        final_business_objectives = f"{final_business_objectives}{separator}{default_constraint}"
+    else:
+        final_business_objectives = default_constraint
+    
     config = {
         "target": {
             "url": url,
             "description": ""
-            # "max_concurrent_tests": max_concurrent_tests
         },
         "test_config": {
             "function_test": {
                 "enabled": function_test_enabled,
                 "type": function_test_type,
-                "business_objectives": business_objectives
+                "business_objectives": final_business_objectives
             },
             "ux_test": {
                 "enabled": ux_test_enabled
@@ -155,6 +194,9 @@ def create_config_dict(
             "base_url": base_url,
             "temperature": 0.1
         },
+        "report": {
+            "language": report_language
+        },
         "browser_config": {
             "viewport": {"width": 1280, "height": 720},
             "headless": True,
@@ -167,13 +209,13 @@ def create_config_dict(
 
 
 def build_test_configurations(config: Dict[str, Any]) -> list:
-    """根据配置构建测试配置列表"""
+    """Build test configuration list based on config"""
     tests = []
     tconf = config.get("test_config", {})
     
     base_browser = {
         "viewport": config.get("browser_config", {}).get("viewport", {"width": 1280, "height": 720}),
-        "headless": True,  # Web界面强制headless
+        "headless": True,  # Force headless for web interface
     }
     
     # function test
@@ -181,7 +223,6 @@ def build_test_configurations(config: Dict[str, Any]) -> list:
         if tconf["function_test"].get("type") == "ai":
             tests.append({
                 "test_type": "ui_agent_langgraph",
-                "test_name": "智能功能测试",
                 "enabled": True,
                 "browser_config": base_browser,
                 "test_specific_config": {
@@ -192,15 +233,7 @@ def build_test_configurations(config: Dict[str, Any]) -> list:
         else:
             tests += [
                 {
-                    "test_type": "button_test",
-                    "test_name": "遍历测试",
-                    "enabled": True,
-                    "browser_config": base_browser,
-                    "test_specific_config": {},
-                },
-                {
-                    "test_type": "web_basic_check",
-                    "test_name": "技术健康度检查",
+                    "test_type": "basic_test",
                     "enabled": True,
                     "browser_config": base_browser,
                     "test_specific_config": {},
@@ -211,7 +244,6 @@ def build_test_configurations(config: Dict[str, Any]) -> list:
     if tconf.get("ux_test", {}).get("enabled"):
         tests.append({
             "test_type": "ux_test",
-            "test_name": "用户体验测试",
             "enabled": True,
             "browser_config": base_browser,
             "test_specific_config": {},
@@ -221,7 +253,6 @@ def build_test_configurations(config: Dict[str, Any]) -> list:
     if tconf.get("performance_test", {}).get("enabled"):
         tests.append({
             "test_type": "performance",
-            "test_name": "性能测试",
             "enabled": True,
             "browser_config": base_browser,
             "test_specific_config": {},
@@ -231,7 +262,6 @@ def build_test_configurations(config: Dict[str, Any]) -> list:
     if tconf.get("security_test", {}).get("enabled"):
         tests.append({
             "test_type": "security",
-            "test_name": "安全测试",
             "enabled": True,
             "browser_config": base_browser,
             "test_specific_config": {},
@@ -240,10 +270,10 @@ def build_test_configurations(config: Dict[str, Any]) -> list:
     return tests
 
 
-async def run_webqa_test(config: Dict[str, Any]) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-    """运行WebQA测试"""
+async def run_webqa_test(config: Dict[str, Any], lang: str = "zh-CN") -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Run WebQA test"""
     try:
-        # 验证LLM配置
+        # Validate LLM configuration
         llm_config = {
             "api": "openai",
             "model": config["llm_config"]["model"],
@@ -252,36 +282,34 @@ async def run_webqa_test(config: Dict[str, Any]) -> Tuple[Optional[str], Optiona
             "temperature": config["llm_config"]["temperature"],
         }
         
-        # 构建测试配置
+        # Build test configurations
         test_configurations = build_test_configurations(config)
         
         if not test_configurations:
-            return None, None, "错误：未启用任何测试类型"
+            return None, None, get_text(lang, "messages.no_test_types_enabled")
         
         target_url = config["target"]["url"]
-        # max_concurrent_tests = config["target"].get("max_concurrent_tests", 2)
         max_concurrent_tests = 1
-        
-        # 执行测试
+    
+        # Execute tests
         parallel_mode = ParallelMode([], max_concurrent_tests=max_concurrent_tests)
         results, report_path, html_report_path, result_count = await parallel_mode.run(
             url=target_url,
             llm_config=llm_config,
             test_configurations=test_configurations,
-            log_cfg=config.get("log", {"level": "info"})
+            log_cfg=config.get("log", {"level": "info"}),
+            report_cfg=config.get("report", {"language": lang})
         )
         
         return html_report_path, report_path, None
         
     except Exception as e:
-        error_msg = f"测试执行失败: {str(e)}\n{traceback.format_exc()}"
+        error_msg = f"{get_text(lang, 'messages.test_execution_failed')}: {str(e)}\n{traceback.format_exc()}"
         return None, None, error_msg
 
 
 def submit_test(
     url: str,
-    # description: str,
-    # max_concurrent_tests: int,
     function_test_enabled: bool,
     function_test_type: str,
     business_objectives: str,
@@ -290,57 +318,52 @@ def submit_test(
     security_test_enabled: bool,
     api_key: str,
     base_url: str,
-    model: str
-    # viewport_width: int,
-    # viewport_height: int,
-    # headless: bool,
-    # language: str
+    model: str,
+    interface_language: str = "zh-CN"
 ) -> Tuple[str, str, bool]:
-    """提交测试任务，返回(状态消息, 任务ID, 是否成功)"""
+    """Submit test task, return (status message, task ID, success flag)"""
     
-    # 基本验证
+    # Basic validation
     if not url.strip():
-        return "❌ 错误：目标URL不能为空", "", False
+        return get_text(interface_language, "messages.error_empty_url"), "", False
     
-    # 验证至少启用一个测试
+    # Validate at least one test is enabled
     if not any([function_test_enabled, ux_test_enabled, performance_test_enabled, security_test_enabled]):
-        return "❌ 错误：至少需要启用一个测试类型", "", False
+        return get_text(interface_language, "messages.error_no_tests"), "", False
     
-    # 如果启用功能测试但没有设置业务目标
-    if function_test_enabled and function_test_type == "ai" and not business_objectives.strip():
-        return "❌ 错误：AI功能测试需要设置业务目标", "", False
-    
-    # 验证LLM配置
-    valid, msg = validate_llm_config(api_key, base_url, model)
+    # Validate LLM configuration
+    valid, msg = validate_llm_config(api_key, base_url, model, interface_language)
     if not valid:
-        return f"❌ 错误：{msg}", "", False
+        return f"❌ {get_text(interface_language, 'messages.error')}: {msg}", "", False
     
-    # 创建配置
+    # Create configuration
     config = create_config_dict(
         url,
         function_test_enabled, function_test_type, business_objectives,
         ux_test_enabled, performance_test_enabled, security_test_enabled,
-        api_key, base_url, model
+        api_key, base_url, model,
+        report_language=interface_language
     )
     
-    # 生成任务ID
+    # Generate task ID
     task_id = str(uuid.uuid4())
     
-    # 添加到队列
-    user_info = {"config": config, "submitted_at": datetime.now()}
+    # Add to queue
+    user_info = {"config": config, "submitted_at": datetime.now(), "interface_language": interface_language}
     position = queue_manager.add_task(task_id, user_info)
     
-    status_msg = f"✅ 任务已提交！\n任务ID: {task_id}\n当前队列位置: {position}"
+    status_msg = f"{get_text(interface_language, 'messages.task_submitted')}\n{get_text(interface_language, 'messages.task_id_label')}: {task_id}\n{get_text(interface_language, 'messages.queue_position')}: {position}"
     if position > 1:
-        status_msg += f"\n⏳ 请耐心等待，前面还有 {position-1} 个任务在排队"
+        status_msg += f"\n{get_text(interface_language, 'messages.queue_waiting', count=position-1)}"
     
-    # 记录历史提交
+    # Record submission history
     submission_history.append({
         "task_id": task_id,
         "url": url,
         "tests": {
             "function": function_test_enabled,
             "function_type": function_test_type,
+            "business_objectives": business_objectives,
             "ux": ux_test_enabled,
         },
         "submitted_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -349,12 +372,12 @@ def submit_test(
     return status_msg, task_id, True
 
 
-def check_task_status(task_id: str) -> Tuple[str, str, Any]:
-    """检查任务状态"""
+def check_task_status(task_id: str, interface_language: str = "zh-CN") -> Tuple[str, str, Any]:
+    """Check task status"""
     if not task_id.strip():
         return (
-            "请输入任务ID",
-            "<div style='text-align: center; padding: 50px; color: #888;'>📄 请先输入任务ID并查询状态</div>",
+            get_text(interface_language, "status.task_id_placeholder"),
+            f"<div style='text-align: center; padding: 50px; color: #888;'>{get_text(interface_language, 'status.default_message')}</div>",
             gr.update(visible=False, value=None),
         )
     
@@ -362,35 +385,35 @@ def check_task_status(task_id: str) -> Tuple[str, str, Any]:
     
     if status["status"] == "not_found":
         return (
-            "❌ 任务不存在",
-            "<div style='text-align: center; padding: 50px; color: #ff6b6b;'>❌ 任务不存在，请检查任务ID是否正确</div>",
+            get_text(interface_language, "messages.task_not_found"),
+            f"<div style='text-align: center; padding: 50px; color: #ff6b6b;'>{get_text(interface_language, 'messages.task_not_found_message')}</div>",
             gr.update(visible=False, value=None),
         )
     
     if status["status"] == "queued":
         position = queue_manager.get_queue_position(task_id)
         return (
-            f"⏳ 任务排队中，当前位置: {position}",
-            "<div style='text-align: center; padding: 50px; color: #ffa500;'>⏳ 任务正在排队中，请稍后再查询</div>",
+            get_text(interface_language, "messages.task_queued", position=position),
+            f"<div style='text-align: center; padding: 50px; color: #ffa500;'>{get_text(interface_language, 'messages.task_queued_message')}</div>",
             gr.update(visible=False, value=None),
         )
     
     if status["status"] == "running":
         return (
-            "🚀 任务正在执行中，请稍候...",
-            "<div style='text-align: center; padding: 50px; color: #4dabf7;'>🚀 任务正在执行中，请稍后再查询结果</div>",
+            get_text(interface_language, "messages.task_running"),
+            f"<div style='text-align: center; padding: 50px; color: #4dabf7;'>{get_text(interface_language, 'messages.task_running_message')}</div>",
             gr.update(visible=False, value=None),
         )
     
     if status["status"] == "completed":
         result = status.get("result")
-        if result and result[0]:  # html_report_path存在
-            # 读取HTML报告内容
+        if result and result[0]:  # html_report_path exists
+            # Read HTML report content
             try:
                 with open(result[0], 'r', encoding='utf-8') as f:
                     html_content = f.read()
-                # 将报告包裹在 iframe 中以隔离其样式，避免影响外部布局
-                # 内联渲染，移除内层滚动和水平滚动
+                # Wrap report in iframe to isolate its styles and avoid affecting external layout
+                # Inline rendering, remove inner scrolling and horizontal scrolling
                 content = html_content
                 m = re.search(r"<head[^>]*>", content, flags=re.I)
                 inject_style = (
@@ -410,49 +433,50 @@ def check_task_status(task_id: str) -> Tuple[str, str, Any]:
                     f"srcdoc=\"{escaped}\"></iframe>"
                 )
                 return (
-                    f"✅ 任务执行完成！\n报告路径: {result[0]}",
+                    f"{get_text(interface_language, 'messages.task_completed')}\n{get_text(interface_language, 'messages.report_path')}: {result[0]}",
                     iframe_html,
                     gr.update(visible=True, value=result[0]),
                 )
             except Exception as e:
                 return (
-                    f"✅ 任务执行完成，但读取报告失败: {str(e)}\n报告路径: {result[0]}",
-                    f"<div style='text-align: center; padding: 50px; color: #ff6b6b;'><p>❌ 无法读取HTML报告文件</p><p>报告路径：{result[0]}</p><p>错误信息：{str(e)}</p></div>",
+                    f"{get_text(interface_language, 'messages.task_completed')}, but failed to read report: {str(e)}\n{get_text(interface_language, 'messages.report_path')}: {result[0]}",
+                    f"<div style='text-align: center; padding: 50px; color: #ff6b6b;'><p>❌ Unable to read HTML report file</p><p>{get_text(interface_language, 'messages.report_path')}：{result[0]}</p><p>{get_text(interface_language, 'messages.error_info', error=str(e))}</p></div>",
                     gr.update(visible=True, value=result[0]),
                 )
         else:
             return (
-                "✅ 任务执行完成，但未生成HTML报告",
-                "<div style='text-align: center; padding: 50px; color: #ffa500;'>⚠️ 测试执行完成，但未生成HTML报告</div>",
+                get_text(interface_language, "messages.task_completed_no_report"),
+                f"<div style='text-align: center; padding: 50px; color: #ffa500;'>{get_text(interface_language, 'messages.task_completed_no_report_message')}</div>",
                 gr.update(visible=False, value=None),
             )
     
     if status["status"] == "failed":
-        error = status.get("error", "未知错误")
+        error = status.get("error", "Unknown error")
         return (
-            f"❌ 任务执行失败: {error}",
-            f"<div style='text-align: center; padding: 50px; color: #ff6b6b;'><p>❌ 任务执行失败</p><p>错误信息：{error}</p></div>",
+            get_text(interface_language, "messages.task_failed", error=error),
+            f"<div style='text-align: center; padding: 50px; color: #ff6b6b;'><p>{get_text(interface_language, 'messages.task_failed_message')}</p><p>{get_text(interface_language, 'messages.error_info', error=error)}</p></div>",
             gr.update(visible=False, value=None),
         )
     
     return (
-        "❓ 未知状态",
-        "<div style='text-align: center; padding: 50px; color: #888;'>❓ 未知状态</div>",
+        get_text(interface_language, "messages.unknown_status"),
+        f"<div style='text-align: center; padding: 50px; color: #888;'>{get_text(interface_language, 'messages.unknown_status')}</div>",
         gr.update(visible=False, value=None),
     )
 
 
 async def process_queue():
-    """处理队列中的任务"""
+    """Process tasks in queue"""
     while True:
         task_id = queue_manager.get_next_task()
         if task_id:
             try:
                 task_status = queue_manager.get_task_status(task_id)
                 config = task_status["user_info"]["config"]
+                interface_language = task_status["user_info"].get("interface_language", "zh-CN")
                 
-                # 执行测试
-                html_report_path, report_path, error = await run_webqa_test(config)
+                # Execute test
+                html_report_path, report_path, error = await run_webqa_test(config, interface_language)
                 
                 if error:
                     queue_manager.complete_task(task_id, error=error)
@@ -462,48 +486,70 @@ async def process_queue():
             except Exception as e:
                 queue_manager.complete_task(task_id, error=str(e))
         
-        await asyncio.sleep(1)  # 避免忙等待
+        await asyncio.sleep(1)  # Avoid busy waiting
 
 
-def create_gradio_interface():
-    """创建Gradio界面"""
+def create_gradio_interface(language: str = "zh-CN"):
+    """Create Gradio interface with specified language"""
     
-    # 自定义CSS样式
+    # Custom CSS styles
     custom_css = """
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    
+    /* Global font settings for better English typography */
+    * {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+    }
+    
+    /* Specific font for headers and titles */
+    h1, h2, h3, h4, h5, h6 {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+        font-weight: 600;
+        letter-spacing: -0.025em;
+    }
+    
+    /* Button and input font improvements */
+    button, input, textarea, select {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+        font-weight: 400;
+    }
+    
     #html-report { border: 1px solid #e1e5e9; border-radius: 8px; padding: 0; background: #fff; }
     #html-report iframe { width: 100%; height: 1800px; border: none; overflow: hidden; }
     
     .gradio-container { max-width: 1500px !important; margin: 0 auto !important; width: 100% !important; }
     
-    /* 防止布局缩小 */
+    /* Prevent layout shrinking */
     .tab-nav {
         position: sticky;
         top: 0;
         z-index: 100;
     }
     
-    /* 改善表单布局 */
+    /* Improve form layout */
     .form-group {
         margin-bottom: 1rem;
     }
     
-    /* 确保任务状态区域不缩小 */
+    /* Ensure task status area doesn't shrink */
     .task-status-container {
         min-height: 400px;
     }
     
-    /* 去除密码字段的提示样式 */
+    /* Remove password field hint styles */
     input[type="password"] {
         background-color: #fff !important;
     }
     
-    /* 顶部 GitHub 引流按钮 */
+    /* Top GitHub CTA button */
     .gh-cta-wrap { text-align: right; padding-top: 16px; }
     .gh-cta {
         display: inline-block;
         padding: 10px 16px;
         border-radius: 8px;
-        background: linear-gradient(90deg,#2563eb,#7c3aed); /* 蓝紫渐变，更醒目 */
+        background: linear-gradient(90deg,#2563eb,#7c3aed); /* Blue-purple gradient, more eye-catching */
         color: #fff !important;
         text-decoration: none !important;
         font-weight: 600;
@@ -513,16 +559,16 @@ def create_gradio_interface():
     }
     .gh-cta:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(0,0,0,.16); }
 
-    /* 三列紧凑栅格与间距优化 */
+    /* Three-column compact grid and spacing optimization */
     .config-grid { gap: 16px; flex-wrap: wrap; }
     .config-card { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:16px; flex: 1 1 calc(50% - 8px); min-width: 300px; }
     .config-card h3 { margin:0 0 12px; font-size:16px; border-bottom:1px solid #f1f5f9; padding-bottom:8px; }
     .config-card .gradio-checkbox, .config-card .gradio-radio, .config-card .gradio-textbox { margin-bottom:10px; }
 
-    /* 统一内容宽度容器（用于各个Tab） */
+    /* Unified content width container (for various Tabs) */
     .content-wrapper { max-width: 1500px; margin: 0 auto; width: 100%; overflow-x: auto; }
     
-    /* 表格宽度限制，使用更强的选择器防止拉宽容器 */
+    /* Table width constraints, use stronger selectors to prevent container widening */
     .fixed-width-table,
     .fixed-width-table > div,
     .fixed-width-table .table-wrap,
@@ -544,7 +590,7 @@ def create_gradio_interface():
         max-width: none !important; /* Remove max-width to allow content to dictate width */
     }
     
-    /* 各列宽度分配 */
+    /* Column width allocation */
     .fixed-width-table th:nth-child(1), 
     .fixed-width-table td:nth-child(1),
     .content-wrapper .gradio-dataframe th:nth-child(1), 
@@ -593,6 +639,15 @@ def create_gradio_interface():
     .content-wrapper .gradio-dataframe td:nth-child(6) { 
         width: auto !important; 
         max-width: none !important; 
+        min-width: 200px !important; 
+        text-align: left !important;
+    }
+    .fixed-width-table th:nth-child(7), 
+    .fixed-width-table td:nth-child(7),
+    .content-wrapper .gradio-dataframe th:nth-child(7), 
+    .content-wrapper .gradio-dataframe td:nth-child(7) { 
+        width: auto !important; 
+        max-width: none !important; 
         min-width: 70px !important; 
         text-align: center !important;
     }
@@ -609,7 +664,7 @@ def create_gradio_interface():
         vertical-align: middle !important;
     }
     
-    /* 表头样式优化 */
+    /* Table header style optimization */
     .fixed-width-table th,
     .content-wrapper .gradio-dataframe th {
         background-color: #f8fafc !important;
@@ -619,7 +674,7 @@ def create_gradio_interface():
         text-align: center !important;
     }
     
-    /* 表格行样式优化 */
+    /* Table row style optimization */
     .fixed-width-table tbody tr:nth-child(even),
     .content-wrapper .gradio-dataframe tbody tr:nth-child(even) {
         background-color: #f9fafb !important;
@@ -631,7 +686,7 @@ def create_gradio_interface():
         transition: background-color 0.2s ease !important;
     }
     
-    /* 表格边框优化 */
+    /* Table border optimization */
     .fixed-width-table table,
     .content-wrapper .gradio-dataframe table {
         border-collapse: collapse !important;
@@ -655,152 +710,152 @@ def create_gradio_interface():
     with gr.Blocks(title="WebQA Agent", theme=gr.themes.Soft(), css=custom_css) as app:
         with gr.Row(elem_id="app-wrapper"):
             with gr.Column(scale=8):
-                gr.Markdown("# 🤖 WebQA Agent")
-                gr.Markdown("## 全自动网页评估测试 Agent，一键诊断功能与交互体验")
-                gr.Markdown("配置参数并运行网站质量检测测试。系统支持排队机制，确保稳定运行。")
+                gr.Markdown(f"# {get_text(language, 'title')}")
+                gr.Markdown(f"## {get_text(language, 'subtitle')}")
+                gr.Markdown(get_text(language, "description"))
             with gr.Column(scale=2):
-                gr.HTML("<div class='gh-cta-wrap'><a class='gh-cta' href='https://github.com/MigoXLab/webqa-agent' target='_blank' rel='noopener'>🌟 在 GitHub 上为我们 Star</a></div>")
+                gr.HTML(f"<div class='gh-cta-wrap'><a class='gh-cta' href='https://github.com/MigoXLab/webqa-agent' target='_blank' rel='noopener'>{get_text(language, 'github_cta')}</a></div>")
         
         with gr.Tabs():
-            # 配置标签页
-            with gr.TabItem("📝 测试配置"):
-                # 两列布局：左侧（目标配置 + LLM配置叠放），右侧（测试类型）
+            # Configuration tab
+            with gr.TabItem(get_text(language, "tabs.config")):
+                # Two-column layout: left (target config + LLM config stacked), right (test types)
                 with gr.Row(elem_classes=["config-grid"]):
                     with gr.Column(elem_classes=["config-card"], min_width=300, scale=0):
-                        gr.Markdown("### 🎯 目标配置")
+                        gr.Markdown(f"### {get_text(language, 'config.target_config')}")
                         url = gr.Textbox(
-                            label="目标URL",
-                            placeholder="https://example.com",
-                            value="https://demo.chat-sdk.dev/",
-                            info="要测试的网站URL"
+                            label=get_text(language, "config.target_url"),
+                            placeholder=get_text(language, "config.target_url_placeholder"),
+                            # value="https://demo.chat-sdk.dev/",
+                            info=get_text(language, "config.target_url_info")
                         )
                     
-                        gr.Markdown("### 🤖 LLM配置")
+                        gr.Markdown(f"### {get_text(language, 'config.llm_config')}")
                         model = gr.Textbox(
-                            label="模型名称",
-                            value="gpt-4.1-mini",
-                            info="使用的语言模型 (OPENAI SDK 兼容格式)"
+                            label=get_text(language, "config.model_name"),
+                            # value="gpt-4.1-mini",
+                            placeholder="eg. gpt-4.1-mini",
+                            info=get_text(language, "config.model_name_info")
                         )
                         api_key = gr.Textbox(
-                            label="API Key",
+                            label=get_text(language, "config.api_key"),
                             value="",
-                            info="LLM服务的API密钥",
+                            info=get_text(language, "config.api_key_info"),
                             type="password"
                         )
                         base_url = gr.Textbox(
-                            label="Base URL",
+                            label=get_text(language, "config.base_url"),
                             value="",
-                            info="LLM服务的基础URL"
+                            info=get_text(language, "config.base_url_info")
                         )
 
                     with gr.Column(elem_classes=["config-card"], min_width=300, scale=0):
-                        gr.Markdown("### 🧪 测试类型")
-                        function_test_enabled = gr.Checkbox(label="功能测试", value=True)
+                        gr.Markdown(f"### {get_text(language, 'config.test_types')}")
+                        function_test_enabled = gr.Checkbox(label=get_text(language, "config.function_test"), value=True)
                         
                         with gr.Group(visible=True) as function_test_group:
                             function_test_type = gr.Radio(
-                                label="功能测试类型",
+                                label=get_text(language, "config.function_test_type"),
                                 choices=["default", "ai"],
                                 value="ai",
-                                info="default: 遍历测试 | ai: 智能测试"
+                                info=get_text(language, "config.function_test_type_info")
                             )
                             business_objectives = gr.Textbox(
-                                label="功能测试业务目标",
-                                placeholder="测试对话功能，生成2个用例",
-                                # value="生成两个测试用例",
-                                info="ai: 智能测试的具体目标，可以修改以定义不同的测试场景"
+                                label=get_text(language, "config.business_objectives"),
+                                placeholder="eg. "+get_text(language, "config.business_objectives_placeholder"),
+                                info=get_text(language, "config.business_objectives_info")
                             )
                         
-                        ux_test_enabled = gr.Checkbox(label="用户体验测试", value=False)
+                        ux_test_enabled = gr.Checkbox(label=get_text(language, "config.ux_test"), value=False)
                         performance_test_enabled = gr.Checkbox(
-                            label="性能测试", 
+                            label=get_text(language, "config.performance_test"), 
                             value=False, 
                             interactive=False,
-                            info="目前在 ModelScope 版本不可用；请前往 GitHub 体验"
+                            info=get_text(language, "config.performance_test_info")
                         )
                         security_test_enabled = gr.Checkbox(
-                            label="安全测试", 
+                            label=get_text(language, "config.security_test"), 
                             value=False, 
                             interactive=False,
-                            info="目前在 ModelScope 版本不可用；请前往 GitHub 体验"
+                            info=get_text(language, "config.security_test_info")
                         )
                 
                 with gr.Row():
-                    submit_btn = gr.Button("🚀 提交测试", variant="primary", size="lg")
+                    submit_btn = gr.Button(get_text(language, "config.submit_btn"), variant="primary", size="lg")
                 
-                # 结果显示
-                with gr.Accordion("📄 任务提交结果", open=False) as submit_result_accordion:
+                # Result display
+                with gr.Accordion(get_text(language, "config.submit_result"), open=False) as submit_result_accordion:
                     submit_status = gr.Textbox(
-                        label="提交状态",
+                        label=get_text(language, "status.task_status"),
                         interactive=False,
                         lines=5,
                         show_label=False
                     )
                     task_id_output = gr.Textbox(
-                        label="任务ID",
+                        label=get_text(language, "status.task_id"),
                         interactive=False,
                         visible=False
                     )
             
-            # 状态查询标签页
-            with gr.TabItem("📊 任务状态"):
+            # Status query tab
+            with gr.TabItem(get_text(language, "tabs.status")):
                 with gr.Column(elem_classes=["task-status-container"]):
-                    gr.Markdown("### 查询任务执行状态")
+                    gr.Markdown(f"### {get_text(language, 'status.query_title')}")
                     with gr.Row(variant="compact"):
                         with gr.Column(min_width=300):
                             task_id_input = gr.Textbox(
-                                label="任务ID",
-                                placeholder="输入任务ID查询状态",
-                                info="从测试配置页面获取的任务ID"
+                                label=get_text(language, "status.task_id"),
+                                placeholder=get_text(language, "status.task_id_placeholder"),
+                                info=get_text(language, "status.task_id_info")
                             )
                         with gr.Column(min_width=100):
-                            check_btn = gr.Button("🔍 查询状态", variant="secondary", size="lg")
+                            check_btn = gr.Button(get_text(language, "status.check_btn"), variant="secondary", size="lg")
                     
                     task_status_output = gr.Textbox(
-                        label="任务状态",
+                        label=get_text(language, "status.task_status"),
                         interactive=False,
                         lines=5
                     )
                     
-                    # HTML报告显示 + 下载（按钮在预览上方）
-                    gr.Markdown("### 📋 测试报告")
+                    # HTML report display + download (button above preview)
+                    gr.Markdown(f"### {get_text(language, 'status.test_report')}")
                     download_file = gr.File(
-                        label="HTML报告",
+                        label=get_text(language, "status.html_report"),
                         interactive=False,
                         visible=False,
                         file_types=[".html"],
                     )
                     html_output = gr.HTML(
-                        label="HTML报告",
+                        label=get_text(language, "status.html_report"),
                         visible=True,
                         elem_id="html-report",
                         show_label=False,
-                        value="<div style='text-align: center; padding: 50px; color: #888;'>📄 请先查询任务状态，成功后将在此显示测试报告</div>"
+                        value=f"<div style='text-align: center; padding: 50px; color: #888;'>{get_text(language, 'status.default_message')}</div>"
                     )
 
-            # 历史记录
-            with gr.TabItem("🗂️ 提交历史") as history_tab:
+            # History records
+            with gr.TabItem(get_text(language, "tabs.history")) as history_tab:
                 with gr.Column(elem_classes=["content-wrapper"]):
-                    gr.Markdown("### 提交记录")
+                    gr.Markdown(f"### {get_text(language, 'history.title')}")
                 history_table = gr.Dataframe(
-                    headers=["提交时间", "任务ID", "URL", "功能测试", "类型", "UX测试"],
+                    headers=get_text(language, "history.headers"),
                     row_count=(0, "dynamic"),
                     interactive=False,
                     elem_classes=["fixed-width-table"]
                 )
-                refresh_history_btn = gr.Button("🔄 刷新历史记录", variant="secondary", size="lg")
+                refresh_history_btn = gr.Button(get_text(language, "history.refresh_btn"), variant="secondary", size="lg")
                 
         
-        # 事件绑定
+        # Event bindings
         def submit_and_expand(*args):
-            """提交任务并展开结果"""
-            status_msg, task_id, success = submit_test(*args)
+            """Submit task and expand results"""
+            status_msg, task_id, success = submit_test(*args, interface_language=language)
             if success:
                 return status_msg, task_id, gr.Accordion(open=True)
             else:
                 return status_msg, task_id, gr.Accordion(open=True)
         
-        # 提交后自动展开结果并刷新一次历史表
+        # Auto expand results and refresh history once after submission
         submit_btn.click(
             fn=submit_and_expand,
             inputs=[
@@ -808,54 +863,62 @@ def create_gradio_interface():
                 function_test_enabled, function_test_type, business_objectives,
                 ux_test_enabled, performance_test_enabled, security_test_enabled,
                 api_key, base_url, model
-                # viewport_width, viewport_height, headless, language
             ],
             outputs=[submit_status, task_id_output, submit_result_accordion]
         )
 
         submit_btn.click(
-            fn=lambda: get_history_rows(),
+            fn=lambda: get_history_rows(language),
             inputs=[],
             outputs=[history_table]
         )
         
         check_btn.click(
-            fn=check_task_status,
+            fn=lambda task_id: check_task_status(task_id, language),
             inputs=[task_id_input],
             outputs=[task_status_output, html_output, download_file]
         )
 
-        # 刷新历史记录
-        def get_history_rows():
+        # Refresh history records
+        def get_history_rows(lang):
             rows = []
             for item in reversed(submission_history[-100:]):
+                business_objectives = item["tests"].get("business_objectives", "")
+                function_type = item["tests"]["function_type"]
+                
+                if function_type == "ai" and business_objectives:
+                    business_display = business_objectives[:30] + "..." if len(business_objectives) > 30 else business_objectives
+                else:
+                    business_display = "-"
+                
                 rows.append([
                     item["submitted_at"],
                     item["task_id"],
                     item["url"],
                     "✅" if item["tests"]["function"] else "-",
                     item["tests"]["function_type"],
+                    business_display,
                     "✅" if item["tests"]["ux"] else "-"
                 ])
             return rows
 
-        # 绑定“提交历史”Tab内的刷新按钮
+        # Bind refresh button in "Submission History" Tab
         refresh_history_btn.click(
-            fn=lambda: get_history_rows(),
+            fn=lambda: get_history_rows(language),
             inputs=[],
             outputs=[history_table]
         )
         
-        # 绑定“提交历史”Tab选中事件，自动刷新历史记录
+        # Bind "Submission History" Tab selection event, auto refresh history records
         history_tab.select(
-            fn=lambda: get_history_rows(),
+            fn=lambda: get_history_rows(language),
             inputs=[],
             outputs=[history_table]
         )
         
-        # 清空报告显示当输入改变时
+        # Clear report display when input changes
         task_id_input.change(
-            fn=lambda x: ("", "<div style='text-align: center; padding: 50px; color: #888;'>📄 请点击查询状态按钮获取最新状态</div>"),
+            fn=lambda x: ("", f"<div style='text-align: center; padding: 50px; color: #888;'>{get_text(language, 'status.input_change_message')}</div>"),
             inputs=[task_id_input],
             outputs=[task_status_output, html_output]
         )
@@ -864,11 +927,11 @@ def create_gradio_interface():
 
 
 if __name__ == "__main__":
-    # 启动队列处理
+    # Start queue processing
     import threading
     
     def run_queue_processor():
-        """在后台线程中运行队列处理器"""
+        """Run queue processor in background thread"""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.run_until_complete(process_queue())
@@ -876,7 +939,7 @@ if __name__ == "__main__":
     queue_thread = threading.Thread(target=run_queue_processor, daemon=True)
     queue_thread.start()
     
-    # 创建并启动Gradio应用
+    # Create and launch Gradio application
     app = create_gradio_interface()
     app.launch(
         server_name="0.0.0.0",

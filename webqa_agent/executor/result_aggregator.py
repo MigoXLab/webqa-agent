@@ -6,10 +6,26 @@ from typing import Any, Dict, List, Optional
 
 from webqa_agent.data import ParallelTestSession, TestStatus
 from webqa_agent.llm.llm_api import LLMAPI
-
+from webqa_agent.utils import i18n
 
 class ResultAggregator:
     """Aggregates and analyzes parallel test results"""
+    
+    def __init__(self, report_config: dict = None):
+        """Initialize ResultAggregator with language support.
+        
+        Args:
+            report_config: Configuration dictionary containing language settings
+        """
+        self.language = report_config.get("language", "zh-CN") if report_config else "zh-CN"
+        self.localized_strings = {
+            'zh-CN': i18n.get_lang_data('zh-CN').get('aggregator', {}),
+            'en-US': i18n.get_lang_data('en-US').get('aggregator', {}),
+        }
+    
+    def _get_text(self, key: str) -> str:
+        """Get localized text for the given key."""
+        return self.localized_strings.get(self.language, {}).get(key, key)
     
     async def aggregate_results(self, test_session: ParallelTestSession) -> Dict[str, Any]:
         """Aggregate all test results into a comprehensive summary.
@@ -51,20 +67,20 @@ class ResultAggregator:
         executive_content = {
             "executiveSummary": "",
             "statistics": [
-                {"label": "评估类别", "value": str(total_sub_tests), "colorClass": "var(--warning-color)"},
-                {"label": "通过数", "value": str(passed_sub_tests), "colorClass": "var(--success-color)"},
-                {"label": "失败数", "value": str(critical_sub_tests), "colorClass": "var(--failure-color)"},
+                {"label": self._get_text('assessment_categories'), "value": str(total_sub_tests), "colorClass": "var(--warning-color)"},
+                {"label": self._get_text('passed_count'), "value": str(passed_sub_tests), "colorClass": "var(--success-color)"},
+                {"label": self._get_text('failed_count'), "value": str(critical_sub_tests), "colorClass": "var(--failure-color)"},
             ]
         }
 
         aggregated_results_list = [
-            {"id": "subtab-summary-advice", "title": "摘要与建议", "content": executive_content},
+            {"id": "subtab-summary-advice", "title": self._get_text('summary_and_advice'), "content": executive_content},
             {
                 "id": "subtab-issue-tracker",
-                "title": "问题列表",
+                "title": self._get_text('issue_list'),
                 "content": {
-                    "title": "问题追踪列表",
-                    "note": "注：此列表汇总了所有检测到的“失败”和“警告”项",
+                    "title": self._get_text('issue_tracker_list'),
+                    "note": self._get_text('issue_list_note'),
                     "issues": issues,
                 },
             },
@@ -89,7 +105,7 @@ class ResultAggregator:
 
         # Also expose simple counters at the top-level for easy consumption
         return {
-            "title": "评估总览",
+            "title": self._get_text('assessment_overview'),
             "tabs": aggregated_results_list,
             "count":{
                 "total": total_sub_tests,
@@ -117,7 +133,6 @@ class ResultAggregator:
                 logging.error(f"Failed to initialise LLM, falling back to heuristic issue extraction: {e}")
                 use_llm = False
 
-        logging.debug(f"LLM 总结测试结果中...")
         # Iterate over all tests and their sub-tests
         for test_result in test_session.test_results.values():
             for sub in test_result.sub_tests or []:
@@ -133,7 +148,7 @@ class ResultAggregator:
                         severity_level = "medium"
 
                     issue_entry = {
-                        "issue_name": "测试不通过: "+test_result.test_name, 
+                        "issue_name": self._get_text('test_failed_prefix') + test_result.test_name, 
                         "issue_type": test_result.test_type.value,
                         "sub_test_name": sub.name,
                         "severity": severity_level,
@@ -147,14 +162,8 @@ class ResultAggregator:
                             "final_summary": sub.final_summary,
                         }
                         prompt = (
-                            "你是一名经验丰富的软件测试分析师。请阅读以下子测试信息，提取【问题内容】、【问题数量】和【严重程度】：\n"
-                            "1）如果 status = pass，请返回 JSON {\"issue_count\": 0}。\n"
-                            "2）如果 status != pass，则根据 report、metrics 或 final_summary 的具体内容判断：\n"
-                            "   - 提取最关键的一句话问题描述 issues\n"
-                            "   - 统计问题数量 issue_count（如果无法准确统计，可默认为 1）\n"
-                            "   - 严重程度判断：优先查看 report 中是否已标明严重程度（如 high/medium/low、严重/中等/轻微、critical/major/minor 等），如果有则直接遵循；如果 report 中没有明确标明，则根据问题影响程度自行判断：high（严重影响功能/性能）、medium（中等影响）、low（轻微问题/警告）\n"
-                            "3）你不能输出任何其他内容，也不能输出代码块，只能输出统一为 JSON：{\"issue_count\": <数字>, \"issues\": \"一句话中文问题描述\", \"severity\": \"high|medium|low\"}。\n"
-                            f"子测试信息: {json.dumps(prompt_content, ensure_ascii=False, default=str)}"
+                            f"{self._get_text('llm_prompt_main')}\n\n"
+                            f"{self._get_text('llm_prompt_test_info')}{json.dumps(prompt_content, ensure_ascii=False, default=str)}"
                         )
                         logging.debug(f"LLM Issue Prompt: {prompt}")
                         llm_response_raw = await llm.get_llm_response("", prompt)
@@ -202,67 +211,6 @@ class ResultAggregator:
                 logging.warning(f"Failed to close LLM client: {e}")
         return critical_issues
 
-    async def generate_llm_summary(self, aggregated_results: Dict[str, Any], llm_config: Dict[str, Any]) -> str:
-        """Generate LLM-powered summary and analysis."""
-        try:
-            llm = LLMAPI(llm_config)
-
-            # Create comprehensive prompt
-            prompt = self._create_analysis_prompt(aggregated_results)
-
-            # Get LLM analysis
-            await llm.initialize()  # 确保LLM已初始化
-            summary = await llm.get_llm_response("", prompt)
-
-            return summary
-
-        except Exception as e:
-            logging.error(f"Failed to generate LLM summary: {e}")
-            return f"LLM summary generation failed: {str(e)}"
-
-    def _create_analysis_prompt(self, aggregated_results: Dict[str, Any]) -> str:
-        """Create analysis prompt for LLM."""
-        prompt = f"""
-        请基于以下并行测试结果进行综合分析，生成专业的测试报告总结：
-
-        ## 测试会话概览
-        {json.dumps(aggregated_results.get('session_summary', {}), indent=2, ensure_ascii=False)}
-
-        ## 整体指标
-        {json.dumps(aggregated_results.get('overall_metrics', {}), indent=2, ensure_ascii=False)}
-
-        ## 性能分析
-        {json.dumps(aggregated_results.get('lighthouse_summary', {}), indent=2, ensure_ascii=False)}
-
-        ## 用户体验分析
-        {json.dumps(aggregated_results.get('ux_analysis', {}), indent=2, ensure_ascii=False)}
-
-        ## 技术健康度
-        {json.dumps(aggregated_results.get('technical_health', {}), indent=2, ensure_ascii=False)}
-
-        ## 功能分析
-        {json.dumps(aggregated_results.get('ui_functionality', {}), indent=2, ensure_ascii=False)}
-
-        ## 关键问题
-        {json.dumps(aggregated_results.get('critical_issues', []), indent=2, ensure_ascii=False)}
-
-        请提供：
-        1. 执行总结
-        2. 关键发现
-        3. 风险评估
-        4. 改进建议
-        5. 下一步行动计划
-
-        要求：
-        - 使用专业且易懂的语言
-        - 突出重要问题和成功亮点
-        - 提供具体可行的建议
-        - 包含风险等级评估
-        """
-        logging.debug(f"Analysis Prompt: {prompt}")
-
-        return prompt
-
     async def _get_error_message(self, test_session: ParallelTestSession) -> str:
         """Get error message from test session."""
         error_message = []
@@ -271,7 +219,7 @@ class ResultAggregator:
                 # Only append if error_message is not empty
                 if test_result.error_message:
                     error_message.append({
-                        "issue_name": "执行异常: "+test_result.test_name,
+                        "issue_name": self._get_text('execution_error_prefix') + test_result.test_name,
                         "issue_type": test_result.test_type.value,
                         "severity": "high",
                         "issues": test_result.error_message
@@ -327,11 +275,23 @@ class ResultAggregator:
         return ""
 
     def _read_js_content(self) -> str:
-        """Read and return JavaScript content."""
+        """Read and return JavaScript content based on language."""
         try:
-            js_path = self._get_static_dir() / "assets" / "index.js"
+            # Choose JS file based on language
+            if self.language == "en-US":
+                js_filename = "index_en-US.js"
+            else:
+                js_filename = "index.js"  # Default to Chinese version
+                
+            js_path = self._get_static_dir() / "assets" / js_filename
             if js_path.exists():
                 return js_path.read_text(encoding="utf-8")
+            else:
+                # Fallback to default file if language-specific file doesn't exist
+                fallback_path = self._get_static_dir() / "assets" / "index.js"
+                if fallback_path.exists():
+                    logging.warning(f"Language-specific JS file {js_filename} not found, using fallback")
+                    return fallback_path.read_text(encoding="utf-8")
         except Exception as e:
             logging.warning(f"Failed to read JS file: {e}")
         return ""

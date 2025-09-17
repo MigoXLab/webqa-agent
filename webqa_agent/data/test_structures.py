@@ -7,12 +7,21 @@ from pydantic import BaseModel
 from webqa_agent.browser.config import DEFAULT_CONFIG
 
 # 侧边栏标题（默认）
-CATEGORY_TITLES: Dict[str, str] = {
-    "function": "功能测试",
-    "ux": "UX测试",
-    "performance": "性能测试",
-    "security": "安全测试",
+CATEGORY_TITLES: Dict[str, Dict[str, str]] = {
+    "zh-CN": {
+        "function": "功能测试",
+        "ux": "UX测试",
+        "performance": "性能测试",
+        "security": "安全测试",
+    },
+    "en-US": {
+        "function": "Function Test",
+        "ux": "UX Test",
+        "performance": "Performance Test",
+        "security": "Security Test",
+    }
 }
+
 
 class TestCategory(str, Enum):
     FUNCTION = "function"
@@ -25,11 +34,12 @@ class TestType(str, Enum):
     """Test type enumeration."""
 
     UNKNOWN = "unknown"
-    BUTTON_TEST = "button_test"
+    BASIC_TEST = "basic_test"
+    # BUTTON_TEST = "button_test"
     UI_AGENT_LANGGRAPH = "ui_agent_langgraph"
     UX_TEST = "ux_test"
     PERFORMANCE = "performance_test"
-    WEB_BASIC_CHECK = "web_basic_check"
+    # WEB_BASIC_CHECK = "web_basic_check"
     SECURITY_TEST = "security_test"
     SEO_TEST = "seo_test"
 
@@ -37,8 +47,9 @@ def get_category_for_test_type(test_type: TestType) -> TestCategory:
     """Map TestType to TestCategory."""
     mapping = {
         TestType.UI_AGENT_LANGGRAPH: TestCategory.FUNCTION,
-        TestType.BUTTON_TEST: TestCategory.FUNCTION,
-        TestType.WEB_BASIC_CHECK: TestCategory.FUNCTION,
+        TestType.BASIC_TEST: TestCategory.FUNCTION,
+        # TestType.BUTTON_TEST: TestCategory.FUNCTION,
+        # TestType.WEB_BASIC_CHECK: TestCategory.FUNCTION,
         TestType.UX_TEST: TestCategory.UX,
         TestType.PERFORMANCE: TestCategory.PERFORMANCE,
         TestType.SECURITY_TEST: TestCategory.SECURITY,
@@ -48,22 +59,35 @@ def get_category_for_test_type(test_type: TestType) -> TestCategory:
 
 
 # 报告子标题栏
-TEST_TYPE_DEFAULT_NAMES: Dict[TestType, str] = {
-    TestType.UI_AGENT_LANGGRAPH: "智能功能测试",
-    TestType.BUTTON_TEST: "遍历测试",
-    TestType.WEB_BASIC_CHECK: "技术健康度检查",
-    TestType.UX_TEST: "用户体验测试",
-    TestType.PERFORMANCE: "性能测试",
-    TestType.SECURITY_TEST: "安全测试",
+TEST_TYPE_DEFAULT_NAMES: Dict[str, Dict[TestType, str]] = {
+    "zh-CN": {
+        TestType.UI_AGENT_LANGGRAPH: "智能功能测试",
+        TestType.BASIC_TEST: "遍历测试",
+        # TestType.BUTTON_TEST: "功能测试",
+        # TestType.WEB_BASIC_CHECK: "技术健康度检查",
+        TestType.UX_TEST: "用户体验测试",
+        TestType.PERFORMANCE: "性能测试",
+        TestType.SECURITY_TEST: "安全测试",
+    },
+    "en-US": {
+        TestType.UI_AGENT_LANGGRAPH: "AI Function Test",
+        TestType.BASIC_TEST: "Basic Function Test",
+        # TestType.BUTTON_TEST: "Traversal Test",
+        # TestType.WEB_BASIC_CHECK: "Technical Health Check",
+        TestType.UX_TEST: "UX Test",
+        TestType.PERFORMANCE: "Performance Test",
+        TestType.SECURITY_TEST: "Security Test",
+    }
 }
 
 
-def get_default_test_name(test_type: TestType) -> str:
+def get_default_test_name(test_type: TestType, language: str = "zh-CN") -> str:
     """Return the internal default test name for a given TestType.
 
     Names are hardcoded and not user-configurable.
     """
-    return TEST_TYPE_DEFAULT_NAMES.get(test_type, test_type.value)
+    return TEST_TYPE_DEFAULT_NAMES.get(language, {}).get(test_type, test_type.value)
+
 
 class TestStatus(str, Enum):
     """Test status enumeration."""
@@ -81,10 +105,11 @@ class TestConfiguration(BaseModel):
     """Test configuration for parallel execution."""
 
     test_id: Optional[str] = None
-    test_type: Optional[TestType] = TestType.WEB_BASIC_CHECK
+    test_type: Optional[TestType] = TestType.BASIC_TEST
     test_name: Optional[str] = ""
     enabled: Optional[bool] = True
     browser_config: Optional[Dict[str, Any]] = DEFAULT_CONFIG
+    report_config: Optional[Dict[str, Any]] = {"language": "zh-CN"}
     test_specific_config: Optional[Dict[str, Any]] = {}
     timeout: Optional[int] = 300  # seconds
     retry_count: Optional[int] = 0
@@ -284,15 +309,18 @@ class ParallelTestSession(BaseModel):
         """Convert session to dictionary with grouped test results."""
         grouped_results: Dict[str, Dict[str, Any]] = {}
 
+        if self.test_configurations and len(self.test_configurations) > 0:
+            language = self.test_configurations[0].report_config.get("language", "zh-CN")
+
         for cat in TestCategory:
             key = f"{cat.value}_test_results"
-            grouped_results[key] = {"title": CATEGORY_TITLES.get(cat.value, cat.name), "items": []}
+            grouped_results[key] = {"title": CATEGORY_TITLES[language].get(cat.value, cat.name), "items": []}
 
         for result in self.test_results.values():
             key = f"{result.category.value}_test_results"
             if key not in grouped_results:
                 grouped_results[key] = {
-                    "title": CATEGORY_TITLES.get(result.category.value, result.category.name.title()),
+                    "title": CATEGORY_TITLES[language].get(result.category.value, result.category.name.title()),
                     "items": [],
                 }
             grouped_results[key]["items"].append(result.dict())
