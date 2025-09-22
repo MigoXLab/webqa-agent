@@ -143,7 +143,7 @@ test_config:                                      # Test configuration
     enabled: False
 
 llm_config:                                       # Vision model configuration, currently supports OpenAI SDK compatible format only
-  model: gpt-4.1                                  # Recommended
+  model: gpt-4.1-2025-04-14                       # Recommended
   api_key: your_api_key
   base_url: https://api.example.com/v1
 
@@ -172,9 +172,9 @@ Based on our testing, these models work well with WebQA Agent:
 
 | Model | Key Strengths | Notes |
 |-------|---------------|-------|
-| **gpt-4.1** ⭐ | High accuracy & reliability | **Best choice** |
-| **gpt-4.1-mini** | Cost-effective, Good for UX testing | **Economical and practical**|
-| **doubao-seed-1-6-vision** | Vision capabilities | **Excellent web understanding** |
+| **gpt-4.1-2025-04-14** ⭐ | High accuracy & reliability | **Best choice** |
+| **gpt-4.1-mini-2025-04-14** | Cost-effective | **Economical and practical**|
+| **doubao-seed-1-6-vision-250815** | Vision capabilities | **Excellent web understanding** |
 
 
 ### View Results

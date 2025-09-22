@@ -16,7 +16,7 @@ test_config: # Test configuration
     enabled: False
 
 llm_config: # LLM configuration, currently only supports OpenAI SDK compatible format
-  model: gpt-4.1  # Recommended
+  model: gpt-4.1-2025-04-14  # Recommended
   api_key: your_api_key
   base_url:  https://api.example.com/v1
   temperature: 0.1   # Optional, default 0.1
