@@ -745,6 +745,47 @@
             return '/' + parts.join('/');
         }
 
+         /**
+         * Retrieves all child container elements from the specified node
+         *
+         * This function is used to get child elements when traversing the DOM tree,
+         * supporting multiple container types:
+         * - Child elements of regular DOM elements
+         * - Child elements of Shadow DOM
+         * - Body element of iframe internal documents
+         *
+         * @param {Node|ShadowRoot} node - The node to get child containers from, can be a regular DOM node or Shadow Root
+         * @returns {Array<Element>} Returns an array containing all child container elements
+         */
+        function getChildContainers(node) {
+            const out = [];
+
+            // Handle Shadow Root nodes
+            if (node instanceof ShadowRoot) {
+                out.push(...Array.from(node.children));
+            }
+            // Handle regular DOM element nodes
+            else if (node && node.nodeType === Node.ELEMENT_NODE) {
+                // Add all direct child elements
+                out.push(...Array.from(node.children));
+
+                // If the element has a Shadow Root, add it to the container list
+                if (node.shadowRoot instanceof ShadowRoot) out.push(node.shadowRoot);
+
+                // Special handling for iframe elements, attempt to get the body of their internal document
+                if (node.tagName?.toLowerCase() === 'iframe') {
+                    try {
+                        const doc = node.contentDocument;
+                        if (doc?.body) out.push(doc.body);
+                    } catch (_) {
+                        /* Ignore errors when cross-origin iframe access is blocked */
+                    }
+                }
+            }
+
+            return out;
+        }
+
         /**
          * Gathers comprehensive information about a DOM element.
          *
@@ -980,29 +1021,31 @@
          * @returns {object | null} A tree node object, or `null` if the element and its descendants are not relevant.
          */
         function buildTree(elemObj, wasParentHighlighted = false) {
-            // 1) get element info
-            const elemInfo = getElementInfo(elemObj, wasParentHighlighted);
+            // If it is a ShadowRoot, use host as element info; otherwise use the element itself
+            const infoTarget = (elemObj instanceof ShadowRoot) ? elemObj.host : elemObj;
 
-            // 2) check node satisfies highlight condition
-            const isCurNodeHighlighted = handleHighlighting(elemInfo, elemObj, wasParentHighlighted)
+            // get element info
+            const elemInfo = getElementInfo(infoTarget, wasParentHighlighted);
+
+            // Highlight check
+            const isCurNodeHighlighted = elemInfo ? handleHighlighting(elemInfo, infoTarget, wasParentHighlighted) : false;
             const isParentHighlighted = wasParentHighlighted || isCurNodeHighlighted;
 
-            // 3) recursively build structured dom tree, with 'isParentHighlighted' state
+            // Recursively process “container” child nodes: Element children, shadowRoot, and same-origin iframe
             const children = [];
-            Array.from(elemObj.children).forEach(child => {
+            for (const child of getChildContainers(elemObj)) {
                 const subtree = buildTree(child, isParentHighlighted);
                 if (subtree) children.push(subtree);
-            });
-
-            // 4) highlight filter
-            if (isCurNodeHighlighted) {
-                highlightIdMap[elemInfo.highlightIndex] = elemInfo;     // map highlightIndex to element info
-                return {node: elemInfo, children};                      // keep info if is highlightable
-            } else if (children.length > 0) {
-                return {node: null, children};                          // child node is highlightable
-            } else {
-                return null;                                            // skip
             }
+
+            // highlight filter
+            if (isCurNodeHighlighted) {
+                highlightIdMap[elemInfo.highlightIndex] = elemInfo;  // map highlightIndex to element info
+                return {node: elemInfo, children};
+            } else if (children.length > 0) {
+                return {node: null, children};                       // child node is highlightable
+            }
+            return null;
         }
 
         // ============================= Main Function =============================
