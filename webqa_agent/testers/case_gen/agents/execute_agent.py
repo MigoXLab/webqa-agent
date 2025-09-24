@@ -21,7 +21,7 @@ from webqa_agent.testers.case_gen.tools.element_action_tool import UIAssertTool,
 from webqa_agent.testers.case_gen.utils.message_converter import convert_intermediate_steps_to_messages
 from webqa_agent.utils.log_icon import icon
 
-LONG_STEPS = 25
+LONG_STEPS = 30
 
 # ============================================================================
 # Critical Failure Detection Patterns
@@ -739,24 +739,17 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             logging.debug(f"Step {i+1} tool output: {tool_output}")
             messages.append(AIMessage(content=tool_output))
 
+            # Check for critical failures that should immediately stop execution
+            if _is_critical_failure_step(tool_output, instruction_to_execute):
+                failed_steps.append(i + 1)
+                final_summary = f"FINAL_SUMMARY: Critical failure at step {i + 1}: '{instruction_to_execute}'. Error details: {tool_output[:200]}..."
+                logging.error(f"Critical failure detected at step {i + 1}, aborting remaining steps to save time")
+                break
+
             # Check for failures in the tool output
             if "[failure]" in result['intermediate_steps'][0][1].lower() or "failed" in tool_output.lower():
                 failed_steps.append(i + 1)
                 logging.warning(f"Step {i+1} detected as failed based on output")
-
-            # Check for critical failures that should immediately stop execution
-            if _is_critical_failure_step(tool_output, instruction_to_execute):
-                failed_steps.append(i + 1)
-                final_summary = f"FINAL_SUMMARY: Critical failure at step {i+1}: '{instruction_to_execute}'. Error details: {tool_output[:200]}..."
-                logging.error(f"Critical failure detected at step {i+1}, aborting remaining steps to save time")
-                break
-
-            # Check for max iterations, which indicates a failure to complete the step.
-            if "Agent stopped due to max iterations." in tool_output:
-                failed_steps.append(i + 1)
-                final_summary = f"FINAL_SUMMARY: Step '{instruction_to_execute}' failed after multiple retries. The agent could not complete the instruction. Last output: {tool_output}"
-                logging.error(f"Step {i+1} failed due to max iterations.")
-                break
 
             # Check for objective achievement signal
             is_achieved, achievement_reason = _is_objective_achieved(tool_output)
