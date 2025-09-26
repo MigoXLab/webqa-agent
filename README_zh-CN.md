@@ -138,6 +138,10 @@ test_config:                                      # 测试项配置
     enabled: True
     type: ai                                      # default or ai
     business_objectives: example business objectives  # 建议加入测试范围，如：测试搜索功能
+    dynamic_step_generation:                      # 可选，动态生成步骤配置
+      enabled: True                               # 可选, 默认False，建议设置为True使能动态步骤生成
+      max_dynamic_steps: 5                        # 可选，默认每次触发生成5步测试步骤
+      min_elements_threshold: 2                   # 可选，默认触发阈值为2个dom元素差异
   ux_test:                                        # 用户体验测试
     enabled: True
   performance_test:                               # 性能分析
@@ -173,11 +177,12 @@ UX（用户体验）评估关注网页可用性与友好性。结果中的模型
 
 基于实际测试结果，以下模型表现较好，推荐使用：
 
-| 模型 | 核心优势 | 使用建议 |
-|------|----------|----------|
-| **gpt-4.1-2025-04-14** ⭐ | 高准确性与可靠性 | **最佳选择** |
-| **gpt-4.1-mini-2025-04-14** | 性价比高 | **经济实用** |
-| **doubao-seed-1-6-vision-250815** | 支持视觉识别 | **网页理解优异** |
+| 模型                                | 核心优势         | 使用建议       |
+|-----------------------------------|--------------|------------|
+| **gpt-4.1-2025-04-14** ⭐          | 高准确性与可靠性     | **最佳选择**   |
+| **gpt-4.1-mini-2025-04-14**       | 性价比高         | **经济实用**   |
+| **qwen3-vl-235b-a22b-instruct**   | 媲美gpt-4.1，开源 | **私有部署首选** |
+| **doubao-seed-1-6-vision-250815** | 支持视觉识别       | **网页理解优异** |
 
 ### 查看结果
 
