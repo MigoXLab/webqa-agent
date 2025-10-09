@@ -921,6 +921,47 @@
             return '/' + parts.join('/');
         }
 
+         /**
+         * Retrieves all child container elements from the specified node
+         *
+         * This function is used to get child elements when traversing the DOM tree,
+         * supporting multiple container types:
+         * - Child elements of regular DOM elements
+         * - Child elements of Shadow DOM
+         * - Body element of iframe internal documents
+         *
+         * @param {Node|ShadowRoot} node - The node to get child containers from, can be a regular DOM node or Shadow Root
+         * @returns {Array<Element>} Returns an array containing all child container elements
+         */
+        function getChildContainers(node) {
+            const out = [];
+
+            // Handle Shadow Root nodes
+            if (node instanceof ShadowRoot) {
+                out.push(...Array.from(node.children));
+            }
+            // Handle regular DOM element nodes
+            else if (node && node.nodeType === Node.ELEMENT_NODE) {
+                // Add all direct child elements
+                out.push(...Array.from(node.children));
+
+                // If the element has a Shadow Root, add it to the container list
+                if (node.shadowRoot instanceof ShadowRoot) out.push(node.shadowRoot);
+
+                // Special handling for iframe elements, attempt to get the body of their internal document
+                if (node.tagName?.toLowerCase() === 'iframe') {
+                    try {
+                        const doc = node.contentDocument;
+                        if (doc?.body) out.push(doc.body);
+                    } catch (_) {
+                        /* Ignore errors when cross-origin iframe access is blocked */
+                    }
+                }
+            }
+
+            return out;
+        }
+
         /**
          * Clean and optimize element attributes to reduce token consumption
          * @param {HTMLElement} elem The element to process

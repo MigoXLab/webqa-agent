@@ -135,6 +135,10 @@ test_config:                                      # Test configuration
     enabled: True
     type: ai                                      # default or ai
     business_objectives: example business objectives  # Recommended to include test scope, e.g., test search functionality
+    dynamic_step_generation:                      # Optional, configuration for dynamic steps generation
+      enabled: True                               # Optional, default False, recommended to set True to enable dynamic step generation
+      max_dynamic_steps: 5                        # Optional, default 5 test steps generated per trigger
+      min_elements_threshold: 2                   # Optional, default trigger threshold is 2 DOM element differences
   ux_test:                                        # User experience testing
     enabled: True
   performance_test:                               # Performance analysis
@@ -170,11 +174,12 @@ UX (User Experience) testing focuses on usability, and user-friendliness. The mo
 
 Based on our testing, these models work well with WebQA Agent:
 
-| Model | Key Strengths | Notes |
-|-------|---------------|-------|
-| **gpt-4.1-2025-04-14** ⭐ | High accuracy & reliability | **Best choice** |
-| **gpt-4.1-mini-2025-04-14** | Cost-effective | **Economical and practical**|
-| **doubao-seed-1-6-vision-250815** | Vision capabilities | **Excellent web understanding** |
+| Model                             | Key Strengths               | Notes                           |
+|-----------------------------------|-----------------------------|---------------------------------|
+| **gpt-4.1-2025-04-14** ⭐         | High accuracy & reliability | **Best choice**                 |
+| **gpt-4.1-mini-2025-04-14**       | Cost-effective              | **Economical and practical**    |
+| **qwen3-vl-235b-a22b-instruct**   | Open-source, GPT-4.1 level  | **Best for on-premise**         |
+| **doubao-seed-1-6-vision-250815** | Vision capabilities         | **Excellent web understanding** |
 
 
 ### View Results

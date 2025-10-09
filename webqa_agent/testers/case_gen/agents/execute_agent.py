@@ -21,7 +21,51 @@ from webqa_agent.testers.case_gen.tools.element_action_tool import UIAssertTool,
 from webqa_agent.testers.case_gen.utils.message_converter import convert_intermediate_steps_to_messages
 from webqa_agent.utils.log_icon import icon
 
-LONG_STEPS = 10
+LONG_STEPS = 30
+
+# ============================================================================
+# Critical Failure Detection Patterns
+# ============================================================================
+
+# Literal patterns for exact substring matching (backward compatible)
+CRITICAL_LITERAL_PATTERNS = [
+    "element not found",
+    "cannot find", 
+    "page crashed",
+    "permission denied",
+    "access denied",
+    "network timeout",
+    "browser error",
+    "navigation failed",
+    "session expired",
+    "server error",
+    "connection timeout",
+    "unable to load",
+    "page not accessible",
+    "critical error",
+    "missing locator",
+    "not found in the buffer",
+    "could not be retrieved",
+    "failed due to a missing",
+    "dropdown options could not be retrieved",
+]
+
+# Regex patterns for flexible matching
+CRITICAL_REGEX_PATTERNS = [
+    r"not found in\s+.*buffer",
+    r"failed due to\s+.*missing",
+    r"locator.*not.*found",
+    r"element.*not.*available", 
+    r"missing.*for.*action",
+    r"missing.*parameter",
+    r"element with id.*not found",
+]
+
+# Pre-compile regex for performance
+CRITICAL_REGEX = re.compile(
+    '|'.join(CRITICAL_REGEX_PATTERNS),
+    re.IGNORECASE
+)
 
 # ============================================================================
 # Dynamic Step Generation Helper Functions
@@ -106,10 +150,22 @@ def format_elements_for_llm(dom_diff: dict) -> list[dict]:
         # Add important attribute information
         important_attrs = {}
         if attributes:
-            # Extract important attributes
-            for key in ['class', 'id', 'role', 'type', 'placeholder', 'aria-label']:
-                if key in attributes:
-                    important_attrs[key] = attributes[key]
+            # Define comprehensive attribute whitelist
+            navigation_attrs = ['href', 'target', 'rel', 'download']
+            form_attrs = ['type', 'placeholder', 'value', 'name', 'required', 'disabled']
+            semantic_attrs = ['role', 'aria-label', 'aria-describedby', 'aria-expanded']
+            
+            for key, value in attributes.items():
+                # Include whitelisted attributes
+                if key in ['class', 'id'] + navigation_attrs + form_attrs + semantic_attrs:
+                    important_attrs[key] = value
+                # Include data-* attributes (often contain behavior info)
+                elif key.startswith('data-'):
+                    # Limit length to prevent token explosion
+                    important_attrs[key] = value[:200] if isinstance(value, str) and len(value) > 200 else value
+                # Include style if it indicates visibility/interactivity
+                elif key == 'style' and isinstance(value, str) and ('display' in value or 'visibility' in value):
+                    important_attrs[key] = value[:200] + "..." if len(value) > 200 else value
         
         if important_attrs:
             formatted_elem["attributes"] = important_attrs
@@ -683,24 +739,17 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             logging.debug(f"Step {i+1} tool output: {tool_output}")
             messages.append(AIMessage(content=tool_output))
 
+            # Check for critical failures that should immediately stop execution
+            if _is_critical_failure_step(tool_output, instruction_to_execute):
+                failed_steps.append(i + 1)
+                final_summary = f"FINAL_SUMMARY: Critical failure at step {i + 1}: '{instruction_to_execute}'. Error details: {tool_output[:200]}..."
+                logging.error(f"Critical failure detected at step {i + 1}, aborting remaining steps to save time")
+                break
+
             # Check for failures in the tool output
             if "[failure]" in result['intermediate_steps'][0][1].lower() or "failed" in tool_output.lower():
                 failed_steps.append(i + 1)
                 logging.warning(f"Step {i+1} detected as failed based on output")
-
-            # Check for critical failures that should immediately stop execution
-            if _is_critical_failure_step(tool_output, instruction_to_execute):
-                failed_steps.append(i + 1)
-                final_summary = f"FINAL_SUMMARY: Critical failure at step {i+1}: '{instruction_to_execute}'. Error details: {tool_output[:200]}..."
-                logging.error(f"Critical failure detected at step {i+1}, aborting remaining steps to save time")
-                break
-
-            # Check for max iterations, which indicates a failure to complete the step.
-            if "Agent stopped due to max iterations." in tool_output:
-                failed_steps.append(i + 1)
-                final_summary = f"FINAL_SUMMARY: Step '{instruction_to_execute}' failed after multiple retries. The agent could not complete the instruction. Last output: {tool_output}"
-                logging.error(f"Step {i+1} failed due to max iterations.")
-                break
 
             # Check for objective achievement signal
             is_achieved, achievement_reason = _is_objective_achieved(tool_output)
@@ -1018,6 +1067,10 @@ def _is_objective_achieved(tool_output: str) -> tuple[bool, str]:
 def _is_critical_failure_step(tool_output: str, step_instruction: str = "") -> bool:
     """Check if a single step output indicates a critical failure that should stop execution.
     
+    Uses hybrid detection approach:
+    1. Primary: Structured error tags [CRITICAL_ERROR:category] (preferred)
+    2. Fallback: Pattern matching for backward compatibility and enhanced coverage
+    
     Args:
         tool_output: The output from the step execution
         step_instruction: The instruction that was executed (for context)
@@ -1030,29 +1083,21 @@ def _is_critical_failure_step(tool_output: str, step_instruction: str = "") -> b
     
     output_lower = tool_output.lower()
     
-    # Critical failure patterns for immediate exit
-    critical_step_patterns = [
-        "element not found",
-        "cannot find",
-        "page crashed", 
-        "permission denied",
-        "access denied",
-        "network timeout",
-        "browser error",
-        "navigation failed",
-        "session expired",
-        "server error", 
-        "connection timeout",
-        "unable to load",
-        "page not accessible",
-        "critical error"
-    ]
+    # Phase 1: Check for structured critical error tags (preferred method)
+    if "[critical_error:" in output_lower:
+        logging.debug("Critical failure detected via structured error tag")
+        return True
     
-    # Check for critical patterns
-    for pattern in critical_step_patterns:
+    # Phase 2a: Check literal patterns (backward compatibility)
+    for pattern in CRITICAL_LITERAL_PATTERNS:
         if pattern in output_lower:
-            logging.debug(f"Critical failure detected in step: pattern '{pattern}' found")
+            logging.debug(f"Critical failure detected via literal pattern: '{pattern}'")
             return True
+    
+    # Phase 2b: Check regex patterns (enhanced matching)
+    if CRITICAL_REGEX.search(output_lower):
+        logging.debug("Critical failure detected via regex pattern")
+        return True
     
     return False
 

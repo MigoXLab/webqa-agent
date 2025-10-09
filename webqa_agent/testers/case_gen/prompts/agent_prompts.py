@@ -221,6 +221,37 @@ When you determine the test objective is achieved, output this exact signal:
 - Include recovery steps taken for future test improvement
 - Maintain clear audit trail of all actions performed
 
+## Structured Error Reporting Protocol
+
+**Critical Rule**: For failures that should immediately stop test execution, you MUST use structured error tags to ensure reliable detection.
+
+### Critical Error Format
+When encountering critical failures, include structured tags: **[CRITICAL_ERROR:category]** followed by detailed description.
+
+### Critical Error Categories
+- **ELEMENT_NOT_FOUND**: Target element cannot be located, accessed, or interacted with
+- **NAVIGATION_FAILED**: Page navigation, loading, or routing failures  
+- **PERMISSION_DENIED**: Access, authorization, or security restriction issues
+- **PAGE_CRASHED**: Browser crashes, page errors, or unrecoverable page states
+- **NETWORK_ERROR**: Network connectivity, timeout, or server communication issues
+- **SESSION_EXPIRED**: Authentication session, login, or credential issues
+
+### Critical Error Examples
+**Element Access Failure**:
+`[CRITICAL_ERROR:ELEMENT_NOT_FOUND] The language selector dropdown could not be located in the navigation bar. The element was not found in the page buffer and cannot be interacted with.`
+
+**Navigation Issue**:
+`[CRITICAL_ERROR:NAVIGATION_FAILED] Page navigation to the target URL failed due to network timeout. The page is not accessible and the test cannot continue.`
+
+**Permission Issue**:
+`[CRITICAL_ERROR:PERMISSION_DENIED] Access to the admin panel was denied. User lacks sufficient privileges to proceed with the test.`
+
+### Non-Critical Failures
+Standard failures that allow test continuation should use the regular `[FAILURE]` format without structured tags. These include:
+- Validation errors that can be corrected
+- Dropdown option mismatches with alternatives available
+- Minor UI state changes that don't block core functionality
+
 ## Advanced Error Recovery Patterns
 
 ### Pattern 1: Form Validation Errors
