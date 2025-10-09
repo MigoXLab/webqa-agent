@@ -198,8 +198,8 @@ class DeepCrawler:
             self,
             page: Optional[Page] = None,
             highlight: bool = False,
-            highlight_text: bool = False,
-            highlight_media: bool = False,
+            filter_text: bool = False,
+            filter_media: bool = False,
             viewport_only: bool = False,
             include_styles: bool = False,
             cache_dom: bool = False,
@@ -208,9 +208,9 @@ class DeepCrawler:
 
         Args:
             page: The Playwright Page to crawl. Defaults to instance page.
-            highlight: Whether to visually highlight detected elements.
-            highlight_text: Whether to highlight text nodes.
-            highlight_media: Whether to highlight media elements.
+            highlight: Whether to visually highlight detected elements (master switch).
+            filter_text: Whether to include text nodes in highlighting when highlight is enabled.
+            filter_media: Whether to include media elements in highlighting when highlight is enabled.
             viewport_only: Whether to restrict detection to current viewport.
             include_styles: Whether to include styles in the result.
             cache_dom: Whether to cache the DOM tree for change detection.
@@ -226,8 +226,8 @@ class DeepCrawler:
             payload = (
                 f"(() => {{"
                 f"window._highlight = {str(highlight).lower()};"
-                f"window._highlightText = {str(highlight_text).lower()};\n"
-                f"window._highlightMedia = {str(highlight_media).lower()};\n"
+                f"window._filterText = {str(filter_text).lower()};\n"
+                f"window._filterMedia = {str(filter_media).lower()};\n"
                 f"window._viewportOnly = {str(viewport_only).lower()};\n"
                 f"window._includeStyles = {str(include_styles).lower()};\n"
                 f"\n{self.read_js(self.DETECTOR_JS)}"

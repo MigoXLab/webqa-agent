@@ -27,10 +27,10 @@
  */
 
 (function () {
-        window._highlight = window._highlight ?? true;                          // RenderHighlight Switch
-        window._highlightText = window._highlightText ?? false;                 // RenderTextHighlight Switch
-        window._viewportOnly = window._viewportOnly ?? false;                   // Viewport Highlight Only
-        window._highlightMedia = window._highlightMedia ?? false;               // Media Element Highlight Switch
+        window._highlight = window._highlight ?? true;                          // Master highlight rendering switch
+        window._filterText = window._filterText ?? false;                       // Text element filter for highlighting
+        window._viewportOnly = window._viewportOnly ?? false;                   // Viewport-only detection filter
+        window._filterMedia = window._filterMedia ?? false;                     // Media element filter for highlighting
         let idCounter = 1;
         let highlightIndex = 1;
         const elementToId = new WeakMap();
@@ -1194,7 +1194,7 @@
         function handleHighlighting(elemInfo, elemObj, isParentHighlighted) {
             function shouldHighlightElem(nodeInfo) {
                 // Media element highlighting mode
-                if (window._highlightMedia) {
+                if (window._filterMedia) {
                     return nodeInfo.isMediaElement && nodeInfo.isVisible && nodeInfo.isTopElement;
                 }
 
@@ -1203,7 +1203,7 @@
                 if (['menu', 'menubar', 'listbox'].includes(role)) return true;
 
                 // Text highlighting mode
-                if (window._highlightText) {
+                if (window._filterText) {
                     return nodeInfo.isVisible && nodeInfo.isTopElement && nodeInfo.isValidText;
                 }
 
@@ -1216,10 +1216,10 @@
 
             // 2) Nested filtering logic
             // Media element mode: skip if parent is highlighted and current is not distinct interaction boundary
-            if (window._highlightText) {
+            if (window._filterText) {
                 if (isParentHighlighted && !elemInfo.isInteractive) return false;
             } else {
-                if (!window._highlightMedia) {
+                if (!window._filterMedia) {
                     if (isParentHighlighted && !isElementDistinctInteraction(elemObj)) return false;
                 }
             }

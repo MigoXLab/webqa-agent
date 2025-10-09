@@ -203,7 +203,7 @@ class UITester:
 
             # Crawl current page
             dp = DeepCrawler(self.page)
-            await dp.crawl(highlight=True, highlight_text=True, viewport_only=True)
+            await dp.crawl(highlight=True, filter_text=True, viewport_only=True)
 
             marker_screenshot = await self._actions.b64_page_screenshot(file_name="marker")
             await dp.remove_marker()
@@ -211,7 +211,7 @@ class UITester:
             screenshot = await self._actions.b64_page_screenshot(file_name="assert")
 
             # Get page structure
-            await dp.crawl(highlight=False, highlight_text=True, viewport_only=True)
+            await dp.crawl(highlight=False, filter_text=True, viewport_only=True)
             page_structure = dp.get_text()
 
             # Prepare LLM input

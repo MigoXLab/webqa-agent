@@ -223,7 +223,7 @@ class PageContentTest:
         logging.info(f"{icon['running']} Running Sub Tests: {layout_result.name}")
 
         dp = DeepCrawler(page)
-        crawl_result = await dp.crawl(highlight=True, highlight_text = False, viewport_only=False, include_styles=True)
+        crawl_result = await dp.crawl(highlight=True, filter_text=False, viewport_only=False, include_styles=True)
         id_map = crawl_result.raw_dict()
         logging.debug(f'id_map: {id_map}')
         await dp.remove_marker()

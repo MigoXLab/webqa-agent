@@ -90,7 +90,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
         file_name="plan_or_replan", save_to_log=False, full_page=False
     )
     await dp.remove_marker()
-    await dp.crawl(highlight=False, highlight_text=True, viewport_only=True)
+    await dp.crawl(highlight=False, filter_text=True, viewport_only=True)
     page_structure = dp.get_text()
     logging.debug(f"----- plan cases ---- Page structure: {page_structure}")
 
