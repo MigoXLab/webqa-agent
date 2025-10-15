@@ -28,6 +28,14 @@
 
 <p align="center"><a href="README.md">English</a> · <a href="README_zh-CN.md">简体中文</a></p>
 
+<p align="center">
+  如果觉得有帮助，欢迎在 GitHub 上点个 ⭐ 支持！
+  <br/>
+  <a href="https://github.com/MigoXLab/webqa-agent/stargazers" target="_blank">
+    <img src="docs/images/star.gif" alt="Click Star" width="900">
+  </a>
+</p>
+
 <p align="center">🤖 <strong>WebQA Agent</strong> 是全自动网页评估测试 Agent，一键完成性能、功能与交互体验的测试评估 ✨</p>
 </div>
 
