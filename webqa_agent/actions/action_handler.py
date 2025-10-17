@@ -1429,3 +1429,30 @@ class ActionHandler:
         except Exception as e:
             logging.error(f'Drag action failed: {str(e)}')
             return False
+    
+    async def mouse_move(self, x: int | float, y: int | float) -> bool:
+        """Move mouse to absolute coordinates (x, y)."""
+        try:
+            # Coerce to numbers in case strings are provided
+            target_x = float(x)
+            target_y = float(y)
+            await self.page.mouse.move(target_x, target_y)
+            logging.info(f"mouse move to ({target_x}, {target_y})")
+            await asyncio.sleep(0.1)
+            return True
+        except Exception as e:
+            logging.error(f"Mouse move failed: {str(e)}")
+            return False
+
+    async def mouse_wheel(self, delta_x: int | float = 0, delta_y: int | float = 0) -> bool:
+        """Scroll the mouse wheel by delta values."""
+        try:
+            dx = float(delta_x) if delta_x is not None else 0.0
+            dy = float(delta_y) if delta_y is not None else 0.0
+            await self.page.mouse.wheel(dx, dy)
+            logging.info(f"mouse wheel by (deltaX={dx}, deltaY={dy})")
+            await asyncio.sleep(0.1)
+            return True
+        except Exception as e:
+            logging.error(f"Mouse wheel failed: {str(e)}")
+            return False

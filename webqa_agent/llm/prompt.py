@@ -152,6 +152,21 @@ class LLMPrompt:
         * selection_path is the text of the option to be selected.
         * if the selection_path is a string, it means the option is the first level of the dropdown.
         * if the selection_path is a list, it means the option is the nth level of the dropdown.
+        - type: 'Mouse', unified mouse action for move and wheel
+         {
+           "param": {
+             "op": 'move' | 'wheel',
+             // move operation
+             "x"?: number,
+             "y"?: number,
+             // wheel operation
+             "deltaX"?: number,
+             "deltaY"?: number
+           },
+           "locate": null
+         }
+        * When op is omitted, auto-detect by provided fields: x+y => move; deltaX/deltaY => wheel.
+
 
     ## Further Plan Format
     If the task isn't completed:
@@ -185,6 +200,10 @@ class LLMPrompt:
     - KeyboardPress: Simulate a keyboard key press, such as Enter, Tab, or arrow keys.
     - Drag: Perform a drag-and-drop operation. Moves the mouse from a starting coordinate to a target coordinate, often used for sliders, sorting, or drag-and-drop interfaces. Requires both source and target coordinates.
     - SelectDropdown: Select an option from a dropdown menu which is user's expected option. The dropdown element is the first level of the dropdown menu. IF You can see the dropdown element, you cannot click the dropdown element, you should directly select the option.
+    - GoToPage: Navigate directly to a specific URL. Useful for returning to the homepage, navigating to known pages, or entering a new web address. Requires a URL parameter.
+    - GoBack: Navigate back to the previous page in the browser history, similar to clicking the browser's back button. Does not require any parameters.
+    - GetNewPage: Get the new page or open in new tab or open in new window. Use this action when the previous action (e.g., clicking a link that opens in a new tab) creates a new browser context that needs to be accessed.
+    - Mouse: Unified mouse action for move and wheel.
 
     Please ensure the output is a valid **JSON** object. Do **not** include any markdown, backticks, or code block indicators.
 
@@ -193,7 +212,7 @@ class LLMPrompt:
           "actions": [
             {
               "thought": "Reasoning for this action and why it's feasible on the current page.",
-              "type": "Tap" | "Scroll" | "Input" | "Sleep" | "Check" | "Upload" | "KeyboardPress" | "Drag" | "SelectDropdown" | "GoToPage" | "GoBack",
+              "type": "Tap" | "Scroll" | "Input" | "Sleep" | "Check" | "Upload" | "KeyboardPress" | "Drag" | "SelectDropdown" | "GoToPage" | "GoBack" | "GetNewPage" | "Mouse",
               "param": {...} | null,
               "locate": {...} | null
             }
