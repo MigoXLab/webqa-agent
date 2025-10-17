@@ -28,6 +28,14 @@
 
 <p align="center"><a href="README.md">English</a> · <a href="README_zh-CN.md">简体中文</a></p>
 
+<p align="center">
+  If you like WebQA Agent, please give us a ⭐ on GitHub!
+  <br/>
+  <a href="https://github.com/MigoXLab/webqa-agent/stargazers" target="_blank">
+    <img src="docs/images/star.gif" alt="Click Star" width="900">
+  </a>
+</p>
+
 <p align="center" itemprop="description">🤖 <strong>WebQA Agent</strong> is an autonomous web browser agent that audits performance, functionality & UX for engineers and vibe-coding creators. ✨</p>
 
 </div>
