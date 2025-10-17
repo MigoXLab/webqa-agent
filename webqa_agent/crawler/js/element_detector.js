@@ -32,7 +32,8 @@
         window._viewportOnly = window._viewportOnly ?? false;                   // Viewport-only detection filter
         window._filterMedia = window._filterMedia ?? false;                     // Media element filter for highlighting
         let idCounter = 1;
-        let highlightIndex = 1;
+        // let highlightIndex = 1;
+        let highlightIndex = (typeof window.__highlightBase__ === 'number' ? window.__highlightBase__ : 0) + 1;
         const elementToId = new WeakMap();
         const highlightMap = new WeakMap();
         let highlightIdMap = new WeakMap();

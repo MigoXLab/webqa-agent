@@ -222,6 +222,17 @@ class DeepCrawler:
             page = self.page
 
         try:
+            
+            try:
+                if hasattr(page, 'frames') and len(page.frames) > 1:
+                    _, merged_id_map = await self.crawl_all_frames(page=page, enable_highlight=highlight)
+                    return CrawlResultModel(
+                        flat_element_map=ElementMap(data=merged_id_map or {}),
+                        element_tree={}
+                    )
+            except Exception:
+                pass
+            
             # Build JavaScript payload for element detection
             payload = (
                 f"(() => {{"
@@ -393,6 +404,99 @@ class DeepCrawler:
 
         # Return as compact JSON array
         return json.dumps(items, ensure_ascii=False, separators=(",", ":"))
+
+    async def crawl_all_frames(self, page=None, enable_highlight=False):
+        """
+        爬取主页面及所有 iframe 的元素（支持跨域与嵌套），并返回统一的 id 列表与映射。
+
+        返回值:
+            (ids, id_map)
+                - ids: List[str] 高亮编号（全局唯一）
+                - id_map: Dict[str, Dict] 元素信息，包含 tagName/className/innerText/center_x/center_y
+                  其中 center_x/center_y 为“主页面视口坐标”，可直接用于 page.mouse.click
+        """
+        if not page:
+            page = self.page
+
+        import logging
+
+        ids = []
+        merged_id_map: Dict[str, Dict[str, Any]] = {}
+
+        # helper: frame scroll
+        async def _get_frame_scroll(f):
+            try:
+                return await f.evaluate("() => ({x: window.scrollX, y: window.scrollY})")
+            except Exception:
+                return {"x": 0, "y": 0}
+
+        # helper: accumulate iframe offsets to top-page viewport
+        async def _accumulate_iframe_offsets(f):
+            total_left, total_top = 0, 0
+            cur = f
+            while True:
+                parent = cur.parent_frame
+                if not parent:
+                    break
+                try:
+                    el = await cur.frame_element()
+                    rect = await el.evaluate("(el) => el.getBoundingClientRect()")
+                    total_left += rect.get('left', 0) or 0
+                    total_top  += rect.get('top', 0) or 0
+                except Exception:
+                    pass
+                cur = parent
+            return total_left, total_top
+
+        # 1) main frame first (base = 0)
+        try:
+            payload_main = f"window.__highlightBase__ = 0; window._highlight = {str(enable_highlight).lower()};\n{self.read_js(self.DETECTOR_JS)}"
+            await page.evaluate(payload_main)
+            main_tree, main_id_map = await page.evaluate("buildElementTree()")
+            # 保持与单 frame 逻辑一致：直接使用 detector 返回的文档坐标（含主页面滚动）
+            for k, v in (main_id_map or {}).items():
+                key = str(k)
+                ids.append(key)
+                merged_id_map[key] = {kk: v.get(kk) for kk in ('tagName','className','innerText','center_x','center_y') if v.get(kk) is not None}
+        except Exception as e:
+            logging.warning(f"Main frame crawl failed: {e}")
+
+        # 2) sub frames
+        frames = page.frames
+        for idx, frame in enumerate(frames):
+            if frame == page.main_frame:
+                continue
+            try:
+                highlight_base = (idx + 1) * 1000
+                payload = f"window.__highlightBase__ = {highlight_base}; window._highlight = {str(enable_highlight).lower()};\n{self.read_js(self.DETECTOR_JS)}"
+                await frame.evaluate(payload)
+                iframe_tree, iframe_id_map = await frame.evaluate("buildElementTree()")
+                frame_scroll = await _get_frame_scroll(frame)
+                total_left, total_top = await _accumulate_iframe_offsets(frame)
+                top_scroll = await _get_frame_scroll(page)
+
+                for k, v in (iframe_id_map or {}).items():
+                    try:
+                        # frame document -> frame viewport
+                        vx = (v.get('center_x') or 0) - (frame_scroll.get('x') or 0)
+                        vy = (v.get('center_y') or 0) - (frame_scroll.get('y') or 0)
+                        # frame viewport -> top-page viewport
+                        gvx = total_left + vx
+                        gvy = total_top + vy
+                        # top-page viewport -> top-page document
+                        gx = gvx + (top_scroll.get('x') or 0)
+                        gy = gvy + (top_scroll.get('y') or 0)
+                        v['center_x'] = gx
+                        v['center_y'] = gy
+                    except Exception:
+                        pass
+                    key = str(k)
+                    ids.append(key)
+                    merged_id_map[key] = {kk: v.get(kk) for kk in ('tagName','className','innerText','center_x','center_y') if v.get(kk) is not None}
+            except Exception as e:
+                logging.warning(f"Sub frame crawl failed: {e}")
+
+        return ids, merged_id_map
 
     # ------------------------------------------------------------------------
     # DOM CACHE MANAGEMENT
