@@ -213,7 +213,7 @@ class LLMPrompt:
           "actions": [
             {
               "thought": "Reasoning for this action and why it's feasible on the current page.",
-              "type": "Tap" | "Hover" | "Scroll" | "Input" | "Sleep" | "Check" | "Upload" | "KeyboardPress" | "Drag" | "SelectDropdown" | "GoToPage" | "GoBack" | "GetNewPage" | "Mouse",
+              "type": "Tap" | "Hover" | "Scroll" | "Input" | "Clear" | "Sleep" | "Upload" | "KeyboardPress" | "Drag" | "SelectDropdown" | "GoToPage" | "GoBack" | "GetNewPage" | "Mouse",
               "param": {...} | null,
               "locate": {...} | null
             }
