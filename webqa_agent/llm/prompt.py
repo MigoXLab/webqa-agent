@@ -51,7 +51,7 @@ class LLMPrompt:
 
     ## Anchor Usage Rule
     Anchors are strictly used for reference during disambiguation.
-    **NEVER** interact (Tap/Hover/Check) with anchor elements directly.
+    **NEVER** interact (Tap/Hover) with anchor elements directly.
 
     ## Scroll Behavior Constraints
     - Avoid planning `Scroll` if the page is already at the bottom.
@@ -97,6 +97,8 @@ class LLMPrompt:
         * `value` is the final required input value based on the existing input. No matter what modifications are required, just provide the final value to replace the existing input value.
         * For Input actions, if the page or validation message requires a minimum length, the value you generate MUST strictly meet or exceed this length. For Chinese, count each character as 1.
         * `clear_before_type`: Set to `true` if the instruction explicitly says to 'clear' the field before typing, or if you are correcting a previous failed input. Defaults to `false`.
+        - type: 'Clear', clear the content of an input field
+        * {{ locate: {{ id: string }}, param: null }}
         - type: 'KeyboardPress', press a key
         * {{ param: {{ value: string }} }}
         - type: 'Upload', upload a file (or click the upload button)
@@ -124,9 +126,6 @@ class LLMPrompt:
         * use this action when you need to go back to the previous page in the browser history, similar to clicking the browser's back button.
         - type: 'Sleep'
         * {{ param: {{ timeMs: number }} }}
-        - type: 'Check'
-        * {{ param: null }}
-        * use this action when the instruction is a "check" or "verify" or "validate" statement.
         - type: 'Drag', drag an slider or element from source to target position
           For Drag action, use the following format:
             {
@@ -193,8 +192,10 @@ class LLMPrompt:
 
     ### Supported Actions:
     - Tap: Click on a specified page element (such as a button or link). Typically used to trigger a click event.
+    - Hover: Move the mouse over a specified page element (such as a button or link). Typically used to show tooltip or hover effect.
     - Scroll: Scroll the page or a specific region. You can specify the direction (down, up), the scroll distance, or scroll to the edge of the page/region.
     - Input: Enter text into an input field or textarea. This action will replace the current value with the specified final value.
+    - Clear: Clear the content of an input field. Requires the input's external id in locate.
     - Sleep: Wait for a specified amount of time (in milliseconds). Useful for waiting for page loads or asynchronous content to render.
     - Upload: Upload a file
     - KeyboardPress: Simulate a keyboard key press, such as Enter, Tab, or arrow keys.
@@ -212,7 +213,7 @@ class LLMPrompt:
           "actions": [
             {
               "thought": "Reasoning for this action and why it's feasible on the current page.",
-              "type": "Tap" | "Scroll" | "Input" | "Sleep" | "Check" | "Upload" | "KeyboardPress" | "Drag" | "SelectDropdown" | "GoToPage" | "GoBack" | "GetNewPage" | "Mouse",
+              "type": "Tap" | "Hover" | "Scroll" | "Input" | "Sleep" | "Check" | "Upload" | "KeyboardPress" | "Drag" | "SelectDropdown" | "GoToPage" | "GoBack" | "GetNewPage" | "Mouse",
               "param": {...} | null,
               "locate": {...} | null
             }
@@ -235,13 +236,12 @@ class LLMPrompt:
           - If mismatched: `targetVerified: false` and include error: "Planned element does not match the user's expected target"
         - If an expected element is not found on the page:
           - For imperative instruction: return `error` and empty actions.
-          - For tolerant instructions like "If popup exists, close it", return `FalsyConditionStatement` action.
 
         ---
 
         ### Unified Few-shot Examples
 
-        #### Example 1: Tap + Sleep + Check (task incomplete)
+        #### Example 1: Tap + Sleep (task incomplete)
         "Click send button and wait 50s"
 
         ====================
@@ -275,7 +275,7 @@ class LLMPrompt:
         }
         ```
 
-        #### Example 2: Scroll + Check (scroll history aware)
+        #### Example 2: Scroll (scroll history aware)
         ```json
         {
           "actions": [

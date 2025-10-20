@@ -14,8 +14,6 @@ class ActionExecutor:
             "Clear": self._execute_clear,
             "Scroll": self._execute_scroll,
             "KeyboardPress": self._execute_keyboard_press,
-            "FalsyConditionStatement": self._execute_falsy,
-            "Check": self._execute_check,
             "GetNewPage": self._execute_get_new_page,
             "Upload": self._execute_upload,
             "SelectDropdown": self._execute_select_dropdown,
@@ -146,14 +144,6 @@ class ActionExecutor:
             return {"success": True, "message": "Keyboard press successful."}
         else:
             return {"success": False, "message": "Keyboard press failed."}
-
-    async def _execute_falsy(self, action):
-        """Execute falsy condition statement."""
-        return {"success": True, "message": "Falsy condition met."}
-
-    async def _execute_check(self, action):
-        """Execute check action."""
-        return {"success": True, "message": "Check action completed."}
 
     async def _execute_get_new_page(self, action):
         """Execute get new page action."""
