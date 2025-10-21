@@ -7,14 +7,80 @@ This tool allows the agent to interact with the web page.
 import datetime
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Optional, Type
 
 from langchain_core.tools import BaseTool
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from webqa_agent.crawler.deep_crawler import DeepCrawler
-from webqa_agent.testers.case_gen.prompts.tool_prompts import get_error_detection_prompt
 from webqa_agent.testers.function_tester import UITester
+
+
+class UIActionSchema(BaseModel):
+    """Schema for UI action tool arguments."""
+
+    action: str = Field(
+        description=(
+            "Type of UI action to perform. Supported actions: "
+            "'Tap' - Click on an element; "
+            "'Input' - Type text into an input field; "
+            "'SelectDropdown' - Select an option from a dropdown menu (supports cascade selection with comma-separated paths); "
+            "'Scroll' - Scroll the page with configurable modes ('once', 'untilBottom', 'untilTop') and optional distance; "
+            "'Clear' - Clear the content of an input field; "
+            "'Hover' - Hover over an element; "
+            "'KeyboardPress' - Press a keyboard key; "
+            "'Upload' - Upload a file; "
+            "'Drag' - Drag an element to a target position; "
+            "'GoToPage' - Navigate to a URL; "
+            "'GoBack' - Navigate back to the previous page; "
+            "'Sleep' - Wait for a specified duration; "
+            "'GetNewPage' - Switch to a new tab or window; "
+            "'Mouse' - Move mouse cursor or scroll mouse wheel."
+        )
+    )
+
+    target: str = Field(
+        description=(
+            "Element identifier or selector to target. "
+            "For most actions, this should be the element ID from the page description. "
+            "For Scroll actions, this can be a scroll target description. "
+            "For GoToPage action, this should be the URL."
+        )
+    )
+
+    value: Optional[str] = Field(
+        default=None,
+        description=(
+            "Value to use for the action. "
+            "Required for 'Input' action (text to type), "
+            "'SelectDropdown' action (option text or comma-separated cascade path like 'Category,Subcategory,Item'), "
+            "'Scroll' action (direction 'up' or 'down', with optional scrollType and distance description), "
+            "'KeyboardPress' action (key name like 'Enter', 'Tab', 'Escape', etc.), "
+            "'Upload' action (file path), "
+            "'Sleep' action (duration in milliseconds), "
+            "'Mouse' action (operation type: 'move' for cursor positioning or 'wheel' for scrolling). "
+            "Optional for 'Drag' action (target position description), "
+            "'GetNewPage' action (tab/window identifier). "
+            "Optional for other actions."
+        )
+    )
+
+    description: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional custom description of what this action is intended to do. "
+            "Helps provide context for the action in test reports."
+        )
+    )
+
+    clear_before_type: bool = Field(
+        default=False,
+        description=(
+            "Whether to clear the input field before typing. "
+            "Only applicable for 'Input' action. "
+            "Set to True to clear existing content before typing new text."
+        )
+    )
 
 
 class UITool(BaseTool):
@@ -22,6 +88,7 @@ class UITool(BaseTool):
 
     name: str = "execute_ui_action"
     description: str = "Executes a UI action using the UITester and returns a structured summary of the new page state."
+    args_schema: Type[BaseModel] = UIActionSchema
     ui_tester_instance: UITester = Field(...)
 
     async def get_full_page_context(
@@ -36,7 +103,7 @@ class UITool(BaseTool):
         logging.debug(f"Retrieving page context for analysis (viewport_only={viewport_only})")
         page = self.ui_tester_instance.driver.get_page()
         dp = DeepCrawler(page)
-        await dp.crawl(highlight=True, highlight_text=True, viewport_only=viewport_only)
+        await dp.crawl(highlight=True, filter_text=True, viewport_only=viewport_only)
         page_structure = dp.get_text()
 
         screenshot = None
@@ -77,20 +144,47 @@ class UITool(BaseTool):
             logging.debug(f"Using custom description: {description}")
 
         # Build the action phrase
-        if action.lower() == "click":
+        if action == "Tap":
             action_phrase = f"Click on the {target}"
-        elif action.lower() == "type":
+        elif action == "Input":
             if clear_before_type:
                 action_phrase = f"Clear the {target} field and then type '{value}'"
                 logging.debug("Using clear-before-type strategy")
             else:
                 action_phrase = f"Type '{value}' in the {target}"
-        elif action.lower() == "selectdropdown":
+        elif action == "SelectDropdown":
             action_phrase = f"From the {target}, select the option '{value}'"
-        elif action.lower() == "scroll":
+        elif action == "Scroll":
             action_phrase = f"Scroll {value or 'down'} on the page"
-        elif action.lower() == "clear":
+        elif action == "Clear":
             action_phrase = f"Clear the content of {target}"
+        elif action == "Hover":
+            action_phrase = f"Hover over {target}"
+        elif action == "KeyboardPress":
+            action_phrase = f"Press the {value} key"
+        elif action == "Upload":
+            action_phrase = f"Upload file {value} to {target}"
+        elif action == "Drag":
+            action_phrase = f"Drag {target}"
+            if value:
+                action_phrase += f" to {value}"
+        elif action == "GoToPage":
+            action_phrase = f"Navigate to {target}"
+        elif action == "GoBack":
+            action_phrase = f"Navigate back to the previous page"
+        elif action == "Sleep":
+            action_phrase = f"Wait for {value or '1000'} milliseconds"
+        elif action == "GetNewPage":
+            action_phrase = f"Switch to new page/tab"
+            if value:
+                action_phrase += f" {value}"
+        elif action == "Mouse":
+            if value and 'move' in value.lower():
+                action_phrase = f"Move mouse cursor to {target}"
+            elif value and 'wheel' in value.lower():
+                action_phrase = f"Scroll mouse wheel on {target}"
+            else:
+                action_phrase = f"Perform mouse action on {target}"
         else:
             action_phrase = f"{action} on {target}"
             if value:
@@ -168,11 +262,28 @@ class UITool(BaseTool):
             return f"[FAILURE] {error_msg}"
 
 
+class UIAssertionSchema(BaseModel):
+    """Schema for UI assertion tool arguments."""
+
+    assertion: str = Field(
+        description=(
+            "The assertion or validation to perform on the current page state. "
+            "Should be a clear, specific statement of what to verify. "
+            "Examples: "
+            "'The login button should be visible', "
+            "'The error message should contain the text \"Invalid credentials\"', "
+            "'The page title should be \"Dashboard\"', "
+            "'There should be 5 items in the shopping cart'."
+        )
+    )
+
+
 class UIAssertTool(BaseTool):
     """A tool to perform UI assertions via a UITester instance."""
 
     name: str = "execute_ui_assertion"
     description: str = "Performs a UI assertion/validation using the UITester and returns the verification result."
+    args_schema: Type[BaseModel] = UIAssertionSchema
     ui_tester_instance: UITester = Field(...)
 
     def _run(self, assertion: str) -> str:

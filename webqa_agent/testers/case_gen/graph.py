@@ -296,7 +296,7 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
     logging.debug(f"current page crawled result: {page_content_summary}")
     screenshot = await ui_tester._actions.b64_page_screenshot(file_name="reflection", save_to_log=False, full_page=False)
     await dp.remove_marker()
-    await dp.crawl(highlight=False, highlight_text=True, viewport_only=True)
+    await dp.crawl(highlight=False, filter_text=True, viewport_only=True)
     page_structure = dp.get_text()
     logging.debug(f"----- reflection ---- Page structure: {page_structure}")
 

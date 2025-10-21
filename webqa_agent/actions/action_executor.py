@@ -145,7 +145,7 @@ class ActionExecutor:
         else:
             return {"success": False, "message": "Keyboard press failed."}
 
-    async def _execute_get_new_page(self, action):
+    async def _execute_get_new_page(self):
         """Execute get new page action."""
         success = await self._actions.get_new_page()
         if success:
@@ -313,7 +313,7 @@ class ActionExecutor:
             logging.error(f"Go to page action failed: {str(e)}")
             return {"success": False, "message": f"Navigation failed: {str(e)}", "playwright_error": str(e)}
 
-    async def _execute_go_back(self, action):
+    async def _execute_go_back(self):
         """Execute browser back navigation action."""
         try:
             if hasattr(self._actions, 'go_back'):

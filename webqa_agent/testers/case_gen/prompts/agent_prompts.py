@@ -32,7 +32,7 @@ You have access to two specialized testing tools:
 
 - **`execute_ui_action(action: str, target: str, value: Optional[str], description: Optional[str], clear_before_type: bool)`**:
   Performs UI interactions such as clicking, typing, scrolling, dropdown selection, etc.
-  - `action`: Action type ('click', 'type', 'scroll', 'SelectDropdown', 'clear', etc.)
+  - `action`: Action type ('Tap', 'Input', 'Scroll', 'SelectDropdown', 'Clear', 'Hover', 'KeyboardPress', 'Upload', 'Drag', 'GoToPage', 'GoBack', 'Sleep', 'GetNewPage', 'Mouse')
   - `target`: Element descriptor (use natural language descriptions)
   - `value`: Input value for text-based actions
   - `description`: Purpose of the action for logging and context
@@ -285,9 +285,9 @@ Standard failures that allow test continuation should use the regular `[FAILURE]
 
 ### Example 1: Form Field Validation Recovery
 **Context**: Registration form with character length requirements
-**Initial Action**: `execute_ui_action(action='type', target='usage scenario field', value='test', description='Enter usage scenario')`
+**Initial Action**: `execute_ui_action(action='Input', target='usage scenario field', value='test', description='Enter usage scenario')`
 **Tool Response**: `[FAILURE] Validation error detected: Usage scenario must be at least 30 characters`
-**Recovery Action**: `execute_ui_action(action='type', target='usage scenario field', value='This is a comprehensive usage scenario description for research and development purposes in academic and commercial settings', description='Enter extended usage scenario meeting length requirements', clear_before_type=True)`
+**Recovery Action**: `execute_ui_action(action='Input', target='usage scenario field', value='This is a comprehensive usage scenario description for research and development purposes in academic and commercial settings', description='Enter extended usage scenario meeting length requirements', clear_before_type=True)`
 
 ### Example 2: Dropdown Language Adaptation
 **Context**: Bilingual interface with Chinese dropdown options
@@ -297,37 +297,37 @@ Standard failures that allow test continuation should use the regular `[FAILURE]
 
 ### Example 3: Dynamic Content Waiting
 **Context**: API-populated dropdown requiring wait time
-**Step 1**: `execute_ui_action(action='click', target='country dropdown', description='Open country selection dropdown')`
+**Step 1**: `execute_ui_action(action='Tap', target='country dropdown', description='Open country selection dropdown')`
 **Tool Response**: `[SUCCESS] Dropdown opened, loading options...`
-**Step 2**: `execute_ui_action(action='sleep', target='', value='2000', description='Wait for options to load')`
-**Step 3**: `execute_ui_action(action='click', target='option containing "Canada"', description='Select Canada from loaded options')`
+**Step 2**: `execute_ui_action(action='Sleep', target='', value='2000', description='Wait for options to load')`
+**Step 3**: `execute_ui_action(action='Tap', target='option containing "Canada"', description='Select Canada from loaded options')`
 
 ### Example 4: Element State Change Handling
 **Context**: Button state change after interaction
-**Initial Action**: `execute_ui_action(action='click', target='submit button', description='Submit form')`
+**Initial Action**: `execute_ui_action(action='Tap', target='submit button', description='Submit form')`
 **Tool Response**: `[SUCCESS] Form submitted, button disabled and showing 'Processing...'`
-**Recovery Action**: `execute_ui_action(action='wait', target='', value='3000', description='Wait for processing to complete')`
+**Recovery Action**: `execute_ui_action(action='Sleep', target='', value='3000', description='Wait for processing to complete')`
 **Follow-up**: `execute_ui_assertion(assertion='Verify success message appears and button returns to normal state')`
 
 ### Example 5: Multi-Action Instruction Handling
 **Context**: Instruction contains multiple actions "Browse the homepage top navigation bar, click one by one: 'Visitor', 'Alumni', 'Donate', 'Careers' links"
 **First Action Identification**: The first mentioned action is "Visitor" link
-**Correct Agent Response**: Execute only the FIRST action - `execute_ui_action(action='click', target='Visitor link', description='Click the visitor link in the top navigation bar')`
-**Tool Response**: `[SUCCESS] Action 'click' on 'Visitor link' completed successfully`
+**Correct Agent Response**: Execute only the FIRST action - `execute_ui_action(action='Tap', target='Visitor link', description='Click the visitor link in the top navigation bar')`
+**Tool Response**: `[SUCCESS] Action 'Tap' on 'Visitor link' completed successfully`
 **Agent Reporting**: Report completion of the single action and allow framework to proceed to next step
 
 ### Example 6: Another Multi-Action Instruction Handling
 **Context**: Instruction contains "Click on the 'Login', 'Register', and 'Help' links in the header"
 **First Action Identification**: The first mentioned action is "Login" link
-**Correct Agent Response**: Execute only the FIRST action - `execute_ui_action(action='click', target='Login link', description='Click the Login link in the header')`
-**Tool Response**: `[SUCCESS] Action 'click' on 'Login link' completed successfully`
+**Correct Agent Response**: Execute only the FIRST action - `execute_ui_action(action='Tap', target='Login link', description='Click the Login link in the header')`
+**Tool Response**: `[SUCCESS] Action 'Tap' on 'Login link' completed successfully`
 **Agent Reporting**: Report completion of the single action and allow framework to proceed to next step
 
 ### Example 7: Numbered List Multi-Action Handling
 **Context**: Instruction contains "1. Enter username 2. Enter password 3. Click submit"
 **First Action Identification**: The numbered step #1 is "Enter username"
-**Correct Agent Response**: Execute only the FIRST action - `execute_ui_action(action='type', target='username field', value='testuser', description='Enter username in the username field')`
-**Tool Response**: `[SUCCESS] Action 'type' on 'username field' completed successfully`
+**Correct Agent Response**: Execute only the FIRST action - `execute_ui_action(action='Input', target='username field', value='testuser', description='Enter username in the username field')`
+**Tool Response**: `[SUCCESS] Action 'Input' on 'username field' completed successfully`
 **Agent Reporting**: Report completion of the single action and allow framework to proceed to next step
 
 ## Test Completion Protocol
