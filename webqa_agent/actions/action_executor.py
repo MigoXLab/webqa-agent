@@ -14,14 +14,13 @@ class ActionExecutor:
             "Clear": self._execute_clear,
             "Scroll": self._execute_scroll,
             "KeyboardPress": self._execute_keyboard_press,
-            "FalsyConditionStatement": self._execute_falsy,
-            "Check": self._execute_check,
             "GetNewPage": self._execute_get_new_page,
             "Upload": self._execute_upload,
             "SelectDropdown": self._execute_select_dropdown,
             "Drag": self._execute_drag,
             "GoToPage": self._execute_go_to_page,  # Added missing action
             "GoBack": self._execute_go_back,  # Added browser back navigation
+            "Mouse": self._execute_mouse, # Added mouse action
         }
 
     async def initialize(self):
@@ -145,14 +144,6 @@ class ActionExecutor:
             return {"success": True, "message": "Keyboard press successful."}
         else:
             return {"success": False, "message": "Keyboard press failed."}
-
-    async def _execute_falsy(self, action):
-        """Execute falsy condition statement."""
-        return {"success": True, "message": "Falsy condition met."}
-
-    async def _execute_check(self, action):
-        """Execute check action."""
-        return {"success": True, "message": "Check action completed."}
 
     async def _execute_get_new_page(self, action):
         """Execute get new page action."""
@@ -336,3 +327,67 @@ class ActionExecutor:
         except Exception as e:
             logging.error(f"Go back action failed: {str(e)}")
             return {"success": False, "message": f"Go back failed: {str(e)}", "playwright_error": str(e)}
+    
+    async def _execute_mouse(self, action):
+        """Unified mouse action supporting move and wheel.
+
+        Accepted param formats:
+        - { op: "move", x: number, y: number }
+        - { op: "wheel", deltaX: number, deltaY: number }
+        - Back-compat: if op is omitted, decide by presence of keys
+        """
+        try:
+            param = action.get("param")
+            if not param or not isinstance(param, dict):
+                return {"success": False, "message": "Missing or invalid param for mouse action"}
+            
+            op = param.get("op")
+            
+            # Auto-detect if op not provided or empty
+            if not op:
+                if "x" in param and "y" in param:
+                    op = "move"
+                elif "deltaX" in param or "deltaY" in param:
+                    op = "wheel"
+                else:
+                    return {"success": False, "message": "Missing mouse operation parameters (x/y or deltaX/deltaY)"}
+
+            if op == "move":
+                if not self._validate_params(action, ["param.x", "param.y"]):
+                    return {"success": False, "message": "Missing x or y coordinates for mouse move"}
+                
+                x = param.get("x")
+                y = param.get("y")
+                
+                # Validate coordinates are numbers
+                if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+                    return {"success": False, "message": "x and y coordinates must be numbers"}
+                
+                success = await self._actions.mouse_move(x, y)
+                if success:
+                    return {"success": True, "message": f"Mouse moved to ({x}, {y})"}
+                else:
+                    return {"success": False, "message": "Mouse move action failed"}
+
+            elif op == "wheel":
+                # Default missing keys to 0
+                dx = param.get("deltaX", 0)
+                dy = param.get("deltaY", 0)
+                
+                # Validate deltas are numbers
+                if not isinstance(dx, (int, float)) or not isinstance(dy, (int, float)):
+                    return {"success": False, "message": "deltaX and deltaY must be numbers"}
+                
+                success = await self._actions.mouse_wheel(dx, dy)
+                if success:
+                    return {"success": True, "message": f"Mouse wheel scrolled (deltaX: {dx}, deltaY: {dy})"}
+                else:
+                    return {"success": False, "message": "Mouse wheel action failed"}
+
+            else:
+                logging.error(f"Unknown mouse op: {op}. Expected 'move' or 'wheel'.")
+                return {"success": False, "message": f"Unknown mouse operation: {op}. Expected 'move' or 'wheel'"}
+                
+        except Exception as e:
+            logging.error(f"Mouse action execution failed: {str(e)}")
+            return {"success": False, "message": f"Mouse action failed with an exception: {e}"}

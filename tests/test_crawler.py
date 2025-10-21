@@ -26,9 +26,9 @@ class TestCrawler:
 
     # Different crawl parameter combinations to test
     CRAWL_PARAMS = [
-        {'name': 'highlight_crawl', 'highlight': True, 'highlight_text': False, 'viewport_only': True},
-        {'name': 'text_highlight_crawl', 'highlight': True, 'highlight_text': True, 'viewport_only': True},
-        {'name': 'viewport_highlight_crawl', 'highlight': True, 'highlight_text': False, 'viewport_only': True},
+        {'name': 'highlight_crawl', 'highlight': True, 'filter_text': False, 'viewport_only': True},
+        {'name': 'text_highlight_crawl', 'highlight': True, 'filter_text': True, 'viewport_only': True},
+        {'name': 'viewport_highlight_crawl', 'highlight': True, 'filter_text': False, 'viewport_only': True},
     ]
 
     # Directories (class attributes; accessible via self)
@@ -155,7 +155,7 @@ class TestCrawler:
         crawl_result = await crawler.crawl(
             page=self.page,
             highlight=params['highlight'],
-            highlight_text=params['highlight_text'],
+            filter_text=params['filter_text'],
             viewport_only=params['viewport_only'],
         )
         crawl_data = crawl_result.element_tree

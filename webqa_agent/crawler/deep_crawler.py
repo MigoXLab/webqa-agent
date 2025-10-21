@@ -4,7 +4,6 @@ import json
 import time
 import logging
 import re
-
 from pathlib import Path
 from playwright.async_api import Page, async_playwright
 from webqa_agent.crawler.dom_tree import DomTreeNode as dtree
@@ -20,16 +19,16 @@ from itertools import groupby
 # ============================================================================
 
 def get_time() -> str:
-    """
-    Get the current time as a formatted string.
-    Timestamp format: YYYYMMDD_HH_MM_SS
+    """Get the current time as a formatted string.
+    
+    Returns:
+        Timestamp format: YYYYMMDD_HH_MM_SS
     """
     return datetime.datetime.now().strftime("%Y%m%d_%H_%M_%S")
 
 
 def _normalize_keys(template: Optional[Iterable[Union[str, "ElementKey"]]]) -> Optional[List[str]]:
-    """
-    Normalize template keys to string format.
+    """Normalize template keys to string format.
     
     Args:
         template: Template containing ElementKey enums or strings.
@@ -43,7 +42,6 @@ def _normalize_keys(template: Optional[Iterable[Union[str, "ElementKey"]]]) -> O
     normalized = []
     for key in template:
         try:
-            # Handle both Enum and string types
             normalized.append(key.value if hasattr(key, "value") else str(key))
         except Exception:
             normalized.append(str(key))
@@ -71,6 +69,7 @@ class ElementKey(Enum):
     IS_IN_VIEWPORT = "isInViewport"
     XPATH = "xpath"
     SELECTOR = "selector"
+    STYLES = "styles"
 
     def __str__(self) -> str:
         """Return the string representation of the enum value."""
@@ -94,12 +93,7 @@ class ElementMap(BaseModel):
     data: Dict[str, Any] = Field(default_factory=dict)
 
     def clean(self, output_template: Optional[List[str]] = None) -> Dict[str, Any]:
-        """
-        Cleanses the element map, returning a new dictionary with filtered attributes.
-    
-        This method filters element data based on the output template and applies
-        additional cleaning logic to remove unwanted attributes like 'class' from
-        the attributes field.
+        """Cleanses the element map, returning a new dictionary with filtered attributes.
     
         Args:
             output_template: A list of keys to include in the cleansed output.
@@ -110,39 +104,26 @@ class ElementMap(BaseModel):
         """
         if output_template is None:
             output_template = DEFAULT_OUTPUT_TEMPLATE
-    
+
         def to_key(k):
             """Convert key to string format."""
             return k.value if hasattr(k, "value") else str(k)
-    
-        def clean_attributes(attrs):
-            """Remove 'class' key from attributes."""
-            if not isinstance(attrs, dict):
-                return attrs
-            
-            # Create a copy and remove 'class' key
-            cleaned_attrs = {k: v for k, v in attrs.items() if k != 'class'}
-            return cleaned_attrs
-    
+
         keys = [to_key(k) for k in output_template]
         result = {}
-    
+
         for e_id, element_data in self.data.items():
             cleaned_element = {}
-    
+
             for key in keys:
                 value = element_data.get(key)
                 if value is not None:
-                    # Apply special cleaning for attributes field
-                    if key == str(ElementKey.ATTRIBUTES):
-                        cleaned_element[key] = clean_attributes(value)
-                    else:
-                        cleaned_element[key] = value
-    
+                    cleaned_element[key] = value
+
             # Only include elements that have at least one valid field
             if cleaned_element:
                 result[e_id] = cleaned_element
-    
+
         return result
 
 
@@ -174,36 +155,23 @@ class CrawlResultModel(BaseModel):
 # ============================================================================
 
 class DeepCrawler:
-    """
-    A deep crawler for recursively extracting structured element data from web pages.
+    """A deep crawler for recursively extracting structured element data from web pages.
 
     This class injects JavaScript payloads into Playwright pages to build hierarchical
     DOM element trees, capturing properties such as visibility, interactivity, and
     positioning. It supports element highlighting for debugging and provides comprehensive
     DOM change detection capabilities.
-
-    Key functionalities:
-    - Recursive DOM crawling with structured data extraction
-    - Interactive element identification and filtering
-    - Visual element highlighting for debugging purposes
-    - DOM change detection between crawl operations
-    - Screenshot capture and result serialization
     """
 
-    # Class-level constants for file and directory paths
-    default_dir = Path(__file__).parent
-
-    # JavaScript injection files
-    DETECTOR_JS = default_dir / "js" / "element_detector.js"
-    REMOVER_JS = default_dir / "js" / "marker_remover.js"
-
-    # Output directories
-    RESULTS_DIR = default_dir / "results"
-    SCREENSHOTS_DIR = default_dir / "screenshots"
+    # Class-level constants
+    _default_dir = Path(__file__).parent
+    DETECTOR_JS = _default_dir / "js" / "element_detector.js"
+    REMOVER_JS = _default_dir / "js" / "marker_remover.js"
+    RESULTS_DIR = _default_dir / "results"
+    SCREENSHOTS_DIR = _default_dir / "screenshots"
 
     def __init__(self, page: Page, depth: int = 0):
-        """
-        Initialize the DeepCrawler instance.
+        """Initialize the DeepCrawler instance.
     
         Args:
             page: The Playwright Page object to crawl.
@@ -230,22 +198,19 @@ class DeepCrawler:
             self,
             page: Optional[Page] = None,
             highlight: bool = False,
-            highlight_text: bool = False,
+            filter_text: bool = False,
+            filter_media: bool = False,
             viewport_only: bool = False,
             include_styles: bool = False,
             cache_dom: bool = False,
     ) -> CrawlResultModel:
-        """Inject JavaScript to crawl the page and return structured element
-        data.
-
-        This method executes the element detector script in the browser context,
-        building a hierarchical representation of the DOM with detailed element
-        properties and optional visual highlighting.
+        """Inject JavaScript to crawl the page and return structured element data.
 
         Args:
             page: The Playwright Page to crawl. Defaults to instance page.
-            highlight: Whether to visually highlight detected elements.
-            highlight_text: Whether to highlight text nodes (requires highlight=True).
+            highlight: Whether to visually highlight detected elements (master switch).
+            filter_text: Whether to include text nodes in highlighting when highlight is enabled.
+            filter_media: Whether to include media elements in highlighting when highlight is enabled.
             viewport_only: Whether to restrict detection to current viewport.
             include_styles: Whether to include styles in the result.
             cache_dom: Whether to cache the DOM tree for change detection.
@@ -257,11 +222,23 @@ class DeepCrawler:
             page = self.page
 
         try:
+            
+            try:
+                if hasattr(page, 'frames') and len(page.frames) > 1:
+                    _, merged_id_map = await self.crawl_all_frames(page=page, enable_highlight=highlight)
+                    return CrawlResultModel(
+                        flat_element_map=ElementMap(data=merged_id_map or {}),
+                        element_tree={}
+                    )
+            except Exception:
+                pass
+            
             # Build JavaScript payload for element detection
             payload = (
                 f"(() => {{"
                 f"window._highlight = {str(highlight).lower()};"
-                f"window._highlightText = {str(highlight_text).lower()};\n"
+                f"window._filterText = {str(filter_text).lower()};\n"
+                f"window._filterMedia = {str(filter_media).lower()};\n"
                 f"window._viewportOnly = {str(viewport_only).lower()};\n"
                 f"window._includeStyles = {str(include_styles).lower()};\n"
                 f"\n{self.read_js(self.DETECTOR_JS)}"
@@ -272,13 +249,11 @@ class DeepCrawler:
             # Execute JavaScript and extract results
             self.element_tree, flat_elements = await page.evaluate(payload)
 
-            # Create result model with extracted data
             result = CrawlResultModel(
                 flat_element_map=ElementMap(data=flat_elements or {}),
                 element_tree=self.element_tree or {}
             )
 
-            # Perform DOM change detection if caching is enabled
             if cache_dom and self.element_tree:
                 dom_tree = dtree.build_root(self.element_tree)
                 self._cached_element_tree = dom_tree
@@ -301,11 +276,7 @@ class DeepCrawler:
             return CrawlResultModel()
 
     def extract_interactive_elements(self, get_new_elems: bool = False) -> Dict:
-        """
-        Extract interactive elements with comprehensive attribute information.
-
-        Filters DOM nodes based on interactivity, visibility, and positioning
-        criteria to identify actionable elements on the page.
+        """Extract interactive elements with comprehensive attribute information.
 
         Args:
             get_new_elems: Whether to return only newly detected elements.
@@ -327,7 +298,6 @@ class DeepCrawler:
 
         if root:
             for node in root.pre_iter():
-                # Apply basic element filtering criteria
                 if not all([
                     node.isInteractive,
                     node.isVisible,
@@ -434,6 +404,99 @@ class DeepCrawler:
 
         # Return as compact JSON array
         return json.dumps(items, ensure_ascii=False, separators=(",", ":"))
+
+    async def crawl_all_frames(self, page=None, enable_highlight=False):
+        """
+        爬取主页面及所有 iframe 的元素（支持跨域与嵌套），并返回统一的 id 列表与映射。
+
+        返回值:
+            (ids, id_map)
+                - ids: List[str] 高亮编号（全局唯一）
+                - id_map: Dict[str, Dict] 元素信息，包含 tagName/className/innerText/center_x/center_y
+                  其中 center_x/center_y 为“主页面视口坐标”，可直接用于 page.mouse.click
+        """
+        if not page:
+            page = self.page
+
+        import logging
+
+        ids = []
+        merged_id_map: Dict[str, Dict[str, Any]] = {}
+
+        # helper: frame scroll
+        async def _get_frame_scroll(f):
+            try:
+                return await f.evaluate("() => ({x: window.scrollX, y: window.scrollY})")
+            except Exception:
+                return {"x": 0, "y": 0}
+
+        # helper: accumulate iframe offsets to top-page viewport
+        async def _accumulate_iframe_offsets(f):
+            total_left, total_top = 0, 0
+            cur = f
+            while True:
+                parent = cur.parent_frame
+                if not parent:
+                    break
+                try:
+                    el = await cur.frame_element()
+                    rect = await el.evaluate("(el) => el.getBoundingClientRect()")
+                    total_left += rect.get('left', 0) or 0
+                    total_top  += rect.get('top', 0) or 0
+                except Exception:
+                    pass
+                cur = parent
+            return total_left, total_top
+
+        # 1) main frame first (base = 0)
+        try:
+            payload_main = f"window.__highlightBase__ = 0; window._highlight = {str(enable_highlight).lower()};\n{self.read_js(self.DETECTOR_JS)}"
+            await page.evaluate(payload_main)
+            main_tree, main_id_map = await page.evaluate("buildElementTree()")
+            # 保持与单 frame 逻辑一致：直接使用 detector 返回的文档坐标（含主页面滚动）
+            for k, v in (main_id_map or {}).items():
+                key = str(k)
+                ids.append(key)
+                merged_id_map[key] = {kk: v.get(kk) for kk in ('tagName','className','innerText','center_x','center_y') if v.get(kk) is not None}
+        except Exception as e:
+            logging.warning(f"Main frame crawl failed: {e}")
+
+        # 2) sub frames
+        frames = page.frames
+        for idx, frame in enumerate(frames):
+            if frame == page.main_frame:
+                continue
+            try:
+                highlight_base = (idx + 1) * 1000
+                payload = f"window.__highlightBase__ = {highlight_base}; window._highlight = {str(enable_highlight).lower()};\n{self.read_js(self.DETECTOR_JS)}"
+                await frame.evaluate(payload)
+                iframe_tree, iframe_id_map = await frame.evaluate("buildElementTree()")
+                frame_scroll = await _get_frame_scroll(frame)
+                total_left, total_top = await _accumulate_iframe_offsets(frame)
+                top_scroll = await _get_frame_scroll(page)
+
+                for k, v in (iframe_id_map or {}).items():
+                    try:
+                        # frame document -> frame viewport
+                        vx = (v.get('center_x') or 0) - (frame_scroll.get('x') or 0)
+                        vy = (v.get('center_y') or 0) - (frame_scroll.get('y') or 0)
+                        # frame viewport -> top-page viewport
+                        gvx = total_left + vx
+                        gvy = total_top + vy
+                        # top-page viewport -> top-page document
+                        gx = gvx + (top_scroll.get('x') or 0)
+                        gy = gvy + (top_scroll.get('y') or 0)
+                        v['center_x'] = gx
+                        v['center_y'] = gy
+                    except Exception:
+                        pass
+                    key = str(k)
+                    ids.append(key)
+                    merged_id_map[key] = {kk: v.get(kk) for kk in ('tagName','className','innerText','center_x','center_y') if v.get(kk) is not None}
+            except Exception as e:
+                logging.warning(f"Sub frame crawl failed: {e}")
+
+        return ids, merged_id_map
 
     # ------------------------------------------------------------------------
     # DOM CACHE MANAGEMENT
