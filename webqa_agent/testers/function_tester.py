@@ -92,12 +92,12 @@ class UITester:
 
             # Crawl current page state
             dp = DeepCrawler(self.page)
-            prev = await dp.crawl(highlight=True, viewport_only=True, cache_dom=True)
+            prev = await dp.crawl(highlight=True, viewport_only=False, cache_dom=True)
             await self._actions.update_element_buffer(prev.raw_dict())
             logging.debug(f"previous dom before action : {prev.to_llm_json()}")
 
             # Take screenshot
-            marker_screenshot = await self._actions.b64_page_screenshot(file_name="marker")
+            marker_screenshot = await self._actions.b64_page_screenshot(file_name="marker", full_page=True)
 
             # Remove marker
             await dp.remove_marker()
@@ -123,7 +123,7 @@ class UITester:
 
             end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            curr = await dp.crawl(highlight=True, viewport_only=True, cache_dom=True)
+            curr = await dp.crawl(highlight=True, viewport_only=False, cache_dom=True)
             diff_elems = curr.diff_dict([str(ElementKey.TAG_NAME), str(ElementKey.INNER_TEXT), str(ElementKey.ATTRIBUTES), str(ElementKey.CENTER_X), str(ElementKey.CENTER_Y)])
             if diff_elems:
                 logging.debug(f"Diff element map after action: {diff_elems}")
@@ -203,15 +203,15 @@ class UITester:
 
             # Crawl current page
             dp = DeepCrawler(self.page)
-            await dp.crawl(highlight=True, filter_text=True, viewport_only=True)
+            await dp.crawl(highlight=True, filter_text=True, viewport_only=False)
 
-            marker_screenshot = await self._actions.b64_page_screenshot(file_name="marker")
+            marker_screenshot = await self._actions.b64_page_screenshot(file_name="marker", full_page=True)
             await dp.remove_marker()
 
-            screenshot = await self._actions.b64_page_screenshot(file_name="assert")
+            screenshot = await self._actions.b64_page_screenshot(file_name="assert", full_page=True)
 
             # Get page structure
-            await dp.crawl(highlight=False, filter_text=True, viewport_only=True)
+            await dp.crawl(highlight=False, filter_text=True, viewport_only=False)
             page_structure = dp.get_text()
 
             # Prepare LLM input

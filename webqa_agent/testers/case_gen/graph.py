@@ -85,30 +85,25 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
     logging.info(f"Deep crawling page structure and elements for initial test plan...")
     page = await ui_tester.get_current_page()
     dp = DeepCrawler(page)
-    await dp.crawl(highlight=True, viewport_only=True)
+    await dp.crawl(highlight=True, viewport_only=False)
     screenshot = await ui_tester._actions.b64_page_screenshot(
-        file_name="plan_or_replan", save_to_log=False, full_page=False
+        file_name="plan_or_replan", save_to_log=False, full_page=True
     )
     await dp.remove_marker()
-    await dp.crawl(highlight=False, filter_text=True, viewport_only=True)
+    await dp.crawl(highlight=False, filter_text=True, viewport_only=False)
     page_structure = dp.get_text()
     logging.debug(f"----- plan cases ---- Page structure: {page_structure}")
 
     business_objectives = state.get("business_objectives", "No specific business objectives provided.")
-    completed_cases = state.get("completed_cases")
 
     language = state.get('language', 'zh-CN')
     system_prompt = get_test_case_planning_system_prompt(
         business_objectives=business_objectives,
-        completed_cases=completed_cases,
         language=language,
     )
 
     user_prompt = get_test_case_planning_user_prompt(
         state_url=state["url"],
-        completed_cases=completed_cases,
-        reflection_history=state.get("reflection_history"),
-        remaining_objectives=state.get("remaining_objectives"),
     )
 
     logging.info("Generating initial test plan - Sending request to LLM...")
@@ -283,7 +278,7 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
     # Use DeepCrawler to get interactive elements mapping and highlighted screenshot
     logging.info(f"Deep crawling page structure and elements for reflection and replanning analysis...")
     dp = DeepCrawler(page)
-    curr = await dp.crawl(highlight=True, viewport_only=True)
+    curr = await dp.crawl(highlight=True, viewport_only=False)
     # Include position information for better replanning decisions
     reflect_template = [
         str(ElementKey.TAG_NAME),
@@ -294,9 +289,9 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
     ]
     page_content_summary = curr.clean_dict(reflect_template)
     logging.debug(f"current page crawled result: {page_content_summary}")
-    screenshot = await ui_tester._actions.b64_page_screenshot(file_name="reflection", save_to_log=False, full_page=False)
+    screenshot = await ui_tester._actions.b64_page_screenshot(file_name="reflection", save_to_log=False, full_page=True)
     await dp.remove_marker()
-    await dp.crawl(highlight=False, filter_text=True, viewport_only=True)
+    await dp.crawl(highlight=False, filter_text=True, viewport_only=False)
     page_structure = dp.get_text()
     logging.debug(f"----- reflection ---- Page structure: {page_structure}")
 

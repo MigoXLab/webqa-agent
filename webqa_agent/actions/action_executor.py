@@ -2,6 +2,8 @@ import asyncio
 import logging
 from typing import Dict, List, Optional
 
+from webqa_agent.actions.action_handler import action_context_var
+
 
 class ActionExecutor:
     def __init__(self, action_handler):
@@ -66,31 +68,131 @@ class ActionExecutor:
         """Execute clear action on an input field."""
         if not self._validate_params(action, ["locate.id"]):
             return {"success": False, "message": "Missing locate.id for clear action"}
+
         success = await self._actions.clear(action.get("locate").get("id"))
+
+        # Read action context for detailed error information
+        ctx = action_context_var.get()
+
         if success:
             return {"success": True, "message": "Clear action successful."}
         else:
-            return {"success": False, "message": "Clear action failed. The element might not be clearable."}
+            # Enrich error message with context
+            base_message = "Clear action failed."
+            error_details = {}
+
+            if ctx and ctx.error_type:
+                error_details = {
+                    "error_type": ctx.error_type,
+                    "error_reason": ctx.error_reason,
+                    "attempted_strategies": ctx.attempted_strategies,
+                    "element_info": ctx.element_info,
+                    "playwright_error": ctx.playwright_error
+                }
+
+                # Make message more specific based on error type
+                if ctx.error_type == "element_not_found":
+                    base_message = "Clear failed: Element not found on page."
+                elif ctx.error_type == "element_not_typeable":
+                    base_message = "Clear failed: Element cannot be cleared."
+                elif ctx.error_type == "playwright_error":
+                    base_message = "Clear failed: Browser interaction error."
+            else:
+                base_message = "Clear action failed. The element might not be clearable."
+
+            return {
+                "success": False,
+                "message": base_message,
+                "error_details": error_details
+            }
 
     async def _execute_tap(self, action):
         """Execute tap/click action."""
         if not self._validate_params(action, ["locate.id"]):
             return {"success": False, "message": "Missing locate.id for tap action"}
+
         success = await self._actions.click(action.get("locate").get("id"))
+
+        # Read action context for detailed error information
+        ctx = action_context_var.get()
+
         if success:
             return {"success": True, "message": "Tap action successful."}
         else:
-            return {"success": False, "message": "Tap action failed. The element might not be clickable."}
+            # Enrich error message with context
+            base_message = "Tap action failed."
+            error_details = {}
+
+            if ctx and ctx.error_type:
+                error_details = {
+                    "error_type": ctx.error_type,
+                    "error_reason": ctx.error_reason,
+                    "attempted_strategies": ctx.attempted_strategies,
+                    "element_info": ctx.element_info,
+                    "playwright_error": ctx.playwright_error
+                }
+
+                # Make message more specific based on error type
+                if ctx.error_type == "scroll_failed":
+                    base_message = f"Tap failed: Could not scroll element into viewport after {ctx.scroll_attempts} attempts."
+                elif ctx.error_type == "scroll_timeout_lazy_loading":
+                    base_message = f"Tap failed: Element viewport positioning succeeded but page content unstable after {ctx.scroll_attempts} attempts."
+                elif ctx.error_type == "element_not_found":
+                    base_message = f"Tap failed: Element not found on page."
+                elif ctx.error_type == "element_not_clickable":
+                    base_message = f"Tap failed: Element exists but is not clickable."
+                elif ctx.error_type == "playwright_error":
+                    base_message = f"Tap failed: Browser interaction error."
+            else:
+                base_message = "Tap action failed. The element might not be clickable."
+
+            return {
+                "success": False,
+                "message": base_message,
+                "error_details": error_details  # NEW: additional metadata, won't break existing consumers
+            }
 
     async def _execute_hover(self, action):
         """Execute hover action."""
         if not self._validate_params(action, ["locate.id"]):
             return {"success": False, "message": "Missing locate.id for hover action"}
+
         success = await self._actions.hover(action.get("locate").get("id"))
+
+        # Read action context for detailed error information
+        ctx = action_context_var.get()
+
         if success:
             return {"success": True, "message": "Hover action successful."}
         else:
-            return {"success": False, "message": "Hover action failed. The element might not be hoverable."}
+            # Enrich error message with context
+            base_message = "Hover action failed."
+            error_details = {}
+
+            if ctx and ctx.error_type:
+                error_details = {
+                    "error_type": ctx.error_type,
+                    "error_reason": ctx.error_reason,
+                    "attempted_strategies": ctx.attempted_strategies,
+                    "element_info": ctx.element_info,
+                    "playwright_error": ctx.playwright_error
+                }
+
+                # Make message more specific based on error type
+                if ctx.error_type == "scroll_failed":
+                    base_message = f"Hover failed: Could not scroll element into viewport after {ctx.scroll_attempts} attempts."
+                elif ctx.error_type == "element_not_found":
+                    base_message = f"Hover failed: Element not found on page or missing coordinates."
+                elif ctx.error_type == "playwright_error":
+                    base_message = f"Hover failed: Browser interaction error."
+            else:
+                base_message = "Hover action failed. The element might not be hoverable."
+
+            return {
+                "success": False,
+                "message": base_message,
+                "error_details": error_details
+            }
 
     async def _execute_sleep(self, action):
         """Execute sleep/wait action."""
@@ -110,12 +212,44 @@ class ActionExecutor:
             success = await self._actions.type(
                 action.get("locate").get("id"), value, clear_before_type=clear_before_type
             )
+
+            # Read action context for detailed error information
+            ctx = action_context_var.get()
+
             if success:
                 return {"success": True, "message": "Input action successful."}
             else:
+                # Enrich error message with context
+                base_message = "Input action failed."
+                error_details = {}
+
+                if ctx and ctx.error_type:
+                    error_details = {
+                        "error_type": ctx.error_type,
+                        "error_reason": ctx.error_reason,
+                        "attempted_strategies": ctx.attempted_strategies,
+                        "element_info": ctx.element_info,
+                        "playwright_error": ctx.playwright_error
+                    }
+
+                    # Make message more specific based on error type
+                    if ctx.error_type == "scroll_failed":
+                        base_message = f"Input failed: Could not scroll element into viewport after {ctx.scroll_attempts} attempts."
+                    elif ctx.error_type == "element_not_found":
+                        base_message = f"Input failed: Element not found on page."
+                    elif ctx.error_type == "element_not_typeable":
+                        base_message = f"Input failed: Element exists but cannot accept text input."
+                    elif ctx.error_type == "element_not_clickable":
+                        base_message = f"Input failed: Could not focus element for typing."
+                    elif ctx.error_type == "playwright_error":
+                        base_message = f"Input failed: Browser interaction error."
+                else:
+                    base_message = "Input action failed. The element might not be available for typing."
+
                 return {
                     "success": False,
-                    "message": "Input action failed. The element might not be available for typing.",
+                    "message": base_message,
+                    "error_details": error_details
                 }
         except Exception as e:
             logging.error(f"Action '_execute_input' execution failed: {str(e)}")
@@ -139,11 +273,39 @@ class ActionExecutor:
         """Execute keyboard press action."""
         if not self._validate_params(action, ["param.value"]):
             return {"success": False, "message": "Missing param.value for keyboard press action"}
+
         success = await self._actions.keyboard_press(action.get("param").get("value"))
+
+        # Read action context for detailed error information
+        ctx = action_context_var.get()
+
         if success:
             return {"success": True, "message": "Keyboard press successful."}
         else:
-            return {"success": False, "message": "Keyboard press failed."}
+            # Enrich error message with context
+            base_message = "Keyboard press failed."
+            error_details = {}
+
+            if ctx and ctx.error_type:
+                error_details = {
+                    "error_type": ctx.error_type,
+                    "error_reason": ctx.error_reason,
+                    "attempted_strategies": ctx.attempted_strategies,
+                    "element_info": ctx.element_info,
+                    "playwright_error": ctx.playwright_error
+                }
+
+                # Make message more specific based on error type
+                if ctx.error_type == "playwright_error":
+                    base_message = "Keyboard press failed: Browser interaction error."
+            else:
+                base_message = "Keyboard press failed."
+
+            return {
+                "success": False,
+                "message": base_message,
+                "error_details": error_details
+            }
 
     async def _execute_get_new_page(self):
         """Execute get new page action."""
@@ -157,11 +319,43 @@ class ActionExecutor:
         """Execute upload action."""
         if not self._validate_params(action, ["locate.id"]):
             return {"success": False, "message": "Missing locate.id for upload action"}
+
         success = await self._actions.upload_file(action.get("locate").get("id"), file_path)
+
+        # Read action context for detailed error information
+        ctx = action_context_var.get()
+
         if success:
             return {"success": True, "message": "File upload successful."}
         else:
-            return {"success": False, "message": "File upload failed."}
+            # Enrich error message with context
+            base_message = "File upload failed."
+            error_details = {}
+
+            if ctx and ctx.error_type:
+                error_details = {
+                    "error_type": ctx.error_type,
+                    "error_reason": ctx.error_reason,
+                    "attempted_strategies": ctx.attempted_strategies,
+                    "element_info": ctx.element_info,
+                    "playwright_error": ctx.playwright_error
+                }
+
+                # Make message more specific based on error type
+                if ctx.error_type == "file_upload_failed":
+                    base_message = "File upload failed: Operation error."
+                elif ctx.error_type == "element_not_found":
+                    base_message = "File upload failed: No file input element found on page."
+                elif ctx.error_type == "playwright_error":
+                    base_message = "File upload failed: Browser interaction error."
+            else:
+                base_message = "File upload failed."
+
+            return {
+                "success": False,
+                "message": base_message,
+                "error_details": error_details
+            }
 
     async def _execute_select_dropdown(self, action):
         """Execute select dropdown action."""
@@ -299,34 +493,172 @@ class ActionExecutor:
                 page = getattr(self._actions, 'page', None)
                 if page:
                     navigation_performed = await self._actions.smart_navigate_to_page(page, url)
-                    message = "Navigated to page" if navigation_performed else "Already on target page"
-                    return {"success": True, "message": message}
+
+                    # Read action context for detailed error information
+                    ctx = action_context_var.get()
+
+                    if navigation_performed or navigation_performed is None:
+                        message = "Navigated to page" if navigation_performed else "Already on target page"
+                        return {"success": True, "message": message}
+                    else:
+                        # Navigation failed, enrich error message with context
+                        base_message = "Navigation to page failed."
+                        error_details = {}
+
+                        if ctx and ctx.error_type:
+                            error_details = {
+                                "error_type": ctx.error_type,
+                                "error_reason": ctx.error_reason,
+                                "attempted_strategies": ctx.attempted_strategies,
+                                "element_info": ctx.element_info,
+                                "playwright_error": ctx.playwright_error
+                            }
+
+                            # Make message more specific based on error type
+                            if ctx.error_type == "playwright_error":
+                                base_message = f"Navigation failed: Browser interaction error."
+                            else:
+                                base_message = f"Navigation failed: {ctx.error_reason or 'Unknown reason'}"
+
+                        return {
+                            "success": False,
+                            "message": base_message,
+                            "error_details": error_details
+                        }
 
             # Fallback to regular navigation
             if hasattr(self._actions, 'go_to_page') and hasattr(self._actions, 'page'):
                 await self._actions.go_to_page(self._actions.page, url)
-                return {"success": True, "message": "Successfully navigated to page"}
+
+                # Read action context for detailed error information
+                ctx = action_context_var.get()
+
+                # Check if navigation succeeded by checking context
+                if not ctx or not ctx.error_type:
+                    return {"success": True, "message": "Successfully navigated to page"}
+                else:
+                    # Navigation failed, enrich error message with context
+                    base_message = "Navigation to page failed."
+                    error_details = {
+                        "error_type": ctx.error_type,
+                        "error_reason": ctx.error_reason,
+                        "attempted_strategies": ctx.attempted_strategies,
+                        "element_info": ctx.element_info,
+                        "playwright_error": ctx.playwright_error
+                    }
+
+                    if ctx.error_type == "playwright_error":
+                        base_message = f"Navigation failed: Browser interaction error."
+                    else:
+                        base_message = f"Navigation failed: {ctx.error_reason or 'Unknown reason'}"
+
+                    return {
+                        "success": False,
+                        "message": base_message,
+                        "error_details": error_details
+                    }
 
             return {"success": False, "message": "Navigation method not available"}
 
         except Exception as e:
             logging.error(f"Go to page action failed: {str(e)}")
-            return {"success": False, "message": f"Navigation failed: {str(e)}", "playwright_error": str(e)}
+
+            # Read action context for any additional error information
+            ctx = action_context_var.get()
+            error_details = {}
+
+            if ctx and ctx.error_type:
+                error_details = {
+                    "error_type": ctx.error_type,
+                    "error_reason": ctx.error_reason,
+                    "attempted_strategies": ctx.attempted_strategies,
+                    "element_info": ctx.element_info,
+                    "playwright_error": ctx.playwright_error or str(e)
+                }
+            else:
+                error_details = {
+                    "error_type": "playwright_error",
+                    "error_reason": "Navigation failed with an exception",
+                    "attempted_strategies": [],
+                    "element_info": {},
+                    "playwright_error": str(e)
+                }
+
+            return {
+                "success": False,
+                "message": f"Navigation failed: {str(e)}",
+                "error_details": error_details
+            }
 
     async def _execute_go_back(self):
         """Execute browser back navigation action."""
         try:
             if hasattr(self._actions, 'go_back'):
                 success = await self._actions.go_back()
+
+                # Read action context for detailed error information
+                ctx = action_context_var.get()
+
                 if success:
                     return {"success": True, "message": "Successfully navigated back to previous page"}
                 else:
-                    return {"success": False, "message": "Go back navigation failed"}
+                    # Navigation failed, enrich error message with context
+                    base_message = "Go back navigation failed."
+                    error_details = {}
+
+                    if ctx and ctx.error_type:
+                        error_details = {
+                            "error_type": ctx.error_type,
+                            "error_reason": ctx.error_reason,
+                            "attempted_strategies": ctx.attempted_strategies,
+                            "element_info": ctx.element_info,
+                            "playwright_error": ctx.playwright_error
+                        }
+
+                        # Make message more specific based on error type
+                        if ctx.error_type == "playwright_error":
+                            base_message = f"Go back failed: Browser interaction error."
+                        else:
+                            base_message = f"Go back failed: {ctx.error_reason or 'Unknown reason'}"
+                    else:
+                        base_message = "Go back navigation failed. No previous page in history or navigation not possible."
+
+                    return {
+                        "success": False,
+                        "message": base_message,
+                        "error_details": error_details
+                    }
             else:
                 return {"success": False, "message": "Go back action not supported by action handler"}
         except Exception as e:
             logging.error(f"Go back action failed: {str(e)}")
-            return {"success": False, "message": f"Go back failed: {str(e)}", "playwright_error": str(e)}
+
+            # Read action context for any additional error information
+            ctx = action_context_var.get()
+            error_details = {}
+
+            if ctx and ctx.error_type:
+                error_details = {
+                    "error_type": ctx.error_type,
+                    "error_reason": ctx.error_reason,
+                    "attempted_strategies": ctx.attempted_strategies,
+                    "element_info": ctx.element_info,
+                    "playwright_error": ctx.playwright_error or str(e)
+                }
+            else:
+                error_details = {
+                    "error_type": "playwright_error",
+                    "error_reason": "Go back navigation failed with an exception",
+                    "attempted_strategies": [],
+                    "element_info": {},
+                    "playwright_error": str(e)
+                }
+
+            return {
+                "success": False,
+                "message": f"Go back failed: {str(e)}",
+                "error_details": error_details
+            }
     
     async def _execute_mouse(self, action):
         """Unified mouse action supporting move and wheel.
@@ -340,9 +672,9 @@ class ActionExecutor:
             param = action.get("param")
             if not param or not isinstance(param, dict):
                 return {"success": False, "message": "Missing or invalid param for mouse action"}
-            
+
             op = param.get("op")
-            
+
             # Auto-detect if op not provided or empty
             if not op:
                 if "x" in param and "y" in param:
@@ -355,39 +687,123 @@ class ActionExecutor:
             if op == "move":
                 if not self._validate_params(action, ["param.x", "param.y"]):
                     return {"success": False, "message": "Missing x or y coordinates for mouse move"}
-                
+
                 x = param.get("x")
                 y = param.get("y")
-                
+
                 # Validate coordinates are numbers
                 if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
                     return {"success": False, "message": "x and y coordinates must be numbers"}
-                
+
                 success = await self._actions.mouse_move(x, y)
+
+                # Read action context for detailed error information
+                ctx = action_context_var.get()
+
                 if success:
                     return {"success": True, "message": f"Mouse moved to ({x}, {y})"}
                 else:
-                    return {"success": False, "message": "Mouse move action failed"}
+                    # Mouse move failed, enrich error message with context
+                    base_message = "Mouse move action failed."
+                    error_details = {}
+
+                    if ctx and ctx.error_type:
+                        error_details = {
+                            "error_type": ctx.error_type,
+                            "error_reason": ctx.error_reason,
+                            "attempted_strategies": ctx.attempted_strategies,
+                            "element_info": ctx.element_info,
+                            "playwright_error": ctx.playwright_error
+                        }
+
+                        # Make message more specific based on error type
+                        if ctx.error_type == "playwright_error":
+                            base_message = f"Mouse move failed: Browser interaction error."
+                        else:
+                            base_message = f"Mouse move failed: {ctx.error_reason or 'Unknown reason'}"
+                    else:
+                        base_message = f"Mouse move to ({x}, {y}) failed. The operation might not be supported."
+
+                    return {
+                        "success": False,
+                        "message": base_message,
+                        "error_details": error_details
+                    }
 
             elif op == "wheel":
                 # Default missing keys to 0
                 dx = param.get("deltaX", 0)
                 dy = param.get("deltaY", 0)
-                
+
                 # Validate deltas are numbers
                 if not isinstance(dx, (int, float)) or not isinstance(dy, (int, float)):
                     return {"success": False, "message": "deltaX and deltaY must be numbers"}
-                
+
                 success = await self._actions.mouse_wheel(dx, dy)
+
+                # Read action context for detailed error information
+                ctx = action_context_var.get()
+
                 if success:
                     return {"success": True, "message": f"Mouse wheel scrolled (deltaX: {dx}, deltaY: {dy})"}
                 else:
-                    return {"success": False, "message": "Mouse wheel action failed"}
+                    # Mouse wheel failed, enrich error message with context
+                    base_message = "Mouse wheel action failed."
+                    error_details = {}
+
+                    if ctx and ctx.error_type:
+                        error_details = {
+                            "error_type": ctx.error_type,
+                            "error_reason": ctx.error_reason,
+                            "attempted_strategies": ctx.attempted_strategies,
+                            "element_info": ctx.element_info,
+                            "playwright_error": ctx.playwright_error
+                        }
+
+                        # Make message more specific based on error type
+                        if ctx.error_type == "playwright_error":
+                            base_message = f"Mouse wheel scroll failed: Browser interaction error."
+                        else:
+                            base_message = f"Mouse wheel scroll failed: {ctx.error_reason or 'Unknown reason'}"
+                    else:
+                        base_message = f"Mouse wheel scroll (deltaX: {dx}, deltaY: {dy}) failed. The operation might not be supported."
+
+                    return {
+                        "success": False,
+                        "message": base_message,
+                        "error_details": error_details
+                    }
 
             else:
                 logging.error(f"Unknown mouse op: {op}. Expected 'move' or 'wheel'.")
                 return {"success": False, "message": f"Unknown mouse operation: {op}. Expected 'move' or 'wheel'"}
-                
+
         except Exception as e:
             logging.error(f"Mouse action execution failed: {str(e)}")
-            return {"success": False, "message": f"Mouse action failed with an exception: {e}"}
+
+            # Read action context for any additional error information
+            ctx = action_context_var.get()
+            error_details = {}
+
+            if ctx and ctx.error_type:
+                error_details = {
+                    "error_type": ctx.error_type,
+                    "error_reason": ctx.error_reason,
+                    "attempted_strategies": ctx.attempted_strategies,
+                    "element_info": ctx.element_info,
+                    "playwright_error": ctx.playwright_error or str(e)
+                }
+            else:
+                error_details = {
+                    "error_type": "playwright_error",
+                    "error_reason": "Mouse action failed with an exception",
+                    "attempted_strategies": [],
+                    "element_info": {},
+                    "playwright_error": str(e)
+                }
+
+            return {
+                "success": False,
+                "message": f"Mouse action failed with an exception: {e}",
+                "error_details": error_details
+            }

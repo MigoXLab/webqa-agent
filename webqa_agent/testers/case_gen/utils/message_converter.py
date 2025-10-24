@@ -91,36 +91,3 @@ def convert_intermediate_steps_to_messages(
             continue
 
     return messages
-
-
-def merge_messages_with_intermediate_steps(
-        existing_messages: List[BaseMessage],
-        intermediate_steps: List[Tuple[Any, str]],
-        include_intermediate: bool = True
-) -> List[BaseMessage]:
-    """Merge existing messages with converted intermediate steps.
-
-    Args:
-        existing_messages: Current message history
-        intermediate_steps: New intermediate steps to add
-        include_intermediate: Whether to include intermediate steps in messages
-
-    Returns:
-        Merged list of messages
-    """
-    if not include_intermediate or not intermediate_steps:
-        return existing_messages
-
-    # Convert intermediate steps to messages
-    intermediate_messages = convert_intermediate_steps_to_messages(intermediate_steps)
-
-    # Merge with existing messages
-    # Note: We append intermediate messages to maintain chronological order
-    merged_messages = existing_messages + intermediate_messages
-
-    logging.debug(
-        f"Merged {len(existing_messages)} existing messages with "
-        f"{len(intermediate_messages)} intermediate messages"
-    )
-
-    return merged_messages
