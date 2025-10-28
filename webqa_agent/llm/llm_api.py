@@ -20,7 +20,7 @@ class LLMAPI:
             self.base_url = self.llm_config.get("base_url")
             # Use AsyncOpenAI client for async operations
             self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url, timeout=60) if self.base_url else AsyncOpenAI(
-                api_key=self.api_key, timeout=60)
+                api_key=self.api_key, timeout=360)
             logging.debug(f"AsyncOpenAI client initialized with API key: {self.api_key}, Model: {self.model} and base URL: {self.base_url}")
         else:
             raise ValueError("Invalid API type or missing credentials. LLM client not initialized.")
@@ -89,7 +89,8 @@ class LLMAPI:
             create_kwargs = {
                 "model": self.llm_config.get("model"),
                 "messages": messages,
-                "timeout": 60,
+                "timeout": 360,
+                "max_tokens": 16000,
             }
             # Always send user/configured temperature when provided (default handled upstream)
             if temperature is not None:

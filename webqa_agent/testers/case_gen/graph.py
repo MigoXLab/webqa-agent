@@ -389,9 +389,7 @@ async def execute_single_case(state: MainGraphState) -> dict:
     default_text = '智能功能测试' if language == 'zh-CN' else 'AI Function Test'
 
     with Display.display(f"{default_text} - {case_name}"):
-        # === 开始跟踪case数据 ===
-        # 使用start_case来同时设置名称和开始数据跟踪
-        ui_tester_instance.start_case(case_name, case)
+        # Note: Case recording is managed by agent_worker_node via CentralCaseRecorder
         logging.debug(f"Executing functional test: {case_name}")
 
         # Conditionally reset the session based on the test case flag
@@ -427,6 +425,7 @@ async def execute_single_case(state: MainGraphState) -> dict:
         # The result from the worker now contains the single case result
         case_result = result.get("case_result")
         modified_case = result.get("modified_case")
+        recorded_case = result.get("recorded_case")
 
         # Handle case modification when dynamic steps were added
         if modified_case:
@@ -454,11 +453,8 @@ async def execute_single_case(state: MainGraphState) -> dict:
             else:
                 logging.warning(f"Current test case index {current_index} out of range for test_cases array (length: {len(test_cases)})")
 
-        # === 结束case跟踪并获取详细数据 ===
-        final_status = case_result.get("status", "completed") if case_result else "failed"
-        final_summary = case_result.get("final_summary", "") if case_result else "No summary available"
-
-        ui_tester_instance.finish_case(final_status, final_summary)
+        # Note: Case finalization is handled by agent_worker_node
+        # The recorded_case from worker contains all step data
 
         # Check if this is a critical failure that should skip reflection
         if case_result and case_result.get("status") == "failed":
@@ -477,6 +473,10 @@ async def execute_single_case(state: MainGraphState) -> dict:
         # Include updated test_cases if case was modified
         if modified_case:
             return_value["test_cases"] = test_cases
+        
+        # Store recorded_case data from CentralCaseRecorder into graph state
+        if recorded_case:
+            return_value["recorded_cases"] = [recorded_case]
 
         return return_value
 
@@ -548,12 +548,13 @@ async def aggregate_results(state: MainGraphState) -> Dict[str, Dict[str, Any]]:
 
 
 async def cleanup_session(state: MainGraphState) -> Dict:
-    """Closes the browser session."""
-    logging.debug("Cleaning up browser session...")
-    ui_tester = state["ui_tester_instance"]
-    if ui_tester:
-        browser_results = await ui_tester.end_session()
-    return browser_results
+    """Cleanup hook for graph workflow completion.
+    
+    Note: Browser session cleanup is handled by test_runners.py to collect
+    monitoring data. This node serves as a graph completion marker.
+    """
+    logging.debug("Graph workflow cleanup node reached")
+    return {}
 
 
 # Define the main graph

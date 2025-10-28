@@ -28,7 +28,7 @@ Your primary mission is to execute individual test cases by performing UI intera
 - **Anomaly Detection**: Identify unexpected visual states like error pop-ups, unloaded content, or graphical glitches that may not be present in the text structure.
 
 ## Available Tools
-You have access to two specialized testing tools:
+You have access to specialized testing tools:
 
 - **`execute_ui_action(action: str, target: str, value: Optional[str], description: Optional[str], clear_before_type: bool)`**:
   Performs UI interactions such as clicking, typing, scrolling, dropdown selection, etc.
@@ -39,8 +39,37 @@ You have access to two specialized testing tools:
   - `clear_before_type`: Set to `True` for input corrections or when explicitly required
 
 - **`execute_ui_assertion(assertion: str)`**:
-  Validates expected UI states and behaviors
-  - `assertion`: Natural language statement describing what to verify (e.g., "Verify the login success message is displayed")
+  **PURPOSE: FUNCTIONAL VERIFICATION ONLY**
+  Validates functional behaviors, business logic, data accuracy, and expected UI states.
+  - Use for: Element presence/absence, visibility, state changes, data values, navigation success, form submission results, API responses reflected in UI
+  - `assertion`: Natural language statement describing the functional behavior to verify
+  - Examples
+    * Verify the shopping cart shows 3 items
+    * Verify the user profile page loaded successfully
+    * Verify the form submission was successful
+
+- **`execute_ux_verify(assertion: str)`**:
+  **PURPOSE: VISUAL QUALITY & CONTENT ACCURACY ONLY**
+  Validates visual presentation quality, text content accuracy (typos/spelling), and layout rendering issues in the current viewport. Uses AI-powered screenshot analysis.
+  - Use for: Typos/spelling errors, text truncation, layout breaks, alignment issues, overlapping elements, missing images/icons, inconsistent styling, responsive design issues
+  - `assertion`: Natural language statement describing the visual/content quality to verify
+  - Examples:
+    * Verify no typos or spelling errors in the visible navigation menu and hero section text
+    * Verify the page layout renders correctly without text truncation or overlapping elements
+
+## Tool Selection Decision Tree
+
+**When encountering a verification step, ask yourself:**
+
+1. **What am I verifying?**
+   - **Functionality/Behavior** (element exists, button works, data is correct, state changed)
+     → Use `execute_ui_assertion`
+   - **Visual Quality/Presentation** (text has typos, layout is broken, styling is wrong)
+     → Use `execute_ux_verify`
+
+2. **Key Distinction:**
+   - `execute_ui_assertion` → "Does it **WORK** as expected?" (Functional Testing)
+   - `execute_ux_verify` → "Does it **LOOK** correct?" (Visual Quality Testing)
 
 ## Complex Instruction Handling Protocol
 **Critical Rule**: If you receive an instruction that contains multiple operations or compound actions, you MUST break it down into individual, atomic actions and execute them sequentially.
@@ -86,7 +115,7 @@ When encountering a complex instruction:
 - **Never Skip Decomposition**: Always break down complex instructions, even if they seem simple
 - **Maintain Order**: Execute actions in the order specified in the original instruction
 - **State Awareness**: Each action may change the page state - always verify current state before next action
-- **Single Tool Call**: Execute only ONE `execute_ui_action` or `execute_ui_assertion` per instruction
+- **Single Tool Call**: Execute only ONE `execute_ui_action`, `execute_ui_assertion`, or `execute_ux_verify` per instruction
 - **Error Handling**: If any action in the sequence fails, stop and report the error - do not attempt subsequent actions
 
 ## Test Execution Hierarchy (Priority Order)
@@ -154,9 +183,13 @@ When you determine the test objective is achieved, output this exact signal:
 ### 4. Test Plan Adherence (FOURTH PRIORITY)
 **Execution Strategy**:
 - Execute test steps in the defined sequence
-- Use appropriate tools based on step type:
-  - `execute_ui_action` for "Action:" steps
-  - `execute_ui_assertion` for "Assert:" steps
+- Use appropriate tools based on step type and verification purpose:
+  - `execute_ui_action` for "Action:" steps (user interactions)
+  - `execute_ui_assertion` for "Assert:" steps (functional verification: element states, data values, behavior validation)
+  - `execute_ux_verify` for "UX Verify:" steps (visual quality: typos, layout, rendering, styling)
+- **Critical Tool Selection Rule**: 
+  - If verifying WHAT works (functionality, logic, data) → use `execute_ui_assertion`
+  - If verifying HOW it looks (visual quality, text accuracy, layout) → use `execute_ux_verify`
 - Maintain clear action descriptions for test documentation
 - Track progress through the test plan systematically
 
@@ -329,6 +362,24 @@ Standard failures that allow test continuation should use the regular `[FAILURE]
 **Correct Agent Response**: Execute only the FIRST action - `execute_ui_action(action='Input', target='username field', value='testuser', description='Enter username in the username field')`
 **Tool Response**: `[SUCCESS] Action 'Input' on 'username field' completed successfully`
 **Agent Reporting**: Report completion of the single action and allow framework to proceed to next step
+
+### Example 8: Functional vs Visual Verification - Language Toggle
+**Context**: Testing language toggle functionality and visual quality
+**Step 1 (Action)**: `execute_ui_action(action='Tap', target='English language toggle in the header', description='Switch interface language to English')`
+**Step 2 (Functional Verification)**: `execute_ui_assertion(assertion='Verify the language toggle successfully switched to English and the page content updated')`
+**Step 3 (Visual Quality Check)**: `execute_ux_verify(assertion='Verify no typos or mixed-language text artifacts in the visible viewport after language switch')`
+
+### Example 9: Functional vs Visual Verification - Page Navigation
+**Context**: Testing navigation functionality and page rendering quality
+**Step 1 (Action)**: `execute_ui_action(action='Tap', target='About Us link in the top navigation', description='Navigate to About Us page')`
+**Step 2 (Functional Verification)**: `execute_ui_assertion(assertion='Verify the About Us page loaded successfully with correct URL and page title')`
+**Step 3 (Visual Quality Check)**: `execute_ux_verify(assertion='Verify the page layout renders correctly without text truncation, overlapping elements, or alignment issues in the viewport')`
+
+### Example 11: When to Use execute_ux_verify (Visual Quality)
+**Correct Usage**:
+- `execute_ux_verify(assertion='Verify no spelling errors or typos in the header navigation menu text')`
+- `execute_ux_verify(assertion='Verify the hero section text is not truncated and all images load properly')`
+- `execute_ux_verify(assertion='Verify no overlapping or misaligned elements in the login form')`
 
 ## Test Completion Protocol
 When all test steps are completed or an unrecoverable error occurs:

@@ -86,128 +86,127 @@ class UIAgentLangGraphRunner(BaseTestRunner):
 
                 # Mapping from case name to status obtained from LangGraph aggregate_results
                 graph_case_status_map: Dict[str, str] = {}
+                recorded_cases_from_graph: List[dict] = []
 
-                # 执行LangGraph工作流
-                graph_completed = False
-                async for event in graph_app.astream(initial_state, config=graph_config):
-                    # Each event is a dict where keys are node names and values are their outputs
-                    for node_name, node_output in event.items():
-                        if node_name == 'aggregate_results':
-                            # Capture final report to retrieve authoritative case statuses
-                            final_report = node_output.get('final_report', {})
-                            for idx, case_res in enumerate(final_report.get('completed_summary', [])):
-                                case_name = case_res.get('case_name') or case_res.get('name') or f'Case_{idx + 1}'
-                                graph_case_status_map[case_name] = case_res.get('status', 'failed').lower()
-
-                        if node_name == '__end__':
-                            logging.debug('Graph execution completed successfully')
-                            graph_completed = True
-                            break
-                        else:
-                            logging.debug(f"Node '{node_name}' completed")
-
-                    # Break out of the outer loop if we found __end__
-                    if graph_completed:
-                        break
-
-                # === 使用UITester的新数据存储机制 ===
+                # 执行LangGraph工作流，直接使用 ainvoke 获取最终状态
+                final_state = await graph_app.ainvoke(initial_state, config=graph_config)
+                
+                # 从最终状态获取 recorded_cases
+                recorded_cases_from_graph = final_state.get('recorded_cases', [])
+                logging.info(f"Retrieved {len(recorded_cases_from_graph)} recorded cases from final graph state")
+                
+                # 从最终状态获取 completed_cases 用于状态映射
+                completed_cases = final_state.get('completed_cases', [])
+                for idx, case_res in enumerate(completed_cases):
+                    case_name = case_res.get('case_name') or case_res.get('name') or f'Case_{idx + 1}'
+                    graph_case_status_map[case_name] = case_res.get('status', 'failed').lower()
+                
+                # === 使用recorded_cases中的数据构建测试结果 ===
                 sub_tests = []
-                runner_format_report = {}
-
-                if parallel_tester:
-                    # 生成符合runner标准格式的完整报告
-                    test_name = f'UI Agent Test - {target_url}'
-                    runner_format_report = parallel_tester.generate_runner_format_report(
-                        test_id=test_config.test_id, test_name=test_name
-                    )
-
-                    sub_tests_data = runner_format_report.get('sub_tests', [])
-                    logging.debug(f'Generated runner format report with {len(sub_tests_data)} cases')
-
-                    if not sub_tests_data:
-                        logging.warning('No sub_tests data found in runner format report')
-
-                    # 将runner格式的sub_tests转换为TestResult.SubTestResult
-                    for i, case in enumerate(sub_tests_data):
-                        case_name = case.get('name', f"Unnamed test case - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                        case_steps = case.get('steps', [])
-
+                
+                if recorded_cases_from_graph:
+                    logging.debug(f'Processing {len(recorded_cases_from_graph)} cases from recorded_cases')
+                    
+                    # 将recorded_cases转换为TestResult.SubTestResult
+                    for i, recorded_case in enumerate(recorded_cases_from_graph):
+                        case_name = recorded_case.get('name', f"Unnamed test case - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                        case_steps_raw = recorded_case.get('steps', [])
+                        
                         # 验证case数据完整性
-                        logging.debug(f"Processing case {i + 1}: '{case_name}' with {len(case_steps)} steps")
-                        if not case_steps:
+                        logging.debug(f"Processing case {i + 1}: '{case_name}' with {len(case_steps_raw)} steps")
+                        if not case_steps_raw:
                             logging.warning(f"Case '{case_name}' has no steps data")
-
+                        
+                        # 转换步骤数据为SubTestStep格式
+                        from webqa_agent.data.test_structures import SubTestStep, SubTestScreenshot, SubTestReport
+                        
+                        case_steps = []
+                        for step_data in case_steps_raw:
+                            # 转换截图数据
+                            screenshots = []
+                            for scr in step_data.get('screenshots', []):
+                                if isinstance(scr, dict) and scr.get('type') == 'base64':
+                                    screenshots.append(SubTestScreenshot(type='base64', data=scr.get('data', '')))
+                            
+                            # 转换状态
+                            step_status_str = step_data.get('status', 'passed').lower()
+                            step_status = TestStatus.PASSED
+                            if step_status_str in ['failed', 'error', 'failure']:
+                                step_status = TestStatus.FAILED
+                            elif step_status_str in ['warning', 'warn']:
+                                step_status = TestStatus.WARNING
+                            
+                            case_steps.append(SubTestStep(
+                                id=step_data.get('id', 0),
+                                description=step_data.get('description', ''),
+                                screenshots=screenshots,
+                                modelIO=step_data.get('modelIO', ''),
+                                actions=step_data.get('actions', []),
+                                status=step_status,
+                            ))
+                        
+                        # 获取case的整体状态
+                        case_status_str = recorded_case.get('status', 'failed').lower()
                         # Prefer status from graph aggregation if available
-                        sub_status = graph_case_status_map.get(case_name, case.get('status', 'failed')).lower()
+                        if case_name in graph_case_status_map:
+                            case_status_str = graph_case_status_map[case_name]
+                        
                         status_mapping = {
                             'pending': TestStatus.PENDING,
                             'running': TestStatus.RUNNING,
                             'passed': TestStatus.PASSED,
-                            'completed': TestStatus.WARNING,
+                            'completed': TestStatus.PASSED,
+                            'warning': TestStatus.WARNING,
                             'failed': TestStatus.FAILED,
                             'cancelled': TestStatus.CANCELLED,
                         }
-                        status_enum = status_mapping.get(sub_status, TestStatus.FAILED)
-
+                        status_enum = status_mapping.get(case_status_str, TestStatus.FAILED)
+                        
+                        # 构建报告
+                        reports = []
+                        if recorded_case.get('final_summary'):
+                            reports.append(SubTestReport(title='Summary', issues=recorded_case.get('final_summary', '')))
+                        
                         sub_tests.append(
                             SubTestResult(
                                 name=case_name,
                                 status=status_enum,
                                 metrics={},
                                 steps=case_steps,
-                                messages=case.get('messages', {}),
-                                start_time=case.get('start_time'),
-                                end_time=case.get('end_time'),
-                                final_summary=case.get('final_summary', ''),
-                                report=case.get('report', []),
+                                messages={},  # recorded_cases不包含messages数据，设为空字典
+                                start_time=recorded_case.get('start_time'),
+                                end_time=recorded_case.get('end_time'),
+                                final_summary=recorded_case.get('final_summary', ''),
+                                report=reports,
                             )
                         )
-
+                    
                     result.sub_tests = sub_tests
-
-                    # 从runner格式报告提取汇总指标
-                    results_data = runner_format_report.get('results', {})
-                    result.add_metric('test_case_count', results_data.get('total_cases', 0))
-                    result.add_metric('passed_test_cases', results_data.get('passed_cases', 0))
-                    result.add_metric('failed_test_cases', results_data.get('failed_cases', 0))
-                    result.add_metric('total_steps', results_data.get('total_steps', 0))
-                    result.add_metric('success_rate', results_data.get('success_rate', 0))
-
-                    # 从每个case的messages中提取网络和控制台数据并汇总
-                    total_failed_requests = 0
-                    total_requests = 0
-                    total_console_errors = 0
-
-                    for case in runner_format_report.get('sub_tests', []):
-                        case_messages = case.get('messages', {})
-                        if isinstance(case_messages, dict):
-                            network_data = case_messages.get('network', {})
-                            if isinstance(network_data, dict):
-                                failed_requests = network_data.get('failed_requests', [])
-                                responses = network_data.get('responses', [])
-                                total_failed_requests += len(failed_requests)
-                                total_requests += len(responses)
-
-                            console_data = case_messages.get('console', [])
-                            if isinstance(console_data, list):
-                                total_console_errors += len(console_data)
-
-                    result.add_metric('network_failed_requests_count', total_failed_requests)
-                    result.add_metric('network_total_requests_count', total_requests)
-                    result.add_metric('console_error_count', total_console_errors)
-
+                    
+                    # 计算汇总指标
+                    total_cases = len(recorded_cases_from_graph)
+                    passed_cases = sum(1 for case in recorded_cases_from_graph if case.get('status', '').lower() in ['passed', 'completed'])
+                    failed_cases = total_cases - passed_cases
+                    total_steps = sum(len(case.get('steps', [])) for case in recorded_cases_from_graph)
+                    success_rate = (passed_cases / total_cases * 100) if total_cases > 0 else 0
+                    
+                    result.add_metric('test_case_count', total_cases)
+                    result.add_metric('passed_test_cases', passed_cases)
+                    result.add_metric('failed_test_cases', failed_cases)
+                    result.add_metric('total_steps', total_steps)
+                    result.add_metric('success_rate', success_rate)
+                    
                     # 设置整体状态
-                    runner_status = runner_format_report.get('status', 'failed')
-                    if runner_status == 'completed':
+                    if failed_cases == 0:
                         result.status = TestStatus.PASSED
                     else:
                         result.status = TestStatus.FAILED
-                        result.error_message = runner_format_report.get('error_message', 'Test execution failed')
-
+                        result.error_message = f'{failed_cases} out of {total_cases} test cases failed'
+                    
                 else:
-                    logging.error('No UITester instance available for data extraction')
+                    logging.error('No recorded_cases data found in graph state')
                     result.status = TestStatus.FAILED
-                    result.error_message = 'No test cases were executed or results were not available'
+                    result.error_message = 'No test cases were executed or recorded_cases data was not available'
 
                 logging.info(f"{icon['check']} Test completed: {test_config.test_name}")
 
@@ -219,14 +218,10 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                 raise
 
             finally:
-                # Cleanup parallel tester
+                # Note: Browser monitoring data collection already handled in main flow
+                # No additional cleanup needed here
                 if parallel_tester:
-                    try:
-                        # UITester现在已经自动管理监控数据，只需要清理资源
-                        await parallel_tester.cleanup()
-                        logging.debug('UITester cleanup completed')
-                    except Exception as e:
-                        logging.error(f'Error cleaning up UITester: {e}')
+                    logging.debug('UITester cleanup completed in main flow')
 
             return result
 

@@ -279,10 +279,14 @@ class UIAssertionSchema(BaseModel):
 
 
 class UIAssertTool(BaseTool):
-    """A tool to perform UI assertions via a UITester instance."""
+    """A tool to perform functional UI assertions via a UITester instance."""
 
     name: str = "execute_ui_assertion"
-    description: str = "Performs a UI assertion/validation using the UITester and returns the verification result."
+    description: str = (
+        "Performs FUNCTIONAL verification: validates UI behaviors, element states, data accuracy, "
+        "and business logic. Use for testing WHAT works (functionality). "
+        "Examples: element presence, button enabled state, form submission success, navigation results, data values."
+    )
     args_schema: Type[BaseModel] = UIAssertionSchema
     ui_tester_instance: UITester = Field(...)
 

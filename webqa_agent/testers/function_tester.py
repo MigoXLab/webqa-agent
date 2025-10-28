@@ -11,6 +11,7 @@ from webqa_agent.browser.session import BrowserSession
 from webqa_agent.crawler.deep_crawler import DeepCrawler, ElementKey
 from webqa_agent.llm.llm_api import LLMAPI
 from webqa_agent.llm.prompt import LLMPrompt
+from webqa_agent.testers.case_gen.utils.case_recorder import CentralCaseRecorder
 
 
 class UITester:
@@ -39,6 +40,8 @@ class UITester:
         self.current_case_steps: List[Dict[str, Any]] = []
         self.all_cases_data: List[Dict[str, Any]] = []  # Store complete data for all cases
         self.step_counter: int = 0  # Used to generate step ID
+        # Central recorder for unified case storage (used by LangGraph path and tools)
+        self.central_case_recorder: Optional[CentralCaseRecorder] = None
 
     async def initialize(self, browser_session: BrowserSession = None):
         if browser_session:
@@ -471,7 +474,11 @@ class UITester:
         self.current_test_name = name
 
     def start_case(self, case_name: str, case_data: Optional[Dict[str, Any]] = None):
-        """Start a new test case."""
+        """Start a new test case (deprecated in LangGraph case execution).
+
+        Note: LangGraph execution now records steps via CentralCaseRecorder. This legacy
+        storage remains for backward compatibility with non-LangGraph paths.
+        """
         # Set current_test_name to ensure compatibility
         self.current_test_name = case_name
 
@@ -488,33 +495,27 @@ class UITester:
 
         self.current_case_data = {
             "name": formatted_case_name,
-            "original_name": case_name,  # Keep original name for reference
+            "original_name": case_name,
             "case_index": case_index,
             "start_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "case_info": case_data or {},
             "steps": [],
             "status": "running",
-            # "messages": {
-            #     "console": [],
-            #     "network": {
-            #         "failed_requests": [],
-            #         "responses": []
-            #     }
-            # },
             "report": [],
         }
         self.current_case_steps = []
-        self.step_counter = 0  # Reset step counter
+        self.step_counter = 0
         logging.debug(f"Started tracking case: {formatted_case_name} (step counter reset)")
+
+        # # Initialize/Reset central recorder as primary store as well
+        # try:
+        #     self.central_case_recorder = CentralCaseRecorder()
+        #     self.central_case_recorder.start_case(case_name, case_data=case_data or {})
+        # except Exception:
+        #     pass
 
     def add_step_data(self, step_data: Dict[str, Any], step_type: str = "action"):
         """Add step data to current case."""
-        if not self.current_case_data:
-            logging.warning("No active case to add step data to")
-            return
-
-        self.step_counter += 1
-
         # Process actions data, remove screenshots
         original_actions = step_data.get("actions", [])
         cleaned_actions = []
@@ -527,7 +528,9 @@ class UITester:
                     cleaned_action[key] = value
             cleaned_actions.append(cleaned_action)
 
-        # Convert to runner format step structure
+        # Prepare formatted step (for both legacy and central recorder)
+        self.step_counter += 1
+        
         formatted_step = {
             "id": self.step_counter,
             "number": self.step_counter,
@@ -547,9 +550,31 @@ class UITester:
         if "error" in step_data:
             formatted_step["error"] = step_data["error"]
 
-        self.current_case_steps.append(formatted_step)
-        self.current_case_data["steps"].append(formatted_step)
-        logging.debug(f"Added step {formatted_step['id']} to case {self.current_test_name}")
+        # Record to legacy storage if available (for backward compatibility)
+        if self.current_case_data:
+            self.current_case_steps.append(formatted_step)
+            self.current_case_data["steps"].append(formatted_step)
+            logging.debug(f"Added step {formatted_step['id']} to legacy case storage: {self.current_test_name}")
+        else:
+            logging.debug(f"No active legacy case storage, skipping legacy recording")
+
+        # ALWAYS record to central recorder if available (primary recording mechanism)
+        if self.central_case_recorder:
+            try:
+                self.central_case_recorder.add_step(
+                    description=formatted_step["description"],
+                    screenshots=formatted_step["screenshots"],
+                    model_io=formatted_step["modelIO"],
+                    actions=formatted_step["actions"],
+                    status=formatted_step["status"],
+                    step_type=step_type,
+                    end_time=formatted_step["end_time"],
+                )
+                logging.debug(f"✅ Step recorded to CentralCaseRecorder (type={step_type}): {formatted_step['description'][:50]}...")
+            except Exception as e:
+                logging.error(f"❌ Failed to record step to CentralCaseRecorder: {e}")
+        else:
+            logging.warning("⚠️ No CentralCaseRecorder available, step not recorded to central storage")
 
     def finish_case(self, final_status: str = "completed", final_summary: Optional[str] = None):
         """Finish current case and save data."""
@@ -572,6 +597,13 @@ class UITester:
                 "total_steps": steps_count,
             }
         )
+
+        # # Sync to central recorder if available
+        # try:
+        #     if self.central_case_recorder:
+        #         self.central_case_recorder.finish_case(final_status=final_status, final_summary=final_summary or "")
+        # except Exception:
+        #     pass
 
         # # Update monitoring data
         # if monitoring_data:
@@ -600,96 +632,96 @@ class UITester:
         self.current_case_steps = []
         self.step_counter = 0
 
-    def get_current_case_steps(self) -> List[Dict[str, Any]]:
-        """Get all steps data for current case."""
-        return self.current_case_steps.copy()
+    # def get_current_case_steps(self) -> List[Dict[str, Any]]:
+    #     """Get all steps data for current case."""
+    #     return self.current_case_steps.copy()
 
-    def get_all_cases_data(self) -> List[Dict[str, Any]]:
-        """Get all cases data."""
-        return self.all_cases_data.copy()
+    # def get_all_cases_data(self) -> List[Dict[str, Any]]:
+    #     """Get all cases data."""
+    #     return self.all_cases_data.copy()
 
-    def get_case_summary(self) -> Dict[str, Any]:
-        """Get summary information for test execution."""
-        total_cases = len(self.all_cases_data)
-        passed_cases = sum(1 for case in self.all_cases_data if case.get("status") == "passed")
-        failed_cases = sum(1 for case in self.all_cases_data if case.get("status") == "failed")
-        total_steps = sum(case.get("total_steps", 0) for case in self.all_cases_data)
+    # def get_case_summary(self) -> Dict[str, Any]:
+    #     """Get summary information for test execution."""
+    #     total_cases = len(self.all_cases_data)
+    #     passed_cases = sum(1 for case in self.all_cases_data if case.get("status") == "passed")
+    #     failed_cases = sum(1 for case in self.all_cases_data if case.get("status") == "failed")
+    #     total_steps = sum(case.get("total_steps", 0) for case in self.all_cases_data)
 
-        return {
-            "total_cases": total_cases,
-            "passed_cases": passed_cases,
-            "failed_cases": failed_cases,
-            "total_steps": total_steps,
-            "success_rate": passed_cases / total_cases if total_cases > 0 else 0,
-            "all_cases_data": self.all_cases_data,
-        }
+    #     return {
+    #         "total_cases": total_cases,
+    #         "passed_cases": passed_cases,
+    #         "failed_cases": failed_cases,
+    #         "total_steps": total_steps,
+    #         "success_rate": passed_cases / total_cases if total_cases > 0 else 0,
+    #         "all_cases_data": self.all_cases_data,
+    #     }
 
-    def generate_runner_format_report(self, test_id: str = None, test_name: str = None) -> Dict[str, Any]:
-        """Generate a complete test report in runner format."""
-        import uuid
-        from datetime import datetime
+    # def generate_runner_format_report(self, test_id: str = None, test_name: str = None) -> Dict[str, Any]:
+    #     """Generate a complete test report in runner format."""
+    #     import uuid
+    #     from datetime import datetime
 
-        if not self.all_cases_data:
-            logging.warning("No case data available for report generation")
-            return {}
+    #     if not self.all_cases_data:
+    #         logging.warning("No case data available for report generation")
+    #         return {}
 
-        total_steps = 0
-        for i, case in enumerate(self.all_cases_data):
-            case_steps = case.get("steps", [])
-            case_name = case.get("name", f"Case_{i + 1}")  # Use 1-based indexing as fallback
-            total_steps += len(case_steps)
-            logging.debug(
-                f"Report validation - Case '{case_name}': {len(case_steps)} steps, status: {case.get('status', 'unknown')}"
-            )
+    #     total_steps = 0
+    #     for i, case in enumerate(self.all_cases_data):
+    #         case_steps = case.get("steps", [])
+    #         case_name = case.get("name", f"Case_{i + 1}")  # Use 1-based indexing as fallback
+    #         total_steps += len(case_steps)
+    #         logging.debug(
+    #             f"Report validation - Case '{case_name}': {len(case_steps)} steps, status: {case.get('status', 'unknown')}"
+    #         )
 
-        logging.debug(f"Report generation - Total cases: {len(self.all_cases_data)}, Total steps: {total_steps}")
+    #     logging.debug(f"Report generation - Total cases: {len(self.all_cases_data)}, Total steps: {total_steps}")
 
-        # Calculate overall test time
-        start_times = [case.get("start_time") for case in self.all_cases_data if case.get("start_time")]
-        end_times = [case.get("end_time") for case in self.all_cases_data if case.get("end_time")]
+    #     # Calculate overall test time
+    #     start_times = [case.get("start_time") for case in self.all_cases_data if case.get("start_time")]
+    #     end_times = [case.get("end_time") for case in self.all_cases_data if case.get("end_time")]
 
-        overall_start = min(start_times) if start_times else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        overall_end = max(end_times) if end_times else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    #     overall_start = min(start_times) if start_times else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    #     overall_end = max(end_times) if end_times else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        try:
-            start_dt = datetime.strptime(overall_start, "%Y-%m-%d %H:%M:%S")
-            end_dt = datetime.strptime(overall_end, "%Y-%m-%d %H:%M:%S")
-            duration = (end_dt - start_dt).total_seconds()
-        except:
-            duration = 0.0
+    #     try:
+    #         start_dt = datetime.strptime(overall_start, "%Y-%m-%d %H:%M:%S")
+    #         end_dt = datetime.strptime(overall_end, "%Y-%m-%d %H:%M:%S")
+    #         duration = (end_dt - start_dt).total_seconds()
+    #     except:
+    #         duration = 0.0
 
-        # Determine overall status
-        overall_status = "completed"
-        if any(case.get("status") == "failed" for case in self.all_cases_data):
-            overall_status = "failed"
+    #     # Determine overall status
+    #     overall_status = "completed"
+    #     if any(case.get("status") == "failed" for case in self.all_cases_data):
+    #         overall_status = "failed"
 
-        summary = self.get_case_summary()
+    #     summary = self.get_case_summary()
 
-        runner_format = {
-            "test_id": test_id or str(uuid.uuid4()),
-            "test_type": "UI_Agent",
-            "test_name": test_name or "UI Agent Test Suite",
-            "category": "function",
-            "status": overall_status,
-            "start_time": overall_start,
-            "end_time": overall_end,
-            "duration": duration,
-            "results": {
-                "total_cases": summary["total_cases"],
-                "passed_cases": summary["passed_cases"],
-                "failed_cases": summary["failed_cases"],
-                "total_steps": summary["total_steps"],
-                "success_rate": summary["success_rate"],
-            },
-            "sub_tests": self.all_cases_data,  # Here contains all formatted case data
-            "logs": [],  # Can add logs if needed
-            "traces": [],  # Can add traces if needed
-            "error_message": "",
-            "error_details": {},
-            "metrics": {},
-        }
+    #     runner_format = {
+    #         "test_id": test_id or str(uuid.uuid4()),
+    #         "test_type": "UI_Agent",
+    #         "test_name": test_name or "UI Agent Test Suite",
+    #         "category": "function",
+    #         "status": overall_status,
+    #         "start_time": overall_start,
+    #         "end_time": overall_end,
+    #         "duration": duration,
+    #         "results": {
+    #             "total_cases": summary["total_cases"],
+    #             "passed_cases": summary["passed_cases"],
+    #             "failed_cases": summary["failed_cases"],
+    #             "total_steps": summary["total_steps"],
+    #             "success_rate": summary["success_rate"],
+    #         },
+    #         "sub_tests": self.all_cases_data,  # Here contains all formatted case data
+    #         "logs": [],  # Can add logs if needed
+    #         "traces": [],  # Can add traces if needed
+    #         "error_message": "",
+    #         "error_details": {},
+    #         "metrics": {},
+    #     }
 
-        return runner_format
+    #     return runner_format
 
     async def get_current_page(self):
         try:

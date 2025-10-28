@@ -18,6 +18,8 @@ from webqa_agent.crawler.deep_crawler import DeepCrawler
 from webqa_agent.testers.case_gen.prompts.agent_prompts import get_execute_system_prompt
 from webqa_agent.testers.case_gen.prompts.planning_prompts import get_dynamic_step_generation_prompt
 from webqa_agent.testers.case_gen.tools.element_action_tool import UIAssertTool, UITool
+from webqa_agent.testers.case_gen.tools.ux_tool import UIUXViewportTool
+from webqa_agent.testers.case_gen.utils.case_recorder import CentralCaseRecorder
 from webqa_agent.testers.case_gen.utils.message_converter import convert_intermediate_steps_to_messages
 from webqa_agent.utils.log_icon import icon
 
@@ -429,6 +431,13 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
     ui_tester_instance = config["configurable"]["ui_tester_instance"]
 
+    # Create an independent case recorder (decoupled from UITester store)
+    case_recorder = CentralCaseRecorder()
+    case_recorder.start_case(case_name, case_data=case)
+    
+    # Expose recorder to UITester so it can record action/verify steps automatically
+    ui_tester_instance.central_case_recorder = case_recorder
+
     # Note: case tracking is managed by execute_single_case node via start_case/finish_case
     # No need to set test name here as it's already handled
 
@@ -459,10 +468,12 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     )
     logging.debug(f"LLM configured: {llm_config.get('model')} at {llm_config.get('base_url')}")
 
-    # Instantiate the custom tool with the ui_tester_instance
+    page = ui_tester_instance.driver.get_page()
+    # Instantiate tools with correct parameters
     tools = [
         UITool(ui_tester_instance=ui_tester_instance),
         UIAssertTool(ui_tester_instance=ui_tester_instance),
+        UIUXViewportTool(page=page, llm_config=llm_config, case_recorder=case_recorder),
     ]
     logging.debug(f"Tools initialized: {[tool.name for tool in tools]}")
 
@@ -633,6 +644,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     case_steps = case.get("steps", [])  # Get reference to steps list
     total_steps = len(case_steps)
     failed_steps = []  # Track failed steps for summary generation
+    warning_steps = []  # Track steps with warnings (e.g., UX issues)
     case_modified = False  # Track if case was modified with dynamic steps
     dynamic_generation_count = 0  # Track how many times dynamic generation occurred
     dom_diff_cache = []
@@ -640,8 +652,17 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     i = 0
     while i < len(case_steps):
         step = case_steps[i]
-        instruction_to_execute = step.get("action") or step.get("verify")
-        step_type = "Action" if step.get("action") else "Assertion"
+        instruction_to_execute = step.get("action") or step.get("verify") or step.get("ux_verify")
+        # step_type = "Action" if step.get("action") else "Assertion"
+        if step.get("action"):
+            step_type = "Action"
+        elif step.get("verify"):
+            step_type = "Assertion"
+        elif step.get("ux_verify"):
+            step_type = "UX_Verify"
+        else:
+            logging.warning(f"Unknown step type: {step}")
+            step_type = "Assertion"
 
         logging.info(f"Executing Step {i+1}/{total_steps} ({step_type}), step instruction: {instruction_to_execute}")
 
@@ -707,6 +728,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         elif step_type == "Assertion":
             tool_choice = {"type": "function", "function": {"name": "execute_ui_assertion"}}
             logging.debug("Forcing tool choice: execute_ui_assertion")
+        elif step_type == "UX_Verify":
+            tool_choice = {"type": "function", "function": {"name": "execute_ux_verify"}}
+            logging.debug("Forcing tool choice: execute_ux_verify")
         # -------------------------
 
         try:
@@ -750,6 +774,11 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             if "[failure]" in result['intermediate_steps'][0][1].lower() or "failed" in tool_output.lower():
                 failed_steps.append(i + 1)
                 logging.warning(f"Step {i+1} detected as failed based on output")
+            
+            # Check for warnings in the tool output (e.g., UX issues)
+            if "[warning]" in tool_output.lower():
+                warning_steps.append(i + 1)
+                logging.info(f"Step {i+1} completed with warnings (e.g., UX issues detected)")
 
             # Check for objective achievement signal
             is_achieved, achievement_reason = _is_objective_achieved(tool_output)
@@ -1011,8 +1040,13 @@ FINAL_SUMMARY: Test case "{case_name}" failed at step [X]. Error: [description].
             status = "failed"
         else:
             status = "passed"
+    
+    # Check if there are warning steps - upgrade status to "warning" if test passed but has warnings
+    if status == "passed" and warning_steps:
+        status = "warning"
+        logging.info(f"Test case '{case_name}' passed but has warnings at steps: {warning_steps}")
 
-    logging.debug(f"Test case '{case_name}' final status: {status} (success indicators: {has_success}, failure indicators: {has_failure})")
+    logging.debug(f"Test case '{case_name}' final status: {status} (success indicators: {has_success}, failure indicators: {has_failure}, warning steps: {warning_steps})")
 
     # Classify failure type if the test case failed
     failure_type = None
@@ -1034,8 +1068,15 @@ FINAL_SUMMARY: Test case "{case_name}" failed at step [X]. Error: [description].
 
     logging.debug(f"=== Agent Worker Completed for {case_name}. ===")
 
-    # Return only the result of the current case
-    return result
+    # Finalize case recording with final status
+    case_recorder.finish_case(final_status=status, final_summary=final_summary)
+
+    # Get recorded case data
+    result_with_case = dict(result)
+    recorded_case_data = case_recorder.get_case_data()
+    result_with_case["recorded_case"] = recorded_case_data
+    
+    return result_with_case
 
 
 def _is_objective_achieved(tool_output: str) -> tuple[bool, str]:

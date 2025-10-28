@@ -31,7 +31,8 @@ Each test case must include these standardized components with enhanced business
 - **`test_data_requirements`**: Specification of domain-appropriate test data and setup conditions
 - **`steps`**: Detailed test execution steps with clear action/verification pairs that simulate real user behavior and scenarios
   - `action`: User-scenario action instructions describing what a real user would do in natural language, DON'T IMAGE. **Only use these action types: "Tap", "Scroll", "Input", "Sleep", "KeyboardPress", "Drag", "SelectDropdown". Do NOT invent or output any other action types or non-existent data.**
-  - `verify`: User-expectation validation instructions describing what result a real user would expect to see
+  - `verify`: **FUNCTIONAL verification** - validates that features WORK correctly (element states, data accuracy, navigation success, business logic)
+  - `ux_verify`: **VISUAL QUALITY verification** - validates that presentation LOOKS correct (text accuracy/typos, layout rendering, visual bugs) in the current viewport
 - **`preamble_actions`**: Optional setup steps to establish required test preconditions
 - **`reset_session`**: Session management flag for test isolation strategy
 - **`success_criteria`**: Measurable, verifiable conditions that define test pass/fail status
@@ -51,11 +52,14 @@ Each test case must include these standardized components with enhanced business
 ```json
 [
 {{"action": "Click navigation bar A"}},
-{{"verify": "Confirm navigation to page A"}},
+{{"verify": "Verify the page successfully navigated to page A"}},
+{{"ux_verify": "Verify page A renders correctly without layout breaks or text truncation in the viewport"}},
 {{"action": "Click navigation bar B"}},
-{{"verify": "Confirm navigation to page B"}},
+{{"verify": "Verify the page successfully navigated to page B"}},
+{{"ux_verify": "Verify page B displays without typos or visual rendering issues in the viewport"}},
 {{"action": "Click navigation bar C"}},
-{{"verify": "Confirm navigation to page C"}}
+{{"verify": "Verify the page successfully navigated to page C"}},
+{{"ux_verify": "Verify page C layout is properly aligned without overlapping elements in the viewport"}}
 ]
 ```
 
@@ -164,6 +168,17 @@ Each test case must include these standardized components with enhanced business
 - **User Experience Focus**: Consider usability, accessibility, and user satisfaction in all test cases
 - **User Scenario Realism**: Design test steps from real user perspective with natural actions and expectations
 - **Business Value Alignment**: Ensure each test case validates specific business value and user benefits
+
+### UX Verification Guidelines
+**When to use `ux_verify`**:
+- After page navigation or URL changes (to check visual rendering)
+- After dynamic content loading or AJAX updates (to check layout integrity)
+- When testing responsive layouts or viewport changes (to check visual adaptation)
+- When validating text-heavy content (to check for typos and readability)
+
+**Key Distinction**:
+- `verify` → "Does it **WORK**?" (Functional Testing - behavior, data, logic)
+- `ux_verify` → "Does it **LOOK correct**?" (Visual Quality Testing - appearance, text accuracy, layout)
 
 ### Navigation Optimization Guidelines
 **IMPORTANT**: When generating test cases, apply navigation optimization rules with business context:
@@ -526,7 +541,29 @@ Example 1:
   "cleanup_requirements": "Clear search history and reset search state to ensure clean test environment"
 }}
 ```
-
+### Example 3: 中英文切换用户体验验证
+```json
+{{
+  "name": "中英文切换用户体验验证",
+  "objective": "Validate the user experience of switching between Chinese and English",
+  "test_category": "Functional_User_Interaction",
+  "priority": "High",
+  "business_context": "The user can switch between Chinese and English",
+  "functional_criticality": "High - Critical for user experience",
+  "domain_specific_rules": "The user can switch between Chinese and English",
+  "test_data_requirements": "The user can switch between Chinese and English",
+  "preamble_actions": [],
+  "steps": [
+    {{"action": "Switch to English"}},
+    {{"verify": "Verify the language successfully switched to English and content updated"}},
+    {{"ux_verify": "Verify no mixed-language text or typos in the visible English content"}},
+    {{"action": "Scroll the page"}},
+    {{"ux_verify": "Verify current viewport displays correctly in English without text truncation or layout issues"}}
+  ],
+  "reset_session": true,
+  "success_criteria": [
+}}
+```
 """
 
     return user_prompt

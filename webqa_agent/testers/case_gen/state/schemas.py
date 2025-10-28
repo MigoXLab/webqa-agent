@@ -28,3 +28,5 @@ class MainGraphState(TypedDict):
     # For critical failure handling
     skip_reflection: bool
     dynamic_step_generation: dict
+    # For CentralCaseRecorder data storage
+    recorded_cases: Annotated[list, operator.add]
