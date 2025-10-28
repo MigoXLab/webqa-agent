@@ -393,25 +393,87 @@ Your response must be ONLY in JSON format. Do not include any analysis, explanat
 
 def get_test_case_planning_user_prompt(
     state_url: str,
+    page_text_summary: dict = None,
+    priority_elements: dict = None,
 ) -> str:
-    """Generate user prompt for test case planning.
+    """Generate user prompt for test case planning (Stage 2).
 
     Args:
         state_url: Target URL
+        page_text_summary: Intelligent text summary from smart_truncate_page_text()
+        priority_elements: AI-filtered priority elements from Stage 1
 
     Returns:
-        Formatted user prompt string
+        Formatted user prompt string with enhanced context
     """
+
+    # Build page content summary section
+    content_section = ""
+    if page_text_summary:
+        coverage = page_text_summary.get("coverage", "N/A")
+        text_content = page_text_summary.get("text_content", [])
+        estimated_tokens = page_text_summary.get("estimated_tokens", 0)
+        strategy = page_text_summary.get("strategy_used", "unknown")
+
+        # Show representative sample of text content
+        sample_text = text_content[:30] if len(text_content) > 30 else text_content
+
+        content_section = f"""
+## Page Content Summary (AI-Processed)
+- **Coverage**: {coverage} of total page text
+- **Estimated Tokens**: {estimated_tokens}
+- **Sampling Strategy**: {strategy}
+- **Key Text Segments**:
+```json
+{json.dumps(sample_text, ensure_ascii=False, indent=2)}
+```
+{"... (showing representative sample from full page)" if len(text_content) > 30 else ""}
+
+**Purpose**: This text summary helps understand page context, content areas, and semantic structure, complementing the visual analysis from the screenshot.
+"""
+
+    # Build priority elements section
+    elements_section = ""
+    if priority_elements:
+        elements_count = len(priority_elements)
+        # Show compact representation
+        elements_json = json.dumps(priority_elements, ensure_ascii=False, indent=2)
+
+        elements_section = f"""
+## Priority Interactive Elements (AI-Filtered from Stage 1)
+**{elements_count} high-priority elements** identified through intelligent LLM analysis:
+
+```json
+{elements_json}
+```
+
+**Selection Criteria**: These elements were filtered by AI based on:
+- Business value and impact
+- User interaction frequency
+- Testing significance and risk
+- Spatial position and importance
+
+**Usage Guideline**: Focus test case design on these critical elements while leveraging the full-page screenshot for context.
+"""
 
     user_prompt = f"""
 ## Application Under Test (AUT)
 - **Target URL**: {state_url}
-- **Visual Element Reference (Referenced via attached screenshot)**: The attached screenshot contains numbered markers corresponding to interactive elements.
+- **Visual Element Reference**: The attached screenshot shows the ENTIRE webpage with numbered markers for interactive elements.
 
 **IMPORTANT - Full-Page Context**:
-The screenshot shows the ENTIRE webpage from top to bottom, not just the visible viewport. All elements on the page are captured and numbered, including those that may be below the fold. When planning test cases, you can reference ANY element visible in this full-page screenshot. During execution, the system will automatically scroll to elements outside the viewport as needed.
+The screenshot captures the complete page from top to bottom, not just the visible viewport. All elements are numbered and can be referenced during test planning. The execution system will automatically handle scrolling to elements outside the viewport as needed.
 
-Please help me plan test cases based on the above information. Please conduct in-depth analysis according to the requirements in the system prompt and generate test cases that meet the specifications.
+{content_section}
+
+{elements_section}
+
+Please design comprehensive test cases following the standards in the system prompt. Leverage:
+1. **Visual Information**: Full-page screenshot with element markers
+2. **Content Summary**: Page text and semantic structure
+3. **Priority Elements**: AI-filtered critical elements for focused testing
+
+Generate business-relevant, effective test scenarios that validate key functionality and user workflows.
 Example 1:
 ```json
 {{
@@ -774,6 +836,104 @@ def get_reflection_prompt(
         business_objectives, current_plan, completed_cases, page_content_summary
     )
     return system_prompt, user_prompt
+
+
+def get_element_filtering_system_prompt(language: str = 'zh-CN') -> str:
+    """Generate system prompt for Stage 1: LLM-driven element filtering.
+
+    Args:
+        language: Language for naming (zh-CN or en-US)
+
+    Returns:
+        System prompt for element filtering
+    """
+    role_desc = "专业QA工程师" if language == 'zh-CN' else "Professional QA Engineer"
+
+    return f"""You are a {role_desc} analyzing web pages to identify critical interactive elements for testing.
+
+## Core Responsibility
+Filter and prioritize interactive elements based on business value, user impact, and testing significance.
+
+## Prioritization Framework
+
+### Tier 1: Business-Critical (Must Test)
+- Transaction elements: checkout, payment, purchase buttons
+- Authentication: login, signup, password reset
+- Core search and filtering functionality
+- Primary CTAs driving business objectives
+
+### Tier 2: High-Value User Actions (Should Test)
+- Navigation menus and primary links
+- Form inputs for data collection
+- Dropdown selectors and option pickers
+- Action buttons for key features
+
+### Tier 3: Secondary Features (May Test)
+- Social sharing and interactions
+- Expandable content and accordions
+- Pagination and sorting controls
+- Secondary navigation
+
+### Tier 4: Lower Priority (Test if capacity allows)
+- Footer links (legal, about, contact)
+- Decorative or redundant elements
+- Less frequently used features
+
+## Evaluation Criteria
+1. **Business Impact**: Does failure affect revenue or core operations?
+2. **User Frequency**: How often do users interact with this?
+3. **Risk Level**: What's the impact if this breaks?
+4. **Spatial Position**: Is it in primary content area vs footer?
+5. **Semantic Importance**: Button > Link > Text for similar functions
+
+## Output Format
+Return ONLY a JSON array (no markdown code blocks, no explanation):
+[
+  {{"id": "element_id", "priority": "tier1", "reason": "brief justification"}},
+  {{"id": "element_id2", "priority": "tier2", "reason": "brief justification"}},
+  ...
+]
+
+Order elements by priority (tier1 first), then by position on page (top to bottom).
+Maximum elements to return: as specified in user prompt.
+"""
+
+
+def get_element_filtering_user_prompt(
+    url: str,
+    business_objectives: str,
+    elements: dict,
+    max_elements: int = 50
+) -> str:
+    """Generate user prompt for Stage 1: element filtering.
+
+    Args:
+        url: Target URL
+        business_objectives: Business objectives for context
+        elements: Simplified element data (tagName, innerText, attributes, center_x/y)
+        max_elements: Maximum number of elements to select
+
+    Returns:
+        User prompt for element filtering
+    """
+    elements_json = json.dumps(elements, ensure_ascii=False, indent=2)
+
+    return f"""## Analysis Context
+- **Target URL**: {url}
+- **Business Objectives**: {business_objectives or "General comprehensive testing - identify all critical functionality"}
+- **Total Elements Found**: {len(elements)}
+- **Required Selection**: Top {max_elements} elements
+
+## Interactive Elements Data (Simplified Format)
+The following elements have been extracted from the page. Each element contains:
+- tagName: Element type (button, input, a, etc.)
+- innerText: Text content (truncated to 200 chars)
+- attributes: Key attributes (type, role, href, aria-label)
+- center_x/y: Position coordinates
+
+{elements_json}
+
+**Your Task**: Analyze all {len(elements)} elements and select the top {max_elements} most important elements for testing. Consider both the business objectives (if provided) and general testing best practices. Return the selection in the specified JSON format."""
 
 
 def get_dynamic_step_generation_prompt() -> str:

@@ -9,6 +9,7 @@ class LLMAPI:
         self.llm_config = llm_config
         self.api_type = self.llm_config.get("api")
         self.model = self.llm_config.get("model")
+        self.filter_model = self.llm_config.get("filter_model", self.model)  # For two-stage architecture
         self.client = None
         self._client = None  # httpx client
 
@@ -32,8 +33,10 @@ class LLMAPI:
             self._client = httpx.AsyncClient(timeout=60.0)
         return self._client
 
-    async def get_llm_response(self, system_prompt, prompt, images=None, temperature=None, top_p=None):
-        model_input = {"model": self.model, "api_type": self.api_type}
+    async def get_llm_response(self, system_prompt, prompt, images=None, temperature=None, top_p=None, max_tokens=None, model_override=None):
+        # Allow temporary model override for two-stage architecture (e.g., lightweight model for filtering)
+        actual_model = model_override or self.model
+        model_input = {"model": actual_model, "api_type": self.api_type}
         if self.api_type == "openai" and self.client is None:
             await self.initialize()
 
@@ -50,8 +53,9 @@ class LLMAPI:
                     temperature if temperature is not None else self.llm_config.get("temperature", 0.1)
                 )
                 resolved_top_p = top_p if top_p is not None else self.llm_config.get("top_p", None)
-                logging.debug(f"Resolved temperature: {resolved_temperature}, top_p: {resolved_top_p}")
-                result = await self._call_openai(messages, resolved_temperature, resolved_top_p)
+                resolved_max_tokens = max_tokens if max_tokens is not None else self.llm_config.get("max_tokens", None)
+                logging.debug(f"Resolved temperature: {resolved_temperature}, top_p: {resolved_top_p}, max_tokens: {resolved_max_tokens}")
+                result = await self._call_openai(messages, resolved_temperature, resolved_top_p, resolved_max_tokens, actual_model)
 
             return result
         except Exception as e:
@@ -84,10 +88,13 @@ class LLMAPI:
             logging.error(f"Error while handling images for OpenAI: {e}")
             raise ValueError(f"Failed to process images for OpenAI. Error: {e}")
 
-    async def _call_openai(self, messages, temperature=None, top_p=None):
+    async def _call_openai(self, messages, temperature=None, top_p=None, max_tokens=None, model=None):
         try:
+            # Use provided model or fallback to config model
+            actual_model = model or self.llm_config.get("model")
+
             create_kwargs = {
-                "model": self.llm_config.get("model"),
+                "model": actual_model,
                 "messages": messages,
                 "timeout": 60,
             }
@@ -96,6 +103,8 @@ class LLMAPI:
                 create_kwargs["temperature"] = temperature
             if top_p is not None:
                 create_kwargs["top_p"] = top_p
+            if max_tokens is not None:
+                create_kwargs["max_tokens"] = max_tokens
 
             completion = await self.client.chat.completions.create(**create_kwargs)
             content = completion.choices[0].message.content

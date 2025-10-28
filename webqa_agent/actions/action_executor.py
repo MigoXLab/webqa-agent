@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import logging
 from typing import Dict, List, Optional
 
@@ -42,9 +43,20 @@ class ActionExecutor:
                 logging.error(f"Unknown action type: {action_type}")
                 return False
 
-            # Execute the action
+            # Execute the action with introspection to handle different method signatures
             logging.debug(f"Executing action: {action_type}")
-            return await execute_func(action)
+
+            # Use introspection to check if method accepts action parameter
+            sig = inspect.signature(execute_func)
+            params = list(sig.parameters.keys())
+
+            # If method only has 'self' parameter (no additional params), call without action
+            # Note: bound methods don't show 'self' in signature, so empty params means no action param
+            if len(params) == 0:
+                logging.debug(f"Calling {action_type} without action parameter (method signature has no parameters)")
+                return await execute_func()
+            else:
+                return await execute_func(action)
 
         except Exception as e:
             logging.error(f"Action execution failed: {str(e)}")

@@ -97,7 +97,7 @@ class ActionHandler:
         await self.page.goto(url=url, wait_until='domcontentloaded')
         await self.page.wait_for_load_state('networkidle', timeout=60000)
 
-    async def smart_navigate_to_page(self, page: Page, url: str, cookies=None) -> bool:
+    async def smart_navigate_to_page(self, page: Page, url: str, cookies=None) -> bool | None:
         """Smart navigation to target page, avoiding redundant navigation.
 
         Args:
@@ -141,7 +141,7 @@ class ActionHandler:
 
             if current_normalized == target_normalized:
                 logging.debug('Already on target page (normalized match), skipping navigation')
-                return False
+                return None  # Return None to indicate "already on page, no navigation needed"
 
             # More flexible URL matching: if domain is same and path is similar, also consider as match
             def extract_domain(u):

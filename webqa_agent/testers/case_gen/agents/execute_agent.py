@@ -3,7 +3,7 @@ application.
 
 The agent worker is responsible for executing a single test case.
 """
-
+import asyncio
 import datetime
 import json
 import logging
@@ -22,6 +22,8 @@ from webqa_agent.testers.case_gen.utils.message_converter import convert_interme
 from webqa_agent.utils.log_icon import icon
 
 LONG_STEPS = 30
+RETRY_STABILIZATION_DELAY = 1.0
+MIN_RECOVERY_CONFIDENCE = 0.7
 
 # ============================================================================
 # Critical Failure Detection Patterns
@@ -100,6 +102,26 @@ def extract_json_from_response(response_text: str) -> str:
     return response_text.strip()
 
 
+def safe_get_intermediate_step(result: dict, index: int = 0, subindex: int = 1, default: str = "") -> str:
+    """Safely access intermediate_steps to prevent list index out of range errors.
+
+    Args:
+        result: The result dictionary from agent execution
+        index: The index of the intermediate step (default: 0)
+        subindex: The subindex within the step tuple/list (default: 1)
+        default: Default value to return if access fails (default: "")
+
+    Returns:
+        The intermediate step content or default value
+    """
+    steps = result.get('intermediate_steps', [])
+    if isinstance(steps, list) and len(steps) > index:
+        step = steps[index]
+        if isinstance(step, (list, tuple)) and len(step) > subindex:
+            return step[subindex]
+    return default
+
+
 def extract_dom_diff_from_output(tool_output: str) -> dict:
     """Extract DOM diff information from tool output"""
     try:
@@ -176,21 +198,29 @@ def format_elements_for_llm(dom_diff: dict) -> list[dict]:
 
 
 async def generate_dynamic_steps_with_llm(
-    dom_diff: dict,
-    last_action: str,
-    test_objective: str,
-    executed_steps: int,
-    max_steps: int,
-    llm: any,
+    dom_diff: dict = None,
+    last_action: str = "",
+    test_objective: str = "",
+    executed_steps: int = 0,
+    max_steps: int = 5,
+    llm: any = None,
     current_case: dict = None,
     screenshot: str = None,
     tool_output: str = None,
-    step_success: bool = True
+    step_success: bool = True,
+    # New parameters for failure recovery mode
+    failure_recovery_mode: bool = False,
+    failed_instruction: str = "",
+    error_message: str = ""
 ) -> dict:
-    """Generate dynamic test steps using LLM with full test case context and visual information
-    
+    """Generate dynamic test steps or recover from failed steps using LLM
+
+    This function serves two purposes:
+    1. DOM Change Mode (failure_recovery_mode=False): Generate new test steps for newly appeared UI elements
+    2. Failure Recovery Mode (failure_recovery_mode=True): Adapt test plan when steps fail due to stale DOM
+
     Args:
-        dom_diff: New DOM elements detected
+        dom_diff: New DOM elements detected (used in DOM change mode)
         last_action: The action that triggered the new elements
         test_objective: Overall test objective
         executed_steps: Number of steps executed so far
@@ -200,12 +230,164 @@ async def generate_dynamic_steps_with_llm(
         screenshot: Base64 screenshot of current page state for visual context
         tool_output: Output from the tool execution for context (optional)
         step_success: Whether the previous step executed successfully (default: True)
-        
+        failure_recovery_mode: If True, operate in failure recovery mode instead of DOM change mode
+        failed_instruction: The instruction that failed (used in failure recovery mode)
+        error_message: The error message from the failed step (used in failure recovery mode)
+
     Returns:
-        Dict containing strategy ("insert" or "replace") and generated test steps
-        Format: {"strategy": "insert|replace", "reason": "explanation", "steps": [...]}
+        Dict containing strategy and generated test steps
+        DOM Change Mode: {"strategy": "insert|replace", "reason": "...", "steps": [...]}
+        Failure Recovery Mode: {"strategy": "retry_modified|skip|abort", "reason": "...", "steps": [...], "confidence": 0.0-1.0}
     """
-    
+
+    # === FAILURE RECOVERY MODE ===
+    if failure_recovery_mode:
+        if not failed_instruction or not error_message:
+            return {"strategy": "abort", "reason": "Missing failure context", "steps": [], "confidence": 0.0}
+
+        try:
+            # Build failure recovery prompt
+            all_steps = current_case.get("steps", []) if current_case else []
+            remaining_steps = all_steps[executed_steps:] if executed_steps < len(all_steps) else []
+            executed_steps_detail = all_steps[:executed_steps] if executed_steps > 0 else []
+
+            failure_prompt = f"""## Test Step Failure Recovery Analysis
+
+**Failed Step**: {executed_steps}/{len(all_steps)}
+**Failed Instruction**: {failed_instruction}
+**Error Message**: {error_message}
+
+**Test Context**:
+- Test Name: {current_case.get('name', 'Unknown') if current_case else 'Unknown'}
+- Test Objective: {test_objective}
+- Remaining Steps: {len(remaining_steps)}
+
+**Executed Steps History** (for context):
+{json.dumps(executed_steps_detail, ensure_ascii=False, indent=2) if executed_steps_detail else "None - This is the first step"}
+
+**Current Page State**:
+The screenshot shows the current UI state after the failure occurred.
+
+## Task
+
+Analyze why this step failed and determine the best recovery strategy:
+
+### Strategy Options:
+
+1. **retry_modified**: The element likely exists but with different characteristics. Suggest an alternative instruction that targets similar functionality using elements visible in the current page.
+
+2. **skip**: The step is non-critical or the functionality has already been achieved/tested in previous steps. Skipping won't impact test validity.
+
+3. **abort**: The step is critical to the test objective and cannot be achieved with current page state. Continuing would produce invalid results.
+
+## Decision Guidelines:
+
+- If remaining steps depend on this step's outcome, avoid "skip"
+- If error indicates fundamental issues (page crashed, wrong page), choose "abort"
+- If alternative elements with similar function exist, choose "retry_modified"
+- If functionality was already tested in earlier steps, choose "skip"
+
+## Response Format (JSON only):
+
+```json
+{{
+  "strategy": "retry_modified|skip|abort",
+  "steps": [{{"action": "alternative instruction"}}],
+  "reason": "detailed explanation of why this strategy was chosen",
+  "confidence": 0.85
+}}
+```
+
+**Important**:
+- For retry_modified: steps array must contain exactly one step with the new instruction
+- For skip/abort: steps array should be empty []
+- confidence should be 0.0-1.0 (if < 0.7, system may override to abort for safety)
+"""
+
+            # Call LLM with multi-modal context
+            if screenshot:
+                messages = [
+                    {"role": "system", "content": "You are a QA expert analyzing test step failures. Respond with JSON only."},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": failure_prompt},
+                            {"type": "image_url", "image_url": {"url": screenshot, "detail": "low"}}
+                        ]
+                    }
+                ]
+            else:
+                messages = [
+                    {"role": "system", "content": "You are a QA expert analyzing test step failures. Respond with JSON only."},
+                    {"role": "user", "content": failure_prompt}
+                ]
+
+            response = await llm.ainvoke(messages)
+            response_text = response.content if hasattr(response, 'content') else str(response)
+
+            # Parse JSON response
+            try:
+                json_content = extract_json_from_response(response_text)
+                result = json.loads(json_content)
+
+                # Validate response
+                if not isinstance(result, dict) or "strategy" not in result:
+                    logging.error("LLM response missing required 'strategy' field")
+                    return {"strategy": "abort", "reason": "Invalid LLM response format", "steps": [], "confidence": 0.0}
+
+                strategy = result.get("strategy")
+                if strategy not in ["retry_modified", "skip", "abort"]:
+                    logging.error(f"Invalid strategy '{strategy}', defaulting to abort")
+                    return {"strategy": "abort", "reason": f"Invalid strategy returned: {strategy}", "steps": [], "confidence": 0.0}
+
+                # Validate confidence
+                confidence = result.get("confidence", 0.5)
+                if not isinstance(confidence, (int, float)) or confidence < 0 or confidence > 1:
+                    logging.warning(f"Invalid confidence {confidence}, defaulting to 0.5")
+                    confidence = 0.5
+
+                # Safety check: low confidence should abort
+                if confidence < MIN_RECOVERY_CONFIDENCE:
+                    logging.warning(f"Low confidence ({confidence}) in recovery strategy, overriding to abort")
+                    return {
+                        "strategy": "abort",
+                        "reason": f"Low confidence in recovery. Original suggestion: {result.get('reason', 'N/A')}",
+                        "steps": [],
+                        "confidence": confidence
+                    }
+
+                # Validate steps for retry_modified
+                if strategy == "retry_modified":
+                    steps = result.get("steps", [])
+                    if not steps or not isinstance(steps, list) or len(steps) == 0:
+                        logging.error("retry_modified strategy missing valid steps")
+                        return {"strategy": "abort", "reason": "retry_modified requires new instruction", "steps": [], "confidence": 0.0}
+
+                    # Validate step format
+                    valid_step = steps[0] if isinstance(steps[0], dict) and ("action" in steps[0] or "verify" in steps[0]) else None
+                    if not valid_step:
+                        logging.error("retry_modified step has invalid format")
+                        return {"strategy": "abort", "reason": "Invalid step format in retry_modified", "steps": [], "confidence": 0.0}
+
+                logging.info(f"Failure recovery strategy: {strategy} (confidence: {confidence:.2f})")
+                logging.debug(f"Recovery reason: {result.get('reason', 'N/A')}")
+
+                return {
+                    "strategy": strategy,
+                    "reason": result.get("reason", "No reason provided"),
+                    "steps": result.get("steps", []),
+                    "confidence": confidence
+                }
+
+            except json.JSONDecodeError as e:
+                logging.error(f"Failed to parse failure recovery LLM response: {e}")
+                return {"strategy": "abort", "reason": "JSON parsing failed", "steps": [], "confidence": 0.0}
+
+        except Exception as e:
+            logging.error(f"Error in failure recovery mode: {e}")
+            return {"strategy": "abort", "reason": f"Recovery failed: {str(e)}", "steps": [], "confidence": 0.0}
+
+    # === DOM CHANGE MODE (Original Logic) ===
     if not dom_diff:
         return {"strategy": "insert", "reason": "No new elements detected", "steps": []}
     
@@ -607,7 +789,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 logging.debug(f"Preamble action {i+1} result: {tool_output[:200]}...")
                 preamble_messages.append(AIMessage(content=tool_output))
 
-                if "[failure]" in result['intermediate_steps'][0][1].lower():
+                # Safely check for failure in intermediate steps
+                intermediate_output = safe_get_intermediate_step(result, index=0, subindex=1, default="")
+                if "[failure]" in intermediate_output.lower():
                     final_summary = f"FINAL_SUMMARY: Preamble action '{instruction_to_execute}' failed, cannot proceed with the test case. Error: {tool_output}"
                     case_result = {"case_name": case_name, "final_summary": final_summary, "status": "failed"}
                     logging.error(f"Preamble action {i+1} failed, aborting test case")
@@ -636,6 +820,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     case_modified = False  # Track if case was modified with dynamic steps
     dynamic_generation_count = 0  # Track how many times dynamic generation occurred
     dom_diff_cache = []
+    step_retry_tracker = {}  # Track retry attempts per step for adaptive recovery
 
     i = 0
     while i < len(case_steps):
@@ -739,17 +924,104 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             logging.debug(f"Step {i+1} tool output: {tool_output}")
             messages.append(AIMessage(content=tool_output))
 
-            # Check for critical failures that should immediately stop execution
-            if _is_critical_failure_step(tool_output, instruction_to_execute):
-                failed_steps.append(i + 1)
-                final_summary = f"FINAL_SUMMARY: Critical failure at step {i + 1}: '{instruction_to_execute}'. Error details: {tool_output[:200]}..."
-                logging.error(f"Critical failure detected at step {i + 1}, aborting remaining steps to save time")
-                break
-
+            # === Enhanced Error Recovery System ===
             # Check for failures in the tool output
-            if "[failure]" in result['intermediate_steps'][0][1].lower() or "failed" in tool_output.lower():
-                failed_steps.append(i + 1)
-                logging.warning(f"Step {i+1} detected as failed based on output")
+            intermediate_output = safe_get_intermediate_step(result, index=0, subindex=1, default="")
+            is_failure = "[failure]" in intermediate_output.lower() or "failed" in tool_output.lower()
+
+            # Check if this is an ELEMENT_NOT_FOUND error (potentially recoverable)
+            is_element_not_found = (
+                "[CRITICAL_ERROR:ELEMENT_NOT_FOUND]" in tool_output or
+                "element not found" in tool_output.lower()
+            )
+
+            if is_failure:
+                # Priority 1: Try recovery for ELEMENT_NOT_FOUND (recoverable critical error)
+                if is_element_not_found:
+                    # Get dynamic config to check if adaptive recovery is enabled
+                    dynamic_config = state.get("dynamic_step_generation", {"enabled": False})
+
+                    if dynamic_config.get("enabled", False):
+                        # Adaptive recovery enabled
+                        retry_key = f"step_{i}"
+                        retry_count = step_retry_tracker.get(retry_key, 0)
+
+                        if retry_count == 0:
+                            # Layer 1: Simple retry after page stabilization
+                            logging.info(f"Step {i+1} element not found, attempting Layer 1 recovery (simple retry after stabilization)")
+                            await asyncio.sleep(RETRY_STABILIZATION_DELAY)  # Let page stabilize
+                            step_retry_tracker[retry_key] = 1
+                            # Don't increment i, will retry same step
+                            continue
+
+                        elif retry_count == 1:
+                            # Layer 2: LLM-based adaptive replanning
+                            logging.info(f"Step {i+1} failed twice, attempting Layer 2 recovery (LLM adaptive replanning)")
+
+                            # Get current page screenshot for LLM analysis
+                            try:
+                                recovery_screenshot = await ui_tester_instance._actions.b64_page_screenshot(
+                                    file_name="recovery_screenshot", save_to_log=False
+                                )
+                            except Exception as e:
+                                logging.error(f"Failed to capture recovery screenshot: {e}")
+                                recovery_screenshot = screenshot  # Fallback to last screenshot
+
+                            # Call unified dynamic adjustment function in failure recovery mode
+                            recovery_result = await generate_dynamic_steps_with_llm(
+                                failure_recovery_mode=True,
+                                failed_instruction=instruction_to_execute,
+                                error_message=tool_output,
+                                test_objective=case.get("objective", ""),
+                                executed_steps=i+1,
+                                llm=llm,
+                                current_case=case,
+                                screenshot=recovery_screenshot
+                            )
+
+                            strategy = recovery_result.get("strategy")
+                            confidence = recovery_result.get("confidence", 0.0)
+
+                            if strategy == "retry_modified":
+                                # Replace current step with adapted instruction
+                                new_steps = recovery_result.get("steps", [])
+                                if new_steps and len(new_steps) > 0:
+                                    logging.info(f"Adapting step {i+1} with new instruction (confidence: {confidence:.2f})")
+                                    logging.debug(f"Adaptation reason: {recovery_result.get('reason', 'N/A')}")
+                                    case_steps[i] = new_steps[0]
+                                    step_retry_tracker[retry_key] = 2  # Mark as adapted
+                                    continue  # Retry with adapted instruction
+
+                            elif strategy == "skip":
+                                logging.warning(f"Skipping step {i+1} based on recovery analysis: {recovery_result.get('reason', 'N/A')}")
+                                failed_steps.append(i + 1)
+                                # i will increment normally, skip this step
+
+                            elif strategy == "abort":
+                                logging.error(f"Aborting test at step {i+1} based on recovery analysis: {recovery_result.get('reason', 'N/A')}")
+                                final_summary = f"FINAL_SUMMARY: Test aborted at step {i+1}. {recovery_result.get('reason', 'Critical failure')}"
+                                break
+
+                        else:
+                            # Already adapted but still failing - mark as failed and continue
+                            failed_steps.append(i + 1)
+                            logging.error(f"Step {i+1} failed even after adaptation, marking as failed")
+                    else:
+                        # Adaptive recovery disabled for ELEMENT_NOT_FOUND
+                        failed_steps.append(i + 1)
+                        logging.warning(f"Step {i+1} element not found, but adaptive recovery is disabled")
+
+                # Priority 2: Check for other critical failures (non-recoverable)
+                elif _is_critical_failure_step(tool_output, instruction_to_execute):
+                    failed_steps.append(i + 1)
+                    final_summary = f"FINAL_SUMMARY: Critical failure at step {i + 1}: '{instruction_to_execute}'. Error details: {tool_output[:200]}..."
+                    logging.error(f"Critical failure detected at step {i + 1}, aborting remaining steps to save time")
+                    break
+
+                # Priority 3: Other failures (non-critical)
+                else:
+                    failed_steps.append(i + 1)
+                    logging.warning(f"Step {i+1} detected as failed based on output")
 
             # Check for objective achievement signal
             is_achieved, achievement_reason = _is_objective_achieved(tool_output)
@@ -774,9 +1046,10 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 min_elements_threshold = dynamic_config.get("min_elements_threshold", 2)
                 
                 if dynamic_enabled:
-                    # Extract DOM diff from tool output
-                    dom_diff = extract_dom_diff_from_output(result['intermediate_steps'][0][1])
-                    
+                    # Extract DOM diff from tool output (safely access intermediate_steps)
+                    intermediate_output = safe_get_intermediate_step(result, index=0, subindex=1, default="")
+                    dom_diff = extract_dom_diff_from_output(intermediate_output)
+
                     if dom_diff and len(dom_diff) >= min_elements_threshold and dom_diff not in dom_diff_cache:
                         logging.info(f"Detected {len(dom_diff)} new elements, starting dynamic test step generation")
                         
