@@ -58,7 +58,7 @@ class UIActionSchema(BaseModel):
             "'KeyboardPress' action (key name like 'Enter', 'Tab', 'Escape', etc.), "
             "'Upload' action (file path), "
             "'Sleep' action (duration in milliseconds), "
-            "'Mouse' action (operation type: 'move' for cursor positioning or 'wheel' for scrolling). "
+            "'Mouse' action (operation specification in format 'move:x,y' for cursor positioning to coordinates (x,y) or 'wheel:deltaX,deltaY' for scrolling by delta values. Examples: 'move:100,200' moves cursor to (100,200), 'wheel:0,100' scrolls down by 100 pixels). "
             "Optional for 'Drag' action (target position description), "
             "'GetNewPage' action (tab/window identifier). "
             "Optional for other actions."
@@ -179,12 +179,14 @@ class UITool(BaseTool):
             if value:
                 action_phrase += f" {value}"
         elif action == "Mouse":
-            if value and 'move' in value.lower():
-                action_phrase = f"Move mouse cursor to {target}"
-            elif value and 'wheel' in value.lower():
-                action_phrase = f"Scroll mouse wheel on {target}"
+            if value and 'move:' in value.lower():
+                # Extract coordinates from 'move:x,y' format
+                action_phrase = f"Move mouse cursor to coordinates {value.split(':', 1)[1]} (specified as {target})"
+            elif value and 'wheel:' in value.lower():
+                # Extract delta values from 'wheel:deltaX,deltaY' format
+                action_phrase = f"Scroll mouse wheel by {value.split(':', 1)[1]} (on {target})"
             else:
-                action_phrase = f"Perform mouse action on {target}"
+                action_phrase = f"Perform mouse action on {target} with value '{value}'"
         else:
             action_phrase = f"{action} on {target}"
             if value:
@@ -212,6 +214,117 @@ class UITool(BaseTool):
 
             # First, check for a hard failure from the action executor
             if not result.get("success"):
+                # Check for enriched error details
+                error_details = result.get("error_details", {})
+
+                if error_details and error_details.get("error_type"):
+                    # Format structured error message based on error type
+                    error_type = error_details.get("error_type")
+                    error_reason = error_details.get("error_reason", "Unknown reason")
+
+                    if error_type == "scroll_failed":
+                        error_message = f"""[FAILURE] Action '{action}' on '{target}' failed.
+
+**Root Cause**: Element viewport positioning failed
+**Details**: {error_reason}
+**Strategies Attempted**: {', '.join(error_details.get('attempted_strategies', []))}
+
+**Recovery Actions**:
+1. Use Sleep action (2-3 seconds) to allow lazy-loaded content to appear
+2. Try manual Scroll action to navigate the page closer to the element
+3. Verify element ID is correct from current page state
+4. Check if element is in a collapsed section that needs to be opened first"""
+
+                    elif error_type == "scroll_timeout_lazy_loading":
+                        error_message = f"""[FAILURE] Action '{action}' on '{target}' failed.
+
+**Root Cause**: Page content unstable after scrolling (likely lazy-loading or infinite scroll)
+**Details**: {error_reason}
+
+**Recovery Actions**:
+1. Use Sleep action with longer duration (3-5 seconds) to allow content to stabilize
+2. Try the action again - content may have loaded by now
+3. Use manual Scroll action to trigger additional content loading
+4. Verify the element ID from the current page state in case it changed"""
+
+                    elif error_type == "element_not_found":
+                        error_message = f"""[FAILURE] Action '{action}' on '{target}' failed.
+
+**Root Cause**: Element does not exist on current page
+**Element ID**: {error_details.get('element_info', {}).get('element_id', target)}
+
+**Recovery Actions**:
+1. Review current page structure - element may have a different ID now
+2. Check if navigation to the correct page is needed
+3. Verify element is not hidden behind authentication or modal dialog
+4. Use Sleep action if element loads dynamically after page interaction"""
+
+                    elif error_type == "element_not_clickable":
+                        error_message = f"""[FAILURE] Action '{action}' on '{target}' failed.
+
+**Root Cause**: Element exists but cannot be clicked
+**Details**: {error_reason}
+
+**Recovery Actions**:
+1. Check if element is obscured by modal/overlay - close it first using Tap action
+2. Try Hover action over the element before clicking
+3. Check if element is disabled - may need to enable it through other actions
+4. Verify correct element ID - similar but different elements may exist"""
+
+                    elif error_type == "element_not_typeable":
+                        error_message = f"""[FAILURE] Action '{action}' on '{target}' failed.
+
+**Root Cause**: Element cannot accept text input
+**Details**: {error_reason}
+
+**Recovery Actions**:
+1. Verify the element is actually an input field or contenteditable element
+2. Try Clear action first, then Input action
+3. Check if element is disabled or read-only
+4. Use Tap action to focus the element before typing"""
+
+                    elif error_type == "file_upload_failed":
+                        error_message = f"""[FAILURE] Action '{action}' on '{target}' failed.
+
+**Root Cause**: File upload operation failed
+**Details**: {error_reason}
+
+**Recovery Actions**:
+1. Verify the file path exists and is accessible
+2. Check if the file format is accepted by the input element
+3. Ensure the file size is within acceptable limits
+4. Verify file input element is present and enabled on the page
+5. Check file permissions and ensure the file is readable"""
+
+                    elif error_type == "playwright_error":
+                        error_message = f"""[FAILURE] Action '{action}' on '{target}' failed.
+
+**Root Cause**: Browser interaction error
+**Technical Details**: {error_details.get('playwright_error', 'Unknown error')}
+
+**Recovery Actions**:
+1. Retry the action after a short Sleep (1-2 seconds)
+2. Check if page has navigated unexpectedly
+3. Verify element still exists on current page
+4. Check browser console for JavaScript errors that might interfere"""
+
+                    else:
+                        # Unknown error type, use generic format
+                        error_message = f"""[FAILURE] Action '{action}' on '{target}' failed.
+
+**Error Type**: {error_type}
+**Details**: {error_reason}
+
+**Recovery Actions**:
+1. Review the error details carefully
+2. Check current page state
+3. Try alternative action strategies
+4. Use Sleep action to allow page to stabilize"""
+
+                    logging.warning(f"Action failed with structured error: {error_type}")
+                    return error_message
+
+                # Fallback: Use existing error handling for errors without enriched details
                 error_message = (
                     f"Action '{action}' on '{target}' failed. Reason: {result.get('message', 'No details provided.')}"
                 )

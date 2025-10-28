@@ -149,9 +149,11 @@ def validate_and_build_llm_config(cfg):
     api_key = os.getenv("OPENAI_API_KEY") or llm_cfg_raw.get("api_key", "")
     base_url = os.getenv("OPENAI_BASE_URL") or llm_cfg_raw.get("base_url", "")
     model = llm_cfg_raw.get("model", "gpt-4o-mini")
+    filter_model = llm_cfg_raw.get("filter_model", model)  # For two-stage architecture, defaults to primary model
     # Sampling configuration: default temperature is 0.1; top_p not set by default
     temperature = llm_cfg_raw.get("temperature", 0.1)
     top_p = llm_cfg_raw.get("top_p")
+    max_tokens = llm_cfg_raw.get("max_tokens")  # Optional: maximum output tokens
 
     # Validate required fields
     if not api_key:
@@ -168,12 +170,15 @@ def validate_and_build_llm_config(cfg):
     llm_config = {
         "api": "openai",
         "model": model,
+        "filter_model": filter_model,
         "api_key": api_key,
         "base_url": base_url,
         "temperature": temperature,
     }
     if top_p is not None:
         llm_config["top_p"] = top_p
+    if max_tokens is not None:
+        llm_config["max_tokens"] = max_tokens
 
     # Show configuration source (hide sensitive information)
     api_key_masked = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "***"
@@ -184,9 +189,13 @@ def validate_and_build_llm_config(cfg):
     print(f"   - API Key: {api_key_masked} ({'Environment variable' if env_api_key else 'Config file'})")
     print(f"   - Base URL: {base_url} ({'Environment variable' if env_base_url else 'Config file/Default'})")
     print(f"   - Model: {model}")
+    if filter_model != model:
+        print(f"   - Filter Model: {filter_model} (for two-stage architecture)")
     print(f"   - Temperature: {temperature}")
     if top_p is not None:
         print(f"   - Top_p: {top_p}")
+    if max_tokens is not None:
+        print(f"   - Max Tokens: {max_tokens}")
 
     return llm_config
 

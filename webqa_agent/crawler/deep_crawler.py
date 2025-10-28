@@ -539,6 +539,104 @@ class DeepCrawler:
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(node, f, ensure_ascii=False, indent=2)
 
+    @staticmethod
+    def smart_truncate_page_text(
+        text_array: List[str],
+        max_tokens: int = 3000,
+        strategy: str = "head_tail_sample"
+    ) -> Dict[str, Any]:
+        """
+        Intelligently truncate page text while preserving semantic completeness.
+
+        Based on 2024 research on semantic chunking and context preservation:
+        - Avoids "lost-in-the-middle" problem
+        - Preserves page structure (head, middle sample, tail)
+        - Maintains overall context and flow
+
+        Args:
+            text_array: Original text array from get_text()
+            max_tokens: Maximum token budget (default: 3000)
+            strategy: Truncation strategy (currently supports "head_tail_sample")
+
+        Returns:
+            Dict containing:
+                - summary: Overview of the truncation
+                - text_content: Sampled text segments
+                - coverage: Coverage ratio (selected/total)
+                - estimated_tokens: Estimated token count
+        """
+        if not text_array:
+            return {
+                "summary": "No text content found",
+                "text_content": [],
+                "coverage": "0/0 (0%)",
+                "estimated_tokens": 0,
+                "strategy_used": strategy
+            }
+
+        total_items = len(text_array)
+        # Conservative estimate: 1 token ≈ 2 chars (mixed Chinese/English)
+        char_budget = max_tokens * 2
+
+        if strategy == "head_tail_sample":
+            result_parts = []
+            current_chars = 0
+
+            # Keep head 30% (navigation, titles, important info)
+            keep_head = int(total_items * 0.3)
+            for item in text_array[:keep_head]:
+                if current_chars + len(item) > char_budget * 0.5:
+                    break
+                result_parts.append(item)
+                current_chars += len(item)
+
+            # Middle sampling (max 20 samples to maintain page flow)
+            middle_start = keep_head
+            middle_end = max(keep_head, total_items - int(total_items * 0.1))
+            middle_section = text_array[middle_start:middle_end]
+
+            if middle_section:
+                sample_rate = max(1, len(middle_section) // 20)
+                for item in middle_section[::sample_rate]:
+                    if current_chars + len(item) > char_budget * 0.8:
+                        break
+                    result_parts.append(item)
+                    current_chars += len(item)
+
+            # Keep tail 10% (footer, contact, legal info)
+            keep_tail = int(total_items * 0.1)
+            for item in text_array[-keep_tail:] if keep_tail > 0 else []:
+                if current_chars + len(item) > char_budget:
+                    break
+                result_parts.append(item)
+                current_chars += len(item)
+
+            return {
+                "summary": f"Intelligently sampled {len(result_parts)} from {total_items} text segments",
+                "text_content": result_parts,
+                "coverage": f"{len(result_parts)}/{total_items} ({len(result_parts)/total_items*100:.1f}%)",
+                "estimated_tokens": current_chars // 2,
+                "strategy_used": strategy
+            }
+
+        else:
+            # Fallback: simple truncation
+            result = []
+            chars = 0
+            for item in text_array:
+                if chars + len(item) > char_budget:
+                    break
+                result.append(item)
+                chars += len(item)
+
+            return {
+                "summary": f"Simple truncation: {len(result)}/{total_items} items",
+                "text_content": result,
+                "coverage": f"{len(result)}/{total_items} ({len(result)/total_items*100:.1f}%)",
+                "estimated_tokens": chars // 2,
+                "strategy_used": "simple_truncate"
+            }
+
     # ------------------------------------------------------------------------
     # VISUAL DEBUGGING METHODS
     # ------------------------------------------------------------------------

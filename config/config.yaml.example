@@ -20,11 +20,13 @@ test_config: # Test configuration
     enabled: False
 
 llm_config: # LLM configuration, currently only supports OpenAI SDK compatible format
-  model: gpt-4.1-2025-04-14  # Recommended
+  model: gpt-4.1-2025-04-14  # Primary model for Stage 2 test planning (Recommended)
+  filter_model: gpt-4o-mini  # Lightweight model for Stage 1 element filtering (cost-effective)
   api_key: your_api_key
   base_url:  https://api.example.com/v1
   temperature: 0.1   # Optional, default 0.1
   # top_p: 0.9       # Optional, if not set, this parameter will not be passed
+  # max_tokens: 8192  # Optional, maximum output tokens (supports generating more test cases)
 
 browser_config:
   viewport: {"width": 1280, "height": 720}

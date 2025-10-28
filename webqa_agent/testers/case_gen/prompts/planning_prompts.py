@@ -30,16 +30,15 @@ Each test case must include these standardized components with enhanced business
 - **`domain_specific_rules`**: Industry-specific validation requirements or compliance rules
 - **`test_data_requirements`**: Specification of domain-appropriate test data and setup conditions
 - **`steps`**: Detailed test execution steps with clear action/verification pairs that simulate real user behavior and scenarios
-  - `action`: User-scenario action instructions describing what a real user would do in natural language, DON'T IMAGE. **Only use these action types: "Tap", "Scroll", "Input", "Sleep", "KeyboardPress", "Drag", "SelectDropdown". Do NOT invent or output any other action types or non-existent data.**
-  - `verify`: **FUNCTIONAL verification** - validates that features WORK correctly (element states, data accuracy, navigation success, business logic)
-  - `ux_verify`: **VISUAL QUALITY verification** - validates that presentation LOOKS correct (text accuracy/typos, layout rendering, visual bugs) in the current viewport
+  - `action`: User-scenario action instructions describing what a real user would do in natural language, DON'T IMAGE. **Only use these action types: "Tap", "Input", "Scroll", "SelectDropdown", "Clear", "Hover", "KeyboardPress", "Upload", "Drag", "GoToPage", "GoBack", "Sleep", "GetNewPage", "Mouse". Do NOT invent or output any other action types or non-existent data.**
+  - `verify`: User-expectation validation instructions describing what result a real user would expect to see
 - **`preamble_actions`**: Optional setup steps to establish required test preconditions
 - **`reset_session`**: Session management flag for test isolation strategy
 - **`success_criteria`**: Measurable, verifiable conditions that define test pass/fail status
 - **`cleanup_requirements`**: Post-test cleanup actions if needed
 
 #### Step Decomposition Rules:
-1. **One Action Per Step**: Each step in the `steps` array must contain ONLY ONE atomic action, and the action type must be one of: "Tap", "Scroll", "Input", "Sleep", "KeyboardPress", "Drag", "SelectDropdown".
+1. **One Action Per Step**: Each step in the `steps` array must contain ONLY ONE atomic action, and the action type must be one of: "Tap", "Input", "Scroll", "SelectDropdown", "Clear", "Hover", "KeyboardPress", "Upload", "Drag", "GoToPage", "GoBack", "Sleep", "GetNewPage", "Mouse".
 2. **Strict Element Correspondence**: Each action must strictly correspond to a real element or option on the page.
 3. **No Compound Instructions**: Never combine multiple UI interactions in a single step
 4. **Sequential Operations**: Multiple operations on the same or different elements must be separated into distinct steps
@@ -89,6 +88,35 @@ Each test case must include these standardized components with enhanced business
 - **Banking/Finance**: Use realistic account numbers, transaction amounts, and financial scenarios with proper validation
 - **Healthcare**: Use realistic patient data, medical codes, and HIPAA-compliant test scenarios
 - **Social Media**: Use realistic user profiles, content types, and interaction patterns
+
+### Mouse Action Usage Guidelines
+**IMPORTANT**: The Mouse action allows precise cursor positioning and mouse wheel scrolling.
+
+#### Mouse Action Format
+- **Mouse Move**: Use format `"Mouse"` action with value `"move:x,y"` where x,y are pixel coordinates
+  - Example: `{{"action": "Move mouse cursor to position (100, 200)"}}` with value `"move:100,200"`
+  - Use for: Precise cursor positioning, custom drawing areas, coordinate-based interactions
+
+- **Mouse Wheel**: Use format `"Mouse"` action with value `"wheel:deltaX,deltaY"`
+  - Example: `{{"action": "Scroll mouse wheel down"}}` with value `"wheel:0,100"`
+  - Use for: Custom scroll behavior, horizontal scrolling, precise scroll control
+
+#### When to Use Mouse Action
+- **Coordinate-based interactions**: Canvas drawing, image mapping, coordinate systems
+- **Custom scroll needs**: Horizontal scrolling, specific scroll distances
+- **Specialized UIs**: Games, design tools, interactive visualizations
+
+#### Mouse Action Examples
+```json
+[
+  {{"action": "Move mouse to drawing area coordinates (150, 300)"}},
+  {{"verify": "Verify cursor position indicator updates"}},
+  {{"action": "Scroll horizontally in the canvas"}},
+  {{"verify": "Verify canvas content shifts horizontally"}}
+]
+```
+
+**Note**: For standard element interactions (clicking buttons, hovering over links), prefer using `Tap` and `Hover` actions which automatically locate elements.
 
 ### User-Scenario Step Design Standards
 **CRITICAL**: All test steps must be designed from the user's perspective to ensure realistic and actionable test scenarios:
@@ -190,34 +218,30 @@ Each test case must include these standardized components with enhanced business
 
 def get_test_case_planning_system_prompt(
     business_objectives: str,
-    completed_cases: list = None,
     language: str = 'zh-CN',
 ) -> str:
     """Generate system prompt for test case planning.
 
     Args:
         business_objectives: Business objectives
-        completed_cases: Completed test cases (for replanning)
         language: Language for test case naming (zh-CN or en-US)
 
     Returns:
         Formatted system prompt string
     """
 
-    # Determine if initial planning or replanning
-    if not completed_cases:
-        # Decide mode based on whether business_objectives is empty
-        # Handle case where business_objectives might be a list
-        business_objectives_str = business_objectives if isinstance(business_objectives, str) else str(business_objectives) if business_objectives else ""
-        if business_objectives_str and business_objectives_str.strip():
-            role_and_objective = """
+    # Decide mode based on whether business_objectives is empty
+    # Handle case where business_objectives might be a list
+    business_objectives_str = business_objectives if isinstance(business_objectives, str) else str(business_objectives) if business_objectives else ""
+    if business_objectives_str and business_objectives_str.strip():
+        role_and_objective = """
 ## Role
 You are a Senior QA Testing Professional with expertise in business domain analysis, requirement engineering, and context-aware test design. Your responsibility is to deeply understand the application's business context, domain-specific patterns, and user needs to generate highly relevant and effective test cases.
 
 ## Primary Objective
 Conduct comprehensive business domain analysis and contextual understanding before generating test cases. Analyze the application's purpose, industry patterns, user workflows, and business logic to create test cases that are not only technically sound but also business-relevant and domain-appropriate.
 """
-            mode_section = f"""
+        mode_section = f"""
 ## Test Planning Mode: Context-Aware Intent-Driven Testing
 **Business Objectives Provided**: {business_objectives_str}
 
@@ -274,15 +298,15 @@ For each test case, provide:
 - **Success criteria**: Clear verification conditions
 - **Test data**: If data input is required, provide specific test data
 """
-        else:
-            role_and_objective = """
+    else:
+        role_and_objective = """
 ## Role
 You are a Senior QA Testing Professional with expertise in comprehensive web application analysis and domain-aware testing. Your responsibility is to conduct deep application analysis, understand business context, and design complete test suites that ensure software quality through systematic validation of all functional, business, and domain-specific requirements.
 
 ## Primary Objective
 Perform comprehensive application analysis including business domain understanding, user workflow identification, and contextual awareness before generating test cases. Apply established QA methodologies including domain-specific testing patterns, business process validation, and risk-based testing prioritization.
 """
-            mode_section = """
+        mode_section = """
 ## Test Planning Mode: Comprehensive Context-Aware Testing
 **Business Objectives**: Not provided - Performing comprehensive testing with domain analysis
 
@@ -339,63 +363,6 @@ For each test case, provide:
 - **Success criteria**: Clear verification conditions
 - **Test data**: If data input is required, provide specific test data
 """
-    else:
-        # Replanning mode
-        role_and_objective = """
-## Role
-You are a Senior QA Testing Professional performing adaptive test plan revision based on execution results, enhanced business understanding, and evolving domain context.
-
-## Primary Objective
-Leverage deeper business domain insights and execution learnings to generate refined test plans that address remaining coverage gaps while building upon successful outcomes. Ensure enhanced business relevance and domain appropriateness in all test cases.
-"""
-        # Also decide mode based on business_objectives during replanning
-        # Handle case where business_objectives might be a list
-        business_objectives_str = business_objectives if isinstance(business_objectives, str) else str(business_objectives) if business_objectives else ""
-        if business_objectives_str and business_objectives_str.strip():
-            mode_section = f"""
-## Replanning Mode: Enhanced Context-Aware Revision
-**Original Business Objectives**: {business_objectives_str}
-
-### Enhanced Replanning Requirements
-- Apply deeper domain understanding gained from execution results
-- Generate additional test cases with enhanced business relevance
-- Maintain focus on original business objectives while improving domain appropriateness
-- Incorporate lessons learned from executed test cases
-- Ensure new test cases complement completed ones with superior business alignment
-"""
-        else:
-            mode_section = """
-## Replanning Mode: Enhanced Comprehensive Testing Revision
-**Original Objectives**: Comprehensive testing with enhanced domain awareness
-
- CRITICAL ANALYSIS REQUIREMENTS
- BEFORE making ANY decision, you MUST:
- 
- 1. **CHECK REPETITION WARNINGS FIRST**: If there are ANY repetition warnings above, those warnings are MANDATORY and NON-NEGOTIABLE. You MUST NOT perform any action that is mentioned in the warnings.
- 
- 2. **FORBIDDEN ACTIONS**: If any element or action is marked as FORBIDDEN, FAILED, or CRITICAL in the warnings above, you are ABSOLUTELY PROHIBITED from using that element or action again.
- 
- 3. **ALTERNATIVE STRATEGY REQUIRED**: When repetition warnings exist, you MUST:
-    - Choose a completely different type of element (if button failed, try link or input)
-    - Navigate to different page areas (scroll, click navigation menu)
-    - Try completely different approaches to achieve the objective
-    - Consider marking the test as completed if the objective might already be achieved
- 
- 4. **ERROR HANDLING PRIORITY**: Check page content and screenshots for errors, warnings, login requirements, etc. Handle these BEFORE continuing the original process.
- 
- 5. **NO EXCUSES**: There are NO exceptions to repetition warnings. Even if the element seems important for the objective, if it's marked as forbidden, you MUST find an alternative approach.
-
- Analysis Priority Order:
- 1. Compliance with repetition warnings (HIGHEST PRIORITY)
- 2. Error/exception handling in page content
- 3. Progress toward test objective
- 4. Coverage of untested functionalities
-
- Please analyze the current state and decide:
- 1. Whether the current test case is completed
- 2. Whether to shift the test focus
- 3. The most valuable next action
-"""
 
     shared_standards = get_shared_test_design_standards(language)
 
@@ -440,42 +407,87 @@ Your response must be ONLY in JSON format. Do not include any analysis, explanat
 
 def get_test_case_planning_user_prompt(
     state_url: str,
-    completed_cases: list = None,
-    reflection_history: list = None,
-    remaining_objectives: str = None,
+    page_text_summary: dict = None,
+    priority_elements: dict = None,
 ) -> str:
-    """Generate user prompt for test case planning.
+    """Generate user prompt for test case planning (Stage 2).
 
     Args:
         state_url: Target URL
-        completed_cases: Completed test cases (for replanning)
-        reflection_history: Reflection history (for replanning)
-        remaining_objectives: Remaining objectives (for replanning)
+        page_text_summary: Intelligent text summary from smart_truncate_page_text()
+        priority_elements: AI-filtered priority elements from Stage 1
 
     Returns:
-        Formatted user prompt string
+        Formatted user prompt string with enhanced context
     """
 
-    context_section = ""
-    if completed_cases:
-        # Replanning mode
-        last_reflection = reflection_history[-1] if reflection_history else {}
-        context_section = f"""
-## Revision Context with Enhanced Business Understanding
-- **Completed Test Execution Summary**: {json.dumps(completed_cases, indent=2)}
-- **Previous Reflection Analysis**: {json.dumps(last_reflection, indent=2)}
-- **Remaining Coverage Objectives**: {remaining_objectives}
-- **Enhanced Domain Insights**: Apply deeper business context learned from execution results
+    # Build page content summary section
+    content_section = ""
+    if page_text_summary:
+        coverage = page_text_summary.get("coverage", "N/A")
+        text_content = page_text_summary.get("text_content", [])
+        estimated_tokens = page_text_summary.get("estimated_tokens", 0)
+        strategy = page_text_summary.get("strategy_used", "unknown")
+
+        # Show representative sample of text content
+        sample_text = text_content[:30] if len(text_content) > 30 else text_content
+
+        content_section = f"""
+## Page Content Summary (AI-Processed)
+- **Coverage**: {coverage} of total page text
+- **Estimated Tokens**: {estimated_tokens}
+- **Sampling Strategy**: {strategy}
+- **Key Text Segments**:
+```json
+{json.dumps(sample_text, ensure_ascii=False, indent=2)}
+```
+{"... (showing representative sample from full page)" if len(text_content) > 30 else ""}
+
+**Purpose**: This text summary helps understand page context, content areas, and semantic structure, complementing the visual analysis from the screenshot.
+"""
+
+    # Build priority elements section
+    elements_section = ""
+    if priority_elements:
+        elements_count = len(priority_elements)
+        # Show compact representation
+        elements_json = json.dumps(priority_elements, ensure_ascii=False, indent=2)
+
+        elements_section = f"""
+## Priority Interactive Elements (AI-Filtered from Stage 1)
+**{elements_count} high-priority elements** identified through intelligent LLM analysis:
+
+```json
+{elements_json}
+```
+
+**Selection Criteria**: These elements were filtered by AI based on:
+- Business value and impact
+- User interaction frequency
+- Testing significance and risk
+- Spatial position and importance
+
+**Usage Guideline**: Focus test case design on these critical elements while leveraging the full-page screenshot for context.
 """
 
     user_prompt = f"""
 ## Application Under Test (AUT)
 - **Target URL**: {state_url}
-- **Visual Element Reference (Referenced via attached screenshot) **: The attached screenshot contains numbered markers corresponding to interactive elements.
+- **Visual Element Reference**: The attached screenshot shows the ENTIRE webpage with numbered markers for interactive elements.
 
-{context_section}
+**IMPORTANT - Full-Page Context**:
+The screenshot captures the complete page from top to bottom, not just the visible viewport. All elements are numbered and can be referenced during test planning. The execution system will automatically handle scrolling to elements outside the viewport as needed.
 
-Please help me plan test cases based on the above information. Please conduct in-depth analysis according to the requirements in the system prompt and generate test cases that meet the specifications.
+{content_section}
+
+{elements_section}
+
+Please design comprehensive test cases following the standards in the system prompt. Leverage:
+1. **Visual Information**: Full-page screenshot with element markers
+2. **Content Summary**: Page text and semantic structure
+3. **Priority Elements**: AI-filtered critical elements for focused testing
+
+Generate business-relevant, effective test scenarios that validate key functionality and user workflows.
 Example 1:
 ```json
 {{
@@ -750,7 +762,10 @@ def get_reflection_user_prompt(
         interactive_elements_section = f"""
 - **Interactive Elements Map**:
 {interactive_elements_json}
-- **Visual Element Reference**: The attached screenshot contains numbered markers corresponding to interactive elements. Each number in the image maps to an element ID in the Interactive Elements Map above, providing precise visual-textual correlation for comprehensive UI analysis."""
+- **Visual Element Reference**: The attached screenshot contains numbered markers corresponding to interactive elements. Each number in the image maps to an element ID in the Interactive Elements Map above, providing precise visual-textual correlation for comprehensive UI analysis.
+
+**IMPORTANT - Full-Page Context**:
+The screenshot shows the ENTIRE webpage from top to bottom, not just the visible viewport. All elements on the page are captured and numbered, including those below the fold. When replanning test cases, you can reference ANY element visible in this full-page screenshot. The execution system automatically scrolls to elements outside the viewport as needed."""
 
     # Determine test mode for reflection decision
     # Handle case where business_objectives might be a list
@@ -857,6 +872,104 @@ def get_reflection_prompt(
         business_objectives, current_plan, completed_cases, page_content_summary
     )
     return system_prompt, user_prompt
+
+
+def get_element_filtering_system_prompt(language: str = 'zh-CN') -> str:
+    """Generate system prompt for Stage 1: LLM-driven element filtering.
+
+    Args:
+        language: Language for naming (zh-CN or en-US)
+
+    Returns:
+        System prompt for element filtering
+    """
+    role_desc = "专业QA工程师" if language == 'zh-CN' else "Professional QA Engineer"
+
+    return f"""You are a {role_desc} analyzing web pages to identify critical interactive elements for testing.
+
+## Core Responsibility
+Filter and prioritize interactive elements based on business value, user impact, and testing significance.
+
+## Prioritization Framework
+
+### Tier 1: Business-Critical (Must Test)
+- Transaction elements: checkout, payment, purchase buttons
+- Authentication: login, signup, password reset
+- Core search and filtering functionality
+- Primary CTAs driving business objectives
+
+### Tier 2: High-Value User Actions (Should Test)
+- Navigation menus and primary links
+- Form inputs for data collection
+- Dropdown selectors and option pickers
+- Action buttons for key features
+
+### Tier 3: Secondary Features (May Test)
+- Social sharing and interactions
+- Expandable content and accordions
+- Pagination and sorting controls
+- Secondary navigation
+
+### Tier 4: Lower Priority (Test if capacity allows)
+- Footer links (legal, about, contact)
+- Decorative or redundant elements
+- Less frequently used features
+
+## Evaluation Criteria
+1. **Business Impact**: Does failure affect revenue or core operations?
+2. **User Frequency**: How often do users interact with this?
+3. **Risk Level**: What's the impact if this breaks?
+4. **Spatial Position**: Is it in primary content area vs footer?
+5. **Semantic Importance**: Button > Link > Text for similar functions
+
+## Output Format
+Return ONLY a JSON array (no markdown code blocks, no explanation):
+[
+  {{"id": "element_id", "priority": "tier1", "reason": "brief justification"}},
+  {{"id": "element_id2", "priority": "tier2", "reason": "brief justification"}},
+  ...
+]
+
+Order elements by priority (tier1 first), then by position on page (top to bottom).
+Maximum elements to return: as specified in user prompt.
+"""
+
+
+def get_element_filtering_user_prompt(
+    url: str,
+    business_objectives: str,
+    elements: dict,
+    max_elements: int = 50
+) -> str:
+    """Generate user prompt for Stage 1: element filtering.
+
+    Args:
+        url: Target URL
+        business_objectives: Business objectives for context
+        elements: Simplified element data (tagName, innerText, attributes, center_x/y)
+        max_elements: Maximum number of elements to select
+
+    Returns:
+        User prompt for element filtering
+    """
+    elements_json = json.dumps(elements, ensure_ascii=False, indent=2)
+
+    return f"""## Analysis Context
+- **Target URL**: {url}
+- **Business Objectives**: {business_objectives or "General comprehensive testing - identify all critical functionality"}
+- **Total Elements Found**: {len(elements)}
+- **Required Selection**: Top {max_elements} elements
+
+## Interactive Elements Data (Simplified Format)
+The following elements have been extracted from the page. Each element contains:
+- tagName: Element type (button, input, a, etc.)
+- innerText: Text content (truncated to 200 chars)
+- attributes: Key attributes (type, role, href, aria-label)
+- center_x/y: Position coordinates
+
+{elements_json}
+
+**Your Task**: Analyze all {len(elements)} elements and select the top {max_elements} most important elements for testing. Consider both the business objectives (if provided) and general testing best practices. Return the selection in the specified JSON format."""
 
 
 def get_dynamic_step_generation_prompt() -> str:

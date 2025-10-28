@@ -14,12 +14,11 @@ class LLMPrompt:
 
     ## Context Provided
     - **`pageDescription (interactive elements)`**: A map of all interactive elements on the page, each with a unique ID. Use these IDs for actions.
-    - **`page_structure (full text content)`**: The complete text content of the page, including non-interactive elements.
     - **`Screenshot`**: A visual capture of the current page state.
 
     ## Objective
     - Decompose the user's instruction into a **series of actionable steps**, each representing a single UI interaction.
-    - **Unified Context Analysis**: You MUST analyze BOTH `pageDescription` and `page_structure` together. Use `page_structure` to understand the meaning and context of the interactive elements in `pageDescription` (e.g., matching a label to a nearby input field). This unified view is critical for making correct decisions.
+    - **Unified Context Analysis**: Analyze the `pageDescription` together with the visual `Screenshot`. Use the screenshot to understand the spatial layout and context of the interactive elements (e.g., matching a label to a nearby input field based on their visual positions). This unified view is critical for making correct decisions.
     - Identify and locate the target element if applicable.
     - Validate if the planned target matches the user's intent, especially in cases of **duplicate or ambiguous elements**.
     - Avoid redundant operations such as repeated scrolling or re-executing completed steps.
@@ -187,8 +186,8 @@ class LLMPrompt:
     - Example: if you see element '1' with internal id 917, use "id": "1" in your action
 
     ### Contextual Decision Making:
-    - **Crucially, use the `page_structure` (full text content) to understand the context of the interactive elements from `pageDescription`**. For example, if `page_structure` shows "Username:" next to an input field, you know that input field is for the username.
-    - If you see error text like "Invalid email format" in `page_structure`, use this information to correct your next action.
+    - **Crucially, use the `Screenshot` to understand the context of the interactive elements from `pageDescription`**. For example, if the screenshot shows "Username:" next to an input field, you know that input field is for the username.
+    - If you see error text like "Invalid email format" in the screenshot, use this information to correct your next action.
 
     ### Supported Actions:
     - Tap: Click on a specified page element (such as a button or link). Typically used to trigger a click event.
