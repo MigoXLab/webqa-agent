@@ -5,7 +5,6 @@ from io import BytesIO
 from typing import Any, List
 
 from langchain_core.tools import BaseTool
-from langgraph.pregel.main import Output
 from pydantic import Field
 
 from webqa_agent.crawler.deep_crawler import DeepCrawler

@@ -276,7 +276,7 @@ class UITester:
 
             # Try to get basic page information even if it fails
             try:
-                basic_screenshot = await self._actions.b64_page_screenshot(file_name="error_assert")
+                basic_screenshot = await self._actions.b64_page_screenshot(file_name="error_assert", full_page=True)
             except:
                 basic_screenshot = None
 
@@ -387,7 +387,7 @@ class UITester:
                     await asyncio.sleep(1)
 
                 # Take screenshot
-                post_action_ss = await self._actions.b64_page_screenshot(file_name=f"action_{action_desc}_{index}")
+                post_action_ss = await self._actions.b64_page_screenshot(file_name=f"action_{action_desc}_{index}", full_page=False)
 
                 action_result = {
                     "description": action_desc,
@@ -410,7 +410,7 @@ class UITester:
                 return execute_results, failure_result
 
         logging.debug("All actions executed successfully")
-        post_action_ss = await self._actions.b64_page_screenshot(file_name="final_success")
+        post_action_ss = await self._actions.b64_page_screenshot(file_name="final_success", full_page=False)
         return execute_results, {
             "success": True,
             "message": "All actions executed successfully",

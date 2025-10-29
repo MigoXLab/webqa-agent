@@ -867,7 +867,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         dp = DeepCrawler(page)
         await dp.crawl(highlight=True, viewport_only=True)
         screenshot = await ui_tester_instance._actions.b64_page_screenshot(
-            file_name="agent_step_vision", save_to_log=False
+            full_page=False, file_name="agent_step_vision", save_to_log=False
         )
         await dp.remove_marker()
         logging.debug("Generated highlighted screenshot for the agent.")
@@ -988,7 +988,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                             # Get current page screenshot for LLM analysis
                             try:
                                 recovery_screenshot = await ui_tester_instance._actions.b64_page_screenshot(
-                                    file_name="recovery_screenshot", save_to_log=False
+                                    full_page=False, file_name="recovery_screenshot", save_to_log=False
                                 )
                             except Exception as e:
                                 logging.error(f"Failed to capture recovery screenshot: {e}")
@@ -1083,7 +1083,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         try:
                             # Capture screenshot for visual context after successful step execution
                             logging.debug("Capturing screenshot for dynamic step generation context")
-                            screenshot = await ui_tester_instance._actions.b64_page_screenshot()
+                            screenshot = await ui_tester_instance._actions.b64_page_screenshot(full_page=False)
                             
                             # Enhance objective with generation context for smarter LLM decision-making
                             enhanced_objective = case.get("objective", "")

@@ -377,6 +377,22 @@ class ActionHandler:
 
                         # Verify page stability after scroll (for dynamic content)
                         await self._wait_for_page_stability()
+
+                        # Verify element is actually in viewport using bounding_box
+                        try:
+                            rect = await self.page.locator(selector).bounding_box()
+                            if rect:
+                                viewport_height = await self.page.evaluate('window.innerHeight')
+                                viewport_width = await self.page.evaluate('window.innerWidth')
+                                is_in_viewport = (rect['y'] >= 0 and rect['y'] < viewport_height and
+                                                rect['x'] >= 0 and rect['x'] < viewport_width)
+                                if is_in_viewport:
+                                    logging.debug(f'Element {element_id} verified in viewport at ({rect["x"]:.1f}, {rect["y"]:.1f})')
+                                else:
+                                    logging.warning(f'Element {element_id} scrolled but still outside viewport: y={rect["y"]:.1f}, viewport_height={viewport_height}')
+                        except Exception as verify_error:
+                            logging.debug(f'Could not verify viewport position for element {element_id}: {verify_error}')
+
                         return True
                     except Exception as css_error:
                         ctx.playwright_error = str(css_error)
@@ -399,6 +415,22 @@ class ActionHandler:
 
                         # Verify page stability after scroll
                         await self._wait_for_page_stability()
+
+                        # Verify element is actually in viewport using bounding_box
+                        try:
+                            rect = await self.page.locator(f'xpath={xpath}').bounding_box()
+                            if rect:
+                                viewport_height = await self.page.evaluate('window.innerHeight')
+                                viewport_width = await self.page.evaluate('window.innerWidth')
+                                is_in_viewport = (rect['y'] >= 0 and rect['y'] < viewport_height and
+                                                rect['x'] >= 0 and rect['x'] < viewport_width)
+                                if is_in_viewport:
+                                    logging.debug(f'Element {element_id} verified in viewport at ({rect["x"]:.1f}, {rect["y"]:.1f})')
+                                else:
+                                    logging.warning(f'Element {element_id} scrolled but still outside viewport: y={rect["y"]:.1f}, viewport_height={viewport_height}')
+                        except Exception as verify_error:
+                            logging.debug(f'Could not verify viewport position for element {element_id}: {verify_error}')
+
                         return True
                     except Exception as xpath_error:
                         ctx.playwright_error = str(xpath_error)
@@ -442,6 +474,16 @@ class ActionHandler:
                                 xpath=xpath,
                                 center_y=center_y
                             )
+
+                    # Verify scroll position (coordinate-based scroll may not work with scroll containers)
+                    actual_scroll_y = await self.page.evaluate('window.scrollY')
+                    if abs(actual_scroll_y - target_scroll_y) > 10:
+                        logging.warning(
+                            f'Coordinate-based scroll for element {element_id} may have failed: '
+                            f'target={target_scroll_y:.1f}, actual={actual_scroll_y:.1f}. '
+                            f'This may indicate scroll containers.'
+                        )
+
                     return True
 
                 # If all strategies failed but we have more retries, wait and continue
@@ -522,6 +564,11 @@ class ActionHandler:
         Playwright's mouse operations use viewport coordinates, while our crawler
         captures document coordinates. This method performs the necessary conversion.
 
+        **IMPORTANT NOTE**: This method only works correctly with window-level scrolling.
+        For pages using scroll containers (elements with overflow: auto/scroll), the
+        window.pageYOffset will be 0 even after scrolling, causing incorrect conversion.
+        In such cases, use element.bounding_box() to get fresh viewport coordinates instead.
+
         Args:
             x: Document X coordinate (from element center_x)
             y: Document Y coordinate (from element center_y)
@@ -533,11 +580,123 @@ class ActionHandler:
             # Element at document position (500, 1200) with scroll at (0, 800)
             # viewport_y = 1200 - 800 = 400 (element is 400px from top of viewport)
         """
+        # Get window scroll offset (only reflects window-level scrolling, not scroll containers)
         scroll_x = await self.page.evaluate('window.pageXOffset || document.documentElement.scrollLeft')
         scroll_y = await self.page.evaluate('window.pageYOffset || document.documentElement.scrollTop')
+
+        # Detect potential scroll container issues
+        # If coordinates are large but scroll offset is 0, likely using scroll containers
+        if (abs(x) > 100 or abs(y) > 100) and scroll_x == 0 and scroll_y == 0:
+            # Check if page has scroll containers
+            has_scroll_containers = await self.page.evaluate('''() => {
+                const scrollContainers = document.querySelectorAll('[style*="overflow"]');
+                const computedScrollContainers = Array.from(document.querySelectorAll('*')).filter(el => {
+                    const style = window.getComputedStyle(el);
+                    return (style.overflow === 'auto' || style.overflow === 'scroll' ||
+                            style.overflowY === 'auto' || style.overflowY === 'scroll');
+                });
+                return scrollContainers.length > 0 || computedScrollContainers.length > 0;
+            }''')
+
+            if has_scroll_containers:
+                logging.warning(
+                    f'Coordinate conversion may be inaccurate: document coords=({x}, {y}), '
+                    f'but window scroll offset=(0, 0) with scroll containers detected. '
+                    f'This indicates overflow scrolling. Consider using bounding_box() instead.'
+                )
+
         viewport_x = x - scroll_x
         viewport_y = y - scroll_y
+
+        logging.debug(
+            f'Coordinate conversion: document=({x:.1f}, {y:.1f}), '
+            f'scroll_offset=({scroll_x:.1f}, {scroll_y:.1f}), '
+            f'viewport=({viewport_x:.1f}, {viewport_y:.1f})'
+        )
+
         return (viewport_x, viewport_y)
+
+    async def _get_element_viewport_coordinates(
+        self,
+        element_id: str,
+        selector: Optional[str] = None,
+        xpath: Optional[str] = None,
+        stored_x: Optional[float] = None,
+        stored_y: Optional[float] = None,
+        validate_against_stored: bool = True,
+        action_name: str = "action"
+    ) -> Optional[tuple[float, float]]:
+        """Get viewport coordinates for an element using multiple strategies.
+
+        This method provides a unified approach for obtaining viewport coordinates,
+        handling scroll containers correctly by using Playwright's bounding_box() API.
+
+        Tries strategies in order:
+        1. Fresh bounding_box() via CSS selector (most reliable)
+        2. Fresh bounding_box() via XPath (fallback if CSS fails)
+        3. Coordinate conversion from stored document coords (backward compatibility)
+
+        Args:
+            element_id: Element identifier for logging
+            selector: CSS selector
+            xpath: XPath selector
+            stored_x: Stored document X coordinate
+            stored_y: Stored document Y coordinate
+            validate_against_stored: Whether to validate fresh coords against stored
+            action_name: Name of the action for logging context (e.g., "click", "hover")
+
+        Returns:
+            Tuple of (viewport_x, viewport_y) if successful, None otherwise
+        """
+        rect = None
+
+        # Strategy 1: Try CSS selector for bounding_box()
+        if self._is_valid_css_selector(selector):
+            try:
+                rect = await self.page.locator(selector).bounding_box()
+            except Exception as e:
+                logging.debug(f'bounding_box() via CSS selector failed for element {element_id} ({action_name}): {e}')
+
+        # Strategy 2: Try XPath if CSS fails or returns None
+        if not rect and xpath:
+            try:
+                rect = await self.page.locator(f'xpath={xpath}').bounding_box()
+            except Exception as e:
+                logging.debug(f'bounding_box() via XPath failed for element {element_id} ({action_name}): {e}')
+
+        # Use fresh viewport coordinates if available
+        if rect:
+            viewport_x = rect['x'] + rect['width'] / 2
+            viewport_y = rect['y'] + rect['height'] / 2
+
+            # Optionally validate against stored coordinates to detect scroll container issues
+            if validate_against_stored and stored_x is not None and stored_y is not None:
+                calc_viewport_x, calc_viewport_y = await self._convert_document_to_viewport_coords(stored_x, stored_y)
+                diff_x = abs(viewport_x - calc_viewport_x)
+                diff_y = abs(viewport_y - calc_viewport_y)
+
+                if diff_x > 10 or diff_y > 10:
+                    logging.warning(
+                        f'Coordinate mismatch detected for element {element_id} ({action_name}): '
+                        f'fresh bounding_box=({viewport_x:.1f}, {viewport_y:.1f}), '
+                        f'calculated from stored=({calc_viewport_x:.1f}, {calc_viewport_y:.1f}), '
+                        f'diff=({diff_x:.1f}, {diff_y:.1f}). '
+                        f'Likely scroll container or CSS transform. Using fresh coordinates.'
+                    )
+
+            logging.debug(f'{action_name.capitalize()} at element {element_id}, fresh viewport coordinates=({viewport_x:.1f}, {viewport_y:.1f})')
+            return (viewport_x, viewport_y)
+
+        # Strategy 3: Fallback to stored coordinates with conversion
+        elif stored_x is not None and stored_y is not None:
+            logging.warning(f'bounding_box() returned None for element {element_id} ({action_name}), falling back to stored coordinates')
+            viewport_x, viewport_y = await self._convert_document_to_viewport_coords(stored_x, stored_y)
+            logging.debug(f'{action_name.capitalize()} at element {element_id}, document coordinates=({stored_x}, {stored_y}), calculated viewport=({viewport_x}, {viewport_y})')
+            return (viewport_x, viewport_y)
+
+        else:
+            logging.error(f'Element {element_id} has no valid coordinates for {action_name}: bounding_box=None, stored coordinates missing')
+            return None
 
     async def click(self, id) -> bool:
         # Initialize action context for error propagation
@@ -604,27 +763,46 @@ class ActionHandler:
         return click_result
 
     async def click_using_coordinates(self, element, id) -> bool:
-        """Helper function to click using coordinates."""
-        x = element.get('center_x')
-        y = element.get('center_y')
+        """Helper function to click using coordinates with scroll container handling.
+
+        Uses Playwright's bounding_box() to get fresh viewport coordinates,
+        which correctly handles scroll containers, CSS transforms, and fixed positioning.
+        Falls back to stored coordinates if bounding_box() fails.
+        """
+        selector = element.get('selector')
+        xpath = element.get('xpath')
+        stored_x = element.get('center_x')
+        stored_y = element.get('center_y')
+
         try:
-            if x is not None and y is not None:
-                # Convert document coordinates to viewport coordinates
-                viewport_x, viewport_y = await self._convert_document_to_viewport_coords(x, y)
-                logging.debug(f'Mouse click at element {id}, document coordinates=({x}, {y}), viewport coordinates=({viewport_x}, {viewport_y})')
-                try:
-                    await self.page.mouse.click(viewport_x, viewport_y)
-                except Exception as e:
-                    logging.error(f'Mouse click error: {e}\nDocument coordinates: ({x}, {y}), Viewport coordinates: ({viewport_x}, {viewport_y})')
+            # Use unified coordinate retrieval method
+            coords = await self._get_element_viewport_coordinates(
+                element_id=id,
+                selector=selector,
+                xpath=xpath,
+                stored_x=stored_x,
+                stored_y=stored_y,
+                validate_against_stored=True,
+                action_name="mouse click"
+            )
+
+            if coords:
+                viewport_x, viewport_y = coords
+                await self.page.mouse.click(viewport_x, viewport_y)
                 return True
             else:
-                logging.error('Coordinates not found in element data')
                 return False
+
         except Exception as e:
-            logging.error(f'Error clicking using coordinates: {e}')
+            logging.error(f'Error clicking element {id}: {e}')
             return False
 
     async def hover(self, id) -> bool:
+        """Hover over element using fresh viewport coordinates.
+
+        Uses Playwright's bounding_box() to get fresh viewport coordinates,
+        which correctly handles scroll containers, CSS transforms, and fixed positioning.
+        """
         # Initialize action context for error propagation
         ctx = ActionContext()
         action_context_var.set(ctx)
@@ -651,25 +829,37 @@ class ActionHandler:
             return False
 
         try:
-            x = element.get('center_x')
-            y = element.get('center_y')
-            if x is not None and y is not None:
-                # Convert document coordinates to viewport coordinates
-                viewport_x, viewport_y = await self._convert_document_to_viewport_coords(x, y)
-                logging.debug(f'Mouse hover at element {id}, document coordinates=({x}, {y}), viewport coordinates=({viewport_x}, {viewport_y})')
+            selector = element.get('selector')
+            xpath = element.get('xpath')
+            stored_x = element.get('center_x')
+            stored_y = element.get('center_y')
+
+            # Use unified coordinate retrieval method
+            coords = await self._get_element_viewport_coordinates(
+                element_id=str(id),
+                selector=selector,
+                xpath=xpath,
+                stored_x=stored_x,
+                stored_y=stored_y,
+                validate_against_stored=False,  # Skip validation for hover (less critical)
+                action_name="hover"
+            )
+
+            if coords:
+                viewport_x, viewport_y = coords
                 await self.page.mouse.move(viewport_x, viewport_y)
                 await asyncio.sleep(0.5)
                 return True
             else:
-                logging.error('Coordinates not found in element data')
                 ctx.set_error(
                     ERROR_ELEMENT_NOT_FOUND,
-                    f"Element {id} missing coordinate information (center_x or center_y)",
+                    f"Element {id} missing coordinate information (bounding_box and stored coordinates unavailable)",
                     element_id=id,
-                    has_center_x=x is not None,
-                    has_center_y=element.get('center_y') is not None
+                    has_center_x=stored_x is not None,
+                    has_center_y=stored_y is not None
                 )
                 return False
+
         except Exception as e:
             logging.error(f'Hover action failed for element {id}: {e}')
             ctx.set_error(
@@ -751,78 +941,18 @@ class ActionHandler:
                 return False
 
             await asyncio.sleep(1)
-            # Type text with CSS validation and XPath fallback
+            # Type text using unified fill method
             selector = element['selector']
+            xpath = element.get('xpath')
 
-            # First validate CSS selector format
-            if self._is_valid_css_selector(selector):
-                try:
-                    # Try using CSS selector
-                    await self.page.locator(selector).fill(text)
-                    logging.debug(f"Typed '{text}' into element {id} using CSS selector: {selector}")
-                except Exception as css_error:
-                    logging.warning(f'CSS selector type failed for element {id}: {css_error}')
-                    ctx.playwright_error = str(css_error)
-                    # CSS selector failed, try XPath
-                    xpath = element.get('xpath')
-                    if xpath:
-                        try:
-                            await self.page.locator(f'xpath={xpath}').fill(text)
-                            logging.debug(f"Typed '{text}' into element {id} using XPath fallback: {xpath}")
-                        except Exception as xpath_error:
-                            logging.error(
-                                f'Both CSS and XPath type failed for element {id}. CSS error: {css_error}, XPath error: {xpath_error}'
-                            )
-                            ctx.set_error(
-                                ERROR_NOT_TYPEABLE,
-                                f"Both CSS selector and XPath strategies failed to type into element {id}",
-                                element_id=id,
-                                selector=selector,
-                                xpath=xpath,
-                                css_error=str(css_error),
-                                xpath_error=str(xpath_error)
-                            )
-                            return False
-                    else:
-                        logging.error(f'CSS selector type failed and no XPath available for element {id}')
-                        ctx.set_error(
-                            ERROR_NOT_TYPEABLE,
-                            f"CSS selector failed to type into element {id} and no XPath fallback available",
-                            element_id=id,
-                            selector=selector,
-                            has_xpath=False,
-                            playwright_error=str(css_error)
-                        )
-                        return False
-            else:
-                logging.warning(f'Invalid CSS selector format for element {id}: {selector}')
-                # CSS selector format invalid, use XPath directly
-                xpath = element.get('xpath')
-                if xpath:
-                    try:
-                        await self.page.locator(f'xpath={xpath}').fill(text)
-                        logging.debug(f"Typed '{text}' into element {id} using XPath: {xpath}")
-                    except Exception as xpath_error:
-                        logging.error(f'XPath type failed for element {id}: {xpath_error}')
-                        ctx.set_error(
-                            ERROR_NOT_TYPEABLE,
-                            f"XPath strategy failed to type into element {id} (invalid CSS selector)",
-                            element_id=id,
-                            selector=selector,
-                            xpath=xpath,
-                            playwright_error=str(xpath_error)
-                        )
-                        return False
-                else:
-                    logging.error(f'Invalid CSS selector and no XPath available for element {id}')
-                    ctx.set_error(
-                        ERROR_NOT_TYPEABLE,
-                        f"Invalid CSS selector format and no XPath available for element {id}",
-                        element_id=id,
-                        selector=selector,
-                        has_xpath=False
-                    )
-                    return False
+            if not await self._fill_element_text(
+                element_id=str(id),
+                selector=selector,
+                xpath=xpath,
+                text=text,
+                action_name="type"
+            ):
+                return False
 
             await asyncio.sleep(1)
             return True
@@ -879,6 +1009,109 @@ class ActionHandler:
         except Exception:
             return False
 
+    async def _fill_element_text(
+        self,
+        element_id: str,
+        selector: str,
+        xpath: Optional[str],
+        text: str,
+        action_name: str = "fill"
+    ) -> bool:
+        """Fill element text using CSS selector with XPath fallback.
+
+        This method provides a unified approach for filling input elements,
+        handling both valid and invalid CSS selectors with automatic XPath fallback.
+
+        Args:
+            element_id: Element ID for logging
+            selector: CSS selector
+            xpath: Optional XPath selector for fallback
+            text: Text to fill (empty string for clear operation)
+            action_name: Name of action for logging/errors (e.g., "type", "clear")
+
+        Returns:
+            True if successful, False otherwise (with error context set)
+        """
+        ctx = action_context_var.get()
+
+        # Strategy 1: Try CSS selector if format is valid
+        if self._is_valid_css_selector(selector):
+            try:
+                await self.page.locator(selector).fill(text)
+                logging.debug(f"{action_name.capitalize()}ed element {element_id} using CSS selector: {selector}")
+                return True
+            except Exception as css_error:
+                logging.warning(f'CSS selector {action_name} failed for element {element_id}: {css_error}')
+                if ctx:
+                    ctx.playwright_error = str(css_error)
+
+                # Strategy 2: Try XPath fallback if CSS fails
+                if xpath:
+                    try:
+                        await self.page.locator(f'xpath={xpath}').fill(text)
+                        logging.debug(f"{action_name.capitalize()}ed element {element_id} using XPath fallback: {xpath}")
+                        return True
+                    except Exception as xpath_error:
+                        logging.error(
+                            f'Both CSS and XPath {action_name} failed for element {element_id}. '
+                            f'CSS error: {css_error}, XPath error: {xpath_error}'
+                        )
+                        if ctx:
+                            ctx.set_error(
+                                ERROR_NOT_TYPEABLE,
+                                f"Both CSS selector and XPath strategies failed to {action_name} element {element_id}",
+                                element_id=element_id,
+                                selector=selector,
+                                xpath=xpath,
+                                css_error=str(css_error),
+                                xpath_error=str(xpath_error)
+                            )
+                        return False
+                else:
+                    logging.error(f'CSS selector {action_name} failed and no XPath available for element {element_id}')
+                    if ctx:
+                        ctx.set_error(
+                            ERROR_NOT_TYPEABLE,
+                            f"CSS selector failed to {action_name} element {element_id} and no XPath fallback available",
+                            element_id=element_id,
+                            selector=selector,
+                            has_xpath=False,
+                            playwright_error=str(css_error)
+                        )
+                    return False
+
+        # Strategy 3: CSS selector format invalid, use XPath directly
+        else:
+            logging.warning(f'Invalid CSS selector format for element {element_id}: {selector}')
+            if xpath:
+                try:
+                    await self.page.locator(f'xpath={xpath}').fill(text)
+                    logging.debug(f"{action_name.capitalize()}ed element {element_id} using XPath: {xpath}")
+                    return True
+                except Exception as xpath_error:
+                    logging.error(f'XPath {action_name} failed for element {element_id}: {xpath_error}')
+                    if ctx:
+                        ctx.set_error(
+                            ERROR_NOT_TYPEABLE,
+                            f"XPath strategy failed to {action_name} element {element_id} (invalid CSS selector)",
+                            element_id=element_id,
+                            selector=selector,
+                            xpath=xpath,
+                            playwright_error=str(xpath_error)
+                        )
+                    return False
+            else:
+                logging.error(f'Invalid CSS selector and no XPath available for element {element_id}')
+                if ctx:
+                    ctx.set_error(
+                        ERROR_NOT_TYPEABLE,
+                        f"Invalid CSS selector format and no XPath available for element {element_id}",
+                        element_id=element_id,
+                        selector=selector,
+                        has_xpath=False
+                    )
+                return False
+
     async def clear(self, id) -> bool:
         """Clears the text in the specified input element."""
         # Initialize action context for error propagation
@@ -911,77 +1144,17 @@ class ActionHandler:
                 return False
 
             selector = element_to_clear['selector']
+            xpath = element_to_clear.get('xpath')
 
-            # Clear input with CSS validation and XPath fallback
-            # First validate CSS selector format
-            if self._is_valid_css_selector(selector):
-                try:
-                    # Try using CSS selector
-                    await self.page.locator(selector).fill('')
-                    logging.debug(f'Cleared input for element {id} using CSS selector: {selector}')
-                except Exception as css_error:
-                    logging.warning(f'CSS selector clear failed for element {id}: {css_error}')
-                    ctx.playwright_error = str(css_error)
-                    # CSS selector failed, try XPath
-                    xpath = element_to_clear.get('xpath')
-                    if xpath:
-                        try:
-                            await self.page.locator(f'xpath={xpath}').fill('')
-                            logging.debug(f'Cleared input for element {id} using XPath fallback: {xpath}')
-                        except Exception as xpath_error:
-                            logging.error(
-                                f'Both CSS and XPath clear failed for element {id}. CSS error: {css_error}, XPath error: {xpath_error}'
-                            )
-                            ctx.set_error(
-                                ERROR_NOT_TYPEABLE,
-                                f"Both CSS selector and XPath strategies failed to clear element {id}",
-                                element_id=id,
-                                selector=selector,
-                                xpath=xpath,
-                                css_error=str(css_error),
-                                xpath_error=str(xpath_error)
-                            )
-                            return False
-                    else:
-                        logging.error(f'CSS selector clear failed and no XPath available for element {id}')
-                        ctx.set_error(
-                            ERROR_NOT_TYPEABLE,
-                            f"CSS selector failed to clear element {id} and no XPath fallback available",
-                            element_id=id,
-                            selector=selector,
-                            has_xpath=False,
-                            playwright_error=str(css_error)
-                        )
-                        return False
-            else:
-                logging.warning(f'Invalid CSS selector format for element {id}: {selector}')
-                # CSS selector format invalid, use XPath directly
-                xpath = element_to_clear.get('xpath')
-                if xpath:
-                    try:
-                        await self.page.locator(f'xpath={xpath}').fill('')
-                        logging.debug(f'Cleared input for element {id} using XPath: {xpath}')
-                    except Exception as xpath_error:
-                        logging.error(f'XPath clear failed for element {id}: {xpath_error}')
-                        ctx.set_error(
-                            ERROR_NOT_TYPEABLE,
-                            f"XPath strategy failed to clear element {id} (invalid CSS selector)",
-                            element_id=id,
-                            selector=selector,
-                            xpath=xpath,
-                            playwright_error=str(xpath_error)
-                        )
-                        return False
-                else:
-                    logging.error(f'Invalid CSS selector and no XPath available for element {id}')
-                    ctx.set_error(
-                        ERROR_NOT_TYPEABLE,
-                        f"Invalid CSS selector format and no XPath available for element {id}",
-                        element_id=id,
-                        selector=selector,
-                        has_xpath=False
-                    )
-                    return False
+            # Clear input using unified fill method
+            if not await self._fill_element_text(
+                element_id=str(id),
+                selector=selector,
+                xpath=xpath,
+                text='',  # Empty string for clear
+                action_name="clear"
+            ):
+                return False
 
             await asyncio.sleep(0.5)
             return True
@@ -1448,16 +1621,50 @@ class ActionHandler:
         if option_id is not None:
             element = self.page_element_buffer.get(str(option_id))
             if element:
-                x = element.get('center_x')
-                y = element.get('center_y')
-                await self.page.mouse.click(x, y)
-                logging.debug(f'Clicked option_id {option_id} ({option_text}) directly.')
-                return {
-                    'success': True,
-                    'message': f"Clicked dropdown option '{option_text}' directly.",
-                    'selected_value': element.get('innerText'),
-                    'selector_type': 'ant_select_option',
-                }
+                selector = element.get('selector')
+                xpath = element.get('xpath')
+                stored_x = element.get('center_x')
+                stored_y = element.get('center_y')
+
+                try:
+                    # Use unified coordinate retrieval method
+                    coords = await self._get_element_viewport_coordinates(
+                        element_id=str(option_id),
+                        selector=selector,
+                        xpath=xpath,
+                        stored_x=stored_x,
+                        stored_y=stored_y,
+                        validate_against_stored=True,
+                        action_name="dropdown option click"
+                    )
+
+                    if coords:
+                        viewport_x, viewport_y = coords
+                        await self.page.mouse.click(viewport_x, viewport_y)
+
+                        logging.debug(f'Clicked option_id {option_id} ({option_text}) directly.')
+                        return {
+                            'success': True,
+                            'message': f"Clicked dropdown option '{option_text}' directly.",
+                            'selected_value': element.get('innerText'),
+                            'selector_type': 'ant_select_option',
+                        }
+                    else:
+                        return {
+                            'success': False,
+                            'message': f'Option element {option_id} missing coordinate information',
+                            'selected_value': None,
+                            'selector_type': 'unknown',
+                        }
+
+                except Exception as e:
+                    logging.error(f'Error clicking dropdown option {option_id}: {e}')
+                    return {
+                        'success': False,
+                        'message': f'Error clicking dropdown option: {str(e)}',
+                        'selected_value': None,
+                        'selector_type': 'unknown',
+                    }
             else:
                 logging.warning(f'option_id {option_id} not found in buffer, fallback to dropdown_id.')
 
@@ -1911,7 +2118,11 @@ class ActionHandler:
             return {'success': False, 'message': f'Error: {str(e)}', 'selector_type': 'error', 'level': level}
 
     async def drag(self, source_coords, target_coords):
-        """Execute drag action."""
+        """Execute drag action with scroll container awareness.
+
+        Note: This method uses coordinate conversion which may not work correctly
+        with scroll containers. Consider using element-based drag if available.
+        """
 
         source_x = source_coords.get('x')
         source_y = source_coords.get('y')
@@ -1920,8 +2131,23 @@ class ActionHandler:
 
         try:
             # Convert document coordinates to viewport coordinates
+            # Note: This assumes window-level scrolling and may not work with scroll containers
             viewport_source_x, viewport_source_y = await self._convert_document_to_viewport_coords(source_x, source_y)
             viewport_target_x, viewport_target_y = await self._convert_document_to_viewport_coords(target_x, target_y)
+
+            # Check for potential scroll container issues
+            scroll_state = await self.page.evaluate('''() => ({
+                windowScrollX: window.pageXOffset || document.documentElement.scrollLeft,
+                windowScrollY: window.pageYOffset || document.documentElement.scrollTop,
+                hasScrollContainers: document.querySelectorAll('[style*="overflow"]').length > 0
+            })''')
+
+            if scroll_state.get('hasScrollContainers') and (scroll_state.get('windowScrollY') == 0 or scroll_state.get('windowScrollX') == 0):
+                logging.warning(
+                    f'Drag operation may be affected by scroll containers. '
+                    f'Window scroll offset: ({scroll_state.get("windowScrollX")}, {scroll_state.get("windowScrollY")}), '
+                    f'Scroll containers detected: {scroll_state.get("hasScrollContainers")}'
+                )
 
             logging.debug(f'Drag action: source document=({source_x}, {source_y}) -> viewport=({viewport_source_x}, {viewport_source_y}), target document=({target_x}, {target_y}) -> viewport=({viewport_target_x}, {viewport_target_y})')
 
@@ -1949,7 +2175,11 @@ class ActionHandler:
             return False
     
     async def mouse_move(self, x: int | float, y: int | float) -> bool:
-        """Move mouse to absolute coordinates (x, y)."""
+        """Move mouse to absolute coordinates (x, y).
+
+        Note: This method assumes window-level scrolling. For pages using scroll containers,
+        the coordinate conversion may be inaccurate. Consider using element-based hover instead.
+        """
         # Initialize action context for error propagation
         ctx = ActionContext()
         action_context_var.set(ctx)
@@ -1961,7 +2191,23 @@ class ActionHandler:
             target_y = float(y)
 
             # Convert document coordinates to viewport coordinates
+            # Note: This assumes window-level scrolling and may not work with scroll containers
             viewport_x, viewport_y = await self._convert_document_to_viewport_coords(target_x, target_y)
+
+            # Detect potential scroll container issues (similar to drag method)
+            if abs(target_x) > 100 or abs(target_y) > 100:
+                scroll_state = await self.page.evaluate('''() => ({
+                    windowScrollX: window.pageXOffset || document.documentElement.scrollLeft,
+                    windowScrollY: window.pageYOffset || document.documentElement.scrollTop,
+                    hasScrollContainers: document.querySelectorAll('[style*="overflow"]').length > 0
+                })''')
+
+                if scroll_state.get('hasScrollContainers') and (scroll_state.get('windowScrollY') == 0 or scroll_state.get('windowScrollX') == 0):
+                    logging.warning(
+                        f'Mouse move to ({target_x}, {target_y}) may be affected by scroll containers. '
+                        f'Window scroll offset: ({scroll_state.get("windowScrollX")}, {scroll_state.get("windowScrollY")}), '
+                        f'Scroll containers detected. Consider using hover on element instead.'
+                    )
 
             logging.info(f"Mouse move: document=({target_x}, {target_y}) -> viewport=({viewport_x}, {viewport_y})")
             await self.page.mouse.move(viewport_x, viewport_y)
