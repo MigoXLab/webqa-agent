@@ -104,6 +104,18 @@ class Driver:
         except Exception as e:
             logging.error("Failed to get Driver instance: %s", e, exc_info=True)
             raise
+    
+    async def get_url(self):
+        """Returns: the current page URL and title."""
+        try:
+            if self.page is None:
+                raise RuntimeError("No active page. Did you call create_browser?")
+            url = self.page.url
+            title = await self.page.title()
+            return url, title
+        except Exception as e:
+            logging.error("Failed to get URL: %s", e, exc_info=True)
+            raise
 
     async def get_new_page(self):
         """Switches to the most recently opened page in the browser.
@@ -115,8 +127,8 @@ class Driver:
             pages = self.context.pages
             logging.debug(f"page number: {len(pages)}")
             if len(pages) > 1:
-                logging.debug("New page detected.")
                 self.page = pages[-1]
+                logging.debug(f"New page detected, page index: {len(pages) - 1}")
                 return self.page
             else:
                 return self.page

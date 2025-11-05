@@ -7,6 +7,7 @@
     "issue_list_note": "Note: This list summarizes all detected \"failed\" and \"warning\" items",
     "assessment_categories": "Test Cases",
     "passed_count": "Passed",
+    "warning_count": "Warning",
     "failed_count": "Failed",
     "test_failed_prefix": "Test Failed: ",
     "execution_error_prefix": "Execution Error: ",

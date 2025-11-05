@@ -59,9 +59,21 @@ class ResultAggregator:
             for sub in (r.sub_tests or [])
             if sub.status == TestStatus.PASSED
         )
+        warning_sub_tests = sum(
+            1
+            for r in test_session.test_results.values()
+            for sub in (r.sub_tests or [])
+            if sub.status == TestStatus.WARNING
+        )
+        failed_sub_tests = sum(
+            1
+            for r in test_session.test_results.values()
+            for sub in (r.sub_tests or [])
+            if sub.status == TestStatus.FAILED
+        )
         critical_sub_tests = total_sub_tests - passed_sub_tests  # 未通过即视为关键问题
         
-        logging.debug(f"Debug: total_sub_tests={total_sub_tests}, passed_sub_tests={passed_sub_tests}, critical_sub_tests={critical_sub_tests}")
+        logging.debug(f"Debug: total_sub_tests={total_sub_tests}, passed_sub_tests={passed_sub_tests}, warning_sub_tests={warning_sub_tests}, failed_sub_tests={failed_sub_tests}, critical_sub_tests={critical_sub_tests}")
 
         # Build content for executive summary tab
         executive_content = {
@@ -69,7 +81,8 @@ class ResultAggregator:
             "statistics": [
                 {"label": self._get_text('assessment_categories'), "value": str(total_sub_tests), "colorClass": "var(--warning-color)"},
                 {"label": self._get_text('passed_count'), "value": str(passed_sub_tests), "colorClass": "var(--success-color)"},
-                {"label": self._get_text('failed_count'), "value": str(critical_sub_tests), "colorClass": "var(--failure-color)"},
+                {"label": self._get_text('warning_count'), "value": str(warning_sub_tests), "colorClass": "var(--warning-color)"},
+                {"label": self._get_text('failed_count'), "value": str(failed_sub_tests), "colorClass": "var(--failure-color)"},
             ]
         }
 
@@ -110,7 +123,8 @@ class ResultAggregator:
             "count":{
                 "total": total_sub_tests,
                 "passed": passed_sub_tests,
-                "failed": critical_sub_tests,
+                "warning": warning_sub_tests,
+                "failed": failed_sub_tests,
             }
         }
 

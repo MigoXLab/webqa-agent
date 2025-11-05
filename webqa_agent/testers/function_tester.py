@@ -92,7 +92,7 @@ class UITester:
 
         try:
             logging.debug(f"Executing AI instruction: {test_step}")
-
+            self.page = self.driver.get_page()
             # Crawl current page state
             dp = DeepCrawler(self.page)
             prev = await dp.crawl(highlight=True, viewport_only=False, cache_dom=True)
@@ -100,7 +100,7 @@ class UITester:
             logging.debug(f"previous dom before action : {prev.to_llm_json()}")
 
             # Take screenshot
-            marker_screenshot = await self._actions.b64_page_screenshot(file_name="marker", full_page=True)
+            marker_screenshot = await self._actions.b64_page_screenshot(file_name="marker", file_path="marker.png", full_page=True)
 
             # Remove marker
             await dp.remove_marker()
@@ -126,15 +126,22 @@ class UITester:
 
             end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            curr = await dp.crawl(highlight=True, viewport_only=False, cache_dom=True)
+            # Re-fetch page after execution in case get_new_page was called
+            # This ensures DOM diff is computed on the correct page
+            self.page = self.driver.get_page()
+            dp_after = DeepCrawler(self.page)
+            curr = await dp_after.crawl(highlight=True, viewport_only=False, cache_dom=True)
             diff_elems = curr.diff_dict([str(ElementKey.TAG_NAME), str(ElementKey.INNER_TEXT), str(ElementKey.ATTRIBUTES), str(ElementKey.CENTER_X), str(ElementKey.CENTER_Y)])
             if diff_elems:
                 logging.debug(f"Diff element map after action: {diff_elems}")
 
-            # Aggregate screenshots: first is page marker screenshot, rest are screenshots after each action
-            screenshots_list = [{"type": "base64", "data": marker_screenshot}] + [
-                {"type": "base64", "data": step.get("screenshot")} for step in execution_steps if step.get("screenshot")
-            ]
+            # Aggregate screenshots: include only valid (non-None) images
+            screenshots_list = []
+            if marker_screenshot:
+                screenshots_list.append({"type": "base64", "data": marker_screenshot})
+            screenshots_list.extend(
+                [{"type": "base64", "data": step.get("screenshot")} for step in execution_steps if step.get("screenshot")]
+            )
 
             # Build structure for case step format
             status_str = "passed" if execution_result.get("success") else "failed"
@@ -203,7 +210,9 @@ class UITester:
 
         try:
             logging.debug(f"Executing AI assertion: {assertion}")
-
+            
+            page_url, page_title = await self.driver.get_url()
+            logging.debug(f"verification page url: {page_url}, title: {page_title}")
             # Crawl current page
             dp = DeepCrawler(self.page)
             await dp.crawl(highlight=True, filter_text=True, viewport_only=False)
@@ -219,11 +228,12 @@ class UITester:
 
             # Prepare LLM input
             user_prompt = self._prepare_prompt_verify(
-                f"assertion: {assertion}", LLMPrompt.verification_prompt, page_structure
+                f"assertion: {assertion}", f"url: {page_url}, title: {page_title}", LLMPrompt.verification_prompt, page_structure
             )
 
+            images_for_llm = [img for img in [marker_screenshot, screenshot] if img]
             result = await self.llm.get_llm_response(
-                LLMPrompt.verification_system_prompt, user_prompt, images=[marker_screenshot, screenshot]
+                LLMPrompt.verification_system_prompt, user_prompt, images=images_for_llm if images_for_llm else None
             )
 
             # Process result
@@ -258,7 +268,10 @@ class UITester:
             verification_step = {
                 "description": f"verify: {assertion}",
                 "actions": verify_action_list,  # Assertion steps usually don't contain actions
-                "screenshots": [{"type": "base64", "data": marker_screenshot}, {"type": "base64", "data": screenshot}],
+                "screenshots": (
+                    ([{"type": "base64", "data": marker_screenshot}] if marker_screenshot else []) +
+                    ([{"type": "base64", "data": screenshot}] if screenshot else [])
+                ),
                 "modelIO": result if isinstance(result, str) else json.dumps(result, ensure_ascii=False),
                 "status": status_str,
                 "start_time": start_time,
@@ -276,7 +289,7 @@ class UITester:
 
             # Try to get basic page information even if it fails
             try:
-                basic_screenshot = await self._actions.b64_page_screenshot(file_name="error_assert", full_page=True)
+                basic_screenshot = await self._actions.b64_page_screenshot(file_name="error_assert")
             except:
                 basic_screenshot = None
 
@@ -309,11 +322,12 @@ class UITester:
             f"{prompt_template}"
         )
 
-    def _prepare_prompt_verify(self, test_step: str, prompt_template: str, page_structure: str) -> str:
+    def _prepare_prompt_verify(self, test_step: str, page_info: str, prompt_template: str, page_structure: str) -> str:
         """Prepare LLM prompt."""
         return (
             f"test step: {test_step}\n"
             f"====================\n"
+            f"page info: {page_info}\n"
             f"page_structure (full text content): {page_structure}\n"
             f"====================\n"
             f"{prompt_template}"
@@ -379,6 +393,7 @@ class UITester:
                     message = "Legacy boolean result"
 
                 # Wait for page to stabilize
+                self.page = self.driver.get_page()
                 try:
                     await self.page.wait_for_load_state("networkidle", timeout=10000)
                     await asyncio.sleep(1.5)
@@ -387,7 +402,7 @@ class UITester:
                     await asyncio.sleep(1)
 
                 # Take screenshot
-                post_action_ss = await self._actions.b64_page_screenshot(file_name=f"action_{action_desc}_{index}", full_page=False)
+                post_action_ss = await self._actions.b64_page_screenshot(file_name=f"action_{action_desc}_{index}")
 
                 action_result = {
                     "description": action_desc,
@@ -410,7 +425,7 @@ class UITester:
                 return execute_results, failure_result
 
         logging.debug("All actions executed successfully")
-        post_action_ss = await self._actions.b64_page_screenshot(file_name="final_success", full_page=False)
+        post_action_ss = await self._actions.b64_page_screenshot(file_name="final_success")
         return execute_results, {
             "success": True,
             "message": "All actions executed successfully",
@@ -530,7 +545,7 @@ class UITester:
 
         # Prepare formatted step (for both legacy and central recorder)
         self.step_counter += 1
-        
+
         formatted_step = {
             "id": self.step_counter,
             "number": self.step_counter,

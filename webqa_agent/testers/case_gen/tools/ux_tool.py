@@ -22,7 +22,7 @@ class UIUXViewportTool(BaseTool):
         "Performs two UX checks in the current viewport: (1) Typo/grammar/text accuracy using page text; "
         "(2) Layout/visual rendering using screenshot + viewport structure. Returns both analyses."
     )
-    page: Any = Field(..., description="Playwright Page instance")
+    ui_tester_instance: Any = Field(..., description="UITester instance to access driver and page")
     llm_config: dict | None = Field(default=None, description="LLM configuration for independent client")
     case_recorder: Any | None = Field(default=None, description="Optional CentralCaseRecorder to record ux_verify step")
 
@@ -52,21 +52,64 @@ class UIUXViewportTool(BaseTool):
             return image_b64
 
     async def _arun(self, assertion: str) -> str:
-        if not self.page:
-            return "[FAILURE] Error: Page instance not provided for UX collection."
+        if not self.ui_tester_instance:
+            return "[FAILURE] Error: UITester instance not provided for UX collection."
 
         try:
             logging.debug(f"Executing UX verification: {assertion}")
 
-            dp = DeepCrawler(self.page)
-            # Viewport-only crawl; do NOT scroll; collect text-rich structure
-            crawl_result = await dp.crawl(highlight=False, filter_text=True, viewport_only=True, include_styles=True)
+            # Dynamically get current page from driver (handles get_new_page updates)
+            page = self.ui_tester_instance.driver.get_page()
+
+            dp = DeepCrawler(page)
+            # Crawl for interactive elements with layout info (for layout check)
+            crawl_result = await dp.crawl(highlight=False, filter_text=False, viewport_only=False, include_styles=True)
             id_map = crawl_result.raw_dict()
-            viewport_structure = dp.get_text()
+            
+            # Get full page text directly from page for text/typo check (more comprehensive)
+            viewport_structure = await page.evaluate("""
+                () => {
+                    // Extract all visible text from the page
+                    const textElements = [];
+                    const walker = document.createTreeWalker(
+                        document.body,
+                        NodeFilter.SHOW_TEXT,
+                        {
+                            acceptNode: function(node) {
+                                const parent = node.parentElement;
+                                if (!parent) return NodeFilter.FILTER_REJECT;
+                                
+                                // Skip script, style, and hidden elements
+                                const style = window.getComputedStyle(parent);
+                                if (style.display === 'none' || 
+                                    style.visibility === 'hidden' || 
+                                    parent.tagName === 'SCRIPT' || 
+                                    parent.tagName === 'STYLE') {
+                                    return NodeFilter.FILTER_REJECT;
+                                }
+                                
+                                const text = node.textContent.trim();
+                                return text.length > 0 ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+                            }
+                        }
+                    );
+                    
+                    let node;
+                    while (node = walker.nextNode()) {
+                        const text = node.textContent.trim();
+                        if (text && text.length > 0) {
+                            textElements.push(text);
+                        }
+                    }
+                    
+                    // Deduplicate and return as JSON
+                    return JSON.stringify([...new Set(textElements)]);
+                }
+            """)
             logging.debug(f"Viewport Text Structure: {viewport_structure}")
 
             screenshot = None
-            img_bytes = await self.page.screenshot(full_page=False)
+            img_bytes = await page.screenshot(full_page=True)
             screenshot = f"data:image/png;base64,{base64.b64encode(img_bytes).decode('utf-8')}"
 
             try:
@@ -127,7 +170,7 @@ class UIUXViewportTool(BaseTool):
                 "- Conciseness: Keep each error description concise and direct, avoid explanations.\n"
             )
 
-            logging.debug(f"UX text typo analysis prompt: {text_prompt}")
+            # logging.debug(f"UX text typo analysis prompt: {text_prompt}")
 
             typo_response = await llm_client.get_llm_response(
                 LLMPrompt.page_default_prompt,
@@ -146,7 +189,7 @@ class UIUXViewportTool(BaseTool):
             # 2) Layout/visual analysis (screenshot + structure)
             layout_prompt = self._build_layout_prompt(layout_user_case, id_map, len(screenshot))
 
-            logging.debug(f"UX layout analysis prompt: {layout_prompt}")
+            # logging.debug(f"UX layout analysis prompt: {layout_prompt}")
 
             images = [screenshot] if isinstance(screenshot, str) else None
             layout_response = await llm_client.get_llm_response(

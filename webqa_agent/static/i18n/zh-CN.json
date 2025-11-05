@@ -7,6 +7,7 @@
     "issue_list_note": "注：此列表汇总了所有检测到的\"失败\"和\"警告\"项",
     "assessment_categories": "评估类别",
     "passed_count": "通过数",
+    "warning_count": "警告数",
     "failed_count": "失败数",
     "test_failed_prefix": "测试不通过: ",
     "execution_error_prefix": "执行异常: ",

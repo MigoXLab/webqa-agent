@@ -78,6 +78,19 @@ class ActionHandler:
             return self
         return self
 
+    def _get_current_page(self) -> Page:
+        """Get current active page, prioritizing driver's page reference.
+        
+        This ensures we always operate on the latest page, which is critical
+        when new pages/tabs are opened during test execution.
+        
+        Returns:
+            Page: The current active page instance
+        """
+        if self.driver:
+            return self.driver.get_page()
+        return self.page
+
     async def update_element_buffer(self, new_element):
         """Update page_element_buffer :param new_buffer: CrawlerHandler fetched
         latest element buffer."""
@@ -228,6 +241,9 @@ class ActionHandler:
             bool: Whether scroll operation was performed
         """
         logging.debug('Start scrolling page')
+        
+        # Get current active page
+        page = self._get_current_page()
 
         # Validate inputs to avoid silent no-ops
         allowed_directions = {'up', 'down'}
@@ -253,12 +269,12 @@ class ActionHandler:
 
         async def perform_scroll():  # Execute scroll operation
             if direction == 'up':
-                await self.page.evaluate(f'(document.scrollingElement || document.body).scrollTop -= {distance};')
+                await page.evaluate(f'(document.scrollingElement || document.body).scrollTop -= {distance};')
             elif direction == 'down':
-                await self.page.evaluate(f'(document.scrollingElement || document.body).scrollTop += {distance};')
+                await page.evaluate(f'(document.scrollingElement || document.body).scrollTop += {distance};')
 
         if not distance:
-            distance = int(await self.page.evaluate('window.innerHeight') / 2)
+            distance = int(await page.evaluate('window.innerHeight') / 2)
             logging.debug(f'Scrolling distance: {distance}')
 
         if scrollType == 'once':
@@ -270,8 +286,8 @@ class ActionHandler:
 
             while True:
                 # Get current scroll position and page total height
-                current_scroll = await self.page.evaluate('window.scrollY')
-                current_scroll_height = await self.page.evaluate('document.body.scrollHeight')
+                current_scroll = await page.evaluate('window.scrollY')
+                current_scroll_height = await page.evaluate('document.body.scrollHeight')
 
                 # Check if page is scrolled to the bottom
                 if current_scroll == prev_scroll:
@@ -293,7 +309,7 @@ class ActionHandler:
             prev_scroll = -1
 
             while True:
-                current_scroll = await self.page.evaluate('window.scrollY')
+                current_scroll = await page.evaluate('window.scrollY')
 
                 # If already at top or no progress, stop
                 if current_scroll <= 0 or current_scroll == prev_scroll:
@@ -330,6 +346,9 @@ class ActionHandler:
         Returns:
             bool: True if element is in viewport (or successfully scrolled to), False otherwise
         """
+        # Get current active page
+        page = self._get_current_page()
+        
         # Initialize action context for error propagation
         ctx = ActionContext()
         action_context_var.set(ctx)
@@ -369,7 +388,7 @@ class ActionHandler:
                 if self._is_valid_css_selector(selector):
                     try:
                         ctx.attempted_strategies.append(f"css_selector_attempt_{attempt + 1}")
-                        await self.page.locator(selector).scroll_into_view_if_needed(timeout=5000)
+                        await page.locator(selector).scroll_into_view_if_needed(timeout=5000)
                         logging.debug(f'Scrolled to element {element_id} using CSS selector (attempt {attempt + 1})')
 
                         # Wait for scroll animation + potential lazy-loading
@@ -380,10 +399,10 @@ class ActionHandler:
 
                         # Verify element is actually in viewport using bounding_box
                         try:
-                            rect = await self.page.locator(selector).bounding_box()
+                            rect = await page.locator(selector).bounding_box()
                             if rect:
-                                viewport_height = await self.page.evaluate('window.innerHeight')
-                                viewport_width = await self.page.evaluate('window.innerWidth')
+                                viewport_height = await page.evaluate('window.innerHeight')
+                                viewport_width = await page.evaluate('window.innerWidth')
                                 is_in_viewport = (rect['y'] >= 0 and rect['y'] < viewport_height and
                                                 rect['x'] >= 0 and rect['x'] < viewport_width)
                                 if is_in_viewport:
@@ -407,7 +426,7 @@ class ActionHandler:
                 if xpath:
                     try:
                         ctx.attempted_strategies.append(f"xpath_attempt_{attempt + 1}")
-                        await self.page.locator(f'xpath={xpath}').scroll_into_view_if_needed(timeout=5000)
+                        await page.locator(f'xpath={xpath}').scroll_into_view_if_needed(timeout=5000)
                         logging.debug(f'Scrolled to element {element_id} using XPath (attempt {attempt + 1})')
 
                         # Wait for scroll animation + potential lazy-loading
@@ -418,10 +437,10 @@ class ActionHandler:
 
                         # Verify element is actually in viewport using bounding_box
                         try:
-                            rect = await self.page.locator(f'xpath={xpath}').bounding_box()
+                            rect = await page.locator(f'xpath={xpath}').bounding_box()
                             if rect:
-                                viewport_height = await self.page.evaluate('window.innerHeight')
-                                viewport_width = await self.page.evaluate('window.innerWidth')
+                                viewport_height = await page.evaluate('window.innerHeight')
+                                viewport_width = await page.evaluate('window.innerWidth')
                                 is_in_viewport = (rect['y'] >= 0 and rect['y'] < viewport_height and
                                                 rect['x'] >= 0 and rect['x'] < viewport_width)
                                 if is_in_viewport:
@@ -445,8 +464,8 @@ class ActionHandler:
                 center_y = element.get('center_y')
                 if center_y is not None:
                     ctx.attempted_strategies.append(f"coordinates_attempt_{attempt + 1}")
-                    viewport_height = await self.page.evaluate('window.innerHeight')
-                    current_scroll_y = await self.page.evaluate('window.scrollY')
+                    viewport_height = await page.evaluate('window.innerHeight')
+                    current_scroll_y = await page.evaluate('window.scrollY')
 
                     # Calculate target scroll position (center element in viewport)
                     target_scroll_y = center_y - viewport_height / 2
@@ -456,7 +475,7 @@ class ActionHandler:
                     logging.debug(f'Scrolling element {element_id}: current scroll position={current_scroll_y}, target scroll position={target_scroll_y}')
 
                     # Perform scroll with smooth behavior
-                    await self.page.evaluate(f'window.scrollTo({{top: {target_scroll_y}, behavior: "smooth"}})')
+                    await page.evaluate(f'window.scrollTo({{top: {target_scroll_y}, behavior: "smooth"}})')
                     logging.debug(f'Scrolled to element {element_id} using coordinates (y={target_scroll_y}, attempt {attempt + 1})')
 
                     # Adaptive wait time for smooth scroll + lazy loading
@@ -476,7 +495,7 @@ class ActionHandler:
                             )
 
                     # Verify scroll position (coordinate-based scroll may not work with scroll containers)
-                    actual_scroll_y = await self.page.evaluate('window.scrollY')
+                    actual_scroll_y = await page.evaluate('window.scrollY')
                     if abs(actual_scroll_y - target_scroll_y) > 10:
                         logging.warning(
                             f'Coordinate-based scroll for element {element_id} may have failed: '
@@ -531,15 +550,18 @@ class ActionHandler:
         Returns:
             bool: True if page stabilized, False if timeout reached
         """
+        # Get current active page
+        page = self._get_current_page()
+        
         try:
             elapsed = 0.0
-            last_height = await self.page.evaluate('document.body.scrollHeight')
+            last_height = await page.evaluate('document.body.scrollHeight')
 
             while elapsed < timeout:
                 await asyncio.sleep(check_interval)
                 elapsed += check_interval
 
-                current_height = await self.page.evaluate('document.body.scrollHeight')
+                current_height = await page.evaluate('document.body.scrollHeight')
 
                 # If page height hasn't changed, consider it stable
                 if current_height == last_height:
@@ -580,15 +602,18 @@ class ActionHandler:
             # Element at document position (500, 1200) with scroll at (0, 800)
             # viewport_y = 1200 - 800 = 400 (element is 400px from top of viewport)
         """
+        # Get current active page
+        page = self._get_current_page()
+        
         # Get window scroll offset (only reflects window-level scrolling, not scroll containers)
-        scroll_x = await self.page.evaluate('window.pageXOffset || document.documentElement.scrollLeft')
-        scroll_y = await self.page.evaluate('window.pageYOffset || document.documentElement.scrollTop')
+        scroll_x = await page.evaluate('window.pageXOffset || document.documentElement.scrollLeft')
+        scroll_y = await page.evaluate('window.pageYOffset || document.documentElement.scrollTop')
 
         # Detect potential scroll container issues
         # If coordinates are large but scroll offset is 0, likely using scroll containers
         if (abs(x) > 100 or abs(y) > 100) and scroll_x == 0 and scroll_y == 0:
             # Check if page has scroll containers
-            has_scroll_containers = await self.page.evaluate('''() => {
+            has_scroll_containers = await page.evaluate('''() => {
                 const scrollContainers = document.querySelectorAll('[style*="overflow"]');
                 const computedScrollContainers = Array.from(document.querySelectorAll('*')).filter(el => {
                     const style = window.getComputedStyle(el);
@@ -648,19 +673,22 @@ class ActionHandler:
         Returns:
             Tuple of (viewport_x, viewport_y) if successful, None otherwise
         """
+        # Get current active page
+        page = self._get_current_page()
+        
         rect = None
 
         # Strategy 1: Try CSS selector for bounding_box()
         if self._is_valid_css_selector(selector):
             try:
-                rect = await self.page.locator(selector).bounding_box()
+                rect = await page.locator(selector).bounding_box()
             except Exception as e:
                 logging.debug(f'bounding_box() via CSS selector failed for element {element_id} ({action_name}): {e}')
 
         # Strategy 2: Try XPath if CSS fails or returns None
         if not rect and xpath:
             try:
-                rect = await self.page.locator(f'xpath={xpath}').bounding_box()
+                rect = await page.locator(f'xpath={xpath}').bounding_box()
             except Exception as e:
                 logging.debug(f'bounding_box() via XPath failed for element {element_id} ({action_name}): {e}')
 
@@ -699,6 +727,9 @@ class ActionHandler:
             return None
 
     async def click(self, id) -> bool:
+        # Get current active page
+        page = self._get_current_page()
+        
         # Initialize action context for error propagation
         # Note: If ensure_element_in_viewport is called, it will set its own context
         # We only need to initialize context for click-specific failures
@@ -713,7 +744,7 @@ class ActionHandler:
             links[i].removeAttribute("target");
         }
         """
-        await self.page.evaluate(js)
+        await page.evaluate(js)
 
         try:
             id = str(id)
@@ -769,6 +800,9 @@ class ActionHandler:
         which correctly handles scroll containers, CSS transforms, and fixed positioning.
         Falls back to stored coordinates if bounding_box() fails.
         """
+        # Get current active page
+        page = self._get_current_page()
+        
         selector = element.get('selector')
         xpath = element.get('xpath')
         stored_x = element.get('center_x')
@@ -788,7 +822,7 @@ class ActionHandler:
 
             if coords:
                 viewport_x, viewport_y = coords
-                await self.page.mouse.click(viewport_x, viewport_y)
+                await page.mouse.click(viewport_x, viewport_y)
                 return True
             else:
                 return False
@@ -803,6 +837,9 @@ class ActionHandler:
         Uses Playwright's bounding_box() to get fresh viewport coordinates,
         which correctly handles scroll containers, CSS transforms, and fixed positioning.
         """
+        # Get current active page
+        page = self._get_current_page()
+        
         # Initialize action context for error propagation
         ctx = ActionContext()
         action_context_var.set(ctx)
@@ -847,7 +884,7 @@ class ActionHandler:
 
             if coords:
                 viewport_x, viewport_y = coords
-                await self.page.mouse.move(viewport_x, viewport_y)
+                await page.mouse.move(viewport_x, viewport_y)
                 await asyncio.sleep(0.5)
                 return True
             else:
@@ -1032,12 +1069,15 @@ class ActionHandler:
         Returns:
             True if successful, False otherwise (with error context set)
         """
+        # Get current active page
+        page = self._get_current_page()
+        
         ctx = action_context_var.get()
 
         # Strategy 1: Try CSS selector if format is valid
         if self._is_valid_css_selector(selector):
             try:
-                await self.page.locator(selector).fill(text)
+                await page.locator(selector).fill(text)
                 logging.debug(f"{action_name.capitalize()}ed element {element_id} using CSS selector: {selector}")
                 return True
             except Exception as css_error:
@@ -1048,7 +1088,7 @@ class ActionHandler:
                 # Strategy 2: Try XPath fallback if CSS fails
                 if xpath:
                     try:
-                        await self.page.locator(f'xpath={xpath}').fill(text)
+                        await page.locator(f'xpath={xpath}').fill(text)
                         logging.debug(f"{action_name.capitalize()}ed element {element_id} using XPath fallback: {xpath}")
                         return True
                     except Exception as xpath_error:
@@ -1085,7 +1125,7 @@ class ActionHandler:
             logging.warning(f'Invalid CSS selector format for element {element_id}: {selector}')
             if xpath:
                 try:
-                    await self.page.locator(f'xpath={xpath}').fill(text)
+                    await page.locator(f'xpath={xpath}').fill(text)
                     logging.debug(f"{action_name.capitalize()}ed element {element_id} using XPath: {xpath}")
                     return True
                 except Exception as xpath_error:
@@ -1206,15 +1246,20 @@ class ActionHandler:
             save_to_log: whether to save to log system (default True)
 
         Returns:
-            tuple: (screenshot base64 encoded, screenshot file path)
+            str: screenshot base64 encoded, or None if screenshot fails
         """
-        # get screenshot
-        screenshot_bytes = await self.take_screenshot(self.page, full_page=full_page, timeout=30000)
+        try:
+            # get screenshot from current active page (dynamically resolves to latest page)
+            current_page = self._get_current_page()
+            screenshot_bytes = await self.take_screenshot(current_page, full_page=full_page, timeout=30000)
 
-        # convert to Base64
-        screenshot_base64 = base64.b64encode(screenshot_bytes).decode('utf-8')
-        base64_data = f'data:image/png;base64,{screenshot_base64}'
-        return base64_data
+            # convert to Base64
+            screenshot_base64 = base64.b64encode(screenshot_bytes).decode('utf-8')
+            base64_data = f'data:image/png;base64,{screenshot_base64}'
+            return base64_data
+        except Exception as e:
+            logging.warning(f"Failed to capture screenshot: {e}")
+            return None
 
     async def take_screenshot(
         self,

@@ -650,12 +650,13 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     )
     logging.debug(f"LLM configured: {llm_config.get('model')} at {llm_config.get('base_url')}")
 
-    page = ui_tester_instance.driver.get_page()
     # Instantiate tools with correct parameters
+    # Note: All tools now use ui_tester_instance to dynamically get page,
+    # which ensures correct page reference after get_new_page operations
     tools = [
         UITool(ui_tester_instance=ui_tester_instance),
         UIAssertTool(ui_tester_instance=ui_tester_instance),
-        UIUXViewportTool(page=page, llm_config=llm_config, case_recorder=case_recorder),
+        UIUXViewportTool(ui_tester_instance=ui_tester_instance, llm_config=llm_config, case_recorder=case_recorder),
     ]
     logging.debug(f"Tools initialized: {[tool.name for tool in tools]}")
 
@@ -867,22 +868,20 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         dp = DeepCrawler(page)
         await dp.crawl(highlight=True, viewport_only=True)
         screenshot = await ui_tester_instance._actions.b64_page_screenshot(
-            full_page=False, file_name="agent_step_vision", save_to_log=False
+            file_name="agent_step_vision", save_to_log=False
         )
         await dp.remove_marker()
         logging.debug("Generated highlighted screenshot for the agent.")
         # ------------------------------------
 
         # Create a new message with the current step's instruction and visual context
-        step_message = HumanMessage(
-            content=[
-                {"type": "text", "text": formatted_instruction},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"{screenshot}", "detail": "low"},
-                },
-            ]
-        )
+        step_content = [{"type": "text", "text": formatted_instruction}]
+        if screenshot:
+            step_content.append({
+                "type": "image_url",
+                "image_url": {"url": f"{screenshot}", "detail": "low"},
+            })
+        step_message = HumanMessage(content=step_content)
 
         # The agent's history includes all prior messages
         current_messages = messages + [step_message]
@@ -949,11 +948,13 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             messages.append(AIMessage(content=tool_output))
             
             # Check for warnings in the tool output (e.g., UX issues)
-            if "[warning]" in tool_output.lower():
+            # Check both agent output and raw tool result from intermediate steps
+            intermediate_output = safe_get_intermediate_step(result, index=0, subindex=1, default="")
+            combined_output = f"{tool_output}\n{intermediate_output}"
+            if "[warning]" in combined_output.lower():
                 warning_steps.append(i + 1)
                 logging.info(f"Step {i+1} completed with warnings (e.g., UX issues detected)")
 
-            intermediate_output = safe_get_intermediate_step(result, index=0, subindex=1, default="")
             is_failure = "[failure]" in intermediate_output.lower() or "failed" in tool_output.lower()
 
             # Check if this is an ELEMENT_NOT_FOUND error (potentially recoverable)
@@ -988,7 +989,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                             # Get current page screenshot for LLM analysis
                             try:
                                 recovery_screenshot = await ui_tester_instance._actions.b64_page_screenshot(
-                                    full_page=False, file_name="recovery_screenshot", save_to_log=False
+                                    file_name="recovery_screenshot", save_to_log=False
                                 )
                             except Exception as e:
                                 logging.error(f"Failed to capture recovery screenshot: {e}")
@@ -1083,7 +1084,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         try:
                             # Capture screenshot for visual context after successful step execution
                             logging.debug("Capturing screenshot for dynamic step generation context")
-                            screenshot = await ui_tester_instance._actions.b64_page_screenshot(full_page=False)
+                            screenshot = await ui_tester_instance._actions.b64_page_screenshot()
                             
                             # Enhance objective with generation context for smarter LLM decision-making
                             enhanced_objective = case.get("objective", "")

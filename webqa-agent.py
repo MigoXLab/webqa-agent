@@ -379,6 +379,7 @@ async def run_tests(cfg):
         if result_count:
             print(f"🔢 Total evaluations: {result_count.get('total', 0)}")
             print(f"✅ Passed: {result_count.get('passed', 0)}")
+            print(f"⚠️  Warning: {result_count.get('warning', 0)}")
             print(f"❌ Failed: {result_count.get('failed', 0)}")
 
         if html_report_path:
