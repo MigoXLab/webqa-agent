@@ -289,7 +289,7 @@ class UITester:
 
             # Try to get basic page information even if it fails
             try:
-                basic_screenshot = await self._actions.b64_page_screenshot(file_name="error_assert")
+                basic_screenshot = await self._actions.b64_page_screenshot(file_name="error_assert", full_page=True)
             except:
                 basic_screenshot = None
 
