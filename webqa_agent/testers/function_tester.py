@@ -43,6 +43,11 @@ class UITester:
         # Central recorder for unified case storage (used by LangGraph path and tools)
         self.central_case_recorder: Optional[CentralCaseRecorder] = None
 
+        # Context tracking for enhanced verification (backward compatible)
+        self.last_action_context: Optional[Dict[str, Any]] = None
+        self.execution_history: List[Dict[str, Any]] = []
+        self.current_test_objective: Optional[str] = None
+
     async def initialize(self, browser_session: BrowserSession = None):
         if browser_session:
             self.browser_session = browser_session
@@ -96,11 +101,50 @@ class UITester:
             # Crawl current page state
             dp = DeepCrawler(self.page)
             prev = await dp.crawl(highlight=True, viewport_only=False, cache_dom=True)
+
+            # Check for unsupported page types (PDF, plugins, etc.)
+            if hasattr(prev, 'page_status') and prev.page_status == "UNSUPPORTED_PAGE":
+                page_type = getattr(prev, 'page_type', 'unknown')
+                error_msg = f"Cannot execute action: current page type '{page_type}' is unsupported"
+                logging.error(f"[CRITICAL] {error_msg}")
+
+                end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                # Build error step structure
+                error_steps_dict = {
+                    "description": f"action: {test_step}",
+                    "actions": [],
+                    "screenshots": [],
+                    "modelIO": "",
+                    "status": "failed",
+                    "error": error_msg,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "dom_diff": {}
+                }
+
+                # Build error result
+                error_result = {
+                    "success": False,
+                    "unsupported_page": True,
+                    "page_type": page_type,
+                    "message": error_msg,
+                    "dom_diff": {}
+                }
+
+                # Store error step
+                self.add_step_data(error_steps_dict, step_type="action")
+                return error_steps_dict, error_result
+
             await self._actions.update_element_buffer(prev.raw_dict())
             logging.debug(f"previous dom before action : {prev.to_llm_json()}")
 
             # Take screenshot
-            marker_screenshot = await self._actions.b64_page_screenshot(file_name="marker", file_path="marker.png", full_page=True)
+            marker_screenshot = await self._actions.b64_page_screenshot(
+                full_page=True,
+                file_name="action_planning_marker",
+                context="test"
+            )
 
             # Remove marker
             await dp.remove_marker()
@@ -194,11 +238,104 @@ class UITester:
 
             return error_execution_steps, {"success": False, "message": f"An exception occurred in action: {str(e)}"}
 
-    async def verify(self, assertion: str) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    def _format_execution_context(self, execution_context: Dict[str, Any]) -> str:
+        """Format execution context for LLM prompt."""
+        if not execution_context:
+            return ""
+
+        context_parts = []
+
+        # Last action information
+        if "last_action" in execution_context and execution_context["last_action"]:
+            last_action = execution_context["last_action"]
+            context_parts.append(f"""**Last Action:**
+- Description: {last_action.get('description', 'N/A')}
+- Type: {last_action.get('action_type', 'N/A')}
+- Target: {last_action.get('target', 'N/A')}
+- Status: {last_action.get('status', 'unknown').upper()}
+- Result: {last_action.get('result', {}).get('message', 'N/A')}""")
+
+            # DOM changes
+            dom_diff = last_action.get('dom_diff', {})
+            if dom_diff:
+                context_parts.append(f"- DOM Changes: {len(dom_diff)} elements added/modified")
+
+        # Test objective
+        if "test_objective" in execution_context and execution_context["test_objective"]:
+            context_parts.append(f"\n**Test Objective:** {execution_context['test_objective']}")
+
+        # Success criteria
+        if "success_criteria" in execution_context and execution_context["success_criteria"]:
+            criteria_str = "; ".join(execution_context["success_criteria"])
+            context_parts.append(f"**Success Criteria:** {criteria_str}")
+
+        # Execution history
+        completed = execution_context.get("completed_steps", [])
+        failed = execution_context.get("failed_steps", [])
+        if completed or failed:
+            context_parts.append(f"\n**Execution History:**")
+            if completed:
+                context_parts.append(f"- Completed steps: {len(completed)}")
+            if failed:
+                context_parts.append(f"- Failed steps: {len(failed)}")
+
+        return "\n".join(context_parts) if context_parts else ""
+
+    def _determine_verification_strategy(self, execution_context: Optional[Dict[str, Any]]) -> str:
+        """Determine verification strategy based on execution context.
+
+        Returns:
+            "maintain" - Use original assertion (default)
+            "skip" - Skip verification (prerequisite action failed)
+        """
+        if not execution_context:
+            return "maintain"
+
+        last_action = execution_context.get("last_action")
+        if not last_action:
+            return "maintain"
+
+        action_status = last_action.get("status", "unknown")
+
+        # If last action failed with critical error, skip verification
+        if action_status == "failed":
+            result = last_action.get("result", {})
+            error_details = result.get("error_details", {})
+            error_type = error_details.get("error_type", "")
+
+            # Critical errors that prevent meaningful verification
+            critical_errors = ["element_not_found", "playwright_error", "scroll_failed"]
+            if error_type in critical_errors:
+                return "skip"
+
+        return "maintain"
+
+    def _build_context_aware_prompt(self, assertion: str, page_info: str, page_structure: str, execution_context: Dict[str, Any]) -> str:
+        """Build context-aware verification prompt."""
+        context_str = self._format_execution_context(execution_context)
+
+        # Use enhanced prompt with context
+        enhanced_prompt = LLMPrompt.verification_prompt_with_context.format(
+            execution_context=context_str
+        )
+
+        return self._prepare_prompt_verify(
+            f"assertion: {assertion}", page_info, enhanced_prompt, page_structure
+        )
+
+    async def verify(self, assertion: str, execution_context: Optional[Dict[str, Any]] = None) -> tuple[Dict[str, Any], Dict[str, Any]]:
         """Execute AI-driven assertion verification.
 
         Args:
             assertion: Assertion description
+            execution_context: Optional execution context for context-aware verification
+                             {
+                                 "last_action": {...},
+                                 "test_objective": "...",
+                                 "success_criteria": [...],
+                                 "completed_steps": [...],
+                                 "failed_steps": [...]
+                             }
 
         Returns:
             Tuple (step_dict, model_output)
@@ -210,26 +347,80 @@ class UITester:
 
         try:
             logging.debug(f"Executing AI assertion: {assertion}")
-            
+
+            # Use instance context if not provided as parameter
+            if execution_context is None and self.last_action_context is not None:
+                execution_context = {
+                    "last_action": self.last_action_context,
+                    "test_objective": self.current_test_objective,
+                }
+                logging.debug("Using instance-stored execution context for verification")
+
+            # Determine verification strategy
+            verification_strategy = self._determine_verification_strategy(execution_context)
+            logging.debug(f"Verification strategy: {verification_strategy}")
+
+            # Handle skip strategy (prerequisite action failed)
+            if verification_strategy == "skip":
+                last_action = execution_context.get("last_action", {})
+                skip_result = {
+                    "Validation Result": "Cannot Verify",
+                    "Failure Type": "ACTION_EXECUTION_FAILURE",
+                    "Details": [
+                        f"Previous action '{last_action.get('description', 'unknown')}' failed: {last_action.get('result', {}).get('message', 'unknown error')}",
+                        "Verification cannot proceed without successful action execution"
+                    ],
+                    "Recommendation": "Fix the action execution issue before attempting verification"
+                }
+
+                end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                skip_step = {
+                    "description": f"verify: {assertion}",
+                    "actions": [],
+                    "screenshots": [],
+                    "modelIO": json.dumps(skip_result, ensure_ascii=False),
+                    "status": "failed",
+                    "start_time": start_time,
+                    "end_time": end_time,
+                }
+                self.add_step_data(skip_step, step_type="assertion")
+                return skip_step, skip_result
+
+
             page_url, page_title = await self.driver.get_url()
             logging.debug(f"verification page url: {page_url}, title: {page_title}")
             # Crawl current page
             dp = DeepCrawler(self.page)
             await dp.crawl(highlight=True, filter_text=True, viewport_only=False)
 
-            marker_screenshot = await self._actions.b64_page_screenshot(file_name="marker", full_page=True)
+            marker_screenshot = await self._actions.b64_page_screenshot(
+                full_page=True,
+                file_name="verification_marker",
+                context="test"
+            )
             await dp.remove_marker()
 
-            screenshot = await self._actions.b64_page_screenshot(file_name="assert", full_page=True)
+            screenshot = await self._actions.b64_page_screenshot(
+                full_page=True,
+                file_name="verification_clean",
+                context="test"
+            )
 
             # Get page structure
             await dp.crawl(highlight=False, filter_text=True, viewport_only=False)
             page_structure = dp.get_text()
 
-            # Prepare LLM input
-            user_prompt = self._prepare_prompt_verify(
-                f"assertion: {assertion}", f"url: {page_url}, title: {page_title}", LLMPrompt.verification_prompt, page_structure
-            )
+            # Prepare LLM input (context-aware if context available)
+            page_info = f"url: {page_url}, title: {page_title}"
+            if execution_context:
+                logging.debug("Using context-aware verification prompt")
+                user_prompt = self._build_context_aware_prompt(assertion, page_info, page_structure, execution_context)
+            else:
+                logging.debug("Using standard verification prompt")
+                # Prepare LLM input
+                user_prompt = self._prepare_prompt_verify(
+                    f"assertion: {assertion}", page_info, LLMPrompt.verification_prompt, page_structure
+                )
 
             images_for_llm = [img for img in [marker_screenshot, screenshot] if img]
             result = await self.llm.get_llm_response(
@@ -289,7 +480,11 @@ class UITester:
 
             # Try to get basic page information even if it fails
             try:
-                basic_screenshot = await self._actions.b64_page_screenshot(file_name="error_assert", full_page=True)
+                basic_screenshot = await self._actions.b64_page_screenshot(
+                    full_page=True,
+                    file_name="assertion_failed",
+                    context="error"
+                )
             except:
                 basic_screenshot = None
 
@@ -402,7 +597,10 @@ class UITester:
                     await asyncio.sleep(1)
 
                 # Take screenshot
-                post_action_ss = await self._actions.b64_page_screenshot(file_name=f"action_{action_desc}_{index}")
+                post_action_ss = await self._actions.b64_page_screenshot(
+                    file_name=f"action_{action_desc}_{index}",
+                    context="test"
+                )
 
                 action_result = {
                     "description": action_desc,
@@ -425,7 +623,10 @@ class UITester:
                 return execute_results, failure_result
 
         logging.debug("All actions executed successfully")
-        post_action_ss = await self._actions.b64_page_screenshot(file_name="final_success")
+        post_action_ss = await self._actions.b64_page_screenshot(
+            file_name="final_success",
+            context="test"
+        )
         return execute_results, {
             "success": True,
             "message": "All actions executed successfully",

@@ -201,7 +201,8 @@ def create_config_dict(
             "viewport": {"width": 1280, "height": 720},
             "headless": True,
             "language": "zh-CN",
-            "cookies": []
+            "cookies": [],
+            "save_screenshots": False  # Always save screenshots in Gradio demo
         }
     }
     
@@ -273,6 +274,11 @@ def build_test_configurations(config: Dict[str, Any]) -> list:
 async def run_webqa_test(config: Dict[str, Any], lang: str = "zh-CN") -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """Run WebQA test"""
     try:
+        # Configure screenshot saving behavior
+        from webqa_agent.actions.action_handler import ActionHandler
+        save_screenshots = config.get("browser_config", {}).get("save_screenshots", False)
+        ActionHandler.set_screenshot_config(save_screenshots=save_screenshots)
+
         # Validate LLM configuration
         llm_config = {
             "api": "openai",

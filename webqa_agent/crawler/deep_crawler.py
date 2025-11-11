@@ -1,14 +1,13 @@
-import asyncio
 import datetime
 import json
 import time
 import logging
 import re
 from pathlib import Path
-from playwright.async_api import Page, async_playwright
+from playwright.async_api import Page
 from webqa_agent.crawler.dom_tree import DomTreeNode as dtree
 from webqa_agent.crawler.dom_cacher import DomCacher
-from typing import List, Dict, Optional, Any, Tuple, TypedDict, Union, Iterable
+from typing import List, Dict, Optional, Any, Tuple, Union, Iterable
 from pydantic import BaseModel, Field
 from enum import Enum
 from itertools import groupby
@@ -133,6 +132,10 @@ class CrawlResultModel(BaseModel):
     flat_element_map: ElementMap = Field(default_factory=ElementMap)
     diff_element_map: ElementMap = Field(default_factory=ElementMap)
 
+    # Page status fields for unsupported page detection (backward compatible)
+    page_status: str = Field(default="NORMAL", description="NORMAL or UNSUPPORTED_PAGE")
+    page_type: Optional[str] = Field(default=None, description="pdf, plugin, download, etc.")
+
     def raw_dict(self) -> Dict[str, Any]:
         """Get raw flattened element data with all fields."""
         return self.flat_element_map.data
@@ -191,6 +194,82 @@ class DeepCrawler:
         self._last_crawl_time = None  # Timestamp of last crawl operation
 
     # ------------------------------------------------------------------------
+    # HELPER METHODS
+    # ------------------------------------------------------------------------
+
+    async def _detect_page_type(self, page: Page) -> Tuple[str, Optional[str]]:
+        """Detect if the page is an unsupported type (PDF, plugin, etc.) using multi-layered detection.
+
+        Uses a 3-layer detection strategy for high reliability:
+        1. URL extension check (fast, reliable)
+        2. PDF embed element detection (catches Chromium PDF viewer)
+        3. document.contentType check (backup)
+
+        Args:
+            page: The Playwright Page object to check.
+
+        Returns:
+            Tuple of (status, page_type):
+                - ("NORMAL", None) for regular HTML pages
+                - ("UNSUPPORTED_PAGE", "pdf") for PDF documents
+                - ("UNSUPPORTED_PAGE", "plugin") for plugin content
+                - ("UNSUPPORTED_PAGE", "download") for download files
+        """
+        try:
+            # === Layer 1: URL Extension Check (Fastest, Most Reliable) ===
+            url = page.url.lower()
+
+            # PDF detection via URL
+            if url.endswith('.pdf'):
+                logging.info(f"Detected PDF via URL suffix: {url}")
+                return ("UNSUPPORTED_PAGE", "pdf")
+
+            # Download file detection via URL
+            download_extensions = [".zip", ".rar", ".exe", ".dmg", ".pkg", ".deb", ".tar", ".gz"]
+            for ext in download_extensions:
+                if url.endswith(ext):
+                    logging.info(f"Detected download file via URL: {url}")
+                    return ("UNSUPPORTED_PAGE", "download")
+
+            # === Layer 2: PDF Embed Element Detection (Catches Chromium PDF Viewer) ===
+            has_pdf_embed = await page.evaluate("""() => {
+                return document.querySelector('embed[type="application/pdf"]') !== null ||
+                       document.querySelector('object[type="application/pdf"]') !== null ||
+                       document.querySelector('iframe[src*=".pdf"]') !== null;
+            }""")
+
+            if has_pdf_embed:
+                logging.info(f"Detected embedded PDF viewer on page: {url}")
+                return ("UNSUPPORTED_PAGE", "pdf")
+
+            # === Layer 3: document.contentType Check (Backup Method) ===
+            content_type = await page.evaluate("() => document.contentType || ''")
+
+            # PDF detection via content type
+            if content_type == "application/pdf":
+                logging.info(f"Detected PDF via document.contentType: {url}")
+                return ("UNSUPPORTED_PAGE", "pdf")
+
+            # Plugin detection (Flash, Silverlight, etc.)
+            plugin_patterns = [
+                "application/x-shockwave-flash",
+                "application/x-silverlight",
+                "application/x-java-applet"
+            ]
+            for pattern in plugin_patterns:
+                if pattern in content_type:
+                    logging.info(f"Detected plugin content ({pattern}): {url}")
+                    return ("UNSUPPORTED_PAGE", "plugin")
+
+            # Regular HTML page
+            return ("NORMAL", None)
+
+        except Exception as e:
+            # On any error, fail safely to NORMAL to avoid false positives
+            logging.warning(f"Page type detection failed (assuming NORMAL page): {e}")
+            return ("NORMAL", None)
+
+    # ------------------------------------------------------------------------
     # CORE CRAWLING METHODS
     # ------------------------------------------------------------------------
 
@@ -220,6 +299,17 @@ class DeepCrawler:
         """
         if page is None:
             page = self.page
+
+        # Multi-layer detection of unsupported page types (PDF, plugins, etc.)
+        page_status, page_type = await self._detect_page_type(page)
+        if page_status == "UNSUPPORTED_PAGE":
+            logging.warning(f"Detected unsupported page type: {page_type}, skipping crawl")
+            return CrawlResultModel(
+                flat_element_map=ElementMap(data={}),
+                element_tree={},
+                page_status=page_status,
+                page_type=page_type
+            )
 
         try:
             
@@ -662,20 +752,37 @@ class DeepCrawler:
             screenshot_path: Optional[str] = None
     ) -> None:
         """
-        Capture a full-page screenshot and save it to disk.
-        
+        Capture a full-page screenshot and optionally save it to disk.
+
         Args:
             page: The Playwright Page to screenshot. Defaults to instance page.
             screenshot_path: Custom path for the screenshot. Auto-generated if None.
+
+        Note:
+            Screenshot saving is controlled by ActionHandler._save_screenshots.
+            If saving is disabled, this method still captures the screenshot but
+            doesn't save it to disk (Playwright path=None behavior).
         """
         if page is None:
             page = self.page
 
-        if screenshot_path:
-            path = Path(screenshot_path)
-        else:
-            path = self.SCREENSHOTS_DIR / f"{get_time()}_marker.png"
+        # Import here to avoid circular dependency
+        from webqa_agent.actions.action_handler import ActionHandler
 
-        path.parent.mkdir(parents=True, exist_ok=True)
-        await page.screenshot(path=str(path), full_page=True)
-        logging.debug(f"Screenshot saved to {path}")
+        # Only prepare path if saving is enabled
+        path_str = None
+        if ActionHandler._save_screenshots:
+            if screenshot_path:
+                path = Path(screenshot_path)
+            else:
+                path = self.SCREENSHOTS_DIR / f"{get_time()}_marker.png"
+
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path_str = str(path)
+
+        await page.screenshot(path=path_str, full_page=True)
+
+        if path_str:
+            logging.debug(f"Screenshot saved to {path_str}")
+        else:
+            logging.debug("Screenshot captured (not saved to disk)")

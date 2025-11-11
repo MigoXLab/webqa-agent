@@ -110,7 +110,9 @@ class UITool(BaseTool):
         if include_screenshot:
             logging.debug("Capturing post-action screenshot")
             screenshot = await self.ui_tester_instance._actions.b64_page_screenshot(
-                file_name="check_ui_error", save_to_log=False, full_page=not viewport_only
+                full_page=not viewport_only,
+                file_name="ui_error_check",
+                context="error"
             )
             await dp.remove_marker()
 
@@ -212,8 +214,34 @@ class UITool(BaseTool):
             logging.debug(f"UI action completed in {duration:.2f} seconds")
             logging.debug(f"UI action result type: {type(result)}")
 
+            # Store execution context for verification (context-aware verification enhancement)
+            self.ui_tester_instance.last_action_context = {
+                "description": instruction,
+                "action_type": action,
+                "target": target,
+                "value": value,
+                "status": "success" if result.get("success") else "failed",
+                "result": result,
+                "dom_diff": result.get("dom_diff", {}),
+                "timestamp": end_time.isoformat()
+            }
+            logging.debug("Stored action context for verification")
+
             # First, check for a hard failure from the action executor
             if not result.get("success"):
+                # Check for unsupported page type (PDF, plugins, etc.) - CRITICAL ERROR
+                if result.get("unsupported_page"):
+                    page_type = result.get("page_type", "unknown")
+                    error_message = f"""[CRITICAL_ERROR:UNSUPPORTED_PAGE] Operation navigated to unsupported page
+
+**Page Type**: {page_type.upper()}
+**Root Cause**: Operation navigated to {page_type} content which cannot be automated
+
+**Impact**: Cannot execute subsequent actions, must abort current test case"""
+
+                    logging.error(f"[CRITICAL] Detected unsupported page type: {page_type}")
+                    return error_message
+
                 # Check for enriched error details
                 error_details = result.get("error_details", {})
 
@@ -415,7 +443,16 @@ class UIAssertTool(BaseTool):
         logging.debug(f"Executing UI assertion: {assertion}")
 
         try:
-            execution_steps, result = await self.ui_tester_instance.verify(assertion)
+            # Build execution context from instance state (context-aware verification)
+            execution_context = None
+            if self.ui_tester_instance.last_action_context:
+                execution_context = {
+                    "last_action": self.ui_tester_instance.last_action_context,
+                    "test_objective": self.ui_tester_instance.current_test_objective,
+                }
+                logging.debug("Passing execution context to verify()")
+
+            execution_steps, result = await self.ui_tester_instance.verify(assertion, execution_context)
 
             if not isinstance(result, dict):
                 return f"[FAILURE] Assertion error: Invalid response format from UITester.verify(). Expected dict, got {type(result)}"
@@ -423,6 +460,8 @@ class UIAssertTool(BaseTool):
             # Extract validation result from the response
             validation_result = result.get("Validation Result", "Unknown")
             details = result.get("Details", [])
+            failure_type = result.get("Failure Type")
+            recommendation = result.get("Recommendation")
 
             if validation_result == "Validation Passed":
                 success_response = f"[SUCCESS] Assertion '{assertion}' PASSED."
@@ -430,10 +469,25 @@ class UIAssertTool(BaseTool):
                     success_response += f" Verification Details: {'; '.join(details)}"
                 return success_response
 
+            elif validation_result == "Cannot Verify":
+                # Action execution failure - cannot perform verification
+                cannot_verify_response = f"[CANNOT_VERIFY] Assertion '{assertion}' cannot be verified (prerequisite action failed)."
+                if failure_type:
+                    cannot_verify_response += f" Failure Type: {failure_type}."
+                if details:
+                    cannot_verify_response += f" Details: {'; '.join(details)}"
+                if recommendation:
+                    cannot_verify_response += f" Recommendation: {recommendation}"
+                return cannot_verify_response
+
             elif validation_result == "Validation Failed":
                 failure_response = f"[FAILURE] Assertion '{assertion}' FAILED."
+                if failure_type:
+                    failure_response += f" Failure Type: {failure_type}."
                 if details:
                     failure_response += f" Failure Details: {'; '.join(details)}"
+                if recommendation:
+                    failure_response += f" Recommendation: {recommendation}"
                 return failure_response
 
             else:

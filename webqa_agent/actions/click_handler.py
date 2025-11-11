@@ -123,7 +123,8 @@ class ClickHandler:
                     new_page_action_handler = ActionHandler()
                     new_page_action_handler.page = new_page
                     screenshot_b64 = await new_page_action_handler.b64_page_screenshot(
-                        file_name=f"element_{element_index}_new_page"
+                        file_name=f"element_{element_index}_new_page",
+                        context="test"
                     )
                     click_result["new_page_screenshot"] = screenshot_b64
                     logging.debug("New page screenshot saved")
@@ -135,7 +136,8 @@ class ClickHandler:
                 await page.wait_for_load_state("networkidle", timeout=30000)
             else:
                 screenshot_b64 = await action_handler.b64_page_screenshot(
-                    file_name=f"element_{element_index}_after_click"
+                    file_name=f"element_{element_index}_after_click",
+                    context="test"
                 )
                 click_result["screenshot_after"] = screenshot_b64
                 logging.debug("After click screenshot saved")

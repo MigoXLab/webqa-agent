@@ -224,6 +224,15 @@ class PageContentTest:
 
         dp = DeepCrawler(page)
         crawl_result = await dp.crawl(highlight=True, filter_text=False, viewport_only=False, include_styles=True)
+
+        # Check for unsupported page types (PDF, plugins, etc.)
+        if hasattr(crawl_result, 'page_status') and crawl_result.page_status == "UNSUPPORTED_PAGE":
+            page_type = getattr(crawl_result, 'page_type', 'unknown')
+            logging.warning(f"Cannot execute UX test on {page_type} page, skipping")
+            layout_result.status = TestStatus.FAILED
+            layout_result.messages = {'page': f"Page type '{page_type}' is unsupported, cannot execute UX test"}
+            return [layout_result]
+
         id_map = crawl_result.raw_dict()
         logging.debug(f'id_map: {id_map}')
         await dp.remove_marker()

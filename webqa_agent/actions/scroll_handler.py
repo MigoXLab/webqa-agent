@@ -119,10 +119,12 @@ class ScrollHandler:
 
         async def capture_viewport(screenshot_counter=0):
             if capture_screenshots:
-                timestamp = time.strftime("%Y%m%d%H%M%S")
-                processed_filename = f"{timestamp}_{page_identifier}_global_viewport_{screenshot_counter}"
+                processed_filename = f"{page_identifier}_global_viewport_{screenshot_counter}"
 
-                screenshot_base64 = await self._action_handler.b64_page_screenshot(file_name=processed_filename)
+                screenshot_base64 = await self._action_handler.b64_page_screenshot(
+                    file_name=processed_filename,
+                    context="scroll"
+                )
 
                 if screenshot_base64:
                     screenshot_image_list.append(screenshot_base64)
@@ -163,10 +165,12 @@ class ScrollHandler:
 
         async def capture_viewport(screenshot_counter=0):
             if capture_screenshots:
-                timestamp = time.strftime("%Y%m%d%H%M%S")
-                processed_filename = f"{timestamp}_{page_identifier}_container_viewport_{screenshot_counter}"
+                processed_filename = f"{page_identifier}_container_viewport_{screenshot_counter}"
 
-                screenshot_base64 = await self._action_handler.b64_page_screenshot(file_name=processed_filename)
+                screenshot_base64 = await self._action_handler.b64_page_screenshot(
+                    file_name=processed_filename,
+                    context="scroll"
+                )
 
                 if screenshot_base64:
                     screenshot_image_list.append(screenshot_base64)
@@ -293,9 +297,11 @@ class ScrollHandler:
         # if not scroll, exit after initial capture
         if not scroll:
             logging.debug("Scrolling disabled, exiting after initial capture.")
-            timestamp = time.strftime("%Y%m%d%H%M%S")
-            processed_filename = f"{timestamp}_{page_identifier}_initial"
-            screenshot_base64 = await self._action_handler.b64_page_screenshot(file_name=processed_filename)
+            processed_filename = f"{page_identifier}_initial"
+            screenshot_base64 = await self._action_handler.b64_page_screenshot(
+                file_name=processed_filename,
+                context="scroll"
+            )
             if screenshot_base64:
                 screenshot_image_list.append(screenshot_base64)
             return screenshot_image_list
@@ -347,18 +353,22 @@ class ScrollHandler:
                                 break
                 else:
                     logging.debug("No scrollable containers found, taking single screenshot")
-                    timestamp = time.strftime("%Y%m%d%H%M%S")
-                    processed_filename = f"{timestamp}_{page_identifier}_no_scroll"
-                    screenshot_base64 = await self._action_handler.b64_page_screenshot(file_name=processed_filename)
+                    processed_filename = f"{page_identifier}_no_scroll"
+                    screenshot_base64 = await self._action_handler.b64_page_screenshot(
+                        file_name=processed_filename,
+                        context="scroll"
+                    )
                     if screenshot_base64:
                         screenshot_image_list.append(screenshot_base64)
 
         except Exception as e:
             logging.error(f"Error in smart scroll: {e}")
             # if error, at least take one screenshot
-            timestamp = time.strftime("%Y%m%d%H%M%S")
-            processed_filename = f"{timestamp}_{page_identifier}_error_fallback"
-            screenshot_base64 = await self._action_handler.b64_page_screenshot(file_name=processed_filename)
+            processed_filename = f"{page_identifier}_error_fallback"
+            screenshot_base64 = await self._action_handler.b64_page_screenshot(
+                file_name=processed_filename,
+                context="error"
+            )
             if screenshot_base64:
                 screenshot_image_list.append(screenshot_base64)
 

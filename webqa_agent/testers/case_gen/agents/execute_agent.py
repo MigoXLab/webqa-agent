@@ -868,7 +868,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         dp = DeepCrawler(page)
         await dp.crawl(highlight=True, viewport_only=True)
         screenshot = await ui_tester_instance._actions.b64_page_screenshot(
-            file_name="agent_step_vision", save_to_log=False
+            file_name=f"step_{i+1}_vision",
+            context="agent"
         )
         await dp.remove_marker()
         logging.debug("Generated highlighted screenshot for the agent.")
@@ -989,7 +990,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                             # Get current page screenshot for LLM analysis
                             try:
                                 recovery_screenshot = await ui_tester_instance._actions.b64_page_screenshot(
-                                    file_name="recovery_screenshot", save_to_log=False
+                                    file_name=f"step_{i+1}_recovery_attempt_{retry_count + 1}",
+                                    context="error"
                                 )
                             except Exception as e:
                                 logging.error(f"Failed to capture recovery screenshot: {e}")

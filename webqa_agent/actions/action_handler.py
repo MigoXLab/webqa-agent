@@ -1,9 +1,11 @@
 import base64
+import datetime
 import json
 import os
 import re
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from playwright.async_api import Page
@@ -64,6 +66,40 @@ ERROR_PLAYWRIGHT = "playwright_error"
 
 
 class ActionHandler:
+    # Session management for screenshot organization
+    _screenshot_session_dir: Optional[Path] = None
+    _screenshot_session_timestamp: Optional[str] = None
+    _save_screenshots: bool = False  # Default: not save screenshots to disk
+
+    @classmethod
+    def set_screenshot_config(cls, save_screenshots: bool = False):
+        """Set global screenshot saving behavior.
+
+        Args:
+            save_screenshots: Whether to save screenshots to local disk (default: False)
+        """
+        cls._save_screenshots = save_screenshots
+        logging.debug(f"Screenshot saving config set to: {save_screenshots}")
+
+    @classmethod
+    def init_screenshot_session(cls) -> Path:
+        """Initialize screenshot session directory for this test run.
+
+        Creates a timestamped directory under webqa_agent/crawler/screenshots/
+        for organizing all screenshots from a single test session.
+
+        Returns:
+            Path: The session directory path
+        """
+        if cls._screenshot_session_dir is None:
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            base_dir = Path(__file__).parent.parent / "crawler" / "screenshots"
+            cls._screenshot_session_dir = base_dir / timestamp
+            cls._screenshot_session_timestamp = timestamp
+            cls._screenshot_session_dir.mkdir(parents=True, exist_ok=True)
+            logging.info(f"Initialized screenshot session directory: {cls._screenshot_session_dir}")
+        return cls._screenshot_session_dir
+
     def __init__(self):
         self.page_data = {}
         self.page_element_buffer = {}  # page element buffer
@@ -348,12 +384,18 @@ class ActionHandler:
         """
         # Get current active page
         page = self._get_current_page()
-        
-        # Initialize action context for error propagation
-        ctx = ActionContext()
-        action_context_var.set(ctx)
+
+        # Get existing context or create new one (preserves parent context)
+        ctx = action_context_var.get()
+        if ctx is None:
+            ctx = ActionContext()
+            action_context_var.set(ctx)
+
+        # Update scroll-specific context info
         ctx.max_scroll_attempts = max_retries
-        ctx.element_info = {"element_id": element_id, "action": "ensure_viewport"}
+        # Only set element_info if not already set by parent method
+        if not ctx.element_info.get("element_id"):
+            ctx.element_info = {"element_id": element_id, "action": "ensure_viewport"}
 
         element = self.page_element_buffer.get(str(element_id))
         if not element:
@@ -924,9 +966,11 @@ class ActionHandler:
     async def type(self, id, text, clear_before_type: bool = False) -> bool:
         """Types text into the specified element, optionally clearing it
         first."""
-        # Initialize action context for error propagation
-        ctx = ActionContext()
-        action_context_var.set(ctx)
+        # Get existing context or create new one (preserves context from helpers)
+        ctx = action_context_var.get()
+        if ctx is None:
+            ctx = ActionContext()
+            action_context_var.set(ctx)
         ctx.element_info = {"element_id": str(id), "action": "type", "text_length": len(text), "clear_before_type": clear_before_type}
 
         try:
@@ -1071,8 +1115,12 @@ class ActionHandler:
         """
         # Get current active page
         page = self._get_current_page()
-        
+
+        # Get existing context or create new one if none exists
         ctx = action_context_var.get()
+        if ctx is None:
+            ctx = ActionContext()
+            action_context_var.set(ctx)
 
         # Strategy 1: Try CSS selector if format is valid
         if self._is_valid_css_selector(selector):
@@ -1154,9 +1202,11 @@ class ActionHandler:
 
     async def clear(self, id) -> bool:
         """Clears the text in the specified input element."""
-        # Initialize action context for error propagation
-        ctx = ActionContext()
-        action_context_var.set(ctx)
+        # Get existing context or create new one (preserves context from helpers)
+        ctx = action_context_var.get()
+        if ctx is None:
+            ctx = ActionContext()
+            action_context_var.set(ctx)
         ctx.element_info = {"element_id": str(id), "action": "clear"}
 
         try:
@@ -1236,27 +1286,67 @@ class ActionHandler:
             )
             return False
 
-    async def b64_page_screenshot(self, full_page=False, file_path=None, file_name=None, save_to_log=True):
-        """Get page screenshot (Base64 encoded)
+    async def b64_page_screenshot(
+        self,
+        full_page: bool = False,
+        file_name: Optional[str] = None,
+        context: str = 'default'
+    ) -> Optional[str]:
+        """Get page screenshot (Base64 encoded) and optionally save to local file.
 
         Args:
             full_page: whether to capture the whole page
-            file_path: screenshot save path (optional)
-            file_name: screenshot file name (optional)
-            save_to_log: whether to save to log system (default True)
+            file_name: descriptive screenshot name (e.g., "marker", "action_click_button")
+            context: test context category (e.g., 'test', 'agent', 'scroll', 'error')
 
         Returns:
             str: screenshot base64 encoded, or None if screenshot fails
+
+        Note:
+            The screenshot is always returned as base64 for HTML reports and LLM analysis.
+            Local file saving is controlled by the _save_screenshots class variable.
         """
         try:
-            # get screenshot from current active page (dynamically resolves to latest page)
+            # Get current active page (dynamically resolves to latest page)
             current_page = self._get_current_page()
-            screenshot_bytes = await self.take_screenshot(current_page, full_page=full_page, timeout=30000)
+            timeout = 90000 if full_page else 60000  # 90s for full page, 60s for viewport
 
-            # convert to Base64
+            # Prepare file path only if saving is enabled
+            file_path_str = None
+            if self._save_screenshots:
+                # Initialize session directory if needed
+                session_dir = self.init_screenshot_session()
+
+                # Generate timestamp and filename
+                timestamp = datetime.datetime.now().strftime("%H%M%S")
+
+                # Build filename: {timestamp}_{context}_{file_name}.png
+                if file_name:
+                    filename = f"{timestamp}_{context}_{file_name}.png"
+                else:
+                    filename = f"{timestamp}_{context}_screenshot.png"
+
+                file_path_str = str(session_dir / filename)
+
+            # Capture screenshot (with or without file saving based on config)
+            screenshot_bytes = await self.take_screenshot(
+                current_page,
+                full_page=full_page,
+                file_path=file_path_str,
+                timeout=timeout
+            )
+
+            # Convert to Base64 for HTML reports
             screenshot_base64 = base64.b64encode(screenshot_bytes).decode('utf-8')
             base64_data = f'data:image/png;base64,{screenshot_base64}'
+
+            if self._save_screenshots and file_path_str:
+                logging.debug(f"Screenshot saved to {file_path_str}")
+            else:
+                logging.debug("Screenshot captured (not saved to disk)")
+
             return base64_data
+
         except Exception as e:
             logging.warning(f"Failed to capture screenshot: {e}")
             return None
@@ -1273,32 +1363,46 @@ class ActionHandler:
         Args:
             page: page object
             full_page: whether to capture the whole page
-            file_path: screenshot save path (only used for direct saving, not recommended in test flow)
-            timeout: timeout
+            file_path: screenshot save path (only used when save_screenshots=True)
+            timeout: timeout (milliseconds)
 
         Returns:
             bytes: screenshot binary data
+
+        Note:
+            If save_screenshots is False, the screenshot will not be saved to disk
+            regardless of the file_path parameter. The method always returns the
+            screenshot bytes for in-memory use (e.g., Base64 encoding).
         """
         try:
+            # Shortened and more lenient load state check
+            # Note: page.screenshot() already waits for fonts and basic rendering internally
             try:
-                await page.wait_for_load_state(timeout=60000)
+                await page.wait_for_load_state('domcontentloaded', timeout=10000)
             except Exception as e:
-                logging.warning(f'wait_for_load_state before screenshot failed: {e}; attempting screenshot anyway')
-            logging.debug('Page is fully loaded or skipped wait; taking screenshot')
+                logging.debug(f'Load state check: {e}; proceeding with screenshot')
 
-            # Directly capture screenshot as binary data
-            if file_path:
-                screenshot: bytes = await page.screenshot(
-                    path=file_path,
-                    full_page=full_page,
-                    timeout=timeout,
-                )
-            else:
-                screenshot: bytes = await page.screenshot(
-                    full_page=full_page,
-                    timeout=timeout,
-                )
+            logging.debug(f'Taking screenshot (full_page={full_page}, save={self._save_screenshots}, timeout={timeout}ms)')
 
+            # Prepare screenshot options with Playwright best practices
+            screenshot_options = {
+                'full_page': full_page,
+                'timeout': timeout,
+                'animations': 'disabled',  # Skip waiting for CSS animations/transitions (Playwright 1.25+)
+                'caret': 'hide',  # Hide text input cursor for cleaner screenshots
+            }
+
+            # Only save to disk if _save_screenshots is True and file_path is provided
+            if self._save_screenshots and file_path:
+                screenshot_options['path'] = file_path
+                logging.debug(f'Screenshot will be saved to: {file_path}')
+            elif not self._save_screenshots:
+                logging.debug('Screenshot saving disabled, returning bytes only')
+
+            # Capture screenshot with optimized options
+            screenshot: bytes = await page.screenshot(**screenshot_options)
+
+            logging.debug(f'Screenshot captured successfully ({len(screenshot)} bytes)')
             return screenshot
 
         except Exception as e:

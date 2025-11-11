@@ -22,7 +22,6 @@ class LLMPrompt:
     - Identify and locate the target element if applicable.
     - Validate if the planned target matches the user's intent, especially in cases of **duplicate or ambiguous elements**.
     - Avoid redundant operations such as repeated scrolling or re-executing completed steps.
-    - If the instruction cannot be fully completed, provide a precise `furtherPlan`.
 
     ## Target Identification & Validation
     ### Step-by-step validation:
@@ -71,10 +70,7 @@ class LLMPrompt:
     2. Decompose into sequential steps under `actions`.
     3. For each action:
        - If the element is visible, provide `locate` details.
-       - If not visible, halt further planning, set `taskWillBeAccomplished` = false, and describe next steps via `furtherPlan`.
-
-    4. If task is completed with current steps, set `taskWillBeAccomplished` = true.
-    5. Use `furtherPlan` when the task is partially completed.
+       - If not visible, halt further planning and return empty actions array.
 
     ## Constraints
     - **No redundant scrolls**. If bottom is reached, don't scroll again.
@@ -164,15 +160,6 @@ class LLMPrompt:
            "locate": null
          }
         * When op is omitted, auto-detect by provided fields: x+y => move; deltaX/deltaY => wheel.
-
-
-    ## Further Plan Format
-    If the task isn't completed:
-    "furtherPlan": {
-      "whatHaveDone": "Actions already performed...",
-      "whatToDoNext": "Next steps to reach target..."
-    }
-    ```
 """
 
     planner_output_prompt = """
@@ -216,31 +203,20 @@ class LLMPrompt:
               "param": {...} | null,
               "locate": {...} | null
             }
-          ],
-          "taskWillBeAccomplished": true | false,
-          "targetVerified": true | false, // optional, include if task involves target validation
-          "furtherPlan": {
-            "whatHaveDone": string,
-            "whatToDoNext": string
-          } | null,
-          "error": string | null // present only if planning failed or validation failed
+          ]
         }
 
         ---
 
         ### Output Requirements
         - Use `thought` field in every action to explain selection & feasibility.
-        - If the task involves matching a user-described target (like "click send button"), you **must validate the target**:
-          - If matched: `targetVerified: true`
-          - If mismatched: `targetVerified: false` and include error: "Planned element does not match the user's expected target"
-        - If an expected element is not found on the page:
-          - For imperative instruction: return `error` and empty actions.
+        - If an expected element is not found on the page, return empty actions array.
 
         ---
 
         ### Unified Few-shot Examples
 
-        #### Example 1: Tap + Sleep (task incomplete)
+        #### Example 1: Tap + Sleep
         "Click send button and wait 50s"
 
         ====================
@@ -263,14 +239,7 @@ class LLMPrompt:
               "thought": "Wait for 50 seconds for streaming to complete",
               "param": { "timeMs": 50000 }
             }
-          ],
-          "taskWillBeAccomplished": false,
-          "targetVerified": true,
-          "furtherPlan": {
-            "whatHaveDone": "Clicked send and waited 50 seconds",
-            "whatToDoNext": "Verify streaming output is complete"
-          },
-          "error": null
+          ]
         }
         ```
 
@@ -284,13 +253,7 @@ class LLMPrompt:
               "param": { "direction": "down", "scrollType": "untilBottom", "distance": null },
               "locate": null
             }
-          ],
-          "taskWillBeAccomplished": false,
-          "furtherPlan": {
-            "whatHaveDone": "Scrolled to bottom of page",
-            "whatToDoNext": "Check whether only Strong Reasoning datasets are shown"
-          },
-          "error": null
+          ]
         }
         ```
 
@@ -310,10 +273,7 @@ class LLMPrompt:
               "thought": "I get the new page",
               "param": null
             }
-          ],
-          "taskWillBeAccomplished": true,
-          "furtherPlan": null,
-          "error": null
+          ]
         }
         ```
 
@@ -337,11 +297,7 @@ class LLMPrompt:
               "thought": "Wait for 10 seconds to allow the upload to complete.",
               "type": "Sleep"
             }
-          ],
-          "error": null,
-          "furtherPlan": null,
-          "targetVerified": true,
-          "taskWillBeAccomplished": true
+          ]
         }
         ```
 
@@ -359,10 +315,7 @@ class LLMPrompt:
               },
               "locate": { "id": "1" }
             }
-          ],
-          "taskWillBeAccomplished": true,
-          "furtherPlan": null,
-          "error": null
+          ]
         }
         ```
 
@@ -382,12 +335,9 @@ class LLMPrompt:
               "type": "SelectDropdown",
               "thought": "there is select dropdown id is "5", Select the option 'Option 2' from the dropdown menu and then select the option 'Option 3' from the dropdown menu",
               "param": { "selection_path": ["Option 2", "Option 3"] },
-              "locate": { dropdown_id: "5", option_id: "2" (optional) }
+              "locate": { "dropdown_id": "5", "option_id": "2" }
             }
-          ],
-          "taskWillBeAccomplished": true,
-          "furtherPlan": null,
-          "error": null
+          ]
         }
         ```
 
@@ -402,10 +352,7 @@ class LLMPrompt:
               \"param\": { \"url\": \"https://example.com\" },
               \"locate\": null
             }
-          ],
-          \"taskWillBeAccomplished\": true,
-          \"furtherPlan\": null,
-          \"error\": null
+          ]
         }
         ```
 
@@ -420,13 +367,7 @@ class LLMPrompt:
               \"param\": null,
               \"locate\": null
             }
-          ],
-          \"taskWillBeAccomplished\": false,
-          \"furtherPlan\": {
-            \"whatHaveDone\": \"Navigated back to previous page\",
-            \"whatToDoNext\": \"Retry the failed action from the previous page\"
-          },
-          \"error\": null
+          ]
         }
         ```
 
@@ -434,13 +375,7 @@ class LLMPrompt:
         - If the action's `locate` is null and element is **not in the screenshot**, don't continue planning. Instead:
         ```json
         {
-          "actions": [],
-          "taskWillBeAccomplished": false,
-          "furtherPlan": {
-            "whatHaveDone": "Clicked language switch",
-            "whatToDoNext": "Locate and click English option once it's visible"
-          },
-          "error": "Planned element not visible; task cannot be completed on current page"
+          "actions": []
         }
         ```
 
@@ -448,7 +383,6 @@ class LLMPrompt:
 
         ### Final Notes
         - Plan only for **visible, reachable actions** based on current context.
-        - If not all steps can be completed now, push remainder to `furtherPlan`.
         - Always output strict JSON format — no markdown, no commentary.
         - Remember to use the external id (string) from the pageDescription in your locate field.
 
@@ -522,8 +456,7 @@ class LLMPrompt:
 
     verification_system_prompt = """
     ## Role
-      Think of yourself as a premium model( ChatGPT Plus )
-      You are a web automation testing verification expert. Verify whether the current page meets the user's test cases and determine if the task is completed. Ensure that the output JSON format does not include any code blocks or backticks.
+      You are a professional web automation testing verification expert. Verify whether the current page meets the user's test cases and determine if the task is completed. Ensure that the output JSON format does not include any code blocks or backticks.
       Based on the screenshot and available evidence, determine whether the user has successfully completed the test case.
       Focus exclusively on verifying the completion of the final output rendering.
 
@@ -535,6 +468,94 @@ class LLMPrompt:
       3. Use the following template to give a conclusion: "Based on the analysis of the screenshots you provided, [If consistent, fill in 'Your operation has successfully achieved the expected goal'] [If inconsistent, fill in 'It seems that some steps are not completed/there are deviations, please check... part']."
       4. If any mismatches are found or further suggestions are needed, provide specific guidance or suggestions to help users achieve their goals.
       5. Make sure the feedback is concise and clear, and directly evaluate the content submitted by the user.
+
+    """
+
+    verification_prompt_with_context = """
+      Task instructions: Based on the assertion provided by the user AND the execution context, you need to check final screenshot to determine whether the verification assertion has been completed.
+
+      ## CRITICAL DISTINCTION
+
+      You must distinguish between TWO types of verification failures:
+
+      **1. ACTION_EXECUTION_FAILURE**
+      - The previous action itself did not execute successfully
+      - Examples: Element not found, click failed, navigation didn't occur, button not responding
+      - Indicators: Previous action status is "failed", action error messages present
+      - Meaning: The verification CANNOT be performed because the prerequisite action failed
+      - Output: "Cannot Verify" result with failure type "ACTION_EXECUTION_FAILURE"
+
+      **2. BUSINESS_REQUIREMENT_FAILURE**
+      - The action executed successfully, BUT the business requirement was not met
+      - Examples: Form submitted but validation error appeared, page loaded but wrong content shown
+      - Indicators: Previous action status is "success", but expected outcome not visible
+      - Meaning: The verification CAN be performed and shows the requirement is not met
+      - Output: "Validation Failed" result with failure type "BUSINESS_REQUIREMENT_FAILURE"
+
+      ## Execution Context Analysis
+
+      **Previous Action Information:**
+      {execution_context}
+
+      Use this context to understand:
+      - What action was just performed
+      - Whether the action succeeded or failed
+      - What changes occurred on the page (DOM diff)
+      - What the test objective is
+      - Whether this verification depends on the previous action's success
+
+      ## Verification Steps
+
+      1. **Check Previous Action Status**
+         - If previous action failed: Cannot verify assertion (return "Cannot Verify")
+         - If previous action succeeded: Proceed to verify assertion against page state
+
+      2. **Analyze Current Page State**
+         - Review page structure and screenshot
+         - Determine if assertion is satisfied
+
+      3. **Classify Failure Type (if verification fails)**
+         - ACTION_EXECUTION_FAILURE: Prerequisite action didn't work
+         - BUSINESS_REQUIREMENT_FAILURE: Action worked but requirement not met
+
+      ## Output Format (Strict JSON)
+
+      **When previous action failed (cannot verify):**
+      {{
+        "Validation Result": "Cannot Verify",
+        "Failure Type": "ACTION_EXECUTION_FAILURE",
+        "Details": [
+          "Previous action '{{action_description}}' failed: {{failure_reason}}",
+          "Verification cannot proceed without successful action execution"
+        ],
+        "Recommendation": "Fix the action execution issue before attempting verification"
+      }}
+
+      **When verification passes:**
+      {{
+        "Validation Result": "Validation Passed",
+        "Failure Type": null,
+        "Details": [
+          "Step X: <specific reason for PASS>",
+          ...
+        ],
+        "Recommendation": "Continue test execution"
+      }}
+
+      **When verification fails (action succeeded but requirement not met):**
+      {{
+        "Validation Result": "Validation Failed",
+        "Failure Type": "BUSINESS_REQUIREMENT_FAILURE",
+        "Details": [
+          "Step X: <specific reason for failure>",
+          ...
+        ],
+        "Recommendation": "Review business requirement or test case design"
+      }}
+
+      ---
+
+      Follow the same few-shot examples from the standard verification_prompt, but always include the "Failure Type" field and use execution context to make intelligent decisions.
 
     """
 

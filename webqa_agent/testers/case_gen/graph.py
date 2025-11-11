@@ -96,9 +96,22 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
     dp = DeepCrawler(page)
 
     # Full-page crawl with highlights
-    await dp.crawl(highlight=True, viewport_only=False)
+    crawl_result = await dp.crawl(highlight=True, viewport_only=False)
+
+    # Check for unsupported page types at the start
+    if hasattr(crawl_result, 'page_status') and crawl_result.page_status == "UNSUPPORTED_PAGE":
+        page_type = getattr(crawl_result, 'page_type', 'unknown')
+        logging.warning(f"Initial page type ({page_type}) is unsupported, cannot generate test cases")
+        return {
+            "test_cases": [],
+            "is_replan": False,
+            "replan_count": 0,
+            "replanned_cases": []
+        }
     screenshot = await ui_tester._actions.b64_page_screenshot(
-        file_name="plan_full_page", save_to_log=False, full_page=True
+        full_page=True,
+        file_name="plan_full_page",
+        context="agent"
     )
 
     # Get all interactive elements (we'll filter them in Stage 1)
@@ -388,7 +401,11 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
     ]
     page_content_summary = curr.clean_dict(reflect_template)
     logging.debug(f"current page crawled result: {page_content_summary}")
-    screenshot = await ui_tester._actions.b64_page_screenshot(file_name="reflection", save_to_log=False, full_page=True)
+    screenshot = await ui_tester._actions.b64_page_screenshot(
+        full_page=True,
+        file_name="reflection",
+        context="agent"
+    )
     await dp.remove_marker()
     await dp.crawl(highlight=True, filter_text=True, viewport_only=False)
     page_structure = dp.get_text()

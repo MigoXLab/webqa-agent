@@ -288,6 +288,15 @@ async def run_tests(cfg):
     if is_docker:
         print("🐳 Docker mode: automatically enable headless browser")
 
+    # 0.1. Configure screenshot saving behavior
+    from webqa_agent.actions.action_handler import ActionHandler
+    save_screenshots = cfg.get("browser_config", {}).get("save_screenshots", False)
+    ActionHandler.set_screenshot_config(save_screenshots=save_screenshots)
+    if not save_screenshots:
+        print("📸 Screenshot saving: disabled (screenshots will be captured but not saved to disk)")
+    else:
+        print("📸 Screenshot saving: enabled")
+
     # 1. Check required tools based on configuration
     tconf = cfg.get("test_config", {})
 
