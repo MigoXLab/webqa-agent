@@ -752,37 +752,20 @@ class DeepCrawler:
             screenshot_path: Optional[str] = None
     ) -> None:
         """
-        Capture a full-page screenshot and optionally save it to disk.
-
+        Capture a full-page screenshot and save it to disk.
+        
         Args:
             page: The Playwright Page to screenshot. Defaults to instance page.
             screenshot_path: Custom path for the screenshot. Auto-generated if None.
-
-        Note:
-            Screenshot saving is controlled by ActionHandler._save_screenshots.
-            If saving is disabled, this method still captures the screenshot but
-            doesn't save it to disk (Playwright path=None behavior).
         """
         if page is None:
             page = self.page
 
-        # Import here to avoid circular dependency
-        from webqa_agent.actions.action_handler import ActionHandler
-
-        # Only prepare path if saving is enabled
-        path_str = None
-        if ActionHandler._save_screenshots:
-            if screenshot_path:
-                path = Path(screenshot_path)
-            else:
-                path = self.SCREENSHOTS_DIR / f"{get_time()}_marker.png"
-
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path_str = str(path)
-
-        await page.screenshot(path=path_str, full_page=True)
-
-        if path_str:
-            logging.debug(f"Screenshot saved to {path_str}")
+        if screenshot_path:
+            path = Path(screenshot_path)
         else:
-            logging.debug("Screenshot captured (not saved to disk)")
+            path = self.SCREENSHOTS_DIR / f"{get_time()}_marker.png"
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        await page.screenshot(path=str(path), full_page=True)
+        logging.debug(f"Screenshot saved to {path}")

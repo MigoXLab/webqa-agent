@@ -202,7 +202,7 @@ def create_config_dict(
             "headless": True,
             "language": "zh-CN",
             "cookies": [],
-            "save_screenshots": False  # Always save screenshots in Gradio demo
+            "save_screenshots": False  # Always not save screenshots in Gradio demo
         }
     }
     
