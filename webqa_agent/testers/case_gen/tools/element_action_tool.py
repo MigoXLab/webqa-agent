@@ -446,9 +446,19 @@ class UIAssertTool(BaseTool):
             # Build execution context from instance state (context-aware verification)
             execution_context = None
             if self.ui_tester_instance.last_action_context:
+                # Build complete execution context with all 5 expected fields
                 execution_context = {
                     "last_action": self.ui_tester_instance.last_action_context,
                     "test_objective": self.ui_tester_instance.current_test_objective,
+                    "success_criteria": self.ui_tester_instance.current_success_criteria,
+                    "completed_steps": [
+                        h for h in self.ui_tester_instance.execution_history
+                        if h.get("success") is True  # Use strict comparison to avoid None misclassification
+                    ],
+                    "failed_steps": [
+                        h for h in self.ui_tester_instance.execution_history
+                        if h.get("success") is False  # Use strict comparison to avoid None misclassification
+                    ]
                 }
                 logging.debug("Passing execution context to verify()")
 

@@ -47,6 +47,7 @@ class UITester:
         self.last_action_context: Optional[Dict[str, Any]] = None
         self.execution_history: List[Dict[str, Any]] = []
         self.current_test_objective: Optional[str] = None
+        self.current_success_criteria: List[str] = []  # Store test success criteria
 
     async def initialize(self, browser_session: BrowserSession = None):
         if browser_session:
@@ -207,6 +208,15 @@ class UITester:
             # Automatically store step data
             self.add_step_data(execution_steps_dict, step_type="action")
 
+            # Update execution history for context-aware verification
+            self.execution_history.append({
+                "description": test_step,
+                "success": execution_result.get("success"),
+                "timestamp": end_time,
+                "dom_diff": diff_elems,
+                "actions": execution_steps
+            })
+
             return execution_steps_dict, execution_result
 
         except Exception as e:
@@ -232,6 +242,14 @@ class UITester:
                 "start_time": start_time,
                 "end_time": end_time,
             }
+
+            self.execution_history.append({
+                "description": test_step,
+                "success": False,
+                "timestamp": end_time,
+                "dom_diff": {},
+                "actions": []
+            })
 
             # Automatically store error step data
             self.add_step_data(error_execution_steps, step_type="action")

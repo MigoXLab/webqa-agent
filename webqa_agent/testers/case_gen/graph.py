@@ -495,6 +495,12 @@ async def execute_single_case(state: MainGraphState) -> dict:
     ui_tester_instance = state["ui_tester_instance"]
     case_name = case.get("name")
 
+    # Set test context for context-aware verification
+    ui_tester_instance.current_test_objective = case.get("objective", case.get("name"))
+    ui_tester_instance.current_success_criteria = case.get("success_criteria", [])
+    # Clear old execution history to avoid cross-case pollution
+    ui_tester_instance.execution_history.clear()
+
     language = state.get('language', 'zh-CN')
     logging.debug(f"Execute case language: {language}")
     default_text = '智能功能测试' if language == 'zh-CN' else 'AI Function Test'
