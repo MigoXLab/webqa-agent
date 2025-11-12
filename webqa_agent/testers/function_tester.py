@@ -409,23 +409,23 @@ class UITester:
             logging.debug(f"verification page url: {page_url}, title: {page_title}")
             # Crawl current page
             dp = DeepCrawler(self.page)
-            await dp.crawl(highlight=True, filter_text=True, viewport_only=False)
+            await dp.crawl(highlight=True, filter_text=True, viewport_only=True)
 
             marker_screenshot = await self._actions.b64_page_screenshot(
-                full_page=True,
+                full_page=False,
                 file_name="verification_marker",
                 context="test"
             )
             await dp.remove_marker()
 
             screenshot = await self._actions.b64_page_screenshot(
-                full_page=True,
+                full_page=False,
                 file_name="verification_clean",
                 context="test"
             )
 
             # Get page structure
-            await dp.crawl(highlight=False, filter_text=True, viewport_only=False)
+            await dp.crawl(highlight=False, filter_text=True, viewport_only=True)
             page_structure = dp.get_text()
 
             # Prepare LLM input (context-aware if context available)

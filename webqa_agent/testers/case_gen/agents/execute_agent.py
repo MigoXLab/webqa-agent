@@ -956,6 +956,64 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 warning_steps.append(i + 1)
                 logging.info(f"Step {i+1} completed with warnings (e.g., UX issues detected)")
 
+            # ===================================================================
+            # PRIORITY 0: Critical failure check (highest priority, independent of is_failure)
+            # ===================================================================
+            # Critical errors are unrecoverable and should abort immediately
+            # to save resources. Check BEFORE regular failure handling.
+            if _is_critical_failure_step(tool_output, instruction_to_execute):
+
+                # Smart differentiation: Check if unsupported page + page-agnostic operation
+                is_unsupported_page = "UNSUPPORTED_PAGE" in tool_output.upper()
+
+                if is_unsupported_page:
+                    # Determine if current operation is page-agnostic
+                    is_agnostic = _is_operation_page_agnostic(
+                        step_type=step_type,
+                        instruction=instruction_to_execute
+                    )
+
+                    if is_agnostic:
+                        # Page-agnostic operation: Allow continued execution (degraded mode)
+                        logging.warning(
+                            f"[WARNING] Step {i + 1} '{instruction_to_execute}' executed on unsupported page type. "
+                            f"This operation is page-agnostic and continuing with limited functionality. "
+                            f"Subsequent DOM-dependent operations will fail."
+                        )
+                        # Don't add to failed_steps, don't break - skip abort logic, continue execution
+                        # No action needed here - just let execution continue normally
+                        pass
+                    else:
+                        # DOM-dependent operation on unsupported page: Must abort
+                        failed_steps.append(i + 1)
+                        final_summary = (
+                            f"FINAL_SUMMARY: Critical failure at step {i + 1}: "
+                            f"'{instruction_to_execute}'. "
+                            f"DOM-dependent operation cannot execute on unsupported page type. "
+                            f"Error details: {tool_output[:200]}..."
+                        )
+                        logging.error(
+                            f"[CRITICAL] Step {i + 1} requires DOM elements but page is unsupported (PDF/plugin). "
+                            f"Aborting remaining {len(case_steps) - i - 1} steps to conserve resources."
+                        )
+                        break  # Abort test case immediately
+                else:
+                    # Other types of critical errors (not unsupported page): Abort immediately
+                    failed_steps.append(i + 1)
+                    final_summary = (
+                        f"FINAL_SUMMARY: Critical failure at step {i + 1}: "
+                        f"'{instruction_to_execute}'. "
+                        f"Error details: {tool_output[:200]}..."
+                    )
+                    logging.error(
+                        f"[CRITICAL] Step {i + 1} encountered critical failure. "
+                        f"Aborting remaining {len(case_steps) - i - 1} steps to conserve resources."
+                    )
+                    break  # Abort test case immediately
+
+            # ===================================================================
+            # PRIORITY 1: Regular failure check (only executed when not critical)
+            # ===================================================================
             is_failure = "[failure]" in intermediate_output.lower() or "failed" in tool_output.lower()
 
             # Check if this is an ELEMENT_NOT_FOUND error (potentially recoverable)
@@ -1041,14 +1099,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         failed_steps.append(i + 1)
                         logging.warning(f"Step {i+1} element not found, but adaptive recovery is disabled")
 
-                # Priority 2: Check for other critical failures (non-recoverable)
-                elif _is_critical_failure_step(tool_output, instruction_to_execute):
-                    failed_steps.append(i + 1)
-                    final_summary = f"FINAL_SUMMARY: Critical failure at step {i + 1}: '{instruction_to_execute}'. Error details: {tool_output[:200]}..."
-                    logging.error(f"Critical failure detected at step {i + 1}, aborting remaining steps to save time")
-                    break
-
-                # Priority 3: Other failures (non-critical)
+                # Priority 2: Other failures (non-critical, not ELEMENT_NOT_FOUND)
                 else:
                     failed_steps.append(i + 1)
                     logging.warning(f"Step {i+1} detected as failed based on output")
@@ -1377,6 +1428,58 @@ def _is_objective_achieved(tool_output: str) -> tuple[bool, str]:
         logging.debug(f"Error parsing objective achievement signal: {e}")
     
     return False, ""
+
+
+def _is_operation_page_agnostic(step_type: str, instruction: str) -> bool:
+    """
+    Determine if operation is page-type agnostic (can execute on unsupported page).
+
+    Page-agnostic operations don't depend on DOM elements and can execute on PDF/plugin pages:
+    - Browser navigation: GoBack, GoForward, Sleep
+    - Screenshot: Screenshot (captures rendered pixels, doesn't need DOM)
+    - Tab switching: GetNewPage (switches browser context)
+    - UX verification: UX_Verify (already implements screenshot fallback)
+
+    Args:
+        step_type: Step type (Action, Verify, UX_Verify, UI_Assert)
+        instruction: Instruction text
+
+    Returns:
+        True if operation can execute on unsupported page, False otherwise
+
+    Examples:
+        >>> _is_operation_page_agnostic("Action", "GoBack to previous page")
+        True
+        >>> _is_operation_page_agnostic("Action", "Tap on element 123")
+        False
+        >>> _is_operation_page_agnostic("UX_Verify", "Check page content")
+        True
+    """
+
+    # Category A: Explicit page-agnostic operation keywords
+    PAGE_AGNOSTIC_KEYWORDS = [
+        'goback', 'go_back', 'go back', 'navigate back', 'back',
+        'goforward', 'go_forward', 'go forward', 'forward',
+        'sleep', 'wait',
+        'screenshot', 'capture',
+        'getnewpage', 'get_new_page', 'get new page', 'switch tab', 'switch window',
+    ]
+
+    # Category C: Hybrid operations (available in degraded mode)
+    DEGRADED_MODE_TYPES = ['UX_Verify']
+
+    # Check step type - UX_Verify is verified to work on PDF pages (uses screenshot analysis)
+    if step_type in DEGRADED_MODE_TYPES:
+        return True
+
+    # Check keywords in instruction
+    instruction_lower = instruction.lower().replace('_', ' ').replace('-', ' ')
+    for keyword in PAGE_AGNOSTIC_KEYWORDS:
+        if keyword in instruction_lower:
+            return True
+
+    # Default: DOM-dependent operation (needs to abort)
+    return False
 
 
 def _is_critical_failure_step(tool_output: str, step_instruction: str = "") -> bool:

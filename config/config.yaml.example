@@ -9,9 +9,9 @@ test_config: # Test configuration
     type: ai  # default or ai
     business_objectives: Test Baidu search functionality, generate 3 test cases
     dynamic_step_generation:
-      enabled: True
-      max_dynamic_steps: 10
-      min_elements_threshold: 1
+      enabled: True  # Default: False (this example enables it as recommended)
+      max_dynamic_steps: 10  # Default: 5 (this example increases the limit)
+      min_elements_threshold: 1  # Default: 2 (this example uses 1 for higher sensitivity)
   ux_test:
     enabled: True
   performance_test:

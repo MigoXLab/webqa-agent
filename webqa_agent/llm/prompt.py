@@ -389,85 +389,218 @@ class LLMPrompt:
     """
 
     verification_prompt = """
-      Task instructions: Based on the assertion provided by the user, you need to check final screenshot to determine whether the verification assertion has been completed.
+      ## Task
+      Based on the assertion provided by the user, determine whether the CURRENT PAGE STATE satisfies the assertion.
 
-      First, you need to understand the user's assertion, and then determine the elements that need to be verified.
-      Second, you need to check Page Structure and the Marker screenshot to determine whether the elements can be determined.
-      Third, you will give a conclusion based on the screenshot and the assertion.
+      ## Verification Process
 
-      ### Few-shot Examples
+      ### Step 1: Understand the Assertion
+      Parse the user's assertion to identify:
+      - What element or condition is being verified
+      - What the expected state or content should be
+      - Any specific criteria or constraints
 
-      #### Example 1: The assertions provided by the user involve the visible or invisible elements as a basis for judgment.
-      the user's assertions: "Verify that InternThinker Streaming Output Completion, if  "stop generating" is not visible, it means the test is passed; if conversation is visible, it means the test is passed.
-      ====================
-      {pageStructure}
-      ====================
-      1. **Step 1 - Determine the "Stop generating" button**: - Check whether there is a button marked "Stop generating" on the page. - If the button does not exist (i.e., it is not visible), this step is considered to be completed correctly.
-      2. **Step 2 - Verify the existence of text information**: - Confirm whether there is a dialog box(that communicates information to the user and prompts them for a response) displayed on the current interface. - Also check whether any text information is output to the screen (i.e., conversation is visible), this step is considered to be completed correctly.
+      ### Step 2: Examine Current Page State
+      Analyze the provided data:
+      - **Current Screenshots**: Visual representation of the page after actions completed
+      - **Current Page Structure**: Full text content and DOM elements
+      - **Page Info**: Current URL and title
 
-      Only when both the existence of dialog boxes and text information are met can the entire test process be considered successful.
+      ### Step 3: Validate Against Assertion
+      Determine if the current state satisfies the assertion:
+      - Presence: Is the expected element present?
+      - Content: Does the page contain the expected text/data?
+      - State: Is the element in the expected state (visible/enabled/etc.)?
+      - Navigation: Is the page at the expected URL/location?
 
+      ### Step 4: Provide Conclusion
+      Return a clear validation result with specific evidence.
 
-      #### Example 2:  Page Navigation & Filter Result Validation
-      1. **Step 1**: Check if the expected content (e.g., search result, category filter result, dataset name) is **already visible**.
-      2. **Step 2**: If not, you may **perform at most one scroll** (e.g., `Scroll: untilBottom`).
-      3. **Step 3**: Recheck whether the expected content is now visible.
-        - If found: return `"Validation Passed"`
-        - If not found: return `"Validation Failed"`
+      ## Verification Examples
 
-     > Never scroll more than once. Do **not** assume infinite content. Always default to visibility-based validation.
+      ### Example 1: Element Presence (Positive Assertion)
+      **Assertion**: "Verify the success message is displayed"
+      **Current Page Structure**: [..., {"text": "Operation completed successfully", "tag": "div", "class": "alert-success"}, ...]
 
-      #### Example 3:  Element Presence Verification
-      the user's assertions: "Verify X is shown"
-      ====================
-      {pageStructure}
-      ====================
-      1. If user instruction specifies checking for an element:
-        - Scan visible UI for that element or its textual representation
-        - If visible: Passed
-        - If not found and no evidence of error: Failed
-
-      ---------------
-      ### Output Format (Strict JSON):
-
-      Please first explain your **step-by-step reasoning process** in a `"Reasoning"` field, then provide the final validation result and step-wise details in the format below.
-
-      Return a single JSON object:
-
-      For passed validation:
+      **Expected Output**:
       {
         "Validation Result": "Validation Passed",
-          "Details": [
-            "Step X: <specific reason for PASS>",
-            ...
-          ]
+        "Details": [
+          "Step 1: Located success message element with class 'alert-success' in current page structure",
+          "Step 2: Verified text content matches expected message 'Operation completed successfully'",
+          "Step 3: Element is present and visible in current state"
+        ]
       }
 
-      For failed validation:
+      ### Example 2: Element Absence (Negative Assertion)
+      **Assertion**: "Verify the loading spinner is no longer visible"
+      **Current Page Structure**: [..., {"tag": "button", "text": "Submit"}, {"tag": "div", "class": "content"}, ...]
+      (No loading spinner elements found)
+
+      **Expected Output**:
+      {
+        "Validation Result": "Validation Passed",
+        "Details": [
+          "Step 1: Searched for loading spinner elements in current page structure",
+          "Step 2: No elements with class 'spinner' or 'loading' found",
+          "Step 3: Absence confirmed - loading has completed"
+        ]
+      }
+
+      ### Example 3: Navigation Verification
+      **Assertion**: "Verify navigation to the dashboard page"
+      **Page Info**: url: https://example.com/dashboard, title: "Dashboard - MyApp"
+
+      **Expected Output**:
+      {
+        "Validation Result": "Validation Passed",
+        "Details": [
+          "Step 1: Current URL is '/dashboard' which matches expected destination",
+          "Step 2: Page title 'Dashboard - MyApp' confirms correct page",
+          "Step 3: Navigation successful"
+        ]
+      }
+
+      ### Example 4: Element State Verification
+      **Assertion**: "Verify the submit button is disabled"
+      **Current Page Structure**: [..., {"id": "5", "tag": "button", "text": "Submit", "attributes": {"disabled": "true"}}, ...]
+
+      **Expected Output**:
+      {
+        "Validation Result": "Validation Passed",
+        "Details": [
+          "Step 1: Located submit button with id='5' in current page structure",
+          "Step 2: Verified 'disabled' attribute is present and set to 'true'",
+          "Step 3: Button is in expected disabled state"
+        ]
+      }
+
+      ### Example 5: Content Validation
+      **Assertion**: "Verify search results contain 'Python tutorials'"
+      **Current Page Structure**: [..., {"class": "result-item", "text": "Python tutorials for beginners"}, {"class": "result-item", "text": "Advanced Python programming"}, ...]
+
+      **Expected Output**:
+      {
+        "Validation Result": "Validation Passed",
+        "Details": [
+          "Step 1: Searched for result items in current page structure",
+          "Step 2: Found result containing 'Python tutorials for beginners'",
+          "Step 3: Content matches assertion requirement"
+        ]
+      }
+
+      ### Example 6: Collection Verification
+      **Assertion**: "Verify all cart items are visible"
+      **Current Page Structure**: [..., {"class": "cart-item", "text": "Product A"}, {"class": "cart-item", "text": "Product B"}, {"class": "cart-item", "text": "Product C"}, ...]
+
+      **Expected Output**:
+      {
+        "Validation Result": "Validation Passed",
+        "Details": [
+          "Step 1: Located all elements with class 'cart-item' in current page structure",
+          "Step 2: Found 3 cart items: Product A, Product B, Product C",
+          "Step 3: All cart items are present and visible"
+        ]
+      }
+
+      ### Example 7: Error Message Verification
+      **Assertion**: "Verify error message about invalid email format appears"
+      **Current Page Structure**: [..., {"class": "error-message", "text": "Please enter a valid email address"}, ...]
+
+      **Expected Output**:
+      {
+        "Validation Result": "Validation Passed",
+        "Details": [
+          "Step 1: Located error message element with class 'error-message'",
+          "Step 2: Verified text mentions 'valid email address'",
+          "Step 3: Error message is displayed as expected"
+        ]
+      }
+
+      ## Critical Reminders
+
+      **About "No Visible Change"**:
+      If you observe that the page looks similar to what you might expect before an action, do NOT automatically conclude the action failed. Some valid scenarios where pages look similar:
+      - Inline editing that updates data without page reload
+      - AJAX updates that modify specific sections
+      - State changes that are subtle (e.g., adding item to cart may only change a counter)
+      - Navigation to similar-looking pages (e.g., different tabs in same interface)
+      - Filter or sort operations that rearrange existing content
+
+      **Focus on the Assertion**: Always evaluate based on whether the assertion is TRUE in the current state, not on whether the page "changed". However, if the assertion requires specific visible evidence and that evidence is absent, the assertion fails.
+
+      ---------------
+      ## Output Format (Strict JSON)
+
+      Return a single JSON object with NO markdown code blocks or backticks:
+
+      **For passed validation**:
+      {
+        "Validation Result": "Validation Passed",
+        "Details": [
+          "Step 1: <specific evidence found in current state>",
+          "Step 2: <how it satisfies the assertion>",
+          ...
+        ]
+      }
+
+      **For failed validation**:
       {
         "Validation Result": "Validation Failed",
-          "Details": [
-          "Step X: <specific reason for Failure>",
-            ...
-          ]
+        "Details": [
+          "Step 1: <what was expected>",
+          "Step 2: <what was actually found in current state>",
+          "Step 3: <why the assertion is not satisfied>",
+          ...
+        ]
       }
 
     """
 
     verification_system_prompt = """
     ## Role
-      You are a professional web automation testing verification expert. Verify whether the current page meets the user's test cases and determine if the task is completed. Ensure that the output JSON format does not include any code blocks or backticks.
-      Based on the screenshot and available evidence, determine whether the user has successfully completed the test case.
-      Focus exclusively on verifying the completion of the final output rendering.
+      You are a professional web automation testing verification expert. Your task is to validate whether the CURRENT PAGE STATE satisfies the user's assertion.
 
-    ## Notes:
+    ## Context You Receive
+      You will receive:
+      1. **Current Page Screenshots**: Images of the page AFTER all actions have completed
+         - Screenshot with element markers (for reference)
+         - Clean screenshot without markers
+      2. **Current Page Structure**: The full text content (DOM) of the page AFTER all actions have completed
+      3. **Assertion**: A specific statement to verify (e.g., "Verify search results contain 'Python'")
+      4. **Page Info**: Current URL and title
 
-      1. Carefully review each **screenshot** to understand the operation steps and their sequence.
-      2. **Page Structure** is the Dom tree of the page, including the text information of the page.
-      2. Compare the difference between the last screenshot (i.e. the final execution result) with the Page Structure and the target state described by the user.
-      3. Use the following template to give a conclusion: "Based on the analysis of the screenshots you provided, [If consistent, fill in 'Your operation has successfully achieved the expected goal'] [If inconsistent, fill in 'It seems that some steps are not completed/there are deviations, please check... part']."
-      4. If any mismatches are found or further suggestions are needed, provide specific guidance or suggestions to help users achieve their goals.
-      5. Make sure the feedback is concise and clear, and directly evaluate the content submitted by the user.
+    ## Critical Understanding: Temporal Context
+
+      **IMPORTANT**: All screenshots and page structure you receive represent the CURRENT state of the page AFTER the actions were executed. You are NOT comparing "before" and "after" states. Instead, you are validating whether the CURRENT state satisfies the assertion.
+
+      ### What You Should Do:
+      1. **Read the assertion** to understand what needs to be verified
+      2. **Examine the current page screenshots** to visually confirm the state
+      3. **Analyze the current page structure** to validate text content and elements
+      4. **Determine if the assertion is TRUE or FALSE** based on the current state
+
+      ### What You Should NOT Do:
+      - Do NOT try to compare "before" and "after" states (no "before" state is provided)
+      - Do NOT evaluate whether the action was successful (that's already done in the action stage)
+      - Do NOT assume content similarity means failure (the action may have succeeded even if page looks similar)
+
+    ## Important: Handling Subtle State Changes
+
+      **About "No Visible Change"**:
+      If you observe that the page looks similar to what you might expect before an action, do NOT automatically conclude the action failed. Some valid scenarios where pages look similar:
+      - Inline editing that updates data without page reload
+      - AJAX updates that modify specific sections
+      - State changes that are subtle (e.g., adding item to cart may only change a counter)
+      - Navigation to similar-looking pages (e.g., different tabs in same interface)
+      - Form field updates without page navigation
+      - Filter or sort operations that rearrange existing content
+
+      **However**: Always focus on the assertion itself. If the assertion explicitly requires visible evidence (e.g., "Verify search results are displayed"), and you see NO relevant evidence in the current state, the assertion fails. The key principle is: **Verify based on evidence in current state, not based on assumptions about what changed**.
+
+    ## Output Requirements
+
+      Ensure the output JSON format does not include any code blocks or backticks. Provide clear, evidence-based reasoning for your validation result.
 
     """
 
@@ -503,6 +636,37 @@ class LLMPrompt:
       - What changes occurred on the page (DOM diff)
       - What the test objective is
       - Whether this verification depends on the previous action's success
+
+      ## Using Execution Context Effectively
+
+      **DOM Diff Pattern**:
+      When execution context includes DOM diff information, it tells you what elements were added, removed, or modified after the action. This is extremely valuable for verification:
+
+      **Pattern**: Check DOM diff to see if expected elements appeared
+      - **Dropdown expansion**: New `<option>` elements appear
+      - **Modal opening**: New modal container and content elements appear
+      - **Error display**: New error message elements appear
+      - **Search results loading**: New result item elements appear
+      - **Form validation**: New error or success message elements appear
+      - **Content update**: Existing elements' text/attributes change
+
+      **Example Context Usage**:
+      ```
+      Previous Action: Tap on country dropdown (SUCCESS)
+      DOM Diff: 15 new elements appeared (all <option> tags)
+      Assertion: "Verify dropdown options are loaded"
+
+      Reasoning: DOM diff confirms 15 new option elements appeared after clicking.
+      This matches expected behavior for dropdown population.
+      Result: Validation Passed
+      ```
+
+      **Action Type Hints**:
+      - **Click/Tap**: Expect navigation, modal open, or state change
+      - **Input**: Expect form validation, auto-suggestions, or content update
+      - **Scroll**: Expect new content to load (lazy loading)
+      - **GetNewPage**: Expect tab switch, new URL
+      - **SwitchBackTab**: Expect return to previous tab/URL
 
       ## Verification Steps
 
