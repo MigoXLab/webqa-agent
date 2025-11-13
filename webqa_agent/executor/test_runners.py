@@ -5,7 +5,7 @@ import time
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from webqa_agent.browser.session import BrowserSession
 from webqa_agent.data import TestConfiguration, TestResult, TestStatus
@@ -67,6 +67,11 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                 })
 
                 cookies = test_config.test_specific_config.get('cookies')
+                language = test_config.report_config.get('language', 'zh-CN')
+
+                # Check if parallel case execution is enabled
+                parallel_case_config = test_config.test_specific_config.get('parallel_case_execution', {})
+                use_parallel_execution = parallel_case_config.get('enabled', False)
 
                 initial_state = {
                     'url': target_url,
@@ -78,7 +83,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                     'ui_tester_instance': parallel_tester,
                     'current_test_case_index': 0,
                     'skip_reflection': False,  # Initialize skip reflection flag
-                    'language': test_config.report_config.get('language', 'zh-CN'),
+                    'language': language,
                     'dynamic_step_generation': dynamic_step_config,  # Pass dynamic step generation config
                 }
 
@@ -88,18 +93,45 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                 graph_case_status_map: Dict[str, str] = {}
                 recorded_cases_from_graph: List[dict] = []
 
-                # 执行LangGraph工作流，直接使用 ainvoke 获取最终状态
-                final_state = await graph_app.ainvoke(initial_state, config=graph_config)
-                
-                # 从最终状态获取 recorded_cases
-                recorded_cases_from_graph = final_state.get('recorded_cases', [])
-                logging.info(f"Retrieved {len(recorded_cases_from_graph)} recorded cases from final graph state")
-                
-                # 从最终状态获取 completed_cases 用于状态映射
-                completed_cases = final_state.get('completed_cases', [])
-                for idx, case_res in enumerate(completed_cases):
-                    case_name = case_res.get('case_name') or case_res.get('name') or f'Case_{idx + 1}'
-                    graph_case_status_map[case_name] = case_res.get('status', 'failed').lower()
+                if use_parallel_execution:
+                    logging.info(f"{icon['running']} Using PARALLEL case execution mode")
+
+                    # Use parallel execution path (reusing external session as planner session)
+                    recorded_cases_from_graph = await self._run_parallel_execution(
+                        session=session,
+                        test_config=test_config,
+                        llm_config=llm_config,
+                        target_url=target_url,
+                        business_objectives=business_objectives,
+                        cookies=cookies,
+                        dynamic_step_config=dynamic_step_config,
+                        language=language,
+                        parallel_case_config=parallel_case_config,
+                        parallel_tester=parallel_tester
+                    )
+
+                    # Build graph_case_status_map from parallel results
+                    for recorded_case in recorded_cases_from_graph:
+                        case_name = recorded_case.get('name', 'Unnamed')
+                        case_status = recorded_case.get('status', 'failed')
+                        graph_case_status_map[case_name] = case_status
+
+                    logging.info(f"Parallel execution completed: {len(recorded_cases_from_graph)} cases")
+                else:
+                    logging.info(f"{icon['running']} Using SEQUENTIAL case execution mode (LangGraph)")
+
+                    # 执行LangGraph工作流，直接使用 ainvoke 获取最终状态
+                    final_state = await graph_app.ainvoke(initial_state, config=graph_config)
+
+                    # 从最终状态获取 recorded_cases
+                    recorded_cases_from_graph = final_state.get('recorded_cases', [])
+                    logging.info(f"Retrieved {len(recorded_cases_from_graph)} recorded cases from final graph state")
+
+                    # 从最终状态获取 completed_cases 用于状态映射
+                    completed_cases = final_state.get('completed_cases', [])
+                    for idx, case_res in enumerate(completed_cases):
+                        case_name = case_res.get('case_name') or case_res.get('name') or f'Case_{idx + 1}'
+                        graph_case_status_map[case_name] = case_res.get('status', 'failed').lower()
                 
                 # === 使用recorded_cases中的数据构建测试结果 ===
                 sub_tests = []
@@ -224,6 +256,208 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                     logging.debug('UITester cleanup completed in main flow')
 
             return result
+
+    async def _run_parallel_execution(
+        self,
+        session: BrowserSession,
+        test_config: TestConfiguration,
+        llm_config: Dict[str, Any],
+        target_url: str,
+        business_objectives: str,
+        cookies: Optional[list],
+        dynamic_step_config: Dict,
+        language: str,
+        parallel_case_config: Dict,
+        parallel_tester
+    ) -> List[dict]:
+        """Run parallel case execution path.
+
+        This method:
+        1. Reuses external session as planner session
+        2. Runs planner to generate test cases using the external session
+        3. Creates session pool by adding external session + additional sessions if needed
+        4. Passes cases to ParallelCaseExecutor for parallel execution using the pool
+        5. Returns recorded_cases list
+
+        Args:
+            session: Browser session from external caller, reused as planner session
+            test_config: Test configuration
+            llm_config: LLM configuration
+            target_url: Target URL
+            business_objectives: Business objectives for testing
+            cookies: Optional cookies
+            dynamic_step_config: Dynamic step generation config
+            language: UI language
+            parallel_case_config: Parallel execution config
+            parallel_tester: UITester instance (not used, will create new one with pool session)
+
+        Returns:
+            List of recorded cases
+        """
+        from webqa_agent.testers.case_gen.graph import setup_session, plan_test_cases
+        from webqa_agent.executor.parallel_case_executor import ParallelCaseExecutor
+        from webqa_agent.browser.session_pool import BrowserSessionPool
+        from webqa_agent.testers.function_tester import UITester
+
+        # Extract parallel execution config
+        max_concurrent_cases = parallel_case_config.get('max_concurrent_cases', 2)
+
+        # Step 1: Reuse external session as planner session
+        logging.info("[Parallel Execution] Step 1: Reusing external session as planner session...")
+
+        planner_session = session
+        planner_session.session_id = "planner_session_0"
+
+        planner_tester = None
+        session_pool = None
+
+        try:
+            # Create UITester with planner session
+            planner_tester = UITester(llm_config=llm_config, browser_session=planner_session)
+            await planner_tester.initialize(browser_session=planner_session)
+
+            # Prepare state for planner
+            planner_state = {
+                'url': target_url,
+                'business_objectives': business_objectives,
+                'cookies': cookies,
+                'ui_tester_instance': planner_tester,
+                'language': language,
+                'dynamic_step_generation': dynamic_step_config,
+            }
+
+            # Run setup and planning nodes from LangGraph
+            logging.info("[Parallel Execution] Running planner to generate test cases...")
+            await setup_session(planner_state)
+            planner_result = await plan_test_cases(planner_state)
+
+            test_cases = planner_result.get('test_cases', [])
+            logging.info(f"[Parallel Execution] Planner generated {len(test_cases)} test cases")
+
+            if not test_cases:
+                logging.warning("[Parallel Execution] No test cases generated by planner")
+                return []
+
+            # Step 2: Determine actual concurrent sessions needed based on case count
+            actual_concurrent = min(len(test_cases), max_concurrent_cases)
+            logging.info(f"[Parallel Execution] Step 2: Determining session pool size...")
+            logging.info(f"[Parallel Execution] Cases: {len(test_cases)}, Max concurrent: {max_concurrent_cases}, Actual concurrent: {actual_concurrent}")
+
+            # Step 3: Create session pool with dynamic size
+            if actual_concurrent == 1:
+                # Only 1 case or max_concurrent=1: Reuse planner session
+                logging.info("[Parallel Execution] Only 1 concurrent case needed, reusing planner session")
+
+                session_pool = BrowserSessionPool(
+                    pool_size=1,
+                    browser_config=test_config.browser_config
+                )
+                # Manually add planner session to pool (skip initialize)
+                session_pool._all_sessions.append(planner_session)
+                await session_pool._available_sessions.put(planner_session)
+                session_pool._session_status[planner_session.session_id] = {
+                    'in_use': False,
+                    'created_at': datetime.now().isoformat(),
+                    'use_count': 0,
+                    'last_acquired_at': None,
+                    'last_released_at': None
+                }
+                session_pool._initialized = True
+                planner_session = None  # Ownership transferred to pool
+
+            else:
+                # Multiple concurrent cases needed: Create additional sessions
+                additional_sessions_needed = actual_concurrent - 1  # -1 because we have planner session
+                logging.info(f"[Parallel Execution] Creating {additional_sessions_needed} additional session(s) to join planner session")
+
+                session_pool = BrowserSessionPool(
+                    pool_size=actual_concurrent,
+                    browser_config=test_config.browser_config
+                )
+
+                # Manually initialize with planner session + additional sessions
+                session_pool._all_sessions.append(planner_session)
+                await session_pool._available_sessions.put(planner_session)
+                session_pool._session_status[planner_session.session_id] = {
+                    'in_use': False,
+                    'created_at': datetime.now().isoformat(),
+                    'use_count': 0,
+                    'last_acquired_at': None,
+                    'last_released_at': None
+                }
+
+                # Create additional sessions
+                for i in range(additional_sessions_needed):
+                    additional_session = BrowserSession(browser_config=test_config.browser_config)
+                    await additional_session.initialize()
+                    additional_session.session_id = f"pool_session_{i+1}"
+
+                    session_pool._all_sessions.append(additional_session)
+                    await session_pool._available_sessions.put(additional_session)
+                    session_pool._session_status[additional_session.session_id] = {
+                        'in_use': False,
+                        'created_at': datetime.now().isoformat(),
+                        'use_count': 0,
+                        'last_acquired_at': None,
+                        'last_released_at': None
+                    }
+
+                    logging.info(f"[Parallel Execution] Created additional session {i+1}/{additional_sessions_needed}: {additional_session.session_id}")
+
+                session_pool._initialized = True
+                planner_session = None  # Ownership transferred to pool
+
+            pool_stats = session_pool.get_pool_stats()
+            logging.info(f"[Parallel Execution] Session pool ready: {pool_stats}")
+
+            logging.info(f"[Parallel Execution] Step 4: Executing {len(test_cases)} cases (actual_concurrent={actual_concurrent})")
+
+            # Create parallel executor
+            executor = ParallelCaseExecutor(
+                llm_config=llm_config,
+                max_concurrent_cases=actual_concurrent,
+                session_pool_size=actual_concurrent,
+                browser_config=test_config.browser_config
+            )
+
+            # Pass the session pool to executor
+            executor.session_pool = session_pool
+
+            # Execute cases in parallel
+            results = await executor.execute_cases_parallel(
+                cases=test_cases,
+                url=target_url,
+                cookies=cookies,
+                dynamic_step_generation=dynamic_step_config,
+                language=language,
+                skip_pool_initialization=True  # Use existing pool
+            )
+
+            # Extract recorded_cases from results
+            recorded_cases = results.get('recorded_cases', [])
+
+            logging.info(f"[Parallel Execution] Completed: {len(recorded_cases)} cases recorded")
+            logging.info(f"[Parallel Execution] Stats: {results.get('stats', {})}")
+
+            return recorded_cases
+
+        finally:
+            # Clean up: release session if still held
+            if planner_session:
+                try:
+                    await session_pool.release(planner_session)
+                    logging.debug("[Parallel Execution] Released planner session in finally block")
+                except Exception as e:
+                    logging.warning(f"Error releasing planner session: {e}")
+
+            # Close session pool (created by this function)
+            if 'session_pool' in locals() and session_pool:
+                try:
+                    logging.info("[Parallel Execution] Closing session pool...")
+                    await session_pool.close_all()
+                    logging.info("[Parallel Execution] Session pool closed successfully")
+                except Exception as e:
+                    logging.warning(f"Error closing session pool: {e}")
 
 
 class UXTestRunner(BaseTestRunner):
