@@ -14,6 +14,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 
+from webqa_agent.actions.action_types import ActionType, is_page_agnostic_action, get_page_agnostic_keywords
 from webqa_agent.crawler.deep_crawler import DeepCrawler
 from webqa_agent.testers.case_gen.prompts.agent_prompts import get_execute_system_prompt
 from webqa_agent.testers.case_gen.prompts.planning_prompts import get_dynamic_step_generation_prompt
@@ -213,7 +214,9 @@ async def generate_dynamic_steps_with_llm(
     # New parameters for failure recovery mode
     failure_recovery_mode: bool = False,
     failed_instruction: str = "",
-    error_message: str = ""
+    error_message: str = "",
+    # Multi-tab context awareness
+    tab_context: dict = None
 ) -> dict:
     """Generate dynamic test steps or recover from failed steps using LLM
 
@@ -253,6 +256,24 @@ async def generate_dynamic_steps_with_llm(
             remaining_steps = all_steps[executed_steps:] if executed_steps < len(all_steps) else []
             executed_steps_detail = all_steps[:executed_steps] if executed_steps > 0 else []
 
+            # Build tab context info for failure recovery
+            tab_context_info = ""
+            if tab_context:
+                tab_state = "child" if tab_context.get('parent_tab_id') else "main"
+                tab_context_info = f"""
+
+**Current Tab State**:
+```json
+{json.dumps(tab_context, indent=2)}
+```
+- You are on a {tab_state} tab
+- {tab_context.get('total_open_tabs', 1)} total tab(s) open
+- Can return to parent tab: {tab_context.get('can_go_back', False)}
+- Tab depth: {tab_context.get('tab_depth', 0)}
+
+Consider whether this failure is tab-related (e.g., element on different tab, need to switch tabs).
+"""
+
             failure_prompt = f"""## Test Step Failure Recovery Analysis
 
 **Failed Step**: {executed_steps}/{len(all_steps)}
@@ -263,6 +284,7 @@ async def generate_dynamic_steps_with_llm(
 - Test Name: {current_case.get('name', 'Unknown') if current_case else 'Unknown'}
 - Test Objective: {test_objective}
 - Remaining Steps: {len(remaining_steps)}
+{tab_context_info}
 
 **Executed Steps History** (for context):
 {json.dumps(executed_steps_detail, ensure_ascii=False, indent=2) if executed_steps_detail else "None - This is the first step"}
@@ -454,6 +476,24 @@ Use this visual information along with the DOM diff to understand the complete U
 {tool_output}
 """
 
+        # Build tab context section for multi-tab awareness
+        tab_context_section = ""
+        if tab_context:
+            tab_state = "child tab" if tab_context.get('parent_tab_id') else "main tab"
+            can_go_back = tab_context.get('can_go_back', False)
+            total_tabs = tab_context.get('total_open_tabs', 1)
+            tab_context_section = f"""
+
+## Current Tab State
+```json
+{json.dumps(tab_context, indent=2)}
+```
+
+**Multi-Tab Context**: You are currently on a {tab_state}. There are {total_tabs} tab(s) open.
+{f"You can use SwitchBackTab to return to the parent tab." if can_go_back else ""}
+When generating new test steps, consider the current tab context and whether tab navigation is needed.
+"""
+
         user_prompt = f"""
 ## Previous Action Status
 {action_status}
@@ -464,6 +504,7 @@ Use this visual information along with the DOM diff to understand the complete U
 {json.dumps(new_elements, ensure_ascii=False, indent=2)}
 
 {visual_context_section}
+{tab_context_section}
 
 {test_case_context}
 
@@ -875,8 +916,29 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         logging.debug("Generated highlighted screenshot for the agent.")
         # ------------------------------------
 
-        # Create a new message with the current step's instruction and visual context
-        step_content = [{"type": "text", "text": formatted_instruction}]
+        # Get tab context for multi-tab awareness in agent execution
+        page_context = None
+        if ui_tester_instance.driver and ui_tester_instance.driver.page_manager:
+            try:
+                page_context = ui_tester_instance.driver.page_manager.get_page_context_info()
+                logging.debug(f"Retrieved tab context for step {i+1}: {page_context}")
+            except Exception as e:
+                logging.warning(f"Failed to retrieve tab context for step {i+1}: {e}")
+                page_context = None
+
+        # Create a new message with the current step's instruction, tab context, and visual context
+        step_text_parts = [formatted_instruction]
+        if page_context:
+            import json
+            tab_state_desc = "child tab" if page_context.get('parent_tab_id') else "main tab"
+            total_tabs = page_context.get('total_open_tabs', 1)
+            can_go_back = page_context.get('can_go_back', False)
+
+            step_text_parts.append(f"\n\n**Current Tab State**:")
+            step_text_parts.append(f"```json\n{json.dumps(page_context, indent=2)}\n```")
+            step_text_parts.append(f"\n*You are on a {tab_state_desc}. {total_tabs} tab(s) open.{' You can use SwitchBackTab to return to parent tab.' if can_go_back else ''}*")
+
+        step_content = [{"type": "text", "text": "\n".join(step_text_parts)}]
         if screenshot:
             step_content.append({
                 "type": "image_url",
@@ -1055,6 +1117,15 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 logging.error(f"Failed to capture recovery screenshot: {e}")
                                 recovery_screenshot = screenshot  # Fallback to last screenshot
 
+                            # Get tab context for recovery analysis
+                            recovery_tab_context = None
+                            if ui_tester_instance.driver and ui_tester_instance.driver.page_manager:
+                                try:
+                                    recovery_tab_context = ui_tester_instance.driver.page_manager.get_page_context_info()
+                                    logging.debug(f"Retrieved tab context for recovery: {recovery_tab_context}")
+                                except Exception as e:
+                                    logging.warning(f"Failed to get tab context for recovery: {e}")
+
                             # Call unified dynamic adjustment function in failure recovery mode
                             recovery_result = await generate_dynamic_steps_with_llm(
                                 failure_recovery_mode=True,
@@ -1064,7 +1135,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 executed_steps=i+1,
                                 llm=llm,
                                 current_case=case,
-                                screenshot=recovery_screenshot
+                                screenshot=recovery_screenshot,
+                                tab_context=recovery_tab_context
                             )
 
                             strategy = recovery_result.get("strategy")
@@ -1138,17 +1210,26 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                             # Capture screenshot for visual context after successful step execution
                             logging.debug("Capturing screenshot for dynamic step generation context")
                             screenshot = await ui_tester_instance._actions.b64_page_screenshot()
-                            
+
+                            # Get current tab context for dynamic generation
+                            generation_tab_context = None
+                            if ui_tester_instance.driver and ui_tester_instance.driver.page_manager:
+                                try:
+                                    generation_tab_context = ui_tester_instance.driver.page_manager.get_page_context_info()
+                                    logging.debug(f"Retrieved tab context for dynamic generation: {generation_tab_context}")
+                                except Exception as e:
+                                    logging.warning(f"Failed to get tab context for dynamic generation: {e}")
+
                             # Enhance objective with generation context for smarter LLM decision-making
                             enhanced_objective = case.get("objective", "")
                             if dynamic_generation_count > 0:
                                 enhanced_objective += f" (Context: Already generated {dynamic_generation_count} rounds of dynamic steps, be selective about additional generation)"
                             if i+1 > LONG_STEPS:  # Long test indicator
                                 enhanced_objective += f" (Context: Test already has {i+1} steps, consider if more steps add meaningful value)"
-                            
+
                             # Determine if current step succeeded based on failed_steps list
                             step_success = (i + 1) not in failed_steps
-                            
+
                             # Generate dynamic test steps with complete context and visual information
                             dynamic_result = await generate_dynamic_steps_with_llm(
                                 dom_diff=dom_diff,
@@ -1160,7 +1241,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 current_case=case,
                                 screenshot=screenshot,
                                 tool_output=tool_output,
-                                step_success=step_success
+                                step_success=step_success,
+                                tab_context=generation_tab_context
                             )
                             
                             # Handle dynamic steps based on LLM strategy decision
@@ -1437,7 +1519,7 @@ def _is_operation_page_agnostic(step_type: str, instruction: str) -> bool:
     Page-agnostic operations don't depend on DOM elements and can execute on PDF/plugin pages:
     - Browser navigation: GoBack, GoForward, Sleep
     - Screenshot: Screenshot (captures rendered pixels, doesn't need DOM)
-    - Tab switching: GetNewPage (switches browser context)
+    - Tab switching: GetNewPage, SwitchBackTab (switches browser context)
     - UX verification: UX_Verify (already implements screenshot fallback)
 
     Args:
@@ -1456,14 +1538,19 @@ def _is_operation_page_agnostic(step_type: str, instruction: str) -> bool:
         True
     """
 
-    # Category A: Explicit page-agnostic operation keywords
-    PAGE_AGNOSTIC_KEYWORDS = [
-        'goback', 'go_back', 'go back', 'navigate back', 'back',
-        'goforward', 'go_forward', 'go forward', 'forward',
-        'sleep', 'wait',
-        'screenshot', 'capture',
-        'getnewpage', 'get_new_page', 'get new page', 'switch tab', 'switch window',
-    ]
+    # Priority 1: Direct action type detection (most reliable)
+    # Check if instruction contains action type names directly
+    for action_type in [ActionType.GO_BACK, ActionType.GET_NEW_PAGE,
+                       ActionType.SWITCH_BACK_TAB, ActionType.SLEEP,
+                       ActionType.SCREENSHOT]:
+        if action_type in instruction:
+            logging.debug(f"Page-agnostic action detected via action type: {action_type}")
+            return True
+
+    # Priority 2: Keyword matching (handles varied phrasings)
+    # Get centralized keywords from action_types module
+    # This eliminates code duplication and ensures consistency
+    PAGE_AGNOSTIC_KEYWORDS = get_page_agnostic_keywords()
 
     # Category C: Hybrid operations (available in degraded mode)
     DEGRADED_MODE_TYPES = ['UX_Verify']
@@ -1476,6 +1563,7 @@ def _is_operation_page_agnostic(step_type: str, instruction: str) -> bool:
     instruction_lower = instruction.lower().replace('_', ' ').replace('-', ' ')
     for keyword in PAGE_AGNOSTIC_KEYWORDS:
         if keyword in instruction_lower:
+            logging.debug(f"Page-agnostic operation detected via keyword: '{keyword}'")
             return True
 
     # Default: DOM-dependent operation (needs to abort)

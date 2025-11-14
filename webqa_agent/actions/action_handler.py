@@ -1433,6 +1433,32 @@ class ActionHandler:
             logging.error(f'Failed to get new page: {e}')
             return False
 
+    async def switch_back_tab(self) -> bool:
+        """Switch back to the previous tab/page in the navigation stack.
+
+        This is different from go_back() which navigates browser history.
+        switch_back_tab() returns to the parent tab that opened the current tab.
+
+        Returns:
+            bool: True if successfully switched, False otherwise
+        """
+        try:
+            if self.driver and self.driver.page_manager:
+                previous_page = await self.driver.get_previous_page()
+                if previous_page:
+                    self.page = previous_page
+                    logging.debug(f'Switched back to previous tab: {self.page.url}')
+                    return True
+                else:
+                    logging.warning('No previous tab to return to (stack is empty)')
+                    return False
+            else:
+                logging.error('PageManager not available, cannot switch back to previous tab')
+                return False
+        except Exception as e:
+            logging.error(f'Failed to switch back to previous tab: {e}')
+            return False
+
     async def upload_file(self, id, file_path: Union[str, List[str]]) -> bool:
         """File upload function.
 
