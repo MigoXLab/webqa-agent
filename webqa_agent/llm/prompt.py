@@ -81,6 +81,90 @@ class LLMPrompt:
     ## Context Provided
     - **`pageDescription (interactive elements)`**: A map of all interactive elements on the page, each with a unique ID. Use these IDs for actions.
     - **`Screenshot`**: A visual capture of the current page state.
+    - **`PAGE STATUS`** (when provided): Indicates whether the current page supports DOM-based interactions.
+
+    ## Page Status Awareness
+
+    The system may encounter **UNSUPPORTED_PAGE** status when navigating to non-HTML content (PDF files, browser plugins, download dialogs).
+
+    ### Detecting Unsupported Pages
+
+    **Indicators**:
+    1. Prompt contains "⚠️ **PAGE STATUS**: UNSUPPORTED_PAGE"
+    2. `pageDescription` is empty or minimal: `{}`
+    3. `page_type` indicates non-HTML content: "pdf", "plugin", "download"
+
+    ### Critical Rule for Unsupported Pages
+
+    **DO**: Plan page-agnostic actions even when `pageDescription` is empty!
+    **DON'T**: Return empty actions array `{"actions": []}` for page-agnostic operations on unsupported pages.
+
+    ### Allowed vs Forbidden Actions on Unsupported Pages
+
+    **Allowed (Page-Agnostic)** - These work at browser level, don't require DOM:
+    - **GoBack**: Navigate to previous page in browser history
+    - **GoToPage**: Navigate to specific URL
+    - **GetNewPage**: Switch to newly opened tab/window
+    - **SwitchBackTab**: Return to parent tab in tab stack
+    - **Sleep**: Wait for specified duration
+    - **Screenshot**: Capture current page state
+
+    **Forbidden (DOM-Dependent)** - These require interactive elements:
+    - **Tap, Hover, Input, Clear**: Require clickable/editable DOM elements
+    - **Scroll**: Requires scrollable DOM content
+    - **SelectDropdown**: Requires dropdown DOM elements
+    - **Drag, Upload, KeyboardPress**: Require specific DOM elements
+
+    ### Example: GoBack on PDF Page
+
+    **Scenario**: User instruction "GoBack to previous page", current page is PDF
+
+    **Context Received**:
+    ```
+    test step: GoBack to previous page
+    ====================
+    ⚠️ **PAGE STATUS**: UNSUPPORTED_PAGE (page_type: pdf)
+    pageDescription (interactive elements): {}
+    ```
+
+    **CORRECT Response**:
+    ```json
+    {
+      "actions": [{
+        "type": "GoBack",
+        "thought": "Current page is PDF with no DOM elements. GoBack is browser-level navigation that operates independently of page type. Will return to previous HTML page.",
+        "param": null,
+        "locate": null
+      }]
+    }
+    ```
+
+    **INCORRECT Response** (Never do this):
+    ```json
+    {
+      "actions": []
+    }
+    ```
+    **Why incorrect**: Returning empty actions signals "cannot execute instruction," but GoBack works perfectly on PDF pages since it's a browser-level operation.
+
+    ### Example: Tap on PDF Page (Legitimate Failure)
+
+    **Scenario**: User instruction "Click the download button", current page is PDF
+
+    **Context Received**:
+    ```
+    test step: Click the download button
+    ⚠️ **PAGE STATUS**: UNSUPPORTED_PAGE (page_type: pdf)
+    pageDescription: {}
+    ```
+
+    **CORRECT Response**:
+    ```json
+    {
+      "actions": []
+    }
+    ```
+    **Why correct**: Tap action requires DOM elements to interact with. PDF pages don't expose DOM elements, so the instruction cannot be executed. Empty actions array is appropriate here.
 
     ## Objective
     - Decompose the user's instruction into a **series of actionable steps**, each representing a single UI interaction.
