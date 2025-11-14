@@ -387,6 +387,16 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
     # Get current UI state for analysis with enhanced visual information
     page = await ui_tester.get_current_page()
 
+    # Get tab context for reflection analysis
+    reflection_page_context = None
+    if ui_tester.driver and ui_tester.driver.page_manager:
+        try:
+            reflection_page_context = ui_tester.driver.page_manager.get_page_context_info()
+            logging.debug(f"Retrieved tab context for reflection: {reflection_page_context}")
+        except Exception as e:
+            logging.warning(f"Failed to retrieve tab context for reflection: {e}")
+            reflection_page_context = None
+
     # Use DeepCrawler to get interactive elements mapping and highlighted screenshot
     logging.info(f"Deep crawling page structure and elements for reflection and replanning analysis...")
     dp = DeepCrawler(page)
@@ -413,7 +423,7 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
 
     logging.debug(f"Reflection analysis enhanced with {len(page_content_summary)} interactive elements")
 
-    # 使用新的反思提示词函数，传入page_content_summary
+    # 使用新的反思提示词函数，传入page_content_summary和tab_context
     language = state.get('language', 'zh-CN')
     system_prompt, user_prompt = get_reflection_prompt(
         business_objectives=state.get("business_objectives"),
@@ -421,6 +431,7 @@ async def reflect_and_replan(state: MainGraphState) -> dict:
         completed_cases=state["completed_cases"],
         page_content_summary=page_content_summary,
         language=language,
+        tab_context=reflection_page_context
     )
 
     logging.info("Reflection and Replanning analysis - Sending request to LLM...")

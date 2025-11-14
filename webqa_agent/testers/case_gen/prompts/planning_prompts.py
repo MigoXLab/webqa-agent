@@ -30,7 +30,7 @@ Each test case must include these standardized components with enhanced business
 - **`domain_specific_rules`**: Industry-specific validation requirements or compliance rules
 - **`test_data_requirements`**: Specification of domain-appropriate test data and setup conditions
 - **`steps`**: Detailed test execution steps with clear action/verification pairs that simulate real user behavior and scenarios
-  - `action`: User-scenario action instructions describing what a real user would do in natural language, DON'T IMAGE. **Only use these action types: "Tap", "Input", "Scroll", "SelectDropdown", "Clear", "Hover", "KeyboardPress", "Upload", "Drag", "GoToPage", "GoBack", "Sleep", "GetNewPage", "Mouse". Do NOT invent or output any other action types or non-existent data.**
+  - `action`: User-scenario action instructions describing what a real user would do in natural language, DON'T IMAGE. **Only use these action types: "Tap", "Input", "Scroll", "SelectDropdown", "Clear", "Hover", "KeyboardPress", "Upload", "Drag", "GoToPage", "GoBack", "Sleep", "GetNewPage", "SwitchBackTab", "Mouse". Do NOT invent or output any other action types or non-existent data.**
   - `verify`: User-expectation validation instructions describing what result a real user would expect to see
 - **`preamble_actions`**: Optional setup steps to establish required test preconditions
 - **`reset_session`**: Session management flag for test isolation strategy
@@ -38,7 +38,7 @@ Each test case must include these standardized components with enhanced business
 - **`cleanup_requirements`**: Post-test cleanup actions if needed
 
 #### Step Decomposition Rules:
-1. **One Action Per Step**: Each step in the `steps` array must contain ONLY ONE atomic action, and the action type must be one of: "Tap", "Input", "Scroll", "SelectDropdown", "Clear", "Hover", "KeyboardPress", "Upload", "Drag", "GoToPage", "GoBack", "Sleep", "GetNewPage", "Mouse".
+1. **One Action Per Step**: Each step in the `steps` array must contain ONLY ONE atomic action, and the action type must be one of: "Tap", "Input", "Scroll", "SelectDropdown", "Clear", "Hover", "KeyboardPress", "Upload", "Drag", "GoToPage", "GoBack", "Sleep", "GetNewPage", "SwitchBackTab", "Mouse".
 2. **Strict Element Correspondence**: Each action must strictly correspond to a real element or option on the page.
 3. **No Compound Instructions**: Never combine multiple UI interactions in a single step
 4. **Sequential Operations**: Multiple operations on the same or different elements must be separated into distinct steps
@@ -117,6 +117,64 @@ Each test case must include these standardized components with enhanced business
 ```
 
 **Note**: For standard element interactions (clicking buttons, hovering over links), prefer using `Tap` and `Hover` actions which automatically locate elements.
+
+### Multi-Tab Navigation Workflow Patterns
+
+**IMPORTANT**: When testing features that open new tabs/windows, follow these structured workflows:
+
+#### Key Actions for Multi-Tab Testing
+- **GetNewPage**: Switch to a newly opened tab/window (after clicking links that open in new tabs)
+- **SwitchBackTab**: Return to the parent tab (pop from tab stack)
+- **GoBack**: Navigate back in browser history (DIFFERENT from SwitchBackTab)
+
+#### Multi-Tab Workflow Example 1: External Link Verification
+```json
+[
+  {{"action": "Click the 'Terms of Service' link that opens in a new tab"}},
+  {{"action": "GetNewPage"}},
+  {{"verify": "Verify the Terms of Service page loaded successfully in the new tab"}},
+  {{"ux_verify": "Verify the Terms of Service content displays without typos or layout issues"}},
+  {{"action": "SwitchBackTab"}},
+  {{"verify": "Verify returned to the original homepage"}},
+  {{"action": "Continue testing on original page"}}
+]
+```
+
+#### Multi-Tab Workflow Example 2: Help Documentation Testing
+```json
+[
+  {{"action": "Click the 'Help' icon that opens help center in new tab"}},
+  {{"action": "GetNewPage"}},
+  {{"verify": "Verify the Help Center page loaded in the new tab"}},
+  {{"action": "Enter search keyword 'password reset' in the help search"}},
+  {{"action": "Click the search button"}},
+  {{"verify": "Verify search results for password reset appear"}},
+  {{"action": "SwitchBackTab"}},
+  {{"verify": "Verify returned to the main application page"}}
+]
+```
+
+#### Multi-Tab Workflow Example 3: Nested Tab Navigation
+```json
+[
+  {{"action": "Click 'Product Catalog' link (opens in new tab)"}},
+  {{"action": "GetNewPage"}},
+  {{"verify": "Verify Product Catalog page loaded"}},
+  {{"action": "Click 'Product Details' link (opens another new tab)"}},
+  {{"action": "GetNewPage"}},
+  {{"verify": "Verify Product Details page loaded"}},
+  {{"action": "SwitchBackTab"}},
+  {{"verify": "Verify returned to Product Catalog page"}},
+  {{"action": "SwitchBackTab"}},
+  {{"verify": "Verify returned to original homepage"}}
+]
+```
+
+#### Critical Multi-Tab Rules
+- **Always use GetNewPage** immediately after actions that open new tabs (external links, target="_blank")
+- **Always use SwitchBackTab** to return to parent tabs - NEVER use GoBack for this purpose
+- **Track tab depth**: Plan the correct number of SwitchBackTab actions to return to the original tab
+- **Verify tab context**: After GetNewPage/SwitchBackTab, always verify you're on the expected page
 
 ### User-Scenario Step Design Standards
 **CRITICAL**: All test steps must be designed from the user's perspective to ensure realistic and actionable test scenarios:
@@ -739,6 +797,7 @@ def get_reflection_user_prompt(
     current_plan: list,
     completed_cases: list,
     page_content_summary: dict = None,
+    tab_context: dict = None,
 ) -> str:
     """Generate user prompt for reflection and replanning (dynamic part).
 
@@ -747,6 +806,7 @@ def get_reflection_user_prompt(
         current_plan: Current test plan
         completed_cases: Completed test cases
         page_content_summary: Interactive element mapping (dict from ID to element info), optional
+        tab_context: Current tab context for multi-tab awareness, optional
 
     Returns:
         Formatted user prompt containing current test status and context information
@@ -766,6 +826,23 @@ def get_reflection_user_prompt(
 
 **IMPORTANT - Full-Page Context**:
 The screenshot shows the ENTIRE webpage from top to bottom, not just the visible viewport. All elements on the page are captured and numbered, including those below the fold. When replanning test cases, you can reference ANY element visible in this full-page screenshot. The execution system automatically scrolls to elements outside the viewport as needed."""
+
+    # Build tab context section for multi-tab awareness
+    tab_context_section = ""
+    if tab_context:
+        tab_state = "child tab" if tab_context.get('parent_tab_id') else "main tab"
+        tab_context_section = f"""
+
+- **Current Tab State**:
+```json
+{json.dumps(tab_context, indent=2)}
+```
+  - Currently on a {tab_state}
+  - {tab_context.get('total_open_tabs', 1)} total tab(s) open
+  - Tab depth: {tab_context.get('tab_depth', 0)}
+  - Can return to parent: {tab_context.get('can_go_back', False)}
+
+**Multi-Tab Consideration**: When deciding whether to CONTINUE, REPLAN, or FINISH, consider the current tab state. If tests left the browser in a multi-tab state, you may need to replan cleanup steps or decide if this is the intended final state."""
 
     # Determine test mode for reflection decision
     # Handle case where business_objectives might be a list
@@ -820,7 +897,7 @@ The screenshot shows the ENTIRE webpage from top to bottom, not just the visible
 {current_plan_json}
 - **Completed Test Execution Summary**:
 {completed_summary}
-- **Current Application State**: (Referenced via attached screenshot){interactive_elements_section}
+- **Current Application State**: (Referenced via attached screenshot){interactive_elements_section}{tab_context_section}
 
 ## Enhanced Coverage Analysis Criteria
 {coverage_criteria}
@@ -854,6 +931,7 @@ def get_reflection_prompt(
     completed_cases: list,
     page_content_summary: dict = None,
     language: str = 'zh-CN',
+    tab_context: dict = None,
 ) -> tuple[str, str]:
     """Generate prompts for reflection and replanning (returns system and user prompt).
 
@@ -863,13 +941,14 @@ def get_reflection_prompt(
         current_plan: Current test plan
         completed_cases: Completed test cases
         page_content_summary: Interactive element mapping (dict from ID to element info), optional
+        tab_context: Current tab context for multi-tab awareness, optional
 
     Returns:
         tuple: (system_prompt, user_prompt)
     """
     system_prompt = get_reflection_system_prompt(language)
     user_prompt = get_reflection_user_prompt(
-        business_objectives, current_plan, completed_cases, page_content_summary
+        business_objectives, current_plan, completed_cases, page_content_summary, tab_context
     )
     return system_prompt, user_prompt
 
