@@ -118,6 +118,10 @@ class UITester:
             dp = DeepCrawler(self.page)
             prev = await dp.crawl(highlight=True, viewport_only=False, cache_dom=True)
 
+            # Extract page status information for LLM context
+            page_status = getattr(prev, 'page_status', 'SUPPORTED')
+            page_type = getattr(prev, 'page_type', 'html')
+
             # Enhanced unsupported page handling with page-agnostic differentiation
             # Check for unsupported page types (PDF, plugins, etc.)
             if hasattr(prev, 'page_status') and prev.page_status == "UNSUPPORTED_PAGE":
@@ -187,7 +191,14 @@ class UITester:
                 str(ElementKey.CENTER_X),
                 str(ElementKey.CENTER_Y)
             ]
-            user_prompt = self._prepare_prompt_action(test_step, prev.to_llm_json(template=planning_template), LLMPrompt.planner_output_prompt, tab_context=page_context)
+            user_prompt = self._prepare_prompt_action(
+                test_step,
+                prev.to_llm_json(template=planning_template),
+                LLMPrompt.planner_output_prompt,
+                tab_context=page_context,
+                page_status=page_status,
+                page_type=page_type
+            )
 
             # Generate plan
             plan_json = await self._generate_plan(LLMPrompt.planner_system_prompt, user_prompt, marker_screenshot)
@@ -600,22 +611,47 @@ class UITester:
             # Return error_step and a failed model output
             return error_step, {"Validation Result": "Validation Failed", "Details": error_msg}
 
-    def _prepare_prompt_action(self, test_step: str, browser_elements: str, prompt_template: str, tab_context: dict = None) -> str:
-        """Prepare LLM prompt with tab context awareness.
+    def _prepare_prompt_action(
+        self,
+        test_step: str,
+        browser_elements: str,
+        prompt_template: str,
+        tab_context: dict = None,
+        page_status: str = "SUPPORTED",
+        page_type: str = "html"
+    ) -> str:
+        """Prepare LLM prompt with tab context and page status awareness.
 
         Args:
             test_step: The test step instruction
             browser_elements: Interactive elements description
             prompt_template: The prompt template
             tab_context: Optional tab context for multi-tab awareness
+            page_status: Page status (SUPPORTED or UNSUPPORTED_PAGE)
+            page_type: Type of page content (html, pdf, plugin, etc.)
         """
         import json
 
         prompt_parts = [
             f"test step: {test_step}",
-            "====================",
-            f"pageDescription (interactive elements): {browser_elements}"
+            "===================="
         ]
+
+        # If page is unsupported (PDF, plugin, etc.), add special guidance for LLM
+        if page_status == "UNSUPPORTED_PAGE":
+            prompt_parts.extend([
+                f"⚠️ **PAGE STATUS**: {page_status} (page_type: {page_type})",
+                f"**IMPORTANT**: Current page is {page_type} content. DOM elements are NOT available.",
+                "**ALLOWED ACTIONS**: Only page-agnostic operations can execute:",
+                "  - GoBack, GoToPage: Browser navigation",
+                "  - GetNewPage, SwitchBackTab: Tab management",
+                "  - Sleep, Screenshot: Utility operations",
+                "**FORBIDDEN ACTIONS**: Tap, Input, Hover, Scroll, SelectDropdown (require DOM elements)",
+                "**CRITICAL**: Plan page-agnostic actions even when pageDescription is empty!",
+                "===================="
+            ])
+
+        prompt_parts.append(f"pageDescription (interactive elements): {browser_elements}")
 
         # Add tab context for multi-tab awareness
         if tab_context:
