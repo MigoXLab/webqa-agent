@@ -12,6 +12,11 @@ from typing import Optional, Type
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
+from webqa_agent.actions.action_types import (
+    ActionType,
+    is_page_agnostic_action,
+    get_action_default_phrase,
+)
 from webqa_agent.crawler.deep_crawler import DeepCrawler
 from webqa_agent.testers.function_tester import UITester
 
@@ -180,6 +185,8 @@ class UITool(BaseTool):
             action_phrase = f"Switch to new page/tab"
             if value:
                 action_phrase += f" {value}"
+        elif action == "SwitchBackTab":
+            action_phrase = get_action_default_phrase(ActionType.SWITCH_BACK_TAB)
         elif action == "Mouse":
             if value and 'move:' in value.lower():
                 # Extract coordinates from 'move:x,y' format
@@ -190,9 +197,16 @@ class UITool(BaseTool):
             else:
                 action_phrase = f"Perform mouse action on {target} with value '{value}'"
         else:
-            action_phrase = f"{action} on {target}"
-            if value:
-                action_phrase += f" with value '{value}'"
+            # Improved fallback logic to avoid malformed phrases like "action on "
+            if target:
+                action_phrase = f"{action} on {target}"
+                if value:
+                    action_phrase += f" with value '{value}'"
+            else:
+                # No target provided - just use action type
+                action_phrase = action
+                if value:
+                    action_phrase += f" with value '{value}'"
 
         if not description:
             instruction_parts.append(action_phrase)

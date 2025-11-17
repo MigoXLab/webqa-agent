@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from webqa_agent.actions.action_executor import ActionExecutor
 from webqa_agent.actions.action_handler import ActionHandler
+from webqa_agent.actions.action_types import is_page_agnostic_action, ActionType, get_page_agnostic_keywords
 from webqa_agent.browser.check import ConsoleCheck, NetworkCheck
 from webqa_agent.browser.session import BrowserSession
 from webqa_agent.crawler.deep_crawler import DeepCrawler, ElementKey
@@ -99,43 +100,74 @@ class UITester:
         try:
             logging.debug(f"Executing AI instruction: {test_step}")
             self.page = self.driver.get_page()
+
+            # Get page context for multi-tab awareness
+            page_context = None
+            if self.driver and self.driver.page_manager:
+                try:
+                    page_context = self.driver.page_manager.get_page_context_info()
+                except Exception as e:
+                    logging.warning(f"Failed to retrieve tab context: {e}")
+                    page_context = None
+
+            # Pre-check if operation is page-agnostic before crawling
+            # This allows page-agnostic operations to execute on PDF/plugin pages
+            is_likely_page_agnostic = self._is_instruction_page_agnostic(test_step)
+
             # Crawl current page state
             dp = DeepCrawler(self.page)
             prev = await dp.crawl(highlight=True, viewport_only=False, cache_dom=True)
 
+            # Extract page status information for LLM context
+            page_status = getattr(prev, 'page_status', 'SUPPORTED')
+            page_type = getattr(prev, 'page_type', 'html')
+
+            # Enhanced unsupported page handling with page-agnostic differentiation
             # Check for unsupported page types (PDF, plugins, etc.)
             if hasattr(prev, 'page_status') and prev.page_status == "UNSUPPORTED_PAGE":
                 page_type = getattr(prev, 'page_type', 'unknown')
-                error_msg = f"Cannot execute action: current page type '{page_type}' is unsupported"
-                logging.error(f"[CRITICAL] {error_msg}")
 
-                end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                # Smart differentiation: page-agnostic operations can continue
+                if is_likely_page_agnostic:
+                    logging.warning(
+                        f"[WARNING] Executing '{test_step}' on {page_type} page. "
+                        f"Operation is page-agnostic and will continue in degraded mode (no DOM interaction)."
+                    )
+                    # Page-agnostic operations don't need DOM data, allow execution to continue
+                    # Note: prev will have minimal data, but that's acceptable for browser-level operations
+                else:
+                    # DOM-dependent operation on unsupported page: must abort
+                    error_msg = f"Cannot execute action: current page type '{page_type}' is unsupported"
+                    logging.error(f"[CRITICAL] {error_msg}")
 
-                # Build error step structure
-                error_steps_dict = {
-                    "description": f"action: {test_step}",
-                    "actions": [],
-                    "screenshots": [],
-                    "modelIO": "",
-                    "status": "failed",
-                    "error": error_msg,
-                    "start_time": start_time,
-                    "end_time": end_time,
-                    "dom_diff": {}
-                }
+                    end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-                # Build error result
-                error_result = {
-                    "success": False,
-                    "unsupported_page": True,
-                    "page_type": page_type,
-                    "message": error_msg,
-                    "dom_diff": {}
-                }
+                    # Build error step structure
+                    error_steps_dict = {
+                        "description": f"action: {test_step}",
+                        "actions": [],
+                        "screenshots": [],
+                        "modelIO": "",
+                        "status": "failed",
+                        "error": error_msg,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "dom_diff": {},
+                        "tab_context": page_context,  # Tab state for AI agent awareness and debugging
+                    }
 
-                # Store error step
-                self.add_step_data(error_steps_dict, step_type="action")
-                return error_steps_dict, error_result
+                    # Build error result
+                    error_result = {
+                        "success": False,
+                        "unsupported_page": True,
+                        "page_type": page_type,
+                        "message": error_msg,
+                        "dom_diff": {}
+                    }
+
+                    # Store error step
+                    self.add_step_data(error_steps_dict, step_type="action")
+                    return error_steps_dict, error_result
 
             await self._actions.update_element_buffer(prev.raw_dict())
             logging.debug(f"previous dom before action : {prev.to_llm_json()}")
@@ -159,7 +191,14 @@ class UITester:
                 str(ElementKey.CENTER_X),
                 str(ElementKey.CENTER_Y)
             ]
-            user_prompt = self._prepare_prompt_action(test_step, prev.to_llm_json(template=planning_template), LLMPrompt.planner_output_prompt)
+            user_prompt = self._prepare_prompt_action(
+                test_step,
+                prev.to_llm_json(template=planning_template),
+                LLMPrompt.planner_output_prompt,
+                tab_context=page_context,
+                page_status=page_status,
+                page_type=page_type
+            )
 
             # Generate plan
             plan_json = await self._generate_plan(LLMPrompt.planner_system_prompt, user_prompt, marker_screenshot)
@@ -174,6 +213,16 @@ class UITester:
             # Re-fetch page after execution in case get_new_page was called
             # This ensures DOM diff is computed on the correct page
             self.page = self.driver.get_page()
+
+            # Get updated page context after execution (tab may have changed)
+            page_context_after = None
+            if self.driver and self.driver.page_manager:
+                try:
+                    page_context_after = self.driver.page_manager.get_page_context_info()
+                except Exception as e:
+                    logging.warning(f"Failed to retrieve tab context after action: {e}")
+                    page_context_after = None
+
             dp_after = DeepCrawler(self.page)
             curr = await dp_after.crawl(highlight=True, viewport_only=False, cache_dom=True)
             diff_elems = curr.diff_dict([str(ElementKey.TAG_NAME), str(ElementKey.INNER_TEXT), str(ElementKey.ATTRIBUTES), str(ElementKey.CENTER_X), str(ElementKey.CENTER_Y)])
@@ -199,7 +248,8 @@ class UITester:
                 "status": status_str,
                 "start_time": start_time,
                 "end_time": end_time,
-                "dom_diff": diff_elems,  # 新增：DOM差异信息
+                "dom_diff": diff_elems,  # DOM difference information
+                "tab_context": page_context_after,  # Tab state for AI agent awareness and debugging
             }
 
             # 在execution_result中也添加DOM差异信息
@@ -228,6 +278,7 @@ class UITester:
             # Safely get possibly undefined variables
             safe_marker_screenshot = locals().get("marker_screenshot")
             safe_plan_json = locals().get("plan_json", {})
+            safe_page_context = locals().get("page_context")
 
             # Build error case execution step dictionary structure
             error_screenshots = [{"type": "base64", "data": safe_marker_screenshot}] if safe_marker_screenshot else []
@@ -241,6 +292,7 @@ class UITester:
                 "error": str(e),
                 "start_time": start_time,
                 "end_time": end_time,
+                "tab_context": safe_page_context,  # Tab state for AI agent awareness and debugging
             }
 
             self.execution_history.append({
@@ -328,8 +380,16 @@ class UITester:
 
         return "maintain"
 
-    def _build_context_aware_prompt(self, assertion: str, page_info: str, page_structure: str, execution_context: Dict[str, Any]) -> str:
-        """Build context-aware verification prompt."""
+    def _build_context_aware_prompt(self, assertion: str, page_info: str, page_structure: str, execution_context: Dict[str, Any], tab_context: dict = None) -> str:
+        """Build context-aware verification prompt with tab context.
+
+        Args:
+            assertion: The assertion to verify
+            page_info: Current page URL and title
+            page_structure: Full text content
+            execution_context: Execution history and previous action results
+            tab_context: Optional tab context for multi-tab verification
+        """
         context_str = self._format_execution_context(execution_context)
 
         # Use enhanced prompt with context
@@ -338,7 +398,7 @@ class UITester:
         )
 
         return self._prepare_prompt_verify(
-            f"assertion: {assertion}", page_info, enhanced_prompt, page_structure
+            f"assertion: {assertion}", page_info, enhanced_prompt, page_structure, tab_context=tab_context
         )
 
     async def verify(self, assertion: str, execution_context: Optional[Dict[str, Any]] = None) -> tuple[Dict[str, Any], Dict[str, Any]]:
@@ -392,6 +452,16 @@ class UITester:
                 }
 
                 end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                # Get page context for verification skip case
+                skip_page_context = None
+                if self.driver and self.driver.page_manager:
+                    try:
+                        skip_page_context = self.driver.page_manager.get_page_context_info()
+                    except Exception as e:
+                        logging.warning(f"Failed to retrieve tab context for verification skip: {e}")
+                        skip_page_context = None
+
                 skip_step = {
                     "description": f"verify: {assertion}",
                     "actions": [],
@@ -400,6 +470,7 @@ class UITester:
                     "status": "failed",
                     "start_time": start_time,
                     "end_time": end_time,
+                    "tab_context": skip_page_context,  # Tab state for AI agent awareness and debugging
                 }
                 self.add_step_data(skip_step, step_type="assertion")
                 return skip_step, skip_result
@@ -407,6 +478,16 @@ class UITester:
 
             page_url, page_title = await self.driver.get_url()
             logging.debug(f"verification page url: {page_url}, title: {page_title}")
+
+            # Get page context for verification
+            page_context = None
+            if self.driver and self.driver.page_manager:
+                try:
+                    page_context = self.driver.page_manager.get_page_context_info()
+                except Exception as e:
+                    logging.warning(f"Failed to retrieve tab context for verification: {e}")
+                    page_context = None
+
             # Crawl current page
             dp = DeepCrawler(self.page)
             await dp.crawl(highlight=True, filter_text=True, viewport_only=True)
@@ -432,12 +513,12 @@ class UITester:
             page_info = f"url: {page_url}, title: {page_title}"
             if execution_context:
                 logging.debug("Using context-aware verification prompt")
-                user_prompt = self._build_context_aware_prompt(assertion, page_info, page_structure, execution_context)
+                user_prompt = self._build_context_aware_prompt(assertion, page_info, page_structure, execution_context, tab_context=page_context)
             else:
                 logging.debug("Using standard verification prompt")
                 # Prepare LLM input
                 user_prompt = self._prepare_prompt_verify(
-                    f"assertion: {assertion}", page_info, LLMPrompt.verification_prompt, page_structure
+                    f"assertion: {assertion}", page_info, LLMPrompt.verification_prompt, page_structure, tab_context=page_context
                 )
 
             images_for_llm = [img for img in [marker_screenshot, screenshot] if img]
@@ -485,6 +566,7 @@ class UITester:
                 "status": status_str,
                 "start_time": start_time,
                 "end_time": end_time,
+                "tab_context": page_context,  # Tab state for AI agent awareness and debugging
             }
 
             # Automatically store assertion step data
@@ -508,6 +590,9 @@ class UITester:
 
             end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+            # Safely get page_context if available
+            safe_verify_page_context = locals().get("page_context")
+
             error_step = {
                 "description": f"verify: {assertion}",
                 "actions": [],
@@ -517,6 +602,7 @@ class UITester:
                 "error": str(e),
                 "start_time": start_time,
                 "end_time": end_time,
+                "tab_context": safe_verify_page_context,  # Tab state for AI agent awareness and debugging
             }
 
             # Error assertion step data
@@ -525,26 +611,86 @@ class UITester:
             # Return error_step and a failed model output
             return error_step, {"Validation Result": "Validation Failed", "Details": error_msg}
 
-    def _prepare_prompt_action(self, test_step: str, browser_elements: str, prompt_template: str) -> str:
-        """Prepare LLM prompt."""
-        return (
-            f"test step: {test_step}\n"
-            f"====================\n"
-            f"pageDescription (interactive elements): {browser_elements}\n"
-            f"====================\n"
-            f"{prompt_template}"
-        )
+    def _prepare_prompt_action(
+        self,
+        test_step: str,
+        browser_elements: str,
+        prompt_template: str,
+        tab_context: dict = None,
+        page_status: str = "SUPPORTED",
+        page_type: str = "html"
+    ) -> str:
+        """Prepare LLM prompt with tab context and page status awareness.
 
-    def _prepare_prompt_verify(self, test_step: str, page_info: str, prompt_template: str, page_structure: str) -> str:
-        """Prepare LLM prompt."""
-        return (
-            f"test step: {test_step}\n"
-            f"====================\n"
-            f"page info: {page_info}\n"
-            f"page_structure (full text content): {page_structure}\n"
-            f"====================\n"
-            f"{prompt_template}"
-        )
+        Args:
+            test_step: The test step instruction
+            browser_elements: Interactive elements description
+            prompt_template: The prompt template
+            tab_context: Optional tab context for multi-tab awareness
+            page_status: Page status (SUPPORTED or UNSUPPORTED_PAGE)
+            page_type: Type of page content (html, pdf, plugin, etc.)
+        """
+        import json
+
+        prompt_parts = [
+            f"test step: {test_step}",
+            "===================="
+        ]
+
+        # If page is unsupported (PDF, plugin, etc.), add special guidance for LLM
+        if page_status == "UNSUPPORTED_PAGE":
+            prompt_parts.extend([
+                f"⚠️ **PAGE STATUS**: {page_status} (page_type: {page_type})",
+                f"**IMPORTANT**: Current page is {page_type} content. DOM elements are NOT available.",
+                "**ALLOWED ACTIONS**: Only page-agnostic operations can execute:",
+                "  - GoBack, GoToPage: Browser navigation",
+                "  - GetNewPage, SwitchBackTab: Tab management",
+                "  - Sleep, Screenshot: Utility operations",
+                "**FORBIDDEN ACTIONS**: Tap, Input, Hover, Scroll, SelectDropdown (require DOM elements)",
+                "**CRITICAL**: Plan page-agnostic actions even when pageDescription is empty!",
+                "===================="
+            ])
+
+        prompt_parts.append(f"pageDescription (interactive elements): {browser_elements}")
+
+        # Add tab context for multi-tab awareness
+        if tab_context:
+            prompt_parts.append("====================")
+            prompt_parts.append(f"tabContext (current tab state):\n{json.dumps(tab_context, indent=2)}")
+
+        prompt_parts.append("====================")
+        prompt_parts.append(prompt_template)
+
+        return "\n".join(prompt_parts)
+
+    def _prepare_prompt_verify(self, test_step: str, page_info: str, prompt_template: str, page_structure: str, tab_context: dict = None) -> str:
+        """Prepare LLM prompt with tab context awareness.
+
+        Args:
+            test_step: The test step instruction
+            page_info: Current page URL and title
+            prompt_template: The prompt template
+            page_structure: Full text content of the page
+            tab_context: Optional tab context for multi-tab verification
+        """
+        import json
+
+        prompt_parts = [
+            f"test step: {test_step}",
+            "====================",
+            f"page info: {page_info}",
+            f"page_structure (full text content): {page_structure}"
+        ]
+
+        # Add tab context for multi-tab verification
+        if tab_context:
+            prompt_parts.insert(3, "====================")
+            prompt_parts.insert(4, f"tabContext (current tab state):\n{json.dumps(tab_context, indent=2)}")
+
+        prompt_parts.append("====================")
+        prompt_parts.append(prompt_template)
+
+        return "\n".join(prompt_parts)
 
     async def _generate_plan(self, system_prompt: str, prompt: str, browser_screenshot: str) -> Dict[str, Any]:
         """Generate test plan."""
@@ -873,3 +1019,55 @@ class UITester:
         except Exception as e:
             logging.warning(f"UITester.get_current_page failed to detect new page: {e}")
         return self.driver.get_page()
+
+    def _is_instruction_page_agnostic(self, test_step: str) -> bool:
+        """Check if instruction likely represents a page-agnostic operation.
+
+        This is a heuristic check before action execution to determine if an operation
+        can execute on unsupported page types (PDF, plugin, download pages).
+
+        Page-agnostic operations work at browser level and don't require DOM elements:
+        - Browser navigation: GoBack, GoForward
+        - Tab switching: GetNewPage, SwitchBackTab
+        - Utility: Sleep, Screenshot
+
+        Uses both keyword matching and action type detection for robustness.
+
+        Args:
+            test_step: The test step instruction
+
+        Returns:
+            True if operation is likely page-agnostic, False otherwise
+
+        Examples:
+            >>> self._is_instruction_page_agnostic("Close current tab")
+            True
+            >>> self._is_instruction_page_agnostic("Switch back to parent tab")
+            True
+            >>> self._is_instruction_page_agnostic("Click on button")
+            False
+        """
+        # Get centralized keywords from action_types module
+        # This eliminates code duplication and ensures consistency
+        PAGE_AGNOSTIC_KEYWORDS = get_page_agnostic_keywords()
+
+        # Normalize instruction for matching
+        instruction_lower = test_step.lower().replace('_', ' ').replace('-', ' ')
+
+        # Check if instruction contains action type names directly
+        # (handles cases where LLM uses action type in description)
+        for action_type in [ActionType.GO_BACK, ActionType.GET_NEW_PAGE,
+                           ActionType.SWITCH_BACK_TAB, ActionType.SLEEP,
+                           ActionType.SCREENSHOT]:
+            if action_type in test_step:
+                logging.debug(f"Detected page-agnostic action type '{action_type}' in instruction")
+                return True
+
+        # Check keywords in instruction
+        for keyword in PAGE_AGNOSTIC_KEYWORDS:
+            if keyword in instruction_lower:
+                logging.debug(f"Detected page-agnostic keyword '{keyword}' in instruction")
+                return True
+
+        # Default: assume DOM-dependent (safe default)
+        return False

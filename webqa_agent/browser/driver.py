@@ -3,6 +3,8 @@ import logging
 
 from playwright.async_api import async_playwright
 
+from webqa_agent.browser.page_manager import PageManager
+
 
 class Driver:
     # Lock used to ensure thread-safety when multiple coroutines create Driver instances concurrently
@@ -33,6 +35,7 @@ class Driver:
         self.browser = None
         self.context = None
         self.playwright = None
+        self.page_manager = None  # Multi-tab page manager
 
     def is_closed(self):
         """Check if the browser instance is closed."""
@@ -79,6 +82,17 @@ class Driver:
             browser_config["browser"] = "Chromium"
             self.config = browser_config
 
+            # Initialize page manager for multi-tab support
+            self.page_manager = PageManager(self.context)
+            # Register the initial main page
+            initial_page_info = await self.page_manager.register_page(
+                self.page,
+                parent_id=None,
+                page_type='main'
+            )
+            await self.page_manager.push_page(initial_page_info)
+            logging.debug("PageManager initialized with main page")
+
             logging.debug(f"Browser instance created successfully with config: {browser_config}")
             return self.page
 
@@ -96,10 +110,21 @@ class Driver:
     def get_page(self):
         """Returns the current page instance.
 
+        Always returns the active page from page manager if available,
+        ensuring we're operating on the correct page in multi-tab scenarios.
+
         Returns:
             Page: The current page instance.
         """
         try:
+            # Delegate to page manager if available
+            if self.page_manager:
+                managed_page = self.page_manager.get_current_page()
+                if managed_page:
+                    self.page = managed_page  # Keep self.page in sync
+                    return managed_page
+
+            # Fallback to direct page reference
             return self.page
         except Exception as e:
             logging.error("Failed to get Driver instance: %s", e, exc_info=True)
@@ -120,26 +145,105 @@ class Driver:
     async def get_new_page(self):
         """Switches to the most recently opened page in the browser.
 
+        Uses PageManager for robust multi-tab tracking when available.
+        Automatically registers new pages and establishes parent-child relationships.
+
         Returns:
-            Page: The new page instance.
+            Page: The new page instance, or None if no new page detected.
         """
         try:
             pages = self.context.pages
-            logging.debug(f"page number: {len(pages)}")
-            if len(pages) > 1:
-                self.page = pages[-1]
-                logging.debug(f"New page detected, page index: {len(pages) - 1}")
-                return self.page
+            logging.debug(f"Total pages in context: {len(pages)}")
+
+            # Use page manager if available
+            if self.page_manager:
+                # Check if there are new pages not yet registered
+                registered_count = self.page_manager.get_total_pages()
+                logging.debug(f"Registered pages: {registered_count}, Context pages: {len(pages)}")
+
+                if len(pages) > registered_count:
+                    # New page(s) detected, register the newest one
+                    new_page = pages[-1]
+                    current_info = self.page_manager.get_current_page_info()
+
+                    # Register new page with current page as parent
+                    new_page_info = await self.page_manager.register_page(
+                        new_page,
+                        parent_id=current_info.page_id if current_info else None,
+                        page_type='new_tab'
+                    )
+
+                    # Push to stack (switch to new page)
+                    await self.page_manager.push_page(new_page_info)
+
+                    # Update self.page reference
+                    self.page = new_page
+
+                    logging.info(
+                        f"Switched to new page: {new_page_info.page_id} "
+                        f"(parent: {new_page_info.parent_id})"
+                    )
+                    return self.page
+                else:
+                    logging.warning("get_new_page called but no new page detected in context")
+                    return self.page
             else:
-                return self.page
+                # Fallback to legacy behavior (without page manager)
+                logging.debug("PageManager not available, using legacy behavior")
+                if len(pages) > 1:
+                    self.page = pages[-1]
+                    logging.debug(f"New page detected, page index: {len(pages) - 1}")
+                    return self.page
+                else:
+                    return self.page
+
         except Exception as e:
             logging.error("Failed to get new page: %s", e, exc_info=True)
+            raise
+
+    async def get_previous_page(self):
+        """Returns to the previous page in the navigation stack.
+
+        This is used for SwitchBackTab action to return to the parent tab
+        after completing operations on a child tab.
+
+        Returns:
+            Page: The previous page instance, or None if no previous page exists.
+        """
+        try:
+            if not self.page_manager:
+                logging.warning("PageManager not available, cannot switch to previous page")
+                return None
+
+            # Pop from stack to get previous page
+            previous_page_info = await self.page_manager.pop_page()
+
+            if previous_page_info:
+                # Update self.page reference
+                self.page = previous_page_info.page
+
+                logging.info(
+                    f"Switched to previous page: {previous_page_info.page_id} "
+                    f"(url: {previous_page_info.url})"
+                )
+                return self.page
+            else:
+                logging.warning("No previous page to return to (stack is empty)")
+                return None
+
+        except Exception as e:
+            logging.error("Failed to get previous page: %s", e, exc_info=True)
             raise
 
     async def close_browser(self):
         """Closes the browser instance and stops Playwright."""
         try:
             if not self.is_closed():
+                # Cleanup page manager first
+                if self.page_manager:
+                    await self.page_manager.cleanup()
+                    logging.debug("PageManager cleaned up successfully.")
+
                 await self.browser.close()
                 await self.playwright.stop()
                 self._is_closed = True  # mark closed
