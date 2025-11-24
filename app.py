@@ -27,6 +27,24 @@ GRADIO_LANGUAGE = get_gradio_language()
 
 # Import and launch Gradio application
 if __name__ == "__main__":
+    # Check Gradio installation and version
+    try:
+        import gradio
+    except ImportError:
+        print("❌ Error: Gradio is not installed.")
+        print("Please install Gradio: uv add \"gradio>5.44.0\"")
+        sys.exit(1)
+
+    try:
+        from packaging import version
+        required_gradio_version = "5.44.0"
+        if version.parse(gradio.__version__) <= version.parse(required_gradio_version):
+            print(f"❌ Error: Gradio version {gradio.__version__} is installed, but > {required_gradio_version} is required.")
+            print(f"Please upgrade Gradio: uv add \"gradio>{required_gradio_version}\"")
+            sys.exit(1)
+    except ImportError:
+        pass  # packaging not found, skip version check
+
     try:
         from app_gradio.demo_gradio import create_gradio_interface, queue_manager, process_queue
         import threading
@@ -36,7 +54,7 @@ if __name__ == "__main__":
         print("📱 Interface will start at http://localhost:7860")
         print(f"🌐 Interface language: {GRADIO_LANGUAGE}")
         print("💡 Tip: Set environment variable GRADIO_LANGUAGE=en-US for English or GRADIO_LANGUAGE=zh-CN for Chinese")
-        print("⚠️  Note: Please ensure all dependencies are installed (pip install -r requirements.txt)")
+        print("⚠️  Note: Please ensure all dependencies are installed (uv sync)")
         print("🔍 Checking Playwright browser dependencies...")
 
         async def _check_playwright():

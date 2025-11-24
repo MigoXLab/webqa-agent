@@ -92,11 +92,16 @@ git clone https://github.com/MigoXLab/webqa-agent.git
 cd webqa-agent
 ```
 
-Install Python >= 3.10 and run the following commands:
+1. Recommended: Install dependencies with [uv](https://github.com/astral-sh/uv) (Python>=3.11):
 
 ```bash
-pip install -r requirements.txt
-playwright install
+uv sync
+```
+
+2. Install Chromium browser:
+
+```bash
+uv run playwright install chromium
 ```
 
 Performance Analysis - Lighthouse (Optional)
@@ -124,8 +129,24 @@ nuclei -version        # Verify successful installation
 After configuring `config/config.yaml` (refer to "Usage > Test Configuration"), run:
 
 ```bash
-python webqa-agent.py
+uv run python webqa-agent.py
 ```
+
+### 🖥️ Visual Web Interface
+
+WebQA Agent provides a user-friendly visual interface powered by Gradio.
+
+```bash
+# Install Gradio
+uv add "gradio>5.44.0"
+# Launch the Web UI
+uv run python app.py
+
+# Launch with Chinese interface
+GRADIO_LANGUAGE=zh-CN uv run python app.py
+```
+
+Access the interface at http://localhost:7860.
 
 ## Usage
 
@@ -192,14 +213,14 @@ UX (User Experience) testing focuses on usability and user-friendliness. Uses mu
 
 ### 🧠 Recommended Models
 
-Based on our testing, these models work well with WebQA Agent:
+The following models have been adapted and verified, and are recommended:
 
-| Model                             | Key Strengths               | Notes                           |
-|-----------------------------------|-----------------------------|---------------------------------|
-| **gpt-4.1-2025-04-14** ⭐         | High accuracy & reliability | **Best choice**                 |
-| **gpt-4.1-mini-2025-04-14**       | Cost-effective              | **Economical and practical**    |
-| **qwen3-vl-235b-a22b-instruct**   | Open-source, GPT-4.1 level  | **Best for on-premise**         |
-| **doubao-seed-1-6-vision-250815** | Vision capabilities         | **Excellent web understanding** |
+| Model                             | Recommendation              |
+|-----------------------------------|-----------------------------|
+| **gpt-4.1-2025-04-14**            | High accuracy and reliability |
+| **gpt-4.1-mini-2025-04-14**       | Economical and practical |
+| **qwen3-vl-235b-a22b-instruct**   | Open-source model, preferred for on-premise |
+| **doubao-seed-1-6-vision-250815** | Good web understanding, supports visual recognition |
 
 
 ### View Results

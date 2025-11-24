@@ -23,7 +23,7 @@
 
 <p align="center">
   体验Demo 🤗<a href="https://huggingface.co/spaces/mmmay0722/WebQA-Agent">HuggingFace</a> | 🚀<a href="https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary">ModelScope</a><br>
-  加入我们 🎮<a href="https://discord.gg/K5TtkVcx">Discord</a> | 💬<a href="https://aicarrier.feishu.cn/docx/NRNXdIirXoSQEHxhaqjchUfenzd">微信群</a>
+  加入我们 🎮<a href="https://discord.gg/fG5QAxYyNr">Discord</a> | 💬<a href="https://aicarrier.feishu.cn/docx/NRNXdIirXoSQEHxhaqjchUfenzd">微信群</a>
 </p>
 
 <p align="center"><a href="README.md">English</a> · <a href="README_zh-CN.md">简体中文</a></p>
@@ -92,20 +92,23 @@ git clone https://github.com/MigoXLab/webqa-agent.git
 cd webqa-agent
 ```
 
-安装 Python >= 3.10，运行以下命令：
+1. 推荐使用 [uv](https://github.com/astral-sh/uv) 安装依赖（Python>=3.11）：
 
 ```bash
-pip install -r requirements.txt
-playwright install
+uv sync
+```
 
+2. 安装 Chromium 浏览器：
+
+```bash
+uv run playwright install chromium
 ```
 
 性能分析 - Lighthouse 安装（可选）
 
 ```bash
-# 需要 Node.js >= 18.0.0 package.json
+# 需要 Node.js >= 18.0.0
 npm install
-
 ```
 
 安全扫描 - Nuclei 安装（可选）
@@ -124,11 +127,27 @@ nuclei -version        # 验证安装成功
 
 ```
 
-参考“使用说明 > 测试配置”进行 `config/config.yaml` 配置后，运行下方命令。
+参考"使用说明 > 测试配置"进行 `config/config.yaml` 配置后，运行下方命令。
 
 ```bash
-python webqa-agent.py
+uv run python webqa-agent.py
 ```
+
+### 🖥️ 可视化 Web 界面
+
+WebQA Agent 提供了基于 Gradio 的可视化界面，操作更加便捷。
+
+```bash
+# 安装 Gradio
+uv add "gradio>5.44.0"
+# 启动 Web UI
+uv run python app.py
+
+# 启动中文界面
+GRADIO_LANGUAGE=zh-CN uv run python app.py
+```
+
+访问地址：http://localhost:7860。
 
 ## 使用说明
 
@@ -195,14 +214,14 @@ UX（用户体验）评估关注网页可用性与友好性。采用多模态分
 
 ### 🧠 推荐模型
 
-基于实际测试结果，以下模型表现较好，推荐使用：
+以下模型经过适配与验证，推荐使用：
 
-| 模型                                | 核心优势         | 使用建议       |
-|-----------------------------------|--------------|------------|
-| **gpt-4.1-2025-04-14** ⭐          | 高准确性与可靠性     | **最佳选择**   |
-| **gpt-4.1-mini-2025-04-14**       | 性价比高         | **经济实用**   |
-| **qwen3-vl-235b-a22b-instruct**   | 媲美gpt-4.1，开源 | **私有部署首选** |
-| **doubao-seed-1-6-vision-250815** | 支持视觉识别       | **网页理解优异** |
+| 模型                                | 推荐理由 |
+|-----------------------------------|------|
+| **gpt-4.1-2025-04-14**            | 准确性与可靠性较高 |
+| **gpt-4.1-mini-2025-04-14**       | 经济实用，性价比高 |
+| **qwen3-vl-235b-a22b-instruct**   | 开源模型，私有部署首选 |
+| **doubao-seed-1-6-vision-250815** | 网页理解较优异，支持视觉识别 |
 
 ### 查看结果
 
