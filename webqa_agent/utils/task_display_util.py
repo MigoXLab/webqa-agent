@@ -183,7 +183,7 @@ class _Display:
             out.write(self._get_text("error_tasks") + "\n")
             for t in self.completed:
                 if t.error:
-                    out.write(f"  ❌ {t.name} {self._get_text('error_message')}：{t.error}\n")
+                    out.write(f"  ❌ {t.name} {self._get_text('error_message')} {t.error}\n")
 
         # out.write("════════════════════════════════════════\n")
         # out.write("🎯 Done！\n")

@@ -33,7 +33,45 @@ class LLMAPI:
             self._client = httpx.AsyncClient(timeout=60.0)
         return self._client
 
-    async def get_llm_response(self, system_prompt, prompt, images=None, temperature=None, top_p=None, max_tokens=None, model_override=None):
+    async def get_llm_response(
+        self,
+        system_prompt,
+        prompt,
+        images=None,
+        temperature=None,
+        top_p=None,
+        max_tokens=None,
+        model_override=None,
+        reasoning=None,
+        text=None,
+    ):
+        """Get LLM response with support for GPT-5 reasoning parameters.
+        
+        Args:
+            system_prompt: System prompt for the model
+            prompt: User prompt
+            images: Optional base64 image(s) for vision models
+            temperature: Sampling temperature (0-2). Note: Only supported with GPT-5.1 when reasoning_effort="none"
+            top_p: Nucleus sampling parameter. Note: Only supported with GPT-5.1 when reasoning_effort="none"
+            max_tokens: Maximum output tokens
+            model_override: Temporary model override (e.g., for two-stage architecture)
+            reasoning: Reasoning effort control. Can be:
+                - dict: {"effort": "none"|"low"|"medium"|"high"}
+                - str: "none"|"low"|"medium"|"high"
+                - None: Uses config or defaults ("none" for gpt-5.1, "low" for others)
+            text: Output verbosity control. Can be:
+                - dict: {"verbosity": "low"|"medium"|"high"}
+                - str: "low"|"medium"|"high"
+                - None: Uses config or defaults to "medium"
+        
+        Returns:
+            str: Model response content
+            
+        Note:
+            - GPT-5.1 supports reasoning_effort="none" for low-latency responses
+            - Other reasoning models (o3, o4, etc.) default to "low" and support low/medium/high
+            - Temperature/top_p are automatically disabled for GPT-5.1 when reasoning_effort != "none"
+        """
         # Allow temporary model override for two-stage architecture (e.g., lightweight model for filtering)
         actual_model = model_override or self.model
         model_input = {"model": actual_model, "api_type": self.api_type}
@@ -48,14 +86,51 @@ class LLMAPI:
                 model_input["images"] = "included"
             # Choose and call API
             if self.api_type == "openai":
-                # resolve sampling params: prefer method args, fallback to config defaults (default temperature=0.1)
-                resolved_temperature = (
-                    temperature if temperature is not None else self.llm_config.get("temperature", 0.1)
+                # Resolve parameters: method args > config > defaults
+                resolved_temperature = temperature if temperature is not None else self.llm_config.get("temperature", 0.1)
+                resolved_top_p = top_p if top_p is not None else self.llm_config.get("top_p")
+                resolved_max_tokens = max_tokens if max_tokens is not None else self.llm_config.get("max_tokens")
+                
+                # Resolve GPT-5 parameters (only for gpt-5/gpt-5.1 series)
+                model_lower = actual_model.lower() if actual_model else ""
+                is_gpt5_family = model_lower.startswith("gpt-5")
+                is_gpt51 = model_lower.startswith("gpt-5.1")
+                
+                # Only apply reasoning/verbosity for GPT-5 family models
+                resolved_reasoning_effort = None
+                resolved_verbosity = None
+                
+                if is_gpt5_family:
+                    # GPT-5.1 defaults to "none" (low-latency), GPT-5 defaults to "low"
+                    default_reasoning = "none" if is_gpt51 else "low"
+                    resolved_reasoning_effort = self._resolve_param(reasoning, "reasoning", "effort", default_reasoning)
+                    resolved_verbosity = self._resolve_param(text, "text", "verbosity", "medium")
+
+                    # GPT-5.1 compatibility: temperature/top_p only allowed when reasoning_effort=none
+                    if is_gpt51 and resolved_reasoning_effort not in ["none", None]:
+                        if resolved_temperature is not None or resolved_top_p is not None:
+                            logging.warning(
+                                "GPT-5.1 with reasoning_effort=%s: removing temperature/top_p (only allowed with 'none')",
+                                resolved_reasoning_effort
+                            )
+                            resolved_temperature = None
+                            resolved_top_p = None
+
+                logging.debug(
+                    "Resolved params - temperature: %s, top_p: %s, max_tokens: %s, reasoning_effort: %s, verbosity: %s",
+                    resolved_temperature, resolved_top_p, resolved_max_tokens,
+                    resolved_reasoning_effort, resolved_verbosity
                 )
-                resolved_top_p = top_p if top_p is not None else self.llm_config.get("top_p", None)
-                resolved_max_tokens = max_tokens if max_tokens is not None else self.llm_config.get("max_tokens", None)
-                logging.debug(f"Resolved temperature: {resolved_temperature}, top_p: {resolved_top_p}, max_tokens: {resolved_max_tokens}")
-                result = await self._call_openai(messages, resolved_temperature, resolved_top_p, resolved_max_tokens, actual_model)
+                
+                result = await self._call_openai(
+                    messages,
+                    temperature=resolved_temperature,
+                    top_p=resolved_top_p,
+                    max_tokens=resolved_max_tokens,
+                    model=actual_model,
+                    reasoning_effort=resolved_reasoning_effort,
+                    verbosity=resolved_verbosity,
+                )
 
             return result
         except Exception as e:
@@ -88,7 +163,42 @@ class LLMAPI:
             logging.error(f"Error while handling images for OpenAI: {e}")
             raise ValueError(f"Failed to process images for OpenAI. Error: {e}")
 
-    async def _call_openai(self, messages, temperature=None, top_p=None, max_tokens=None, model=None):
+    def _resolve_param(self, override, config_key, sub_key, default):
+        """Generic parameter resolver: override > config[key][sub_key] > config[sub_key] > default."""
+        # Check override (supports dict with sub_key or direct value)
+        if override is not None:
+            if isinstance(override, dict):
+                value = override.get(sub_key)
+                if value:
+                    return value
+            else:
+                return override
+        
+        # Check config nested structure (e.g., config.reasoning.effort)
+        config_obj = self.llm_config.get(config_key)
+        if isinstance(config_obj, dict):
+            value = config_obj.get(sub_key)
+            if value:
+                return value
+        
+        # Check config flat key (e.g., config.reasoning_effort)
+        flat_key = f"{config_key}_{sub_key}" if config_key != sub_key else sub_key
+        value = self.llm_config.get(flat_key)
+        if value:
+            return value
+        
+        return default
+
+    async def _call_openai(
+        self,
+        messages,
+        temperature=None,
+        top_p=None,
+        max_tokens=None,
+        model=None,
+        reasoning_effort=None,
+        verbosity=None,
+    ):
         try:
             # Use provided model or fallback to config model
             actual_model = model or self.llm_config.get("model")
@@ -105,6 +215,21 @@ class LLMAPI:
                 create_kwargs["top_p"] = top_p
             if max_tokens is not None:
                 create_kwargs["max_tokens"] = max_tokens
+            if reasoning_effort is not None:
+                create_kwargs["reasoning_effort"] = reasoning_effort
+            if verbosity is not None:
+                create_kwargs["verbosity"] = verbosity
+
+            # Log all request parameters for debugging
+            logging.debug(
+                "LLM API request - model: %s, temperature: %s, top_p: %s, max_tokens: %s, reasoning_effort: %s, verbosity: %s",
+                actual_model,
+                create_kwargs.get("temperature"),
+                create_kwargs.get("top_p"),
+                create_kwargs.get("max_tokens"),
+                create_kwargs.get("reasoning_effort"),
+                create_kwargs.get("verbosity")
+            )
 
             completion = await self.client.chat.completions.create(**create_kwargs)
             content = completion.choices[0].message.content
@@ -113,8 +238,10 @@ class LLMAPI:
             content = self._clean_response(content)
             return content
         except Exception as e:
-            logging.error(f"Error while calling LLM API: {e}")
-            raise ValueError(f"{str(e)}")
+            error_msg = f"LLM API request failed for model '{actual_model}' {str(e)}"
+            logging.error(error_msg)
+            logging.error(f"Request parameters: {create_kwargs.get('model')}, temperature={create_kwargs.get('temperature')}, reasoning_effort={create_kwargs.get('reasoning_effort')}, verbosity={create_kwargs.get('verbosity')}")
+            raise ValueError(error_msg)
 
     def _clean_response(self, response):
         """Remove JSON code block markers from the response if present."""

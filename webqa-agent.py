@@ -154,6 +154,11 @@ def validate_and_build_llm_config(cfg):
     temperature = llm_cfg_raw.get("temperature", 0.1)
     top_p = llm_cfg_raw.get("top_p")
     max_tokens = llm_cfg_raw.get("max_tokens")  # Optional: maximum output tokens
+    # GPT-5 reasoning & text verbosity configuration (optional)
+    reasoning = llm_cfg_raw.get("reasoning")
+    reasoning_effort = llm_cfg_raw.get("reasoning_effort")
+    text_cfg = llm_cfg_raw.get("text")
+    text_verbosity = llm_cfg_raw.get("text_verbosity")
 
     # Validate required fields
     if not api_key:
@@ -179,6 +184,15 @@ def validate_and_build_llm_config(cfg):
         llm_config["top_p"] = top_p
     if max_tokens is not None:
         llm_config["max_tokens"] = max_tokens
+    # Pass through optional GPT-5 specific configuration so that LLMAPI._resolve_param can use it
+    if reasoning is not None:
+        llm_config["reasoning"] = reasoning
+    if reasoning_effort is not None:
+        llm_config["reasoning_effort"] = reasoning_effort
+    if text_cfg is not None:
+        llm_config["text"] = text_cfg
+    if text_verbosity is not None:
+        llm_config["text_verbosity"] = text_verbosity
 
     # Show configuration source (hide sensitive information)
     api_key_masked = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "***"

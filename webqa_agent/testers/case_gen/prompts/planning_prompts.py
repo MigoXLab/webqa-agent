@@ -13,8 +13,45 @@ def get_shared_test_design_standards(language: str = 'zh-CN') -> str:
         String containing complete test case design standards
     """
     name_language = '中文' if language == 'zh-CN' else 'English'
-    return f"""## Enhanced Test Case Design Standards
+    return f"""## Test Case Design Standards
 
+### Test Case Granularity Principle (CRITICAL - HIGHEST PRIORITY)
+**Single Responsibility Rule**: Each test case MUST test ONE complete functional scenario.
+
+#### Core Granularity Definition:
+- **One Test Case = One Functional Scenario** (NOT just one single action)
+- A "Functional Scenario" typically includes: [Setup] → [User Actions] → [Verification]
+- Ideally, a test case validates one specific user goal or business rule.
+
+#### Granularity Guidelines:
+
+**✅ Correct Scope (One Functional Scenario)**:
+- "Verify searching for 'Python' returns results" (Includes: Input text → Click search → Verify results)
+- "Verify login with valid credentials" (Includes: Input user → Input pass → Click login → Verify dashboard)
+- "Verify 'Home' navigation" (Includes: Click Home → Verify URL & Content)
+- "verify Check A and Check B" (Includes: Check A + Check B)
+
+**Coverage Requirement for Navigation (MANDATORY)**:
+- **Generate a SEPARATE test case for EACH button/link in the navigation bar.**
+- **Full Coverage**: If the navigation bar has 5 links, you MUST generate 5 corresponding test cases. Do not skip any navigation items.
+
+**❌ Too Broad (Multiple Scenarios)**:
+- "Test all search functionality" (Combining exact match, no results, special chars in one case)
+- "Test entire checkout flow" (Better to split: Add to Cart, Update Cart, Checkout Form, Payment)
+
+**❌ Too Narrow (Fragmented Actions)**:
+- "Click search input" (Only clicking, no meaningful result)
+- "Type 'Python'" (Only typing, no search execution)
+- "Verify search button exists" (Static check, no interaction)
+
+**When to Split vs. Keep Together**:
+- **Split**: If you are testing different *outcomes* (e.g., success vs. failure) or different *inputs* (valid vs. invalid).
+- **Keep Together**: All steps required to achieve *one* specific outcome (e.g., filling a form requires multiple inputs).
+
+**Test Case Completeness Requirements**:
+- Every test case MUST include at least ONE meaningful user action sequence that leads to a verifiable result.
+- Avoid test cases that only verify initial state without interaction.
+  
 ### Domain-Aware Test Case Structure Requirements
 Each test case must include these standardized components with enhanced business context:
 
@@ -31,8 +68,9 @@ Each test case must include these standardized components with enhanced business
 - **`domain_specific_rules`**: Industry-specific validation requirements or compliance rules
 - **`test_data_requirements`**: Specification of domain-appropriate test data and setup conditions
 - **`steps`**: Detailed test execution steps with clear action/verification pairs that simulate real user behavior and scenarios
-  - `action`: User-scenario action instructions describing what a real user would do in natural language, DON'T IMAGE. **Only use these action types: "Tap", "Input", "Scroll", "SelectDropdown", "Clear", "Hover", "KeyboardPress", "Upload", "Drag", "GoToPage", "GoBack", "Sleep", "Mouse". Do NOT invent or output any other action types or non-existent data.**
+  - `action`: User-scenario action instructions describing what a real user would do in natural language. **Only use these action types: "Tap", "Input", "Scroll", "SelectDropdown", "Clear", "Hover", "KeyboardPress", "Upload", "Drag", "GoToPage", "GoBack", "Sleep", "Mouse".**
   - `verify`: User-expectation validation instructions describing what result a real user would expect to see
+  - **FORBIDDEN FIELDS**: Do NOT output `elementRef`, `elementId`, `domId`, or any other technical identifiers in the step objects. The system handles element resolution automatically based on your semantic description.
 - **`preamble_actions`**: Optional setup steps to establish required test preconditions
 - **`reset_session`**: Session management flag for test isolation strategy
 - **`success_criteria`**: Measurable, verifiable conditions that define test pass/fail status
@@ -47,9 +85,9 @@ Each test case must include these standardized components with enhanced business
    - Use GoBack instead of GoToPage when the goal is to return to the immediate previous page (preserves browser history)
    - GoBack works on all page types (HTML, PDF, etc.) since it's a browser-level operation
    - Note: GoBack returns boolean indicating success (true if navigation occurred, false if no browser history exists)
-5. **Sequential Operations**: Multiple operations on the same or different elements must be separated into distinct steps
-6. **State Management**: Each step should account for potential page state changes after execution
-7. **Language State Awareness**: When testing internationalization features (language switchers, multi-language content), observe the current page language from the screenshot and DOM text BEFORE planning steps. Switch to the non-current language first to ensure observable changes. Use navigation menu text as primary language indicator (highest reliability), followed by headings and body content.
+6. **Sequential Operations**: Multiple operations on the same or different elements must be separated into distinct steps
+7. **State Management**: Each step should account for potential page state changes after execution
+8. **Language State Awareness**: When testing internationalization features (language switchers, multi-language content), observe the current page language from the screenshot and DOM text BEFORE planning steps. Switch to the non-current language first to ensure observable changes. Use navigation menu text as primary language indicator (highest reliability), followed by headings and body content.
 
 #### Browser Environment: Single-Tab Mode
 **System Configuration**: This test execution environment enforces strict single-tab mode through 7-layer interception architecture. All browser navigation occurs exclusively within the current tab.
@@ -118,25 +156,17 @@ When designing test cases for language switching or internationalization feature
 - **Decision**: Page language = Chinese (ignore product names per rule)
 - **Test Design**: Product names staying English after language switch is EXPECTED behavior, not a bug
 
-#### Atomic Action Design Examples
-**CRITICAL**: Each action must be a single, independent operation, and must use ONLY the allowed action types:
-
-**✅ Atomic Action Design (Preferred)**:
+### Action Examples
+**✅ Good (User perspective, atomic)**:
 ```json
 [
 {{"action": "Click the 'Products' navigation link in the top menu bar"}},
 {{"verify": "Verify the page successfully navigated to the Products page"}},
 {{"ux_verify": "Verify Products page renders correctly without layout breaks or text truncation in the viewport"}},
-{{"action": "Click the 'Solutions' navigation link in the top menu bar"}},
-{{"verify": "Verify the page successfully navigated to the Solutions page"}},
-{{"ux_verify": "Verify Solutions page displays without typos or visual rendering issues in the viewport"}},
-{{"action": "Click the 'About Us' navigation link in the top menu bar"}},
-{{"verify": "Verify the page successfully navigated to the About Us page"}},
-{{"ux_verify": "Verify About Us page layout is properly aligned without overlapping elements in the viewport"}}
 ]
 ```
 
-**Search Testing - Atomic Steps**:
+**❌ Bad (Technical, compound)**:
 ```json
 [
 {{"action": "Enter search keyword 'product' in the search input field"}},
@@ -575,6 +605,8 @@ Your response must be ONLY in JSON format. Do not include any analysis, explanat
     "steps": [
       {{"action": "specific_action_instruction"}},
       {{"verify": "precise_validation_instruction"}}
+      {{"action": "specific_action_instruction"}},
+      {{"ux_verify": "precise_validation_instruction"}}
     ],
     "reset_session": boolean_isolation_flag,
     "success_criteria": ["measurable_success_conditions"]
@@ -651,7 +683,6 @@ def get_test_case_planning_user_prompt(
 
 **Usage Guideline**: Focus test case design on these critical elements while leveraging the full-page screenshot for context.
 """
-
     user_prompt = f"""
 ## Application Under Test (AUT)
 - **Target URL**: {state_url}
@@ -670,102 +701,85 @@ Please design comprehensive test cases following the standards in the system pro
 3. **Priority Elements**: AI-filtered critical elements for focused testing
 
 Generate business-relevant, effective test scenarios that validate key functionality and user workflows.
-Example 1:
+### Example 1: Search & Data Retrieval
 ```json
 {{
-  "name": "表单验证和错误处理-通用表单交互模式",
-  "objective": "Validate form validation, error handling, and user feedback mechanisms",
-  "test_category": "Functional_User_Interaction",
+  "name": "商品搜索功能验证-精确匹配",
+  "objective": "Verify search functionality returns relevant results for exact product name match",
+  "test_category": "Discovery_Search",
   "priority": "High",
-  "business_context": "Form validation is crucial for data integrity, user experience, and preventing erroneous data entry. This template provides a universal pattern for testing all types of forms and input validation.",
-  "domain_specific_rules": "Form validation rules, error message standards, user feedback requirements",
-  "test_data_requirements": "Valid data, invalid data, edge cases, boundary values",
-  "preamble_actions": [
-    {{"action": "Navigate to the target form or input interface"}}
-  ],
+  "business_context": "Search is the primary discovery tool for e-commerce. Users expect exact matches to appear at the top.",
+  "domain_specific_rules": "Search results should display product image, title, and price.",
+  "test_data_requirements": "Existing product name 'Wireless Headphones'",
+  "preamble_actions": [],
   "steps": [
-    {{"action": "Try to submit the form without filling in required fields"}},
-    {{"verify": "See helpful messages indicating which fields need to be completed"}},
-    {{"verify": "Notice the form prevents submission until requirements are met"}},
-    {{"action": "Fill in all required fields with appropriate information"}},
-    {{"action": "Include some optional information if relevant"}},
-    {{"action": "Submit the completed form"}},
-    {{"verify": "See confirmation that your form was processed successfully"}},
-    {{"action": "Test with invalid data to see error handling"}},
-    {{"verify": "Verify clear error messages guide you to correct input"}}
+    {{"action": "Input 'Wireless Headphones' into the main search input field (with magnifying glass icon) in the header"}},
+    {{"action": "Click the search submit button (icon button) next to the search input"}},
+    {{"verify": "Verify search results page is displayed, and the result title contains 'Wireless Headphones'"}},
+    {{"ux_verify": "Verify product price and image are loaded for the search results"}}
   ],
   "reset_session": false,
   "success_criteria": [
-    "Form validation prevents invalid data submission",
-    "Clear, actionable error messages guide user to correct input",
-    "Form processes valid data successfully",
-    "User feedback is provided throughout the interaction"
+    "Search results page loads",
+    "Relevant products are displayed"
   ]
 }}
 ```
 
-### Example 2: Search & Data Retrieval
-**Information Discovery Template - Covers search, filtering, and data access patterns**
-
+### Example 2: 中英文切换用户体验验证 (Language Switcher with Visual Detection)
 ```json
 {{
-  "name": "搜索和数据检索-信息发现功能验证",
-  "objective": "Validate search functionality, data retrieval, and information discovery features",
-  "test_category": "Functional_Integration",
-  "priority": "High",
-  "business_context": "Search and data retrieval capabilities are essential for users to find relevant information quickly and efficiently. This template covers search functionality, filtering, and data access patterns.",
-  "domain_specific_rules": "Search behavior patterns, result relevance, loading feedback",
-  "test_data_requirements": "Search terms, filters, ambiguous queries, special characters",
+  "name": "多语言切换验证-中英文互换",
+  "objective": "Validate language switcher functionality (detected current: Chinese from navigation text '首页', '产品' - confidence 90%)",
+  "test_category": "Internationalization_UX",
+  "priority": "Medium",
+  "business_context": "Page loads in Chinese. Switching to English should update UI text. Product names may remain English.",
+  "domain_specific_rules": "Navigation and static text must translate. Dynamic content depends on DB.",
+  "test_data_requirements": "Visual language detection: Nav menu (50%), Headings (30%).",
   "preamble_actions": [],
   "steps": [
-    {{"action": "Enter a common search term related to the content in the search input field"}},
-    {{"action": "Click the search submit button (magnifying glass icon) next to the search input field"}},
-    {{"verify": "Observe the search process with loading indicator or transition"}},
-    {{"verify": "See result count and any additional search options displayed"}},
+    {{"action": "Hover over the language selector menu (globe icon) in the top right corner"}},
+    {{"action": "click the 'English' option in the language dropdown menu"}},
+    {{"verify": "Verify page content updates to English (Navigation: 'Home', 'Products')"}},
+    {{"ux_verify": "Verify layout remains stable without text truncation in English mode"}},
+    {{"action": "click the 'Chinese' (中文) option in the language selector"}},
+    {{"verify": "Verify page content reverts to Chinese"}}
   ],
-  "reset_session": true,
+  "reset_session": false,
   "success_criteria": [
-    "Search functionality processes various input types correctly",
-    "Loading states provide appropriate user feedback",
-    "Search results are relevant to the query terms",
-    "System handles edge cases and ambiguous queries gracefully"
-  ]
-}}
-```
-### Example 3: 中英文切换用户体验验证 (Language Switcher with Visual Detection)
-```json
-{{
-  "name": "中英文切换用户体验验证",
-  "objective": "Validate language switcher functionality (detected current: Chinese from navigation text '首页', '产品', '关于我们' - confidence 90%)",
-  "test_category": "Functional_User_Interaction",
-  "priority": "High",
-  "business_context": "Page loads in Chinese by default based on navigation menu language (Chinese characters detected in primary nav elements). Test switches to English first to ensure observable content change (Chinese → English transition), then back to Chinese to verify bidirectional functionality. Product names may remain in English across language switches (expected behavior for international brands).",
-  "domain_specific_rules": "Language switching should update navigation, headings, and body content. Product names and technical terms may remain in source language. Mixed-language scenarios common in e-commerce (nav in one language, product names in English).",
-  "test_data_requirements": "Visual language detection from screenshot: Navigation menu (primary indicator - 50% weight), page headings (secondary - 30%), body content (tertiary - 15%). Ignore product names, technical terms, and footer text (5%).",
-  "preamble_actions": [],
-  "steps": [
-    {{"action": "Switch to English"}},
-    {{"verify": "Verify the language successfully switched to English and navigation menu updated (expect '首页' → 'Home', '产品' → 'Products')"}},
-    {{"ux_verify": "Verify no mixed-language artifacts or typos in the visible English navigation and headings"}},
-    {{"action": "Scroll the page"}},
-    {{"ux_verify": "Verify current viewport displays correctly in English without text truncation or layout issues. Note: Product names remaining in English is expected behavior."}},
-    {{"action": "Switch back to Chinese"}},
-    {{"verify": "Verify the language successfully switched back to Chinese and navigation menu reverted"}},
-    {{"ux_verify": "Verify bidirectional language switching works without visual artifacts"}}
-  ],
-  "reset_session": true,
-  "success_criteria": [
-    "Language switcher toggles between Chinese and English",
-    "Navigation menu text updates correctly on language switch",
-    "Content updates observable (excluding expected English product names)",
-    "No mixed-language artifacts or layout breaks after switching",
-    "Bidirectional switching (Chinese ↔ English) functions correctly"
+    "Language toggles correctly",
+    "UI text updates to target language"
   ]
 }}
 ```
 """
 
     return user_prompt
+  
+def get_planning_prompt(
+    business_objectives: str,
+    state_url: str,
+    language: str = 'zh-CN',
+    page_text_summary: dict = None,
+    priority_elements: dict = None,
+) -> tuple[str, str]:
+    """Generate prompts for planning (returns system and user prompt).
+
+    Args:
+        business_objectives: Overall business objectives
+        state_url: Target URL
+        language: Language for test case naming (zh-CN or en-US)
+        page_text_summary: Intelligent text summary from smart_truncate_page_text()
+        priority_elements: AI-filtered priority elements from Stage 1
+
+    Returns:
+        tuple: (system_prompt, user_prompt)
+    """
+    system_prompt = get_test_case_planning_system_prompt(business_objectives, language)
+    user_prompt = get_test_case_planning_user_prompt(
+        state_url, page_text_summary, priority_elements
+    )
+    return system_prompt, user_prompt
 
 
 def get_reflection_system_prompt(language: str = 'zh-CN') -> str:

@@ -18,6 +18,7 @@ from webqa_agent.crawler.deep_crawler import DeepCrawler, ElementKey, ElementMap
 from webqa_agent.testers.case_gen.agents.execute_agent import agent_worker_node
 from webqa_agent.testers.case_gen.prompts.planning_prompts import (
     get_reflection_prompt,
+    get_planning_prompt,
     get_test_case_planning_system_prompt,
     get_test_case_planning_user_prompt,
     get_element_filtering_system_prompt,
@@ -198,13 +199,20 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
 
     # === Stage 2: Test Case Planning with Enhanced Context ===
     logging.info("Stage 2: Test case planning with enhanced context...")
-    system_prompt = get_test_case_planning_system_prompt(
-        business_objectives=business_objectives,
-        language=language,
-    )
+    # system_prompt = get_test_case_planning_system_prompt(
+    #     business_objectives=business_objectives,
+    #     language=language,
+    # )
 
-    user_prompt = get_test_case_planning_user_prompt(
+    # user_prompt = get_test_case_planning_user_prompt(
+    #     state_url=state["url"],
+    #     page_text_summary=page_text_info,
+    #     priority_elements=priority_elements,
+    # )
+    system_prompt, user_prompt = get_planning_prompt(
+        business_objectives=business_objectives,
         state_url=state["url"],
+        language=language,
         page_text_summary=page_text_info,
         priority_elements=priority_elements,
     )
