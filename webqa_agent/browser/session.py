@@ -34,7 +34,7 @@ class BrowserSession:
 
             try:
                 # Use Driver as the single browser creation entry-point.
-                self.driver = await Driver.getInstance(browser_config=self.browser_config)
+                self.driver = await Driver.create(browser_config=self.browser_config)
 
                 # Keep reference if external code needs direct access (optional)
                 self._playwright = self.driver.playwright
@@ -138,58 +138,3 @@ class BrowserSession:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit."""
         await self.close()
-
-
-class BrowserSessionManager:
-    """Manager for multiple browser sessions."""
-
-    def __init__(self):
-        self.sessions: Dict[str, BrowserSession] = {}
-        self._lock = asyncio.Lock()
-
-    async def browser_session(self, browser_config: Dict[str, Any] = None) -> BrowserSession:
-        """Create a new browser session."""
-        session = BrowserSession(browser_config=browser_config)
-        return session
-
-    async def create_session(self, browser_config: Dict[str, Any] = None) -> BrowserSession:
-        """Create a new browser session."""
-        session = BrowserSession(browser_config=browser_config)
-        await session.initialize()
-
-        async with self._lock:
-            self.sessions[session.session_id] = session
-
-        logging.debug(f"Created browser session: {session.session_id}")
-        return session
-
-    async def get_session(self, session_id: str) -> Optional[BrowserSession]:
-        """Get session by ID."""
-        async with self._lock:
-            return self.sessions.get(session_id)
-
-    async def close_session(self, session_id: str):
-        """Close and remove session."""
-        async with self._lock:
-            session = self.sessions.pop(session_id, None)
-            if session:
-                await session.close()
-                logging.debug(f"Closed session: {session_id}")
-
-    async def close_all_sessions(self):
-        """Close all sessions."""
-        async with self._lock:
-            sessions = list(self.sessions.values())
-            self.sessions.clear()
-
-        # Close sessions in parallel
-        if sessions:
-            await asyncio.gather(*[session.close() for session in sessions], return_exceptions=True)
-            logging.debug(f"Closed {len(sessions)} browser sessions")
-
-    def list_sessions(self) -> Dict[str, Dict[str, Any]]:
-        """List all active sessions."""
-        return {
-            session_id: {"browser_config": session.browser_config, "is_closed": session.is_closed()}
-            for session_id, session in self.sessions.items()
-        }

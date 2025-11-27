@@ -221,6 +221,9 @@ class TestResult(BaseModel):
     # Metrics
     metrics: Optional[Dict[str, Union[int, float, str]]] = {}
 
+    # Reflection statistics (for parallel execution with reflection)
+    reflection_stats: Optional[Dict[str, int]] = None
+
     def add_log(self, log_path: str):
         """Add log file to results."""
         self.logs.append(log_path)

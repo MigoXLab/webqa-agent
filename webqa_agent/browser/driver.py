@@ -5,26 +5,40 @@ from playwright.async_api import async_playwright
 
 
 class Driver:
-    # Lock used to ensure thread-safety when multiple coroutines create Driver instances concurrently
-    __lock = asyncio.Lock()
+    # Performance: Removed global lock to enable concurrent browser creation.
+    # Each Driver instance is completely independent (separate playwright connection,
+    # browser process, context, and page), so no synchronization is needed.
+    # Playwright's async API is designed for concurrent operations.
 
     @staticmethod
-    async def getInstance(browser_config, *args, **kwargs):
-        """Returns the singleton instance of the Driver class. If the instance
-        is closed, creates a new one.
+    async def create(browser_config, *args, **kwargs):
+        """Create a new Driver instance with initialized browser.
 
         Args:
-            browser_config (dict, optional): Browser configuration options.
-        """
-        logging.debug(f"Driver.getInstance called with browser_config: {browser_config}")
+            browser_config (dict): Browser configuration options.
 
-        # Always create a *new* Driver instance – singleton restriction removed to
-        # allow multiple browsers to run in parallel.  Keeping the public API
-        # unchanged ensures existing call-sites keep working.
-        async with Driver.__lock:
-            driver = Driver(browser_config=browser_config)
-            await driver.create_browser(browser_config=browser_config)
-            return driver
+        Returns:
+            Driver: A new initialized Driver instance
+
+        Note:
+            This method supports concurrent execution. Multiple calls can run
+            in parallel as each Driver instance is completely isolated.
+        """
+        import time
+        start_time = time.time()
+
+        logging.debug(f"Driver.create called with browser_config: {browser_config}")
+
+        # Create a new Driver instance for parallel execution support
+        # No lock needed - each instance is independent
+        driver = Driver(browser_config=browser_config)
+        await driver.create_browser(browser_config=browser_config)
+
+        elapsed_time = time.time() - start_time
+        logging.info(
+            f"Driver instance created successfully in {elapsed_time:.3f}s (config: headless={browser_config.get('headless', 'unknown')})")
+
+        return driver
 
     def __init__(self, browser_config=None, *args, **kwargs):
         # Each call constructs an independent browser driver.
@@ -104,7 +118,7 @@ class Driver:
         except Exception as e:
             logging.error("Failed to get Driver instance: %s", e, exc_info=True)
             raise
-    
+
     async def get_url(self):
         """Returns: the current page URL and title."""
         try:

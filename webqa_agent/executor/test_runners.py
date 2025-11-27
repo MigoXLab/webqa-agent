@@ -22,6 +22,10 @@ from webqa_agent.utils import i18n
 class BaseTestRunner(ABC):
     """Base class for test runners."""
 
+    def __init__(self):
+        # Case result saver support (set by ParallelTestExecutor before run_test)
+        self.case_result_saver = None
+
     @abstractmethod
     async def run_test(
         self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
@@ -242,6 +246,12 @@ class UIAgentLangGraphRunner(BaseTestRunner):
 
                 logging.info(f"{icon['check']} Test completed: {test_config.test_name}")
 
+                # Attach reflection stats if available (from parallel execution with reflection)
+                if hasattr(self, '_pending_reflection_stats') and self._pending_reflection_stats:
+                    result.reflection_stats = self._pending_reflection_stats
+                    logging.debug(f"Attached reflection_stats to TestResult: {self._pending_reflection_stats}")
+                    self._pending_reflection_stats = None  # Clear after use
+
             except Exception as e:
                 error_msg = f'AI Functional Test failed: {str(e)}'
                 result.status = TestStatus.FAILED
@@ -277,7 +287,8 @@ class UIAgentLangGraphRunner(BaseTestRunner):
         2. Runs planner to generate test cases using the external session
         3. Creates session pool by adding external session + additional sessions if needed
         4. Passes cases to ParallelCaseExecutor for parallel execution using the pool
-        5. Returns recorded_cases list
+        5. Optionally enables reflection after each case (configurable)
+        6. Returns recorded_cases list
 
         Args:
             session: Browser session from external caller, reused as planner session
@@ -301,6 +312,13 @@ class UIAgentLangGraphRunner(BaseTestRunner):
 
         # Extract parallel execution config
         max_concurrent_cases = parallel_case_config.get('max_concurrent_cases', 2)
+
+        # Extract reflection config from test_specific_config
+        reflection_config = test_config.test_specific_config.get('reflection', {})
+        use_reflection = reflection_config.get('enabled', False)
+        reflection_mode = reflection_config.get('mode', 'full')
+
+        logging.info(f"[Parallel Execution] Reflection config: enabled={use_reflection}, mode={reflection_mode}")
 
         # Step 1: Reuse external session as planner session
         logging.info("[Parallel Execution] Step 1: Reusing external session as planner session...")
@@ -343,95 +361,82 @@ class UIAgentLangGraphRunner(BaseTestRunner):
             logging.info(f"[Parallel Execution] Step 2: Determining session pool size...")
             logging.info(f"[Parallel Execution] Cases: {len(test_cases)}, Max concurrent: {max_concurrent_cases}, Actual concurrent: {actual_concurrent}")
 
-            # Step 3: Create session pool with dynamic size
-            if actual_concurrent == 1:
-                # Only 1 case or max_concurrent=1: Reuse planner session
-                logging.info("[Parallel Execution] Only 1 concurrent case needed, reusing planner session")
+            # Step 3: Create session pool with planner session
+            logging.info(f"[Parallel Execution] Step 3: Creating session pool with {actual_concurrent} session(s)")
 
-                session_pool = BrowserSessionPool(
-                    pool_size=1,
-                    browser_config=test_config.browser_config
-                )
-                # Manually add planner session to pool (skip initialize)
-                session_pool._all_sessions.append(planner_session)
-                await session_pool._available_sessions.put(planner_session)
-                session_pool._session_status[planner_session.session_id] = {
-                    'in_use': False,
-                    'created_at': datetime.now().isoformat(),
-                    'use_count': 0,
-                    'last_acquired_at': None,
-                    'last_released_at': None
-                }
-                session_pool._initialized = True
-                planner_session = None  # Ownership transferred to pool
+            # Create pool with target size
+            session_pool = BrowserSessionPool(
+                pool_size=actual_concurrent,
+                browser_config=test_config.browser_config
+            )
 
-            else:
-                # Multiple concurrent cases needed: Create additional sessions
-                additional_sessions_needed = actual_concurrent - 1  # -1 because we have planner session
-                logging.info(f"[Parallel Execution] Creating {additional_sessions_needed} additional session(s) to join planner session")
+            # Add planner session to pool using official API
+            await session_pool.add_external_session(planner_session)
+            planner_session = None  # Ownership transferred to pool
 
-                session_pool = BrowserSessionPool(
-                    pool_size=actual_concurrent,
-                    browser_config=test_config.browser_config
-                )
-
-                # Manually initialize with planner session + additional sessions
-                session_pool._all_sessions.append(planner_session)
-                await session_pool._available_sessions.put(planner_session)
-                session_pool._session_status[planner_session.session_id] = {
-                    'in_use': False,
-                    'created_at': datetime.now().isoformat(),
-                    'use_count': 0,
-                    'last_acquired_at': None,
-                    'last_released_at': None
-                }
-
-                # Create additional sessions
-                for i in range(additional_sessions_needed):
-                    additional_session = BrowserSession(browser_config=test_config.browser_config)
-                    await additional_session.initialize()
-                    additional_session.session_id = f"pool_session_{i+1}"
-
-                    session_pool._all_sessions.append(additional_session)
-                    await session_pool._available_sessions.put(additional_session)
-                    session_pool._session_status[additional_session.session_id] = {
-                        'in_use': False,
-                        'created_at': datetime.now().isoformat(),
-                        'use_count': 0,
-                        'last_acquired_at': None,
-                        'last_released_at': None
-                    }
-
-                    logging.info(f"[Parallel Execution] Created additional session {i+1}/{additional_sessions_needed}: {additional_session.session_id}")
-
-                session_pool._initialized = True
-                planner_session = None  # Ownership transferred to pool
+            # Initialize pool (will create remaining sessions as needed)
+            await session_pool.initialize()
 
             pool_stats = session_pool.get_pool_stats()
             logging.info(f"[Parallel Execution] Session pool ready: {pool_stats}")
 
             logging.info(f"[Parallel Execution] Step 4: Executing {len(test_cases)} cases (actual_concurrent={actual_concurrent})")
 
-            # Create parallel executor
+            # Create parallel executor with case result saver support
             executor = ParallelCaseExecutor(
                 llm_config=llm_config,
                 max_concurrent_cases=actual_concurrent,
                 session_pool_size=actual_concurrent,
-                browser_config=test_config.browser_config
+                browser_config=test_config.browser_config,
+                case_result_saver=self.case_result_saver,  # Pass case result saver
+                test_id=test_config.test_id,  # Get from test_config directly
+                test_name=test_config.test_name  # Get from test_config directly
             )
 
             # Pass the session pool to executor
             executor.session_pool = session_pool
 
-            # Execute cases in parallel
-            results = await executor.execute_cases_parallel(
-                cases=test_cases,
-                url=target_url,
-                cookies=cookies,
-                dynamic_step_generation=dynamic_step_config,
-                language=language,
-                skip_pool_initialization=True  # Use existing pool
-            )
+            # Execute cases in parallel (with or without reflection)
+            if use_reflection:
+                logging.info(f"[Parallel Execution] Using reflection mode: {reflection_mode}")
+
+                # Build reflection config for executor
+                executor_reflection_config = {
+                    'enabled': True,
+                    'reflect_on_failure_only': reflection_config.get('reflect_on_failure_only', False),
+                    'max_new_cases_per_reflect': reflection_config.get('max_new_cases_per_reflect', 3),
+                }
+
+                # Execute with reflection
+                results = await executor.execute_cases_with_reflection(
+                    cases=test_cases,
+                    url=target_url,
+                    llm_client=planner_tester.llm,  # Use planner's LLM client for reflection
+                    cookies=cookies,
+                    dynamic_step_generation=dynamic_step_config,
+                    language=language,
+                    business_objectives=business_objectives,
+                    reflection_config=executor_reflection_config,
+                    skip_pool_initialization=True  # Use existing pool
+                )
+
+                # Log and store reflection stats for propagation to TestResult
+                reflection_stats = results.get('reflection_stats', {})
+                logging.info(f"[Parallel Execution] Reflection stats: {reflection_stats}")
+                # Store for later attachment to TestResult
+                self._pending_reflection_stats = reflection_stats if reflection_stats else None
+            else:
+                logging.info("[Parallel Execution] Reflection disabled, using basic parallel execution")
+
+                # Execute without reflection (original path)
+                results = await executor.execute_cases_parallel(
+                    cases=test_cases,
+                    url=target_url,
+                    cookies=cookies,
+                    dynamic_step_generation=dynamic_step_config,
+                    language=language,
+                    skip_pool_initialization=True  # Use existing pool
+                )
 
             # Extract recorded_cases from results
             recorded_cases = results.get('recorded_cases', [])
@@ -442,16 +447,19 @@ class UIAgentLangGraphRunner(BaseTestRunner):
             return recorded_cases
 
         finally:
-            # Clean up: release session if still held
-            if planner_session:
+            # Clean up: release session if still held (only if pool was created)
+            if planner_session and session_pool:
                 try:
                     await session_pool.release(planner_session)
                     logging.debug("[Parallel Execution] Released planner session in finally block")
                 except Exception as e:
                     logging.warning(f"Error releasing planner session: {e}")
+            elif planner_session and not session_pool:
+                # Session pool was never created (early failure), planner_session ownership never transferred
+                logging.debug("[Parallel Execution] Session pool not created, planner_session still owned by caller")
 
             # Close session pool (created by this function)
-            if 'session_pool' in locals() and session_pool:
+            if session_pool:
                 try:
                     logging.info("[Parallel Execution] Closing session pool...")
                     await session_pool.close_all()

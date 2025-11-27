@@ -805,15 +805,16 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 intermediate_output = safe_get_intermediate_step(result, index=0, subindex=1, default="")
                 if "[failure]" in intermediate_output.lower():
                     final_summary = f"FINAL_SUMMARY: Preamble action '{instruction_to_execute}' failed, cannot proceed with the test case. Error: {tool_output}"
-                    case_result = {"case_name": case_name, "final_summary": final_summary, "status": "failed"}
-                    logging.error(f"Preamble action {i+1} failed, aborting test case")
+                    case_result = {"case_name": case_name, "status": "failed"}
+                    logging.error(f"Preamble action {i+1} failed: {final_summary}")
                     return {"case_result": case_result, "current_case_steps": []}
 
                 logging.debug(f"Preamble action {i+1} completed successfully")
             except Exception as e:
                 logging.error(f"Exception during preamble action {i+1}: {str(e)}")
                 final_summary = f"FINAL_SUMMARY: Preamble action '{instruction_to_execute}' raised exception: {str(e)}"
-                case_result = {"case_name": case_name, "final_summary": final_summary, "status": "failed"}
+                case_result = {"case_name": case_name, "status": "failed"}
+                logging.error(f"Preamble action {i+1} exception: {final_summary}")
                 return {"case_result": case_result, "current_case_steps": []}
 
         logging.debug("=== All Preamble Actions Completed Successfully ===")
@@ -1320,17 +1321,16 @@ FINAL_SUMMARY: Test case "{case_name}" failed at step [X]. Error: [description].
 
     logging.debug(f"Test case '{case_name}' final status: {status} (success indicators: {has_success}, failure indicators: {has_failure}, warning steps: {warning_steps})")
 
-    # Classify failure type if the test case failed
+    # Classify failure type if the test case failed (for internal logging only)
     failure_type = None
     if status == "failed":
         failure_type = _classify_failure_type(final_summary, failed_steps)
         logging.info(f"Test case '{case_name}' failed with type: {failure_type}")
 
+    # Build case result with only essential fields (removed final_summary, failure_type)
     case_result = {
         "case_name": case_name,
-        "final_summary": final_summary,
-        "status": status,
-        "failure_type": failure_type,
+        "status": status
     }
 
     # Include the modified case if dynamic steps were added

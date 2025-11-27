@@ -6,10 +6,11 @@ from typing import Dict, List, Optional
 # Session ID constants
 SECURITY_TEST_NO_SESSION_ID = "security_test_no_session"
 
-from webqa_agent.browser.session import BrowserSessionManager
+from webqa_agent.browser.session import BrowserSession
 from webqa_agent.data import ParallelTestSession, TestConfiguration, TestResult, TestStatus, TestType
 from webqa_agent.data.test_structures import get_category_for_test_type
 from webqa_agent.executor.result_aggregator import ResultAggregator
+from webqa_agent.executor.case_result_saver import CaseResultSaver
 from webqa_agent.executor.test_runners import (
     BasicTestRunner,
     LighthouseTestRunner,
@@ -25,7 +26,6 @@ class ParallelTestExecutor:
 
     def __init__(self, max_concurrent_tests: int = 4):
         self.max_concurrent_tests = max_concurrent_tests
-        self.session_manager = BrowserSessionManager()
 
         # Test runners mapping
         self.test_runners = {
@@ -42,6 +42,9 @@ class ParallelTestExecutor:
         self.running_tests: Dict[str, asyncio.Task] = {}
         self.completed_tests: Dict[str, TestResult] = {}
 
+        # Session tracking (for cleanup)
+        self.active_sessions: Dict[str, BrowserSession] = {}
+
     async def execute_parallel_tests(self, test_session: ParallelTestSession) -> ParallelTestSession:
         """Execute tests in parallel with proper isolation.
 
@@ -54,6 +57,11 @@ class ParallelTestExecutor:
         logging.debug(f"Starting parallel test execution for session: {test_session.session_id}")
         test_session.start_session()
 
+        # Initialize case result result saver (crash-safe saves)
+        timestamp = os.getenv("WEBQA_REPORT_TIMESTAMP") or os.getenv("WEBQA_TIMESTAMP")
+        self.report_dir = f"./reports/test_{timestamp}"
+        self.case_result_saver = CaseResultSaver(self.report_dir)
+
         try:
             # Get enabled tests
             enabled_tests = test_session.get_enabled_tests()
@@ -61,15 +69,29 @@ class ParallelTestExecutor:
                 logging.warning("No enabled tests found")
                 return test_session
 
+            # Initialize case result saver with session metadata
+            await self.case_result_saver.initialize(
+                session_id=test_session.session_id,
+                total_tests=len(enabled_tests)
+            )
+
             # Execute tests in batches to respect concurrency limits
             await self._execute_tests_in_batches(test_session, enabled_tests)
 
             test_session.complete_session()
+
+            # Mark case result saver as successfully completed
+            await self.case_result_saver.finalize("completed")
+
         except asyncio.CancelledError:
             logging.warning("Parallel test execution cancelled – generating partial report.")
+            # Mark case result saver as cancelled
+            await self.case_result_saver.finalize("cancelled")
             raise
         except Exception as e:
             logging.error(f"Error in parallel test execution: {e}")
+            # Mark case result saver as failed
+            await self.case_result_saver.finalize("failed")
             raise
         finally:
             # Consolidated cleanup, aggregation, and report generation
@@ -184,8 +206,12 @@ class ParallelTestExecutor:
                 ]:
 
                     # Create isolated browser session
-                    session = await self.session_manager.create_session(test_config.browser_config)
+                    session = BrowserSession(browser_config=test_config.browser_config)
+                    await session.initialize()
                     test_context.session_id = session.session_id
+
+                    # Track active session for cleanup
+                    self.active_sessions[session.session_id] = session
 
                     # Navigate to target URL
                     await session.navigate_to(
@@ -198,13 +224,18 @@ class ParallelTestExecutor:
                     test_context.session_id = SECURITY_TEST_NO_SESSION_ID
 
                 else:
-                    session = await self.session_manager.browser_session(test_config.browser_config)
+                    # Performance tests (Lighthouse) - create but don't initialize yet
+                    session = BrowserSession(browser_config=test_config.browser_config)
                     test_context.session_id = session.session_id
+                    self.active_sessions[session.session_id] = session
 
                 # Get appropriate test runner
                 runner = self.test_runners.get(test_config.test_type)
                 if not runner:
                     raise ValueError(f"No runner available for test type: {test_config.test_type}")
+
+                # Set case result saver for runner
+                runner.case_result_saver = self.case_result_saver
 
                 # Execute test
                 result = await runner.run_test(
@@ -222,6 +253,9 @@ class ParallelTestExecutor:
                 result.start_time = test_context.start_time
                 result.end_time = test_context.end_time
                 result.duration = test_context.duration
+
+                # NOTE: Test-level file generation disabled - only case-level case result saves are used
+                # await self.case_result_saver.save_test_result(result)
 
                 logging.debug(f"Test completed successfully: {test_config.test_name}")
                 return result
@@ -242,6 +276,10 @@ class ParallelTestExecutor:
                     duration=test_context.duration,
                     error_message=error_msg,
                 )
+
+                # NOTE: Test-level file generation disabled - only case-level case result saves are used
+                # await self.case_result_saver.save_test_result(result)
+
                 return result
 
             except asyncio.CancelledError:
@@ -267,7 +305,13 @@ class ParallelTestExecutor:
             finally:
                 # Clean up browser session
                 if test_context.session_id and test_context.session_id != SECURITY_TEST_NO_SESSION_ID:
-                    await self.session_manager.close_session(test_context.session_id)
+                    session_to_close = self.active_sessions.pop(test_context.session_id, None)
+                    if session_to_close:
+                        try:
+                            await session_to_close.close()
+                            logging.debug(f"Closed browser session: {test_context.session_id}")
+                        except Exception as e:
+                            logging.warning(f"Error closing session {test_context.session_id}: {e}")
 
     def _resolve_test_dependencies(self, tests: List[TestConfiguration]) -> List[List[TestConfiguration]]:
         """Resolve test dependencies and return execution batches.
@@ -308,7 +352,7 @@ class ParallelTestExecutor:
         for test_id in list(self.running_tests.keys()):
             await self.cancel_test(test_id)
 
-        await self.session_manager.close_all_sessions()
+        await self._close_all_active_sessions()
         logging.debug("All tests cancelled")
 
     def get_running_tests(self) -> List[str]:
@@ -323,6 +367,19 @@ class ParallelTestExecutor:
             return self.completed_tests[test_id].status
         return None
 
+    async def _close_all_active_sessions(self):
+        """Close all active browser sessions."""
+        if not self.active_sessions:
+            return
+
+        sessions = list(self.active_sessions.values())
+        self.active_sessions.clear()
+
+        # Close sessions in parallel
+        close_tasks = [session.close() for session in sessions]
+        await asyncio.gather(*close_tasks, return_exceptions=True)
+        logging.debug(f"Closed {len(sessions)} browser sessions")
+
     async def _finalize_session(self, test_session: ParallelTestSession):
         """Close sessions, aggregate results, and generate reports for the given session.
 
@@ -330,19 +387,18 @@ class ParallelTestExecutor:
         across normal completion, cancellation, and error paths.
         """
         # Ensure all browser sessions are closed
-        await self.session_manager.close_all_sessions()
+        await self._close_all_active_sessions()
 
         # Aggregate results
         aggregated_results = await self.result_aggregator.aggregate_results(test_session)
         test_session.aggregated_results = aggregated_results
 
-        # Generate JSON & HTML reports
-        report_path = await self.result_aggregator.generate_json_report(test_session)
+        # Generate JSON & HTML reports (pass report_dir to avoid re-constructing path)
+        report_path = await self.result_aggregator.generate_json_report(test_session, report_dir=self.report_dir)
         test_session.report_path = report_path
 
-        report_dir = os.path.dirname(report_path)
         html_path = self.result_aggregator.generate_html_report_fully_inlined(
-            test_session, report_dir=report_dir
+            test_session, report_dir=self.report_dir
         )
         test_session.html_report_path = html_path
 

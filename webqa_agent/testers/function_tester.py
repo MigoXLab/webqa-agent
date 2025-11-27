@@ -522,12 +522,22 @@ class UITester:
         self.step_counter = 0
         logging.debug(f"Started tracking case: {formatted_case_name} (step counter reset)")
 
-        # # Initialize/Reset central recorder as primary store as well
-        # try:
-        #     self.central_case_recorder = CentralCaseRecorder()
-        #     self.central_case_recorder.start_case(case_name, case_data=case_data or {})
-        # except Exception:
-        #     pass
+        # Initialize/Reset central recorder as primary store as well
+        try:
+            self.central_case_recorder = CentralCaseRecorder()
+            # Extract planned steps from case_data if available
+            planned_steps = None
+            if case_data and isinstance(case_data, dict):
+                planned_steps = case_data.get("steps", None)
+            self.central_case_recorder.start_case(
+                case_name,
+                case_data=case_data or {},
+                planned_steps=planned_steps
+            )
+            logging.debug(f"Central case recorder initialized for case: {case_name} with {len(planned_steps) if planned_steps else 0} planned steps")
+        except Exception as e:
+            logging.error(f"Failed to initialize central_case_recorder: {e}")
+            self.central_case_recorder = None
 
     def add_step_data(self, step_data: Dict[str, Any], step_type: str = "action"):
         """Add step data to current case."""
@@ -613,12 +623,13 @@ class UITester:
             }
         )
 
-        # # Sync to central recorder if available
-        # try:
-        #     if self.central_case_recorder:
-        #         self.central_case_recorder.finish_case(final_status=final_status, final_summary=final_summary or "")
-        # except Exception:
-        #     pass
+        # Sync to central recorder if available
+        try:
+            if self.central_case_recorder:
+                self.central_case_recorder.finish_case(final_status=final_status, final_summary=final_summary or "")
+                logging.debug(f"Central case recorder finalized for case: {original_name}")
+        except Exception as e:
+            logging.error(f"Failed to finalize central_case_recorder: {e}")
 
         # # Update monitoring data
         # if monitoring_data:
