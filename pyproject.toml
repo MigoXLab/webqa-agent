@@ -1,10 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "webqa-agent"
 version = "0.2.0"
 description = "WebQA Agent is an autonomous web browser agent that audits performance, functionality & UX for engineers and vibe-coding creators."
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+authors = [
+    {name = "MigoXLab"}
+]
+keywords = ["web", "qa", "testing", "automation", "playwright", "ai"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Internet :: WWW/HTTP :: Browsers",
+]
 dependencies = [
+    "gradio>=5.44.0",
     "html2text>=2025.4.15",
     "jinja2>=3.1.6",
     "langchain==0.3.26",
@@ -23,3 +42,20 @@ dependencies = [
     "requests>=2.32.4",
     "typing-extensions==4.14.0",
 ]
+
+[project.scripts]
+webqa-agent = "webqa_agent.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/MigoXLab/webqa-agent"
+Repository = "https://github.com/MigoXLab/webqa-agent"
+Documentation = "https://github.com/MigoXLab/webqa-agent#readme"
+Issues = "https://github.com/MigoXLab/webqa-agent/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["webqa_agent*", "app_gradio*"]
+
+[tool.setuptools.package-data]
+webqa_agent = ["static/*", "static/**/*", "crawler/js/*"]
+app_gradio = ["*.json"]
