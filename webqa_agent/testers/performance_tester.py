@@ -140,8 +140,7 @@ class LighthouseMetricsTest:
 
         # If still cannot find required packages, throw error
         if not node_modules_path:
-            locations_str = "\n- ".join(possible_locations)
-            error_message = f"Could not find node_modules directory in any of these locations:\n- {locations_str}\n\nPlease run 'npm install' in your project directory or install packages globally with 'npm install -g chrome-launcher lighthouse'."
+            error_message = f"Could not find node_modules directory in any of these locations. Please run 'npm install' in your project directory or install packages globally with 'npm install -g chrome-launcher lighthouse'."
             logging.error(error_message)
             raise Exception(error_message)
 

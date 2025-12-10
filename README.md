@@ -66,154 +66,168 @@ vibecoding, vibe coding, web evaluation, autonomous exploration, web testing aut
 
 Try Demo: [🤗Hugging Face](https://huggingface.co/spaces/mmmay0722/WebQA-Agent) · [🚀ModelScope](https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary)
 
-## Installation & Configuration
+## Quick Start
 
-### 🚀 One-Click Docker Setup
+### 🏎️ Recommended (uv)
+```bash
+# 1) Create a project and install the package
+uv init my-webqa && cd my-webqa
+uv add webqa-agent
 
-Before starting, ensure Docker is installed. If not, please refer to the official installation guide: [Docker Installation Guide](https://docs.docker.com/get-started/get-docker/).
+# 2) Install browser (required)
+uv run playwright install chromium
+
+# 3) Create a config file (auto-generated template)
+uv run webqa-agent init            # creates config.yaml
+
+# 4) Edit config.yaml
+#    - target.url: your site
+#    - llm_config.api_key: your OpenAI key (or set OPENAI_API_KEY)
+#  For detailed configuration information, please refer to the "Usage > Test Configuration"
+
+# 5) Run
+uv run webqa-agent run
+```
+
+### 🐳 Docker (one-liner)
+
+Before starting, ensure Docker is installed. If not, please refer to the official installation guide: [Docker Installation 
+Guide](https://docs.docker.com/get-started/get-docker/).
 
 Recommended versions: Docker >= 24.0, Docker Compose >= 2.32.
 
 ```bash
-# 1. Download configuration template
-mkdir -p config && curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/config/config.yaml.example -o config/config.yaml
+mkdir -p config \
+  && curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/config/config.yaml.example -o config/config.yaml
 
-# 2. Edit configuration file
+# Edit config.yaml
 # Set target.url, llm_config.api_key and other parameters
 
-# 3. One-click start
 curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/start.sh | bash
 ```
 
-### Source Installation
-
+### 🛠️ From source
 ```bash
 git clone https://github.com/MigoXLab/webqa-agent.git
 cd webqa-agent
-```
-
-1. Recommended: Install dependencies with [uv](https://github.com/astral-sh/uv) (Python>=3.11):
-
-```bash
 uv sync
-```
-
-2. Install Chromium browser:
-
-```bash
 uv run playwright install chromium
+cp ./config/config.yaml.example ./config/config.yaml
+# Edit config.yaml
+# Set target.url, llm_config.api_key and other parameters
+uv run webqa-agent run -c ./config/config.yaml
 ```
 
-Performance Analysis - Lighthouse (Optional)
+### Optional Dependencies
+Performance (Lighthouse): `npm install lighthouse chrome-launcher` (Node.js ≥18)
 
+Security (Nuclei):
 ```bash
-# Requires Node.js >= 18.0.0
-npm install
+brew install nuclei      # macOS
+nuclei -ut               # update templates
+# Linux/Win: download from https://github.com/projectdiscovery/nuclei/releases
 ```
 
-Security Scanning - Nuclei (Optional)
-
-Download from: [Nuclei Releases](https://github.com/projectdiscovery/nuclei/releases/)
-
-```bash
-# MacOS
-brew install nuclei
-
-# For other systems, download the appropriate version from the link above
-
-# Update templates and verify installation
-nuclei -ut -v          # Update Nuclei templates
-nuclei -version        # Verify successful installation
-```
-
-After configuring `config/config.yaml` (refer to "Usage > Test Configuration"), run:
-
-```bash
-uv run python webqa-agent.py
-```
-
-### 🖥️ Visual Web Interface
-
-WebQA Agent provides a user-friendly visual interface powered by Gradio.
-
-```bash
-# Install Gradio
-uv add "gradio>5.44.0"
-# Launch the Web UI
-uv run python app.py
-
-# Launch with Chinese interface
-GRADIO_LANGUAGE=zh-CN uv run python app.py
-```
-
-Access the interface at http://localhost:7860.
-
-## Usage
+## ⚙️ Usage
 
 ### Test Configuration
 
-`webqa-agent` uses YAML configuration for test parameters:
-
 ```yaml
 target:
-  url: https://example.com/                       # Website URL to test
-  description: example description
-  # max_concurrent_tests: 2                       # Optional, default parallel 2
+  url: https://example.com              # Website URL to test
+  description: Website QA testing
+  # max_concurrent_tests: 2             # Optional, default 2
 
-test_config:                                      # Test configuration
-  function_test:                                  # Functional testing
+test_config:
+  function_test:                        # Functional testing
     enabled: True
-    type: ai                                      # default or ai
-    business_objectives: example business objectives  # Recommended to include test scope, e.g., test search functionality
-    dynamic_step_generation:                      # Optional, configuration for dynamic steps generation
-      enabled: True                               # Optional, default False, recommended to set True to enable dynamic step generation
-      max_dynamic_steps: 10                       # Optional, default 5, this example uses 10
-      min_elements_threshold: 1                   # Optional, default 2, this example uses 1 for higher sensitivity
-  ux_test:                                        # User experience testing
+    type: ai                            # 'default' or 'ai'
+    business_objectives: Test search functionality, generate 3 test cases
+    dynamic_step_generation:
+      enabled: True                     # Enable dynamic step generation
+      max_dynamic_steps: 10
+      min_elements_threshold: 1
+  ux_test:                              # User experience testing
     enabled: True
-  performance_test:                               # Performance analysis
+  performance_test:                     # Performance analysis (requires Lighthouse)
     enabled: False
-  security_test:                                  # Security scanning
+  security_test:                        # Security scanning (requires Nuclei)
     enabled: False
 
-llm_config:                                       # Vision model configuration, currently supports OpenAI SDK compatible format only
-  model: gpt-4.1-2025-04-14                       # Primary model for Stage 2 test planning (Recommended)
-  filter_model: gpt-4o-mini                       # Lightweight model for Stage 1 element filtering (cost-effective)
-  api_key: your_api_key
-  base_url: https://api.example.com/v1
-  temperature: 0.1                                # Optional, default 0.1
-  # top_p: 0.9                                    # Optional, if not set, this parameter will not be passed
-  # max_tokens: 8192                              # Optional, maximum output tokens (supports generating more test cases)
+llm_config:
+  model: gpt-4.1-2025-04-14             # Vision model configuration, currently supports OpenAI SDK compatible format only
+  filter_model: gpt-4o-mini             # Lightweight model for element filtering
+  api_key: your_api_key                 # Or use OPENAI_API_KEY env var
+  base_url: https://api.openai.com/v1   # Or use OPENAI_BASE_URL env var
+  temperature: 0.1
 
 browser_config:
   viewport: {"width": 1280, "height": 720}
-  headless: False                                 # Automatically overridden to True in Docker environment
-  language: zh-CN
+  headless: False                       # Auto True in Docker
+  language: en-US
   cookies: []
-  save_screenshots: False                         # Whether to save screenshots to local disk (default: False)
+  save_screenshots: False
 
 report:
-  language: en-US                                 # zh-CN, en-US
+  language: en-US                       # zh-CN or en-US
 
 log:
-  level: info
+  level: info                           # debug, info, warning, error
 ```
 
-Please note the following important considerations when configuring and running tests:
+### Notes for Running Tests
 
-#### 1. Functional Testing Notes
+- **Functional Testing (AI mode)**: Two-stage planning. Stage 1 (`filter_model`) prioritizes elements for efficient analysis; Stage 2 (primary model) generates comprehensive test cases. The agent may reflect and re-plan based on page state and coverage, so executed case count can differ from the initial request. When `dynamic_step_generation` is enabled, new UI elements (e.g., dropdowns, modals) detected via DOM diff will trigger additional generated steps.
+- **Functional Testing (default mode)**: Focuses on whether UI interactions (clicks, navigations) complete successfully.
+- **User Experience Testing**: Multi-modal analysis (screenshots + DOM structure + text) to assess visual quality, detect typos/grammar issues, and validate layout rendering. Model outputs include best-practice suggestions for optimization.
 
-- **AI Mode**: Uses a 2-stage planning architecture where Stage 1 (filter_model) prioritizes elements for efficient analysis, and Stage 2 (primary model) generates comprehensive test cases. The system may reflect and re-plan based on actual page conditions and test coverage, which may result in the final number of executed test cases differing from the initial configuration to ensure effectiveness. When `dynamic_step_generation` is enabled, the system automatically generates additional test steps for newly appeared UI elements (e.g., dropdowns, modals) detected through DOM diff analysis.
 
-- **Default Mode**: The `default` mode focuses on whether UI interactions (e.g., clicks and navigations) complete successfully.
+### 📖 CLI Reference
 
-#### 2. User Experience Testing Notes
+#### init - Create Configuration
 
-UX (User Experience) testing focuses on usability and user-friendliness. Uses multi-modal analysis combining screenshots, DOM structure, and text content to evaluate visual quality, detect typos/grammar issues, and validate layout rendering. The model output in the results provides suggestions based on best practices to guide optimization.
+```bash
+# Create config.yaml in current directory
+webqa-agent init
+
+# Create at custom path
+webqa-agent init -o myconfig.yaml
+
+# Overwrite existing file
+webqa-agent init --force
+```
+
+#### run - Execute Tests
+
+```bash
+# Auto-discover config (./config.yaml or ./config/config.yaml)
+webqa-agent run
+
+# Specify config file
+webqa-agent run -c /path/to/config.yaml
+```
+
+#### gradio - Web Interface
+
+WebQA Agent provides a visual interface powered by Gradio:
+
+```bash
+# Install Gradio
+uv add "gradio>=5.44.0"
+
+# Launch Web UI (English by default)
+webqa-agent ui
+# Access at http://localhost:7860
+
+# Launch with Chinese interface
+webqa-agent ui -l zh-CN
+
+# Optional: custom host/port and no auto-open browser
+webqa-agent ui --host 0.0.0.0 --port 9000
+```
+
 
 ### 🧠 Recommended Models
-
-The following models have been adapted and verified, and are recommended:
 
 | Model                             | Recommendation              |
 |-----------------------------------|-----------------------------|
@@ -223,23 +237,23 @@ The following models have been adapted and verified, and are recommended:
 | **doubao-seed-1-6-vision-250815** | Good web understanding, supports visual recognition |
 
 
-### View Results
+### 📊 View Results
 
-Test results will be generated in the `reports` directory. Open the HTML report within the generated folder to view results.
+Test reports are generated in the `reports/` directory. Open the HTML file to view detailed results.
 
-## Roadmap
+## 🗺️ Roadmap
 
 1. Continuous optimization of AI functional testing: Improve coverage and accuracy
-2. Functional traversal and page validation: Verify business logic correctness and data integrity
-3. Interaction and visualization: Test item visualization and local service real-time reasoning process display
+2. Functional traversal and page validation: Verify business logic correctness
+3. Interaction and visualization: Real-time reasoning process display
 4. Capability expansion: Multi-model integration and more evaluation dimensions
 
-## Acknowledgements
+## 🙏 Acknowledgements
 
 - [natbot](https://github.com/nat/natbot): Drive a browser with GPT-3
 - [Midscene.js](https://github.com/web-infra-dev/midscene/): AI Operator for Web, Android, Automation & Testing
 - [browser-use](https://github.com/browser-use/browser-use/): AI Agent for Browser control
 
-## Open Source License
+## 📄 License
 
 This project is licensed under the [Apache 2.0 License](LICENSE).
