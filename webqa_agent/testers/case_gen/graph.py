@@ -32,11 +32,7 @@ async def setup_session(state: MainGraphState) -> Dict[str, Any]:
     """Uses the provided UITester instance to start the browser session."""
     logging.debug("Setting up browser session...")
     ui_tester = state["ui_tester_instance"]
-    await ui_tester.start_session(state["url"])
-    page = await ui_tester.get_current_page()
-    action_handler = ActionHandler()
-    await action_handler.go_to_page(page, state["url"], cookies=state["cookies"])
-    # Initialize the loop counter and replan flag
+    await ui_tester.start_session(state["url"], state["cookies"])
     return {"current_test_case_index": 0, "is_replan": False, "replan_count": 0}
 
 

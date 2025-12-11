@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import base64
 import datetime
 import json
@@ -9,8 +11,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from playwright.async_api import Page
-
-from webqa_agent.browser.driver import *
 
 
 # ===== Action Context Infrastructure for Error Propagation =====
@@ -103,28 +103,14 @@ class ActionHandler:
     def __init__(self):
         self.page_data = {}
         self.page_element_buffer = {}  # page element buffer
-        self.driver = None
         self.page = None
 
-    async def initialize(self, page: Page | None = None, driver=None):
-        if page is not None:
-            self.page = page
-            if driver is not None:
-                self.driver = driver
-            return self
+    async def initialize(self, page: Page):
+        self.page = page
         return self
 
     def _get_current_page(self) -> Page:
-        """Get current active page, prioritizing driver's page reference.
-        
-        This ensures we always operate on the latest page, which is critical
-        when new pages/tabs are opened during test execution.
-        
-        Returns:
-            Page: The current active page instance
-        """
-        if self.driver:
-            return self.driver.get_page()
+        """Get current active page."""
         return self.page
 
     async def update_element_buffer(self, new_element):
@@ -133,8 +119,6 @@ class ActionHandler:
         self.page_element_buffer = new_element
 
     async def go_to_page(self, page: Page, url: str, cookies=None):
-        # if not self.driver:
-        #     self.driver = await Driver.getInstance()
         self.page = page
         if cookies:
             try:
@@ -297,7 +281,7 @@ class ActionHandler:
             bool: Whether scroll to element was successful
         """
         logging.debug(f'Start scrolling to element {element_id}')
-        
+
         # Get current active page
         page = self._get_current_page()
 
@@ -710,7 +694,7 @@ class ActionHandler:
         """
         # Get current active page
         page = self._get_current_page()
-        
+
         try:
             elapsed = 0.0
             last_height = await page.evaluate('document.body.scrollHeight')
@@ -762,7 +746,7 @@ class ActionHandler:
         """
         # Get current active page
         page = self._get_current_page()
-        
+
         # Get window scroll offset (only reflects window-level scrolling, not scroll containers)
         scroll_x = await page.evaluate('window.pageXOffset || document.documentElement.scrollLeft')
         scroll_y = await page.evaluate('window.pageYOffset || document.documentElement.scrollTop')
@@ -833,7 +817,7 @@ class ActionHandler:
         """
         # Get current active page
         page = self._get_current_page()
-        
+
         rect = None
 
         # Strategy 1: Try CSS selector for bounding_box()
@@ -1115,7 +1099,7 @@ class ActionHandler:
         """
         # Get current active page
         page = self._get_current_page()
-        
+
         try:
             elapsed = 0.0
             last_height = await page.evaluate('document.body.scrollHeight')
@@ -1167,7 +1151,7 @@ class ActionHandler:
         """
         # Get current active page
         page = self._get_current_page()
-        
+
         # Get window scroll offset (only reflects window-level scrolling, not scroll containers)
         scroll_x = await page.evaluate('window.pageXOffset || document.documentElement.scrollLeft')
         scroll_y = await page.evaluate('window.pageYOffset || document.documentElement.scrollTop')
@@ -1238,7 +1222,7 @@ class ActionHandler:
         """
         # Get current active page
         page = self._get_current_page()
-        
+
         rect = None
 
         # Strategy 1: Try CSS selector for bounding_box()
@@ -1292,7 +1276,7 @@ class ActionHandler:
     async def click(self, id) -> bool:
         # Get current active page
         page = self._get_current_page()
-        
+
         # Initialize action context for error propagation
         # Note: If ensure_element_in_viewport is called, it will set its own context
         # We only need to initialize context for click-specific failures
@@ -1471,7 +1455,7 @@ class ActionHandler:
         """
         # Get current active page
         page = self._get_current_page()
-        
+
         selector = element.get('selector')
         xpath = element.get('xpath')
         stored_x = element.get('center_x')
@@ -1508,7 +1492,7 @@ class ActionHandler:
         """
         # Get current active page
         page = self._get_current_page()
-        
+
         # Initialize action context for error propagation
         ctx = ActionContext()
         action_context_var.set(ctx)
@@ -2974,7 +2958,7 @@ class ActionHandler:
         except Exception as e:
             logging.error(f'Drag action failed: {str(e)}')
             return False
-    
+
     async def mouse_move(self, x: int | float, y: int | float) -> bool:
         """Move mouse to absolute coordinates (x, y).
 

@@ -8,7 +8,7 @@ from webqa_agent.actions.action_executor import ActionExecutor
 from webqa_agent.actions.action_handler import ActionHandler
 from webqa_agent.actions.action_types import is_page_agnostic_action, ActionType, get_page_agnostic_keywords
 from webqa_agent.browser.check import ConsoleCheck, NetworkCheck
-from webqa_agent.browser.session import BrowserSession
+from webqa_agent.browser import BrowserSession
 from webqa_agent.crawler.deep_crawler import DeepCrawler, ElementKey
 from webqa_agent.llm.llm_api import LLMAPI
 from webqa_agent.llm.prompt import LLMPrompt
@@ -33,8 +33,6 @@ class UITester:
         self.is_initialized = False
         self.test_results = []
 
-        self.driver = None
-
         # Data storage related properties
         self.current_test_name: Optional[str] = None
         self.current_case_data: Optional[Dict[str, Any]] = None
@@ -57,30 +55,24 @@ class UITester:
         if not self.browser_session:
             raise ValueError("Browser session is required")
 
-        self.page = self.browser_session.get_page()
-        self.driver = self.browser_session.driver
+        self.page = self.browser_session.page
 
-        await self._actions.initialize(page=self.page, driver=self.browser_session.driver)
+        await self._actions.initialize(page=self.page)
         await self._action_executor.initialize()
         await self.llm.initialize()
 
         self.is_initialized = True
         return self
 
-    async def start_session(self, url: str):
+    async def start_session(self, url: str, cookies=None):
         if not self.is_initialized:
             raise RuntimeError("ParallelUITester not initialized")
 
-        # # Simplify URL validation
-        # if not url.startswith(("http://", "https://", "file://")):
-        #     url = f"https://{url}"
-
-        # Page navigation
-        # await self._actions.go_to_page(self.page, url, cookies=cookies)
-        await asyncio.sleep(2)  # Wait for page to load
-
         self.network_check = NetworkCheck(self.page)
         self.console_check = ConsoleCheck(self.page)
+
+        await self._actions.go_to_page(self.page, url, cookies=cookies)
+        await asyncio.sleep(2)  # Wait for page to load
 
     async def action(self, test_step: str, file_path: str = None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Execute AI-driven test instructions and return (step_dict, summary_dict)
@@ -99,7 +91,7 @@ class UITester:
 
         try:
             logging.debug(f"Executing AI instruction: {test_step}")
-            self.page = self.driver.get_page()
+            self.page = self.browser_session.page
 
             # Pre-check if operation is page-agnostic before crawling
             # This allows page-agnostic operations to execute on PDF/plugin pages
@@ -202,7 +194,7 @@ class UITester:
 
             # Re-fetch page after execution
             # This ensures DOM diff is computed on the correct page
-            self.page = self.driver.get_page()
+            self.page = self.browser_session.page
             dp.page = self.page
             curr = await dp.crawl(highlight=True, viewport_only=False, cache_dom=True)
             diff_elems = curr.diff_dict([str(ElementKey.TAG_NAME), str(ElementKey.INNER_TEXT), str(ElementKey.ATTRIBUTES), str(ElementKey.CENTER_X), str(ElementKey.CENTER_Y)])
@@ -504,7 +496,7 @@ class UITester:
                     page_structure = saved_page_structure
                     logging.debug(f"Using saved action-time context: {page_url}")
                 else:
-                    page_url, page_title = await self.driver.get_url()
+                    page_url, page_title = await self.browser_session.get_url()
                     dp = DeepCrawler(self.page)
                     await dp.crawl(highlight=False, filter_text=True, viewport_only=False)
                     page_structure = dp.get_text()
@@ -552,7 +544,7 @@ class UITester:
                 logging.debug("Using fallback mode - capturing new screenshot")
 
                 # Get page info
-                page_url, page_title = await self.driver.get_url()
+                page_url, page_title = await self.browser_session.get_url()
                 logging.debug(f"verification page url: {page_url}, title: {page_title}")
 
                 # Crawl current page
@@ -851,7 +843,7 @@ class UITester:
                     message = "Legacy boolean result"
 
                 # Wait for page to stabilize
-                self.page = self.driver.get_page()
+                self.page = self.browser_session.page
                 try:
                     await self.page.wait_for_load_state("networkidle", timeout=10000)
                     await asyncio.sleep(1.5)
@@ -885,7 +877,7 @@ class UITester:
                     )
                     # Capture page context at failure time (for time-consistent verification)
                     try:
-                        after_action_url, after_action_title = await self.driver.get_url()
+                        after_action_url, after_action_title = await self.browser_session.get_url()
                     except Exception:
                         after_action_url, after_action_title = "", ""
                     # Add plan-level screenshots and context to failure result
@@ -911,7 +903,7 @@ class UITester:
 
                 # Capture page context at exception time (for time-consistent verification)
                 try:
-                    after_action_url, after_action_title = await self.driver.get_url()
+                    after_action_url, after_action_title = await self.browser_session.get_url()
                 except Exception:
                     after_action_url, after_action_title = "", ""
 
@@ -937,7 +929,7 @@ class UITester:
 
         # Capture page context at action completion time (for time-consistent verification)
         try:
-            after_action_url, after_action_title = await self.driver.get_url()
+            after_action_url, after_action_title = await self.browser_session.get_url()
             dp_after = DeepCrawler(self.page)
             await dp_after.crawl(highlight=False, filter_text=True, viewport_only=False)
             after_action_page_structure = dp_after.get_text()[:5000]  # 限制长度避免内存开销
@@ -1177,7 +1169,7 @@ class UITester:
         self.step_counter = 0
 
     async def get_current_page(self):
-        return self.driver.get_page()
+        return self.browser_session.page
 
     def _is_instruction_page_agnostic(self, test_step: str) -> bool:
         """Check if instruction likely represents a page-agnostic operation.

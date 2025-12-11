@@ -697,7 +697,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             if case.get("reset_session", False) and _is_navigation_instruction(instruction_to_execute):
                 # Check if already on target page
                 try:
-                    page = ui_tester_instance.driver.get_page()
+                    page = ui_tester_instance.browser_session.page
                     current_url = page.url
                     target_url = case.get("url", "")
 
@@ -864,7 +864,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         formatted_instruction = prompt_template.format(instruction=instruction_to_execute)
 
         # --- Multi-Modal Context Generation ---
-        page = ui_tester_instance.driver.get_page()
+        page = ui_tester_instance.browser_session.page
         dp = DeepCrawler(page)
         await dp.crawl(highlight=True, viewport_only=True)
         screenshot = await ui_tester_instance._actions.b64_page_screenshot(
