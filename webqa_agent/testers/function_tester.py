@@ -72,7 +72,6 @@ class UITester:
         self.console_check = ConsoleCheck(self.page)
 
         await self._actions.go_to_page(self.page, url, cookies=cookies)
-        await asyncio.sleep(2)  # Wait for page to load
 
     async def action(self, test_step: str, file_path: str = None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Execute AI-driven test instructions and return (step_dict, summary_dict)
