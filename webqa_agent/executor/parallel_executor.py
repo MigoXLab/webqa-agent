@@ -3,10 +3,11 @@ import logging
 import os
 from typing import Dict, List, Optional
 
-# Session ID constants
+# Session ID constants - for tests that don't need browser sessions
 SECURITY_TEST_NO_SESSION_ID = "security_test_no_session"
+PERFORMANCE_TEST_NO_SESSION_ID = "performance_test_no_session"
 
-from webqa_agent.browser.session import BrowserSessionManager
+from webqa_agent.browser import BrowserSessionPool
 from webqa_agent.data import ParallelTestSession, TestConfiguration, TestResult, TestStatus, TestType
 from webqa_agent.data.test_structures import get_category_for_test_type
 from webqa_agent.executor.result_aggregator import ResultAggregator
@@ -25,7 +26,7 @@ class ParallelTestExecutor:
 
     def __init__(self, max_concurrent_tests: int = 4):
         self.max_concurrent_tests = max_concurrent_tests
-        self.session_manager = BrowserSessionManager()
+        self.session_pool: Optional[BrowserSessionPool] = None
 
         # Test runners mapping
         self.test_runners = {
@@ -53,6 +54,17 @@ class ParallelTestExecutor:
         """
         logging.debug(f"Starting parallel test execution for session: {test_session.session_id}")
         test_session.start_session()
+
+        # Initialize browser session pool
+        browser_config = (
+            test_session.test_configurations[0].browser_config
+            if test_session.test_configurations else {}
+        )
+        self.session_pool = BrowserSessionPool(
+            pool_size=self.max_concurrent_tests,
+            browser_config=browser_config
+        )
+        await self.session_pool.initialize()
 
         try:
             # Get enabled tests
@@ -174,6 +186,9 @@ class ParallelTestExecutor:
 
             logging.debug(f"Starting test: {test_config.test_name} ({test_config.test_type.value})")
 
+            session = None
+            browser_failed = False
+
             try:
                 if test_config.test_type in [
                     TestType.UI_AGENT_LANGGRAPH,
@@ -183,8 +198,8 @@ class ParallelTestExecutor:
                     # TestType.WEB_BASIC_CHECK,
                 ]:
 
-                    # Create isolated browser session
-                    session = await self.session_manager.create_session(test_config.browser_config)
+                    # Acquire browser session from pool
+                    session = await self.session_pool.acquire()
                     test_context.session_id = session.session_id
 
                     # Navigate to target URL
@@ -197,8 +212,14 @@ class ParallelTestExecutor:
                     session = None
                     test_context.session_id = SECURITY_TEST_NO_SESSION_ID
 
+                elif test_config.test_type == TestType.PERFORMANCE:
+                    # Performance tests don't need browser sessions (Lighthouse manages its own Chrome instance)
+                    session = None
+                    test_context.session_id = PERFORMANCE_TEST_NO_SESSION_ID
+
                 else:
-                    session = await self.session_manager.browser_session(test_config.browser_config)
+                    # Fallback for any other test types
+                    session = await self.session_pool.acquire()
                     test_context.session_id = session.session_id
 
                 # Get appropriate test runner
@@ -227,6 +248,7 @@ class ParallelTestExecutor:
                 return result
 
             except Exception as e:
+                browser_failed = True
                 error_msg = f"Test execution failed: {str(e)}"
                 test_context.complete_execution(success=False, error_message=error_msg)
 
@@ -265,9 +287,9 @@ class ParallelTestExecutor:
                 return cancelled_result
 
             finally:
-                # Clean up browser session
-                if test_context.session_id and test_context.session_id != SECURITY_TEST_NO_SESSION_ID:
-                    await self.session_manager.close_session(test_context.session_id)
+                # Release browser session back to pool
+                if session is not None:
+                    await self.session_pool.release(session, failed=browser_failed)
 
     def _resolve_test_dependencies(self, tests: List[TestConfiguration]) -> List[List[TestConfiguration]]:
         """Resolve test dependencies and return execution batches.
@@ -308,7 +330,8 @@ class ParallelTestExecutor:
         for test_id in list(self.running_tests.keys()):
             await self.cancel_test(test_id)
 
-        await self.session_manager.close_all_sessions()
+        if self.session_pool:
+            await self.session_pool.close_all()
         logging.debug("All tests cancelled")
 
     def get_running_tests(self) -> List[str]:
@@ -330,7 +353,8 @@ class ParallelTestExecutor:
         across normal completion, cancellation, and error paths.
         """
         # Ensure all browser sessions are closed
-        await self.session_manager.close_all_sessions()
+        if self.session_pool:
+            await self.session_pool.close_all()
 
         # Aggregate results
         aggregated_results = await self.result_aggregator.aggregate_results(test_session)
