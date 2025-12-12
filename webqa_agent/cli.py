@@ -4,7 +4,6 @@
 import argparse
 import asyncio
 import os
-import shutil
 import subprocess
 import sys
 import traceback
@@ -511,8 +510,8 @@ def cmd_ui(args):
         from packaging import version
         required = "5.44.0"
         if version.parse(gradio.__version__) <= version.parse(required):
-            print(f"❌ Gradio version {gradio.__version__} detected, need > {required}")
-            print(f"Install/upgrade: uv add \"gradio>{required}\"")
+            print(f"❌ Gradio version {gradio.__version__} detected, need >= {required}")
+            print(f"Install/upgrade: uv add \"gradio>={required}\"")
             sys.exit(1)
     except ImportError:
         pass
@@ -586,7 +585,7 @@ Examples:
   webqa-agent run                     Run tests with auto-discovered config
   webqa-agent run -c config.yaml      Run tests with specified config
 
-Documentation: https://github.com/anthropics/webqa-agent
+Documentation: https://github.com/MigoXLab/webqa-agent
 """
     )
     

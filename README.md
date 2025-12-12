@@ -68,11 +68,13 @@ Try Demo: [🤗Hugging Face](https://huggingface.co/spaces/mmmay0722/WebQA-Agent
 
 ## Quick Start
 
-### 🏎️ Recommended (uv)
+### 🏎️ Recommended [uv](https://github.com/astral-sh/uv) (Python>=3.11):
+
 ```bash
 # 1) Create a project and install the package
 uv init my-webqa && cd my-webqa
 uv add webqa-agent
+uv sync
 
 # 2) Install browser (required)
 uv run playwright install chromium
@@ -91,8 +93,7 @@ uv run webqa-agent run
 
 ### 🐳 Docker (one-liner)
 
-Before starting, ensure Docker is installed. If not, please refer to the official installation guide: [Docker Installation 
-Guide](https://docs.docker.com/get-started/get-docker/).
+Before starting, ensure Docker is installed. If not, please refer to the official installation guide: [Docker Installation Guide](https://docs.docker.com/get-started/get-docker/).
 
 Recommended versions: Docker >= 24.0, Docker Compose >= 2.32.
 
@@ -207,7 +208,7 @@ webqa-agent run
 webqa-agent run -c /path/to/config.yaml
 ```
 
-#### gradio - Web Interface
+#### ui - Web Interface
 
 WebQA Agent provides a visual interface powered by Gradio:
 

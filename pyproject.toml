@@ -8,7 +8,7 @@ version = "0.2.0"
 description = "WebQA Agent is an autonomous web browser agent that audits performance, functionality & UX for engineers and vibe-coding creators."
 readme = "README.md"
 requires-python = ">=3.11"
-license = "MIT"
+license = "Apache-2.0"
 authors = [
     {name = "MigoXLab"}
 ]
@@ -23,7 +23,6 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: Browsers",
 ]
 dependencies = [
-    "gradio>=5.44.0",
     "html2text>=2025.4.15",
     "jinja2>=3.1.6",
     "langchain==0.3.26",

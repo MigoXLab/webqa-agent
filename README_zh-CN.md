@@ -200,7 +200,7 @@ webqa-agent run
 webqa-agent run -c /path/to/config.yaml
 ```
 
-#### gradio - 可视化界面
+#### ui - 可视化界面
 
 WebQA Agent 提供了基于 Gradio 的可视化界面：
 
