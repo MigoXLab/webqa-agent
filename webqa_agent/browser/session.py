@@ -265,11 +265,12 @@ class BrowserSessionPool:
         )
         await new_s.initialize()
 
-        try:
-            idx = self._sessions.index(session)
-            self._sessions[idx] = new_s
-        except ValueError:
-            self._sessions.append(new_s)
+        async with self._creation_lock:
+            try:
+                idx = self._sessions.index(session)
+                self._sessions[idx] = new_s
+            except ValueError:
+                self._sessions.append(new_s)
 
         return new_s
 
