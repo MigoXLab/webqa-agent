@@ -268,6 +268,7 @@ class ParallelTestExecutor:
 
             except asyncio.CancelledError:
                 # The task was cancelled (e.g., by cancel_test / KeyboardInterrupt).
+                browser_failed = True
                 logging.warning(f"Test cancelled: {test_config.test_name}")
 
                 test_context.complete_execution(success=False, error_message="Test was cancelled")
