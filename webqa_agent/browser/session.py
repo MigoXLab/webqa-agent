@@ -140,7 +140,7 @@ class _BrowserSession:
         if cookies:
             try:
                 cookie_list = json.loads(cookies) if isinstance(cookies, str) else cookies
-                cookie_list = [cookies] if isinstance(cookies, dict) else list(cookie_list)
+                cookie_list = [cookie_list] if isinstance(cookie_list, dict) else list(cookie_list)
                 await self._context.add_cookies(cookie_list)
             except Exception as e:
                 logging.error(f"Failed to add cookies: {e}")
