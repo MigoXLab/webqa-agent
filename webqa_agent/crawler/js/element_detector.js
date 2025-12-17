@@ -1407,7 +1407,31 @@
                 window.addEventListener('scroll', () => renderHighlights(tree), {passive: true, capture: true});
                 window.addEventListener('resize', () => renderHighlights(tree));
             }
-            return [tree, highlightIdMap];
+
+            // Remove DOM node references to make the result serializable
+            function removeNodeReferences(node) {
+                if (!node) return null;
+                const result = {};
+                if (node.node) {
+                    const {node: domNode, ...serializableInfo} = node.node;
+                    result.node = serializableInfo;
+                }
+                if (node.children) {
+                    result.children = node.children.map(removeNodeReferences).filter(Boolean);
+                }
+                return result;
+            }
+
+            const serializableTree = removeNodeReferences(tree);
+
+            // Clean highlightIdMap - remove 'node' property from each entry
+            const serializableHighlightIdMap = {};
+            for (const [key, value] of Object.entries(highlightIdMap)) {
+                const {node: domNode, ...serializableInfo} = value;
+                serializableHighlightIdMap[key] = serializableInfo;
+            }
+
+            return [serializableTree, serializableHighlightIdMap];
         }
     }
 )();

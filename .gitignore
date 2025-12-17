@@ -147,6 +147,10 @@ venv.bak/
 node_modules/
 package-lock*.json
 
+uv.lock
+temp
+tmp
+
 # Spyder project settings
 .spyderproject
 .spyproject
@@ -230,5 +234,5 @@ test_cases_*.json
 tests/*test_results/*
 
 #config
-.env
 config/config*.yaml
+test*.yaml
