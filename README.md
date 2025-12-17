@@ -211,17 +211,6 @@ Please note the following important considerations when configuring and running 
 
 UX (User Experience) testing focuses on usability and user-friendliness. Uses multi-modal analysis combining screenshots, DOM structure, and text content to evaluate visual quality, detect typos/grammar issues, and validate layout rendering. The model output in the results provides suggestions based on best practices to guide optimization.
 
-### 🧠 Recommended Models
-
-The following models have been adapted and verified, and are recommended:
-
-| Model                             | Recommendation              |
-|-----------------------------------|-----------------------------|
-| **gpt-4.1-2025-04-14**            | High accuracy and reliability |
-| **gpt-4.1-mini-2025-04-14**       | Economical and practical |
-| **qwen3-vl-235b-a22b-instruct**   | Open-source model, preferred for on-premise |
-| **doubao-seed-1-6-vision-250815** | Good web understanding, supports visual recognition |
-
 
 ### View Results
 
