@@ -5,15 +5,15 @@ def get_execute_system_prompt(case: dict) -> str:
     """Generate detailed system prompt for execution agent."""
 
     # Core fields (original)
-    objective = case.get("objective", "Not specified")
-    success_criteria = case.get("success_criteria", ["Not specified"])
+    objective = case.get('objective', 'Not specified')
+    success_criteria = case.get('success_criteria', ['Not specified'])
 
     # Enhanced fields (new)
-    priority = case.get("priority", "Medium")
-    business_context = case.get("business_context", "")
-    test_category = case.get("test_category", "Functional_General")
-    domain_specific_rules = case.get("domain_specific_rules", "")
-    test_data_requirements = case.get("test_data_requirements", "")
+    priority = case.get('priority', 'Medium')
+    business_context = case.get('business_context', '')
+    test_category = case.get('test_category', 'Functional_General')
+    domain_specific_rules = case.get('domain_specific_rules', '')
+    test_data_requirements = case.get('test_data_requirements', '')
 
     system_prompt = f"""You are an intelligent UI test execution agent specialized in web application testing. Your role is to execute individual test cases by performing UI interactions and validations in a systematic, reliable manner following established QA best practices.
 
@@ -154,7 +154,7 @@ When encountering a complex instruction:
 2. **Wait for Completion**: Report result
 3. **Second Action**: Execute `execute_ui_action(action='type', target='password field', value='password123')`
 4. **Wait for Completion**: Report result
-5. **Third Action**: Execute `execute_ui_action(action='click', target='login button')`, 
+5. **Third Action**: Execute `execute_ui_action(action='click', target='login button')`,
 6. **Final Report**: Summarize completion of all actions
 
 ### Important Notes:
@@ -206,7 +206,7 @@ When encountering a complex instruction:
 4. **Resume test plan** only after successful error resolution
 
 ### 3. Objective Achievement Detection (THIRD PRIORITY)
-**Critical Rule**: After completing each step, evaluate whether the test objective has been fully achieved. 
+**Critical Rule**: After completing each step, evaluate whether the test objective has been fully achieved.
 If the objective is complete and remaining steps would be redundant, signal early completion.
 
 **Objective Achievement Criteria**:
@@ -233,7 +233,7 @@ When you determine the test objective is achieved, output this exact signal:
   - `execute_ui_action` for "Action:" steps (user interactions)
   - `execute_ui_assertion` for "Assert:" steps (functional verification: element states, data values, behavior validation)
   - `execute_ux_verify` for "UX Verify:" steps (visual quality: typos, layout, rendering, styling)
-- **Critical Tool Selection Rule**: 
+- **Critical Tool Selection Rule**:
   - If verifying WHAT works (functionality, logic, data) → use `execute_ui_assertion`
   - If verifying HOW it looks (visual quality, text accuracy, layout) → use `execute_ux_verify`
 - Maintain clear action descriptions for test documentation
@@ -309,11 +309,12 @@ When encountering critical failures, include structured tags: **[CRITICAL_ERROR:
 
 ### Critical Error Categories
 - **ELEMENT_NOT_FOUND**: Target element cannot be located, accessed, or interacted with
-- **NAVIGATION_FAILED**: Page navigation, loading, or routing failures  
+- **NAVIGATION_FAILED**: Page navigation, loading, or routing failures
 - **PERMISSION_DENIED**: Access, authorization, or security restriction issues
 - **PAGE_CRASHED**: Browser crashes, page errors, or unrecoverable page states
 - **NETWORK_ERROR**: Network connectivity, timeout, or server communication issues
 - **SESSION_EXPIRED**: Authentication session, login, or credential issues
+- **UNSUPPORTED_PAGE**: Page type cannot be tested (PDF, plugin pages, binary content)
 
 ### Critical Error Examples
 **Element Access Failure**:
@@ -513,55 +514,49 @@ def get_category_guidelines(test_category: str) -> str:
     """Generate specific execution guidelines based on test category."""
 
     category_guidelines = {
-        "Security_Functional": """
+        'Security_Functional': """
 **Security Testing Guidelines**:
 - Prioritize data protection and privacy considerations
 - Validate authentication and authorization mechanisms
 - Test for common security vulnerabilities (XSS, CSRF, injection)
 - Verify secure data transmission and storage
 - Pay special attention to session management and timeout handling""",
-
-        "Ecommerce_Functional": """
+        'Ecommerce_Functional': """
 **E-commerce Testing Guidelines**:
 - Focus on shopping cart and checkout process integrity
 - Validate pricing calculations and discount applications
 - Test payment processing with appropriate test data
 - Verify order confirmation and fulfillment workflows
 - Ensure inventory and stock availability handling""",
-
-        "Banking_Security": """
+        'Banking_Security': """
 **Banking Security Testing Guidelines**:
 - Adhere to strict financial data protection standards
 - Validate transaction integrity and audit trails
 - Test multi-factor authentication and security questions
 - Verify account balance and transaction accuracy
 - Comply with financial regulations and compliance requirements""",
-
-        "Healthcare_Compliance": """
+        'Healthcare_Compliance': """
 **Healthcare Compliance Testing Guidelines**:
 - Follow HIPAA and patient privacy protection guidelines
 - Validate medical data accuracy and confidentiality
 - Test patient record access controls and audit logs
 - Verify emergency access and data breach procedures
 - Ensure compliance with healthcare industry standards""",
-
-        "Functional_Data": """
+        'Functional_Data': """
 **Data Management Testing Guidelines**:
 - Validate CRUD operations and data consistency
 - Test data integrity constraints and validation rules
 - Verify backup and recovery procedures
 - Check data migration and synchronization processes
 - Ensure proper handling of large datasets""",
-
-        "Functional_User_Interaction": """
+        'Functional_User_Interaction': """
 **User Interaction Testing Guidelines**:
 - Focus on user experience and interface responsiveness
 - Test accessibility features and keyboard navigation
 - Validate user input validation and feedback mechanisms
 - Verify consistent behavior across different user roles
 - Test for internationalization and localization support""",
-
-        "Functional_General": """
+        'Functional_General': """
 **General Functional Testing Guidelines**:
 - Follow standard functional testing procedures
 - Validate core business logic and workflow integrity
@@ -570,22 +565,22 @@ def get_category_guidelines(test_category: str) -> str:
 - Ensure cross-browser compatibility""",
     }
 
-    return category_guidelines.get(test_category, category_guidelines["Functional_General"])
+    return category_guidelines.get(test_category, category_guidelines['Functional_General'])
 
 
 def get_business_context_guidance(business_context: str, domain_specific_rules: str) -> str:
     """Generate execution guidance based on business context."""
 
     if not business_context.strip() and not domain_specific_rules.strip():
-        return "**Standard Business Context**: Apply general business workflow understanding and common user behavior patterns."
+        return '**Standard Business Context**: Apply general business workflow understanding and common user behavior patterns.'
 
-    guidance = "**Business Context Guidance**:\n"
+    guidance = '**Business Context Guidance**:\n'
 
     if business_context.strip():
-        guidance += f"- **Business Process**: {business_context}\n"
+        guidance += f'- **Business Process**: {business_context}\n'
 
     if domain_specific_rules.strip():
-        guidance += f"- **Domain Rules**: {domain_specific_rules}\n"
+        guidance += f'- **Domain Rules**: {domain_specific_rules}\n'
 
     guidance += """
 - Apply industry-specific user behavior patterns
@@ -600,7 +595,7 @@ def get_test_data_guidance(test_data_requirements: str) -> str:
     """Generate selection strategy based on test data requirements."""
 
     if not test_data_requirements.strip():
-        return "**Test Data Strategy**: Use realistic, appropriate test data that matches field requirements and business context."
+        return '**Test Data Strategy**: Use realistic, appropriate test data that matches field requirements and business context.'
 
     return f"""
 **Test Data Requirements**: {test_data_requirements}
