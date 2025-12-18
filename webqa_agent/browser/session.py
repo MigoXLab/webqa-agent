@@ -108,7 +108,7 @@ class _BrowserSession:
             # Auto-handle browser dialogs (alert/confirm/prompt) to prevent test blocking
             async def _handle_dialog(dialog):
                 dialog_type = dialog.type
-                message = dialog.message[:50] if dialog.message else ''
+                message = dialog.message[:200] if dialog.message else ''
                 logging.info(f'[DIALOG] Auto-handled {dialog_type}: {message}')
                 await dialog.accept()
 
