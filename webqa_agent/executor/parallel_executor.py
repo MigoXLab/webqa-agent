@@ -67,7 +67,7 @@ class ParallelTestExecutor:
         # Configure tab interception based on test type
         for test_config in test_session.test_configurations:
             if test_config.test_type == TestType.BASIC_TEST:
-                self.session_pool._disable_tab_interception = True
+                self.session_pool.disable_tab_interception = True
                 logging.info('🔓 Tab interception disabled for BASIC_TEST mode')
                 break
 
