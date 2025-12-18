@@ -35,7 +35,7 @@ class _BrowserSession:
             *,
             session_id: str = None,
             browser_config: Dict[str, Any] = None,
-            _disable_tab_interception: bool = False,
+            disable_tab_interception: bool = False,
             _token: Optional[_SessionToken] = None,
     ):
         # Hard gate: only pool can create session
@@ -46,7 +46,7 @@ class _BrowserSession:
 
         self.session_id = session_id or str(uuid.uuid4())
         self.browser_config = {**DEFAULT_CONFIG, **(browser_config or {})}
-        self._disable_tab_interception = _disable_tab_interception
+        self.disable_tab_interception = disable_tab_interception
 
         self._browser: Optional[Browser] = None
         self._context: Optional[BrowserContext] = None
@@ -98,7 +98,7 @@ class _BrowserSession:
             self._page = await self._context.new_page()
 
             # keep single-tab (conditionally based on test type)
-            if not self._disable_tab_interception:
+            if not self.disable_tab_interception:
                 self._context.on('page', self._close_unexpected_page)
                 self._page.on('popup', self._close_unexpected_page)
                 logging.debug(f'Session {self.session_id} initialized - Tab interception ENABLED')
@@ -213,7 +213,7 @@ class BrowserSessionPool:
 
         self.pool_size = pool_size
         self.browser_config = browser_config or {}
-        self._disable_tab_interception = False  # Control tab interception behavior
+        self.disable_tab_interception = False  # Control tab interception behavior
 
         self._available_sessions: asyncio.Queue[_BrowserSession] = asyncio.Queue(maxsize=pool_size)
         self._sessions: List[_BrowserSession] = []
@@ -237,7 +237,7 @@ class BrowserSessionPool:
         s = _BrowserSession(
             session_id=f'pool_session_{self._session_counter}',
             browser_config=self.browser_config,
-            _disable_tab_interception=self._disable_tab_interception,
+            disable_tab_interception=self.disable_tab_interception,
             _token=_POOL_TOKEN,
         )
         self._session_counter += 1
@@ -285,7 +285,7 @@ class BrowserSessionPool:
         new_s = _BrowserSession(
             session_id=session_id,
             browser_config=self.browser_config,
-            _disable_tab_interception=self._disable_tab_interception,
+            disable_tab_interception=self.disable_tab_interception,
             _token=_POOL_TOKEN,
         )
         await new_s.initialize()
