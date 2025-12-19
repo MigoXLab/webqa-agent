@@ -232,6 +232,8 @@ output/
 test.py
 test_cases_*.json
 tests/*test_results/*
+tests/data
+tests/file
 
 #config
 config/config*.yaml

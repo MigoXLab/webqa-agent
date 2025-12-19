@@ -70,10 +70,10 @@ class ScrollHandler:
 
         try:
             containers = await self.page.evaluate(scrollable_containers_script)
-            logging.debug(f"Found {len(containers)} scrollable containers")
+            logging.debug(f'Found {len(containers)} scrollable containers')
             return containers
         except Exception as e:
-            logging.error(f"Error detecting scrollable containers: {e}")
+            logging.error(f'Error detecting scrollable containers: {e}')
             return []
 
     async def can_global_scroll(self):
@@ -105,25 +105,25 @@ class ScrollHandler:
 
         try:
             scroll_info = await self.page.evaluate(can_scroll_script)
-            logging.debug(f"Global scroll info: {scroll_info}")
+            logging.debug(f'Global scroll info: {scroll_info}')
             return scroll_info
         except Exception as e:
-            logging.error(f"Error checking global scroll capability: {e}")
-            return {"canScroll": False, "documentHeight": 0, "windowHeight": 0, "currentScrollY": 0, "maxScrollY": 0}
+            logging.error(f'Error checking global scroll capability: {e}')
+            return {'canScroll': False, 'documentHeight': 0, 'windowHeight': 0, 'currentScrollY': 0, 'maxScrollY': 0}
 
-    async def scroll_global(self, max_scrolls: int = 10, capture_screenshots: bool = True, page_identifier: str = ""):
-        logging.debug("Executing global page scrolling")
+    async def scroll_global(self, max_scrolls: int = 10, capture_screenshots: bool = True, page_identifier: str = ''):
+        logging.debug('Executing global page scrolling')
 
-        viewport_height = await self.page.evaluate("window.innerHeight")
+        viewport_height = await self.page.evaluate('window.innerHeight')
         screenshot_image_list = []
 
         async def capture_viewport(screenshot_counter=0):
             if capture_screenshots:
-                processed_filename = f"{page_identifier}_global_viewport_{screenshot_counter}"
+                processed_filename = f'{page_identifier}_global_viewport_{screenshot_counter}'
 
                 screenshot_base64 = await self._action_handler.b64_page_screenshot(
                     file_name=processed_filename,
-                    context="scroll"
+                    context='scroll'
                 )
 
                 if screenshot_base64:
@@ -133,17 +133,17 @@ class ScrollHandler:
         await capture_viewport(scroll_count)
 
         while scroll_count < max_scrolls:
-            current_scroll_y = await self.page.evaluate("window.scrollY")
-            document_height = await self.page.evaluate("document.documentElement.scrollHeight")
+            current_scroll_y = await self.page.evaluate('window.scrollY')
+            document_height = await self.page.evaluate('document.documentElement.scrollHeight')
 
             if current_scroll_y + viewport_height >= document_height:
-                logging.debug("Reached bottom of the page.")
+                logging.debug('Reached bottom of the page.')
                 break
 
-            await self.page.evaluate(f"window.scrollBy(0, {viewport_height})")
+            await self.page.evaluate(f'window.scrollBy(0, {viewport_height})')
             await asyncio.sleep(2)
             scroll_count += 1
-            logging.info(f"Global scrolling down... count: {scroll_count}")
+            logging.info(f'Global scrolling down... count: {scroll_count}')
             await capture_viewport(scroll_count)
 
         return screenshot_image_list
@@ -153,9 +153,9 @@ class ScrollHandler:
         container_selector: str,
         max_scrolls: int = 10,
         capture_screenshots: bool = True,
-        page_identifier: str = "",
+        page_identifier: str = '',
     ):
-        logging.debug(f"Executing container scrolling for: {container_selector}")
+        logging.debug(f'Executing container scrolling for: {container_selector}')
 
         safe_selector = self._escape_selector(container_selector)
         if safe_selector != container_selector:
@@ -165,11 +165,11 @@ class ScrollHandler:
 
         async def capture_viewport(screenshot_counter=0):
             if capture_screenshots:
-                processed_filename = f"{page_identifier}_container_viewport_{screenshot_counter}"
+                processed_filename = f'{page_identifier}_container_viewport_{screenshot_counter}'
 
                 screenshot_base64 = await self._action_handler.b64_page_screenshot(
                     file_name=processed_filename,
-                    context="scroll"
+                    context='scroll'
                 )
 
                 if screenshot_base64:
@@ -189,7 +189,7 @@ class ScrollHandler:
             """
             )
         except Exception as e:
-            logging.error(f"Error checking container existence: {e}")
+            logging.error(f'Error checking container existence: {e}')
             return screenshot_image_list
 
         if not container_exists:
@@ -223,19 +223,19 @@ class ScrollHandler:
                 """
                 )
             except Exception as e:
-                logging.error(f"Error getting scroll info: {e}")
+                logging.error(f'Error getting scroll info: {e}')
                 break
 
-            if not scroll_info or not scroll_info["canScroll"]:
-                logging.debug("Container cannot scroll or reached bottom")
+            if not scroll_info or not scroll_info['canScroll']:
+                logging.debug('Container cannot scroll or reached bottom')
                 break
 
-            if scroll_info["scrollTop"] + scroll_info["clientHeight"] >= scroll_info["scrollHeight"]:
-                logging.debug("Reached bottom of the container")
+            if scroll_info['scrollTop'] + scroll_info['clientHeight'] >= scroll_info['scrollHeight']:
+                logging.debug('Reached bottom of the container')
                 break
 
             # scroll container
-            scroll_amount = scroll_info["clientHeight"]
+            scroll_amount = scroll_info['clientHeight']
             try:
                 await self.page.evaluate(
                     f"""
@@ -252,35 +252,35 @@ class ScrollHandler:
                 """
                 )
             except Exception as e:
-                logging.error(f"Error scrolling container: {e}")
+                logging.error(f'Error scrolling container: {e}')
                 break
 
             await asyncio.sleep(2)
             scroll_count += 1
-            logging.info(f"Container scrolling down... count: {scroll_count}")
+            logging.info(f'Container scrolling down... count: {scroll_count}')
             await capture_viewport(scroll_count)
 
         return screenshot_image_list
 
     def _safe_selector(self, element_info):
-        if element_info.get("id") and element_info["id"].strip():
-            element_id = element_info["id"].strip()
-            if element_id and not any(c in element_id for c in [" ", '"', "'", "\\", "/"]):
-                return f"#{element_id}"
+        if element_info.get('id') and element_info['id'].strip():
+            element_id = element_info['id'].strip()
+            if element_id and not any(c in element_id for c in [' ', '"', "'", '\\', '/']):
+                return f'#{element_id}'
 
-        if element_info.get("className") and element_info["className"].strip():
-            class_names = element_info["className"].strip().split()
+        if element_info.get('className') and element_info['className'].strip():
+            class_names = element_info['className'].strip().split()
             for class_name in class_names:
-                if class_name and all(c.isalnum() or c in ["-", "_"] for c in class_name):
-                    return f".{class_name}"
+                if class_name and all(c.isalnum() or c in ['-', '_'] for c in class_name):
+                    return f'.{class_name}'
 
-        tag_name = element_info.get("tagName", "div").lower()
+        tag_name = element_info.get('tagName', 'div').lower()
         return tag_name
 
     def _escape_selector(self, selector):
 
-        if any(c in selector for c in ['"', "'", "\\", "/"]):
-            return "div"
+        if any(c in selector for c in ['"', "'", '\\', '/']):
+            return 'div'
         return selector
 
     async def scroll_and_crawl(
@@ -288,7 +288,7 @@ class ScrollHandler:
         scroll: bool = True,
         max_scrolls: int = 10,
         capture_screenshots: bool = True,
-        page_identifier: str = "",
+        page_identifier: str = '',
         prefer_container: bool = True,
     ):
 
@@ -296,11 +296,11 @@ class ScrollHandler:
 
         # if not scroll, exit after initial capture
         if not scroll:
-            logging.debug("Scrolling disabled, exiting after initial capture.")
-            processed_filename = f"{page_identifier}_initial"
+            logging.debug('Scrolling disabled, exiting after initial capture.')
+            processed_filename = f'{page_identifier}_initial'
             screenshot_base64 = await self._action_handler.b64_page_screenshot(
                 file_name=processed_filename,
-                context="scroll"
+                context='scroll'
             )
             if screenshot_base64:
                 screenshot_image_list.append(screenshot_base64)
@@ -310,11 +310,11 @@ class ScrollHandler:
             # check global scroll ability
             global_scroll_info = await self.can_global_scroll()
 
-            if global_scroll_info["canScroll"]:
-                logging.debug("Global scrolling is possible, using global scroll")
+            if global_scroll_info['canScroll']:
+                logging.debug('Global scrolling is possible, using global scroll')
                 screenshot_image_list = await self.scroll_global(max_scrolls, capture_screenshots, page_identifier)
             else:
-                logging.debug("Global scrolling not possible, checking for scrollable containers")
+                logging.debug('Global scrolling not possible, checking for scrollable containers')
 
                 # detect scrollable containers
                 containers = await self.detect_scrollable_containers()
@@ -328,7 +328,7 @@ class ScrollHandler:
 
                     # build safe selector
                     selector = self._safe_selector(main_container)
-                    logging.debug(f"Using selector: {selector}")
+                    logging.debug(f'Using selector: {selector}')
 
                     screenshot_image_list = await self.scroll_container(
                         selector, max_scrolls, capture_screenshots, page_identifier
@@ -336,14 +336,14 @@ class ScrollHandler:
 
                     # if first container scrolling failed, try other containers
                     if len(screenshot_image_list) <= 1 and len(containers) > 1:
-                        logging.debug("Main container scrolling failed, trying other containers")
+                        logging.debug('Main container scrolling failed, trying other containers')
                         for i, container in enumerate(containers[1:], 1):
                             logging.debug(
                                 f"Trying container {i+1}: {container['tagName']} (class: {container.get('className', 'N/A')})"
                             )
 
                             selector = self._safe_selector(container)
-                            logging.debug(f"Using selector: {selector}")
+                            logging.debug(f'Using selector: {selector}')
 
                             container_screenshots = await self.scroll_container(
                                 selector, max_scrolls, capture_screenshots, page_identifier
@@ -352,22 +352,22 @@ class ScrollHandler:
                                 screenshot_image_list = container_screenshots
                                 break
                 else:
-                    logging.debug("No scrollable containers found, taking single screenshot")
-                    processed_filename = f"{page_identifier}_no_scroll"
+                    logging.debug('No scrollable containers found, taking single screenshot')
+                    processed_filename = f'{page_identifier}_no_scroll'
                     screenshot_base64 = await self._action_handler.b64_page_screenshot(
                         file_name=processed_filename,
-                        context="scroll"
+                        context='scroll'
                     )
                     if screenshot_base64:
                         screenshot_image_list.append(screenshot_base64)
 
         except Exception as e:
-            logging.error(f"Error in smart scroll: {e}")
+            logging.error(f'Error in smart scroll: {e}')
             # if error, at least take one screenshot
-            processed_filename = f"{page_identifier}_error_fallback"
+            processed_filename = f'{page_identifier}_error_fallback'
             screenshot_base64 = await self._action_handler.b64_page_screenshot(
                 file_name=processed_filename,
-                context="error"
+                context='error'
             )
             if screenshot_base64:
                 screenshot_image_list.append(screenshot_base64)

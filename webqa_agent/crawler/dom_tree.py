@@ -1,16 +1,16 @@
-import json
 import copy
 import hashlib
+import json
 import logging
-from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Any, Set
 from collections import Counter
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Set
 
 
 @dataclass
 class DomTreeNode:
-    """
-    A data class representing a node in a simplified Document Object Model (DOM) tree.
+    """A data class representing a node in a simplified Document Object Model
+    (DOM) tree.
 
     This class captures essential information about a DOM element, including its identity,
     attributes, layout, and state (e.g., visibility, interactivity). It also maintains
@@ -38,7 +38,6 @@ class DomTreeNode:
         children (List['DomTreeNode']): A list of child nodes.
         depth (int): The depth of the node in the tree (root is at depth 0).
         subtree (Dict[str, Any]): A copy of the raw subtree data from the crawler, if any.
-
     """
 
     # Mapped from original node fields
@@ -46,7 +45,7 @@ class DomTreeNode:
     highlightIndex: Optional[int] = None
     tagName: Optional[str] = None
     className: Optional[str] = None
-    innerText: str = ""
+    innerText: str = ''
     element_type: Optional[str] = None
     placeholder: Optional[str] = None
 
@@ -54,8 +53,8 @@ class DomTreeNode:
     attributes: Dict[str, str] = field(default_factory=dict)
 
     # Added selector, xpath
-    selector: str = ""
-    xpath: str = ""
+    selector: str = ''
+    xpath: str = ''
 
     # Layout information
     viewport: Dict[str, float] = field(default_factory=dict)
@@ -79,20 +78,16 @@ class DomTreeNode:
 
     def __repr__(self):
         """Returns a string representation of the DomTreeNode."""
-        return f"<DomTreeNode id={self.id!r} tag={self.tagName!r} depth={self.depth}>"
+        return f'<DomTreeNode id={self.id!r} tag={self.tagName!r} depth={self.depth}>'
 
     def add_child(self, child: 'DomTreeNode') -> None:
-        """
-        Adds a child node to self.children and sets its parent and depth.
-        """
+        """Adds a child node to self.children and sets its parent and depth."""
         child.parent = self
         child.depth = self.depth + 1
         self.children.append(child)
 
     def find_by_tag(self, tag_name: str) -> List['DomTreeNode']:
-        """
-        Recursively finds all nodes matching the tag_name.
-        """
+        """Recursively finds all nodes matching the tag_name."""
         matches: List['DomTreeNode'] = []
         if self.tagName == tag_name:
             matches.append(self)
@@ -101,8 +96,9 @@ class DomTreeNode:
         return matches
 
     def find_by_id(self, target_id: int) -> Optional['DomTreeNode']:
-        """
-        Performs a depth-first search to find the first node with id == target_id.
+        """Performs a depth-first search to find the first node with id ==
+        target_id.
+
         Returns None if not found.
         """
         if self.highlightIndex == target_id:
@@ -117,8 +113,8 @@ class DomTreeNode:
 
     @classmethod
     def build_root(cls, data: Dict[str, Any]) -> 'DomTreeNode':
-        """
-        Constructs a DomTreeNode tree from a raw dictionary, typically from JSON.
+        """Constructs a DomTreeNode tree from a raw dictionary, typically from
+        JSON.
 
         This class method serves as the primary entry point for creating a tree from
         the data returned by the crawler. It handles cases where the input data might
@@ -160,14 +156,15 @@ class DomTreeNode:
         def build_dom_tree(data: Dict[str, Any],
                            parent: Optional['DomTreeNode'] = None,
                            depth: int = 0) -> List['DomTreeNode']:
-            """
-            Builds a list of DomTreeNode from the injected JS result (nested dict).
+            """Builds a list of DomTreeNode from the injected JS result (nested
+            dict).
+
             Returns a list of top-level (or multi-root) nodes.
             """
             nodes: List[DomTreeNode] = []
             node_data = data.get('node')
             children_data = data.get('children', [])
-            subtree_data = copy.deepcopy(data.get("subtree", {}))
+            subtree_data = copy.deepcopy(data.get('subtree', {}))
 
             if node_data:
                 attrs = {a['name']: a['value'] for a in node_data.get('attributes', [])}
@@ -239,12 +236,11 @@ class DomTreeNode:
     element_hash: Optional[str] = None  # Element hash value
 
     def calculate_element_hash(self) -> str:
-        """
-        Calculate unique hash value for the element.
+        """Calculate unique hash value for the element.
 
         Hash is generated based on:
         - Parent path
-        - Element attributes  
+        - Element attributes
         - XPath
 
         Returns:
@@ -259,7 +255,7 @@ class DomTreeNode:
 
         # Combine hash source
         # hash_source = f"{parent_path_str}|{attrs_str}|{self.xpath}"
-        hash_source = f"{parent_path_str}|{self.xpath}"
+        hash_source = f'{parent_path_str}|{self.xpath}'
         # logging.debug(f"hash_source of elem {self.highlightIndex} ({self.innerText}):\nparent_path_str: {parent_path_str}\nxpath: {self.xpath}")
 
         # Calculate SHA256 hash
@@ -267,8 +263,7 @@ class DomTreeNode:
         return self.element_hash
 
     def _get_parent_branch_path(self) -> List[str]:
-        """
-        Get parent path from root node to current node.
+        """Get parent path from root node to current node.
 
         Returns:
             List[str]: List of parent tag names.
@@ -282,8 +277,7 @@ class DomTreeNode:
         return path
 
     def get_clickable_elements(self) -> List['DomTreeNode']:
-        """
-        Get all clickable elements.
+        """Get all clickable elements.
 
         Returns:
             List[DomTreeNode]: List of clickable elements.
@@ -304,8 +298,7 @@ class DomTreeNode:
         return clickable_elements
 
     def get_clickable_elements_hashes(self) -> Set[str]:
-        """
-        Get hash set of all clickable elements.
+        """Get hash set of all clickable elements.
 
         Returns:
             Set[str]: Hash set of clickable elements.
@@ -314,8 +307,7 @@ class DomTreeNode:
         return {elem.calculate_element_hash() for elem in clickable_elements}
 
     def find_element_by_hash(self, target_hash: str) -> Optional['DomTreeNode']:
-        """
-        Find element by hash value.
+        """Find element by hash value.
 
         Args:
             target_hash: Target element hash value.
@@ -334,8 +326,7 @@ class DomTreeNode:
         return None
 
     def mark_new_elements(self, cached_hashes: Set[str]) -> None:
-        """
-        Mark newly appeared elements.
+        """Mark newly appeared elements.
 
         Args:
             cached_hashes: Cached element hash set.

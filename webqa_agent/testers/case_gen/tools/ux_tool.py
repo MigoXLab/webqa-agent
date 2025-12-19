@@ -1,36 +1,39 @@
+import base64
 import json
 import logging
-import base64
 from io import BytesIO
 from typing import Any, List
 
 from langchain_core.tools import BaseTool
+from PIL import Image, ImageDraw
 from pydantic import Field
 
 from webqa_agent.crawler.deep_crawler import DeepCrawler
-from webqa_agent.llm.prompt import LLMPrompt
-from webqa_agent.llm.llm_api import LLMAPI
 from webqa_agent.data.test_structures import TestStatus
-from webqa_agent.testers.case_gen.utils.case_recorder import CentralCaseRecorder
-from PIL import Image, ImageDraw
+from webqa_agent.llm.llm_api import LLMAPI
+from webqa_agent.llm.prompt import LLMPrompt
+from webqa_agent.testers.case_gen.utils.case_recorder import \
+    CentralCaseRecorder
+
 
 class UIUXViewportTool(BaseTool):
-    """UX Verify tool to verify visual quality and content accuracy of the page."""
+    """UX Verify tool to verify visual quality and content accuracy of the
+    page."""
 
-    name: str = "execute_ux_verify"
+    name: str = 'execute_ux_verify'
     description: str = (
-        "Performs two UX checks in the current viewport: (1) Typo/grammar/text accuracy using page text; "
-        "(2) Layout/visual rendering using screenshot + viewport structure. Returns both analyses."
+        'Performs two UX checks in the current viewport: (1) Typo/grammar/text accuracy using page text; '
+        '(2) Layout/visual rendering using screenshot + viewport structure. Returns both analyses.'
     )
-    ui_tester_instance: Any = Field(..., description="UITester instance to access driver and page")
-    llm_config: dict | None = Field(default=None, description="LLM configuration for independent client")
-    case_recorder: Any | None = Field(default=None, description="Optional CentralCaseRecorder to record ux_verify step")
+    ui_tester_instance: Any = Field(..., description='UITester instance to access driver and page')
+    llm_config: dict | None = Field(default=None, description='LLM configuration for independent client')
+    case_recorder: Any | None = Field(default=None, description='Optional CentralCaseRecorder to record ux_verify step')
 
     def _run(self, assertion: str) -> str:
-        raise NotImplementedError("Use arun for asynchronous execution.")
+        raise NotImplementedError('Use arun for asynchronous execution.')
 
     def _annotate_b64_image(self, image_b64: str, rect: List[int]) -> str:
-        """Annotate a base64 encoded image with a rectangle"""
+        """Annotate a base64 encoded image with a rectangle."""
         try:
             header, b64 = image_b64.split(',', 1)
             img_bytes = base64.b64decode(b64)
@@ -53,10 +56,10 @@ class UIUXViewportTool(BaseTool):
 
     async def _arun(self, assertion: str) -> str:
         if not self.ui_tester_instance:
-            return "[FAILURE] Error: UITester instance not provided for UX collection."
+            return '[FAILURE] Error: UITester instance not provided for UX collection.'
 
         try:
-            logging.debug(f"Executing UX verification: {assertion}")
+            logging.debug(f'Executing UX verification: {assertion}')
 
             # Dynamically get current page from browser session
             page = self.ui_tester_instance.browser_session.page
@@ -65,7 +68,7 @@ class UIUXViewportTool(BaseTool):
             # Crawl for interactive elements with layout info (for layout check)
             crawl_result = await dp.crawl(highlight=False, filter_text=False, viewport_only=False, include_styles=True)
             id_map = crawl_result.raw_dict()
-            
+
             # Get full page text directly from page for text/typo check (more comprehensive)
             viewport_structure = await page.evaluate("""
                 () => {
@@ -78,22 +81,22 @@ class UIUXViewportTool(BaseTool):
                             acceptNode: function(node) {
                                 const parent = node.parentElement;
                                 if (!parent) return NodeFilter.FILTER_REJECT;
-                                
+
                                 // Skip script, style, and hidden elements
                                 const style = window.getComputedStyle(parent);
-                                if (style.display === 'none' || 
-                                    style.visibility === 'hidden' || 
-                                    parent.tagName === 'SCRIPT' || 
+                                if (style.display === 'none' ||
+                                    style.visibility === 'hidden' ||
+                                    parent.tagName === 'SCRIPT' ||
                                     parent.tagName === 'STYLE') {
                                     return NodeFilter.FILTER_REJECT;
                                 }
-                                
+
                                 const text = node.textContent.trim();
                                 return text.length > 0 ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
                             }
                         }
                     );
-                    
+
                     let node;
                     while (node = walker.nextNode()) {
                         const text = node.textContent.trim();
@@ -101,12 +104,12 @@ class UIUXViewportTool(BaseTool):
                             textElements.push(text);
                         }
                     }
-                    
+
                     // Deduplicate and return as JSON
                     return JSON.stringify([...new Set(textElements)]);
                 }
             """)
-            logging.debug(f"Viewport Text Structure: {viewport_structure}")
+            logging.debug(f'Viewport Text Structure: {viewport_structure}')
 
             screenshot = None
             img_bytes = await page.screenshot(full_page=True)
@@ -123,12 +126,12 @@ class UIUXViewportTool(BaseTool):
             structure_str = viewport_structure
             if isinstance(parsed_structure, (dict, list)):
                 try:
-                    structure_str = json.dumps(parsed_structure, ensure_ascii=False, separators=(",", ":"))
+                    structure_str = json.dumps(parsed_structure, ensure_ascii=False, separators=(',', ':'))
                 except Exception:
                     pass
             # Truncate long structure to control token size
             if structure_str and len(structure_str) > 10000:
-                structure_str = structure_str[:10000] + "..."
+                structure_str = structure_str[:10000] + '...'
 
             # Prepare two user cases: text typo check and layout check
             text_user_case = LLMPrompt.TEXT_USER_CASES[0]
@@ -137,37 +140,37 @@ class UIUXViewportTool(BaseTool):
             # Initialize an independent LLM client (do not use UITester.llm API directly)
             resolved_llm_config = self.llm_config
             if not resolved_llm_config:
-                return "[FAILURE] LLM config is missing. Provide llm_config to the tool."
+                return '[FAILURE] LLM config is missing. Provide llm_config to the tool.'
 
             llm_client = LLMAPI(resolved_llm_config)
             await llm_client.initialize()
 
             text_prompt = (
-                "Task description: Based on the provided web page content and user cases, check for any typos or English grammar errors. "
-                "If errors are found, output the results in the specified JSON format.\n"
-                "Input information:\n"
-                f"- Web content: ${structure_str}\n"
-                f"- User case: ${text_user_case}\n"
-                "Output requirements:\n"
-                "- If no errors are found, output only None, do not include any explanations.\n"
-                "- If errors are found, please output in the following JSON format:\n"
-                "{\n"
+                'Task description: Based on the provided web page content and user cases, check for any typos or English grammar errors. '
+                'If errors are found, output the results in the specified JSON format.\n'
+                'Input information:\n'
+                f'- Web content: ${structure_str}\n'
+                f'- User case: ${text_user_case}\n'
+                'Output requirements:\n'
+                '- If no errors are found, output only None, do not include any explanations.\n'
+                '- If errors are found, please output in the following JSON format:\n'
+                '{\n'
                 "    \"error\": [\n"
-                "        {\n"
+                '        {\n'
                 "            \"location\": \"Description of error location\",\n"
                 "            \"current\": \"Current erroneous content\",\n"
                 "            \"suggested\": \"Suggested modification\",\n"
                 "            \"type\": \"Error type\"\n"
-                "        }\n"
-                "    ],\n"
+                '        }\n'
+                '    ],\n'
                 "    \"summary\": \"Summary of the issues found, errors and suggestions\"\n"
-                "}\n"
-                "Rules:\n"
-                "- Do not invent or guess issues. Report only errors that are present verbatim in the provided Web content.\n"
+                '}\n'
+                'Rules:\n'
+                '- Do not invent or guess issues. Report only errors that are present verbatim in the provided Web content.\n'
                 "- The \\\"current\\\" field must copy the exact erroneous text snippet from the Web content.\n"
-                "- If the text cannot be located exactly in the Web content or you are uncertain, output only None.\n"
-                "- Do not infer intent or style; judge strictly on spelling and grammar within the provided content only.\n"
-                "- Conciseness: Keep each error description concise and direct, avoid explanations.\n"
+                '- If the text cannot be located exactly in the Web content or you are uncertain, output only None.\n'
+                '- Do not infer intent or style; judge strictly on spelling and grammar within the provided content only.\n'
+                '- Conciseness: Keep each error description concise and direct, avoid explanations.\n'
             )
 
             # logging.debug(f"UX text typo analysis prompt: {text_prompt}")
@@ -176,12 +179,12 @@ class UIUXViewportTool(BaseTool):
                 LLMPrompt.page_default_prompt,
                 text_prompt,
             )
-            logging.debug(f"UX text typo analysis response: {typo_response}")
+            logging.debug(f'UX text typo analysis response: {typo_response}')
 
             # Parse typo response when possible
             parsed_typo = None
             try:
-                if isinstance(typo_response, str) and typo_response.strip().lower() != "none":
+                if isinstance(typo_response, str) and typo_response.strip().lower() != 'none':
                     parsed_typo = json.loads(typo_response)
             except Exception:
                 parsed_typo = typo_response  # keep raw if not JSON
@@ -205,12 +208,12 @@ class UIUXViewportTool(BaseTool):
                 parsed_layout = layout_response  # keep raw if not JSON
 
             result_payload = {
-                "screenshot_included": bool(images),
-                "viewport_structure": parsed_structure,
-                "typo_analysis": parsed_typo if parsed_typo is not None else (typo_response or None),
-                "layout_analysis": parsed_layout if parsed_layout is not None else (layout_response or None),
+                'screenshot_included': bool(images),
+                'viewport_structure': parsed_structure,
+                'typo_analysis': parsed_typo if parsed_typo is not None else (typo_response or None),
+                'layout_analysis': parsed_layout if parsed_layout is not None else (layout_response or None),
             }
-            compact = json.dumps(result_payload, ensure_ascii=False, separators=(",", ":"))
+            compact = json.dumps(result_payload, ensure_ascii=False, separators=(',', ':'))
 
             # Optionally record this as a ux_verify step into a central recorder if present
             recorder: CentralCaseRecorder | None = self.case_recorder
@@ -220,38 +223,38 @@ class UIUXViewportTool(BaseTool):
                 text_has_issues = False
                 layout_has_issues = False
                 layout_issues_summary = None
-                
+
                 # Process typo/text issues
-                logging.debug(f"UX Tool: Processing typo/text issues: {parsed_typo}")
+                logging.debug(f'UX Tool: Processing typo/text issues: {parsed_typo}')
                 typo_summary_parts = []
-                if isinstance(parsed_typo, dict) and parsed_typo.get("error"):
-                    errors = parsed_typo.get("error", [])
+                if isinstance(parsed_typo, dict) and parsed_typo.get('error'):
+                    errors = parsed_typo.get('error', [])
                     text_has_issues = True
-                    
+
                     for idx, error in enumerate(errors, 1):
                         if isinstance(error, dict):
-                            location = error.get("location", "Unknown location")
-                            current = error.get("current", "")
-                            suggested = error.get("suggested", "")
-                            error_type = error.get("type", "Unknown type")
-                            
+                            location = error.get('location', 'Unknown location')
+                            current = error.get('current', '')
+                            suggested = error.get('suggested', '')
+                            error_type = error.get('type', 'Unknown type')
+
                             typo_summary_parts.append(
-                                f"{idx}. [{error_type}] at {location}\n"
+                                f'{idx}. [{error_type}] at {location}\n'
                                 f"   Current: '{current}'\n"
                                 f"   Suggested: '{suggested}'"
                             )
-                    
+
                     if typo_summary_parts:
-                        all_issues_summary.append("**Text/Typo Issues:**\n" + "\n".join(typo_summary_parts))
-                        logging.debug(f"UX Tool: Collected {len(typo_summary_parts)} text errors")
-                
+                        all_issues_summary.append('**Text/Typo Issues:**\n' + '\n'.join(typo_summary_parts))
+                        logging.debug(f'UX Tool: Collected {len(typo_summary_parts)} text errors')
+
                 # Process layout issues with coordinates
                 layout_issues = []
                 # Check if it's the "no issues" format
                 if isinstance(parsed_layout, dict) and parsed_layout.get('status') == 'no_issues':
                     # No issues found - this is the expected case
                     layout_has_issues = False
-                    layout_issues_summary = "No layout issues detected"
+                    layout_issues_summary = 'No layout issues detected'
                     logging.debug(f"UX Tool: LLM confirmed no layout issues found: {parsed_layout.get('message', 'No layout issues detected')}")
 
                 # Check if it's the "issues found" format (array)
@@ -278,20 +281,20 @@ class UIUXViewportTool(BaseTool):
                     if issues_candidate:
                         layout_has_issues = True
                         layout_issues.append(issues_candidate)
-                        
+
                 # Collect all coordinates for annotation
                 all_coords = []
                 layout_summary_parts = []
-                
+
                 for idx, issue in enumerate(layout_issues, 1):
                     if not isinstance(issue, dict):
                         continue
-                    
+
                     layout_has_issues = True
-                    issue_desc = issue.get('issue') or issue.get('description') or f"Layout Issue {idx}"
+                    issue_desc = issue.get('issue') or issue.get('description') or f'Layout Issue {idx}'
                     suggestion = issue.get('suggestion', '')
                     coords = None
-                    
+
                     # Process coordinates
                     if isinstance(issue, dict) and 'coordinates' in issue:
                         c = issue.get('coordinates')
@@ -308,22 +311,22 @@ class UIUXViewportTool(BaseTool):
                                 logging.debug(f'Layout issue {idx} - Processed coordinates: {coords}')
                             except Exception as e:
                                 logging.warning(f'Layout issue {idx} - Failed to process coordinates {c}: {e}')
-                    
+
                     # Build summary
-                    issue_text = f"{idx}. {issue_desc}"
+                    issue_text = f'{idx}. {issue_desc}'
                     if suggestion:
-                        issue_text += f"\n   Suggestion: {suggestion}"
+                        issue_text += f'\n   Suggestion: {suggestion}'
                     layout_summary_parts.append(issue_text)
-                
+
                 # # If we have a high-level layout summary, include it
                 # if layout_issues_summary:
                 #     all_issues_summary.append("**Layout Overview:**\n" + str(layout_issues_summary))
 
                 if layout_summary_parts:
-                    all_issues_summary.append("**Layout Issues:**\n" + "\n".join(layout_summary_parts))
-                
-                logging.debug(f"UX Tool: Found {len(layout_issues)} layout issues to process")
-                
+                    all_issues_summary.append('**Layout Issues:**\n' + '\n'.join(layout_summary_parts))
+
+                logging.debug(f'UX Tool: Found {len(layout_issues)} layout issues to process')
+
                 # Create annotated screenshot with all coordinates
                 step_screenshots = []
                 if all_coords:
@@ -332,40 +335,40 @@ class UIUXViewportTool(BaseTool):
                     for coords in all_coords:
                         annotated_screenshot = self._annotate_b64_image(annotated_screenshot, coords)
                         logging.debug(f'Annotated screenshot with coordinates: {coords}')
-                    
-                    step_screenshots.append({"type": "base64", "data": annotated_screenshot})
-                    step_screenshots.append({"type": "base64", "data": screenshot})
+
+                    step_screenshots.append({'type': 'base64', 'data': annotated_screenshot})
+                    step_screenshots.append({'type': 'base64', 'data': screenshot})
                 else:
-                    step_screenshots.append({"type": "base64", "data": screenshot})
-                
+                    step_screenshots.append({'type': 'base64', 'data': screenshot})
+
                 # Determine overall status and summary
                 has_issues = bool(text_has_issues or layout_has_issues)
                 if has_issues:
                     combined_status = TestStatus.WARNING
-                    combined_summary = "\n\n".join(all_issues_summary) if all_issues_summary else "UX issues detected (see details in analysis)"
+                    combined_summary = '\n\n'.join(all_issues_summary) if all_issues_summary else 'UX issues detected (see details in analysis)'
                 else:
                     combined_status = TestStatus.PASSED
-                    combined_summary = "No UX issues detected."
-                
+                    combined_summary = 'No UX issues detected.'
+
                 # Record a single step with all issues
                 recorder.add_step(
-                    description=f"ux_verify: {assertion}",
+                    description=f'ux_verify: {assertion}',
                     screenshots=step_screenshots,
                     model_io=combined_summary,
                     actions=[],
                     status=combined_status,
                 )
-                logging.debug(f"Recorded single UX verify step with {len(typo_summary_parts)} text errors and {len(layout_issues)} layout issues")
+                logging.debug(f'Recorded single UX verify step with {len(typo_summary_parts)} text errors and {len(layout_issues)} layout issues')
 
             # Return with warning indicator if issues were found
             if has_issues:
-                return f"[WARNING] UX viewport analysis completed with issues.\n\nUX_VIEWPORT_RESULT: {compact}"
+                return f'[WARNING] UX viewport analysis completed with issues.\n\nUX_VIEWPORT_RESULT: {compact}'
             else:
-                return f"[SUCCESS] UX viewport analysis completed.\n\nUX_VIEWPORT_RESULT: {compact}"
+                return f'[SUCCESS] UX viewport analysis completed.\n\nUX_VIEWPORT_RESULT: {compact}'
 
         except Exception as e:
-            logging.error(f"Error collecting UX viewport context: {str(e)}")
-            return f"[FAILURE] Unexpected error during UX collection: {str(e)}"
+            logging.error(f'Error collecting UX viewport context: {str(e)}')
+            return f'[FAILURE] Unexpected error during UX collection: {str(e)}'
 
     def _build_layout_prompt(self, user_case: str, id_map: dict, screenshot_count: int = 0) -> str:
         structured_info = ''

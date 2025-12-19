@@ -1172,8 +1172,16 @@ class ActionHandler:
         return True
 
     async def type(self, id, text, clear_before_type: bool = False) -> bool:
-        """Types text into the specified element, optionally clearing it
-        first."""
+        """Types text into the specified element using keyboard input.
+
+        Args:
+            id: Element ID
+            text: Text to type
+            clear_before_type: Whether to clear existing text before typing
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
         # Get existing context or create new one (preserves context from helpers)
         ctx = action_context_var.get()
         if ctx is None:
@@ -1199,14 +1207,13 @@ class ActionHandler:
             # Ensure element is in viewport before typing (for full-page planning mode)
             if not await self.ensure_element_in_viewport(str(id)):
                 logging.error(f'Cannot type into element {id}: failed to scroll element into viewport after multiple attempts')
-                # Context already populated by ensure_element_in_viewport, preserve it
                 return False
 
             if clear_before_type:
                 if not await self.clear(id):
                     logging.warning(f'Failed to clear element {id} before typing, but will attempt to type anyway.')
 
-            # click element to get focus
+            # Click element to get focus
             try:
                 if not await self.click(str(id)):
                     # Context already populated by click(), check and enhance if needed
@@ -1230,9 +1237,6 @@ class ActionHandler:
                 return False
 
             await asyncio.sleep(1)
-            # Type text using unified fill method
-            selector = element['selector']
-            xpath = element.get('xpath')
 
             if not await self._fill_element_text(
                 element_id=str(id),
@@ -1245,6 +1249,7 @@ class ActionHandler:
 
             await asyncio.sleep(1)
             return True
+
         except Exception as e:
             logging.error(f'Failed to type into element {id}: {e}')
             ctx.set_error(

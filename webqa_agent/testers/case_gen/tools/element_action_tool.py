@@ -12,9 +12,6 @@ from typing import Any, Optional, Type
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from webqa_agent.actions.action_types import (ActionType,
-                                              get_action_default_phrase,
-                                              is_page_agnostic_action)
 from webqa_agent.crawler.deep_crawler import DeepCrawler
 from webqa_agent.testers.case_gen.utils.case_recorder import \
     CentralCaseRecorder

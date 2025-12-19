@@ -7,8 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from webqa_agent.actions.action_executor import ActionExecutor
 from webqa_agent.actions.action_handler import ActionHandler
 from webqa_agent.actions.action_types import (ActionType,
-                                              get_page_agnostic_keywords,
-                                              is_page_agnostic_action)
+                                              get_page_agnostic_keywords)
 from webqa_agent.browser import BrowserSession
 from webqa_agent.browser.check import ConsoleCheck, NetworkCheck
 from webqa_agent.crawler.deep_crawler import DeepCrawler, ElementKey
@@ -20,12 +19,13 @@ from webqa_agent.llm.prompt import LLMPrompt
 
 class UITester:
 
-    def __init__(self, llm_config: Dict[str, Any], browser_session: BrowserSession = None):
+    def __init__(self, llm_config: Dict[str, Any], browser_session: BrowserSession = None, ignore_rules: Optional[Dict[str, List[Dict]]] = None):
         self.llm_config = llm_config
         self.browser_session = browser_session
         self.page = None
         self.network_check = None
         self.console_check = None
+        self.ignore_rules = ignore_rules or {}
 
         # Create component instances
         self._actions = ActionHandler()
@@ -71,12 +71,16 @@ class UITester:
         if not self.is_initialized:
             raise RuntimeError('ParallelUITester not initialized')
 
-        self.network_check = NetworkCheck(self.page)
-        self.console_check = ConsoleCheck(self.page)
+        # Get ignore rules from config
+        network_ignore_rules = self.ignore_rules.get('network', [])
+        console_ignore_rules = self.ignore_rules.get('console', [])
+
+        self.network_check = NetworkCheck(self.page, ignore_rules=network_ignore_rules)
+        self.console_check = ConsoleCheck(self.page, ignore_rules=console_ignore_rules)
 
         await self._actions.go_to_page(self.page, url, cookies=cookies)
 
-    async def action(self, test_step: str, file_path: str = None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    async def action(self, test_step: str, file_path: str = None, viewport_only: bool = False) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Execute AI-driven test instructions and return (step_dict,
         summary_dict)
 
@@ -102,7 +106,7 @@ class UITester:
 
             # Crawl current page state
             dp = DeepCrawler(self.page)
-            prev = await dp.crawl(highlight=True, viewport_only=False, cache_dom=True)
+            prev = await dp.crawl(highlight=True, viewport_only=viewport_only, cache_dom=True)
 
             # Extract page status information for LLM context
             page_status = getattr(prev, 'page_status', 'SUPPORTED')
@@ -191,7 +195,7 @@ class UITester:
             logging.debug(f'Generated plan: {plan_json}')
 
             # Execute plan
-            execution_steps, execution_result = await self._execute_plan(test_step, plan_json, file_path)
+            execution_steps, execution_result = await self._execute_plan(plan_json=plan_json, file_path=file_path, viewport_only=viewport_only)
 
             end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
@@ -199,7 +203,7 @@ class UITester:
             # This ensures DOM diff is computed on the correct page
             self.page = self.browser_session.page
             dp.page = self.page
-            curr = await dp.crawl(highlight=True, viewport_only=False, cache_dom=True)
+            curr = await dp.crawl(highlight=True, viewport_only=viewport_only, cache_dom=True)
             diff_elems = curr.diff_dict([str(ElementKey.TAG_NAME), str(ElementKey.INNER_TEXT), str(ElementKey.ATTRIBUTES), str(ElementKey.CENTER_X), str(ElementKey.CENTER_Y)])
             if diff_elems:
                 logging.debug(f'Diff element map after action: {diff_elems}')
@@ -315,7 +319,7 @@ class UITester:
         completed = execution_context.get('completed_steps', [])
         failed = execution_context.get('failed_steps', [])
         if completed or failed:
-            context_parts.append(f'\n**Execution History:**')
+            context_parts.append('\n**Execution History:**')
             if completed:
                 context_parts.append(f'- Completed steps: {len(completed)}')
             if failed:
@@ -369,7 +373,8 @@ class UITester:
         self,
         assertion: str,
         execution_context: Optional[Dict[str, Any]] = None,
-        focus_region: Optional[str] = None
+        focus_region: Optional[str] = None,
+        viewport_only: bool = False
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Execute AI-driven assertion verification.
 
@@ -501,7 +506,7 @@ class UITester:
                 else:
                     page_url, page_title = await self.browser_session.get_url()
                     dp = DeepCrawler(self.page)
-                    await dp.crawl(highlight=False, filter_text=True, viewport_only=False)
+                    await dp.crawl(highlight=False, filter_text=True, viewport_only=viewport_only)
                     page_structure = dp.get_text()
                     logging.warning('Saved action context not available, using current page state (may cause time mismatch)')
 
@@ -552,7 +557,7 @@ class UITester:
 
                 # Crawl current page
                 dp = DeepCrawler(self.page)
-                await dp.crawl(highlight=False, filter_text=True, viewport_only=False)
+                await dp.crawl(highlight=False, filter_text=True, viewport_only=viewport_only)
 
                 # Capture new screenshot
                 screenshot = await self._actions.b64_page_screenshot(
@@ -746,7 +751,7 @@ class UITester:
             )
 
             prompt_parts.extend([
-                f'⚠️ **OPERATION TYPE**: Page-agnostic browser-level operation',
+                '⚠️ **OPERATION TYPE**: Page-agnostic browser-level operation',
                 f'**PAGE STATUS**: {page_status}',
                 f'**IMPORTANT**: {status_message}',
                 '',
@@ -814,7 +819,7 @@ class UITester:
                 logging.warning(f'Plan generation attempt {attempt + 1} failed: {str(e)}, retrying...')
                 await asyncio.sleep(1)
 
-    async def _execute_plan(self, user_case: str, plan_json: Dict[str, Any], file_path: str = None) -> Dict[str, Any]:
+    async def _execute_plan(self, plan_json: Dict[str, Any], file_path: str = None, viewport_only: bool = False) -> Dict[str, Any]:
         """Execute test plan."""
         execute_results = []
         action_count = len(plan_json.get('actions', []))
@@ -934,7 +939,7 @@ class UITester:
         try:
             after_action_url, after_action_title = await self.browser_session.get_url()
             dp_after = DeepCrawler(self.page)
-            await dp_after.crawl(highlight=False, filter_text=True, viewport_only=False)
+            await dp_after.crawl(highlight=False, filter_text=True, viewport_only=viewport_only)
             after_action_page_structure = dp_after.get_text()[:5000]  # 限制长度避免内存开销
         except Exception as e:
             logging.warning(f'Failed to capture action-time context: {str(e)}')
@@ -976,7 +981,6 @@ class UITester:
         results dict is always returned so that callers don't need to wrap it in
         their own try/except blocks.
         """
-        import sys
 
         results: dict = {}
 
@@ -1000,12 +1004,45 @@ class UITester:
         return results
 
     async def cleanup(self):
-        """Lightweight wrapper so external callers can always call
-        cleanup()."""
+        """Comprehensive cleanup of all resources.
+
+        This method ensures proper cleanup of:
+        - Event listeners (NetworkCheck, ConsoleCheck)
+        - LLM API HTTP client connections
+        - Internal data structures and caches
+        - Object references
+        """
+        # 1. End session (remove event listeners, get monitoring data)
         try:
             await self.end_session()
         except Exception as e:
-            logging.warning(f'UITester.cleanup encountered an error: {e}')
+            logging.warning(f'UITester.end_session error during cleanup: {e}')
+
+        # 2. Close LLM API client (critical for preventing connection leaks)
+        try:
+            if self.llm:
+                await self.llm.close()
+                logging.debug('LLM API client closed')
+        except Exception as e:
+            logging.warning(f'Failed to close LLM client: {e}')
+
+        # 3. Clear references to browser objects
+        self.page = None
+        self.network_check = None
+        self.console_check = None
+
+        # 4. Clear data structures to free memory
+        self.test_results = []
+        self.all_cases_data = []
+        self.current_case_steps = []
+        self.execution_history = []
+        self.last_action_context = None
+        self.current_case_data = None
+
+        # 5. Mark as not initialized
+        self.is_initialized = False
+
+        logging.debug('UITester cleanup completed')
 
     def set_current_test_name(self, name: str):
         """Set the current test case name (stub for compatibility with

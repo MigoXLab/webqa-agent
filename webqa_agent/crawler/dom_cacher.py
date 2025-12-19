@@ -1,14 +1,14 @@
-from dataclasses import dataclass
-from typing import Set, Optional, Dict, Any
-from webqa_agent.crawler.dom_tree import DomTreeNode
 import time
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Set
+
+from webqa_agent.crawler.dom_tree import DomTreeNode
 
 
 @dataclass
 class CachedDomState:
-    """
-    DOM state cache class.
-    
+    """DOM state cache class.
+
     Used to store DOM state snapshots for change detection.
     """
     url: str
@@ -17,9 +17,8 @@ class CachedDomState:
 
 
 class DomCacher:
-    """
-    DOM change detector.
-    
+    """DOM change detector.
+
     Provides DOM state comparison and change detection functionality.
     """
 
@@ -29,8 +28,7 @@ class DomCacher:
     def detect_dom_diff(self,
                         current_tree: DomTreeNode,
                         current_url: str) -> Dict[str, Any]:
-        """
-        Detect DOM changes.
+        """Detect DOM changes.
 
         Args:
             current_tree: Current DOM tree.
@@ -79,14 +77,11 @@ class DomCacher:
         return result
 
     def clear_cache(self) -> None:
-        """
-        Clear cached state.
-        """
+        """Clear cached state."""
         self._cached_state = None
 
     def get_cached_state(self) -> Optional[CachedDomState]:
-        """
-        Get cached state.
+        """Get cached state.
 
         Returns:
             Optional[CachedDomState]: Cached DOM state.

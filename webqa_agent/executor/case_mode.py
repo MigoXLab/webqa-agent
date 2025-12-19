@@ -13,9 +13,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from webqa_agent.browser.config import DEFAULT_CONFIG
 from webqa_agent.data import (ParallelTestSession, TestConfiguration,
                               TestResult, TestStatus, TestType)
+from webqa_agent.data.case_structures import Case
 from webqa_agent.data.test_structures import get_category_for_test_type
 from webqa_agent.executor.case_executor import CaseExecutor
-from webqa_agent.executor.result_aggregator import ResultAggregator
 from webqa_agent.utils import Display
 from webqa_agent.utils.get_log import GetLog
 from webqa_agent.utils.log_icon import icon
@@ -30,11 +30,12 @@ class CaseMode:
 
     async def run(
         self,
-        cases: List[Dict[str, Any]],
+        cases: List[Dict[str, Any]],  # Raw YAML dicts
         target_url: str,
         llm_config: Dict[str, Any],
         cookies: Optional[List[Dict]] = None,
         browser_config: Optional[Dict[str, Any]] = None,
+        ignore_rules: Optional[Dict[str, List[Dict]]] = None,
         log_cfg: Optional[Dict[str, Any]] = None,
         report_cfg: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Dict[str, Any], str, str, Dict[str, Any]]:
@@ -46,6 +47,7 @@ class CaseMode:
             llm_config: LLM configuration
             browser_config: Browser configuration
             cookies: Optional cookies for browser session
+            ignore_rules: Optional ignore rules for network and console errors
             log_cfg: Log configuration
             report_cfg: Report configuration
 
@@ -87,6 +89,7 @@ class CaseMode:
             test_specific_config={
                 'cookies': cookies,
                 'url': target_url,
+                'ignore_rules': ignore_rules or {},
             },
         )
 
@@ -100,6 +103,10 @@ class CaseMode:
         html_report_path = None
 
         try:
+            # Parse cases from YAML dicts to Case objects
+            parsed_cases = Case.from_yaml_list(cases)
+            logging.info(f'📋 Parsed {len(parsed_cases)} test cases')
+
             # Initialize case executor
             case_executor = CaseExecutor(
                 test_config=test_config,
@@ -228,8 +235,8 @@ class CaseMode:
             import glob
             import json
 
-            # Find all test_data_*.json files in report_dir
-            test_data_files = glob.glob(os.path.join(report_dir, 'test_data_*.json'))
+            # Find all test_data_*.json files in report_dir and sort by filename (which includes index)
+            test_data_files = sorted(glob.glob(os.path.join(report_dir, 'test_data_*.json')))
 
             if not test_data_files:
                 logging.warning(f'No test data files found in {report_dir}')
@@ -252,6 +259,9 @@ class CaseMode:
         if not test_data:
             logging.error('No test data found after merging')
             return None
+
+        # Sort test_data by case_index to ensure correct order
+        test_data.sort(key=lambda x: x.get('case_index', 999))
 
         logging.debug(f'Loaded {len(test_data)} test cases from {len(test_data_files)} files')
 

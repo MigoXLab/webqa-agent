@@ -20,6 +20,7 @@ test_config: # Test configuration
     enabled: False
 
 llm_config: # LLM configuration, currently only supports OpenAI SDK compatible format
+  api: openai
   model: gpt-4.1-2025-04-14  # Primary model for Stage 2 test planning (Recommended)
   filter_model: gpt-4o-mini  # Lightweight model for Stage 1 element filtering (cost-effective)
   api_key: your_api_key

@@ -1099,9 +1099,9 @@
                                 <div class="config-label">使用模型</div>
                                 <div class="config-value">
                                     <div>主模型: {{ case.config.llm_model }}</div>
-                                    {% if case.config.filter_model %}
+                                    <!-- {% if case.config.filter_model %}
                                     <div style="margin-top: 4px;">过滤模型: {{ case.config.filter_model }}</div>
-                                    {% endif %}
+                                    {% endif %} -->
                                 </div>
                             </div>
                             {% endif %}
@@ -1110,7 +1110,55 @@
                             <div class="config-item">
                                 <div class="config-label">浏览器配置</div>
                                 <div class="config-value">
-                                    <pre>{{ case.config.browser_config|tojson(indent=2) }}</pre>
+                                    {% if case.config.browser_config.viewport %}
+                                    <div style="margin-bottom: 4px;">
+                                        <strong>窗口大小:</strong> {{ case.config.browser_config.viewport.width }} × {{ case.config.browser_config.viewport.height }}
+                                    </div>
+                                    {% endif %}
+                                    {% if case.config.browser_config.language %}
+                                    <div style="margin-bottom: 4px;">
+                                        <strong>浏览器语言:</strong> {{ case.config.browser_config.language }}
+                                    </div>
+                                    {% endif %}
+                                    {% if case.config.browser_config.headless is defined %}
+                                    <div style="margin-bottom: 4px;">
+                                        <strong>无头模式:</strong> {{ '是' if case.config.browser_config.headless else '否' }}
+                                    </div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            {% endif %}
+
+                            {% if case.config.ignore_rules %}
+                            <div class="config-item">
+                                <div class="config-label">忽略规则</div>
+                                <div class="config-value">
+                                    {% if case.config.ignore_rules.console %}
+                                    <div style="margin-bottom: 8px;">
+                                        <strong>Console 错误:</strong>
+                                        <ul style="margin: 4px 0; padding-left: 20px;">
+                                            {% for rule in case.config.ignore_rules.console %}
+                                            <li>
+                                                <code>{{ rule.pattern }}</code>
+                                                <span style="color: #666; font-size: 0.9em;">({{ rule.match_type }})</span>
+                                            </li>
+                                            {% endfor %}
+                                        </ul>
+                                    </div>
+                                    {% endif %}
+                                    {% if case.config.ignore_rules.network %}
+                                    <div>
+                                        <strong>Network 请求:</strong>
+                                        <ul style="margin: 4px 0; padding-left: 20px;">
+                                            {% for rule in case.config.ignore_rules.network %}
+                                            <li>
+                                                <code>{{ rule.pattern }}</code>
+                                                <span style="color: #666; font-size: 0.9em;">({{ rule.type }})</span>
+                                            </li>
+                                            {% endfor %}
+                                        </ul>
+                                    </div>
+                                    {% endif %}
                                 </div>
                             </div>
                             {% endif %}

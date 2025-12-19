@@ -9,11 +9,11 @@ import sys
 import threading
 import traceback
 
-import yaml
-from playwright.async_api import Error as PlaywrightError
-from playwright.async_api import async_playwright
-
 from webqa_agent.executor import ParallelMode
+from webqa_agent.utils import (check_lighthouse_installation,
+                               check_nuclei_installation,
+                               check_playwright_browsers_async,
+                               find_config_file, load_cookies, load_yaml)
 
 # ============================================================================
 # Configuration Template
@@ -45,6 +45,7 @@ test_config:
     enabled: False  # Requires Nuclei: https://github.com/projectdiscovery/nuclei
 
 llm_config:
+  api: openai
   model: gpt-4.1-2025-04-14  # Vision-capable model recommended for UX tests
   filter_model: gpt-4o-mini  # Lightweight model for element filtering
   api_key: your_api_key_here  # Or set OPENAI_API_KEY environment variable
@@ -55,7 +56,7 @@ browser_config:
   viewport: {"width": 1280, "height": 720}
   headless: False  # Docker environment will automatically override to True
   language: en-US
-  cookies: []
+  cookies: []  # Can be a list of cookie objects or a file path to JSON file
   save_screenshots: False
 
 report:
@@ -76,108 +77,6 @@ def get_version():
     return __version__
 
 
-def find_config_file(config_path=None):
-    """Find configuration file with priority search."""
-    # 1. Explicit path has highest priority
-    if config_path:
-        if os.path.isfile(config_path):
-            return config_path
-        else:
-            raise FileNotFoundError(f'Specified config file not found: {config_path}')
-
-    # 2. Search default locations
-    current_dir = os.getcwd()
-    default_paths = [
-        os.path.join(current_dir, 'config.yaml'),
-        os.path.join(current_dir, 'config', 'config.yaml'),
-        '/app/config/config.yaml',  # Docker container
-    ]
-
-    for path in default_paths:
-        if os.path.isfile(path):
-            return path
-
-    return None
-
-
-def load_yaml(path):
-    """Load and parse YAML configuration file."""
-    if not os.path.isfile(path):
-        print(f'[ERROR] Config file not found: {path}', file=sys.stderr)
-        sys.exit(1)
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            return yaml.safe_load(f)
-    except Exception as e:
-        print(f'[ERROR] Failed to parse YAML: {e}', file=sys.stderr)
-        sys.exit(1)
-
-
-# ============================================================================
-# Environment Check Functions
-# ============================================================================
-
-async def check_playwright_browsers_async():
-    """Check if Playwright browsers are installed."""
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            await browser.close()
-        print('✅ Playwright browsers available')
-        return True
-    except PlaywrightError as e:
-        print(f'⚠️ Playwright browsers unavailable: {e}')
-        return False
-    except Exception as e:
-        print(f'❌ Playwright check failed: {e}')
-        return False
-
-
-def check_lighthouse_installation():
-    """Check if Lighthouse is properly installed."""
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    current_dir = os.getcwd()
-    is_windows = os.name == 'nt'
-    lighthouse_exe = 'lighthouse.cmd' if is_windows else 'lighthouse'
-
-    # Possible lighthouse paths (local installation priority)
-    lighthouse_paths = [
-        os.path.join(current_dir, 'node_modules', '.bin', lighthouse_exe),  # local installation in current directory
-        os.path.join(script_dir, 'node_modules', '.bin', lighthouse_exe),  # local installation in script directory
-        'lighthouse',  # global installation path (fallback)
-    ]
-
-    if not is_windows:
-        lighthouse_paths.insert(-1, os.path.join('/app', 'node_modules', '.bin', 'lighthouse'))
-
-    for path in lighthouse_paths:
-        try:
-            result = subprocess.run([path, '--version'], capture_output=True, text=True, timeout=10)
-            if result.returncode == 0:
-                version = result.stdout.strip()
-                print(f'✅ Lighthouse available: {version}')
-                return True
-        except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
-            continue
-
-    print('❌ Lighthouse not found')
-    return False
-
-
-def check_nuclei_installation():
-    """Check if Nuclei is properly installed."""
-    try:
-        result = subprocess.run(['nuclei', '-version'], capture_output=True, text=True, timeout=10)
-        if result.returncode == 0:
-            version = result.stdout.strip()
-            print(f'✅ Nuclei available: {version}')
-            return True
-    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
-        pass
-    print('❌ Nuclei not found')
-    return False
-
-
 # ============================================================================
 # LLM Configuration
 # ============================================================================
@@ -187,6 +86,7 @@ def validate_and_build_llm_config(cfg):
     llm_cfg_raw = cfg.get('llm_config', {})
 
     # Environment variables take priority
+    api = llm_cfg_raw.get('api', 'openai')
     api_key = os.getenv('OPENAI_API_KEY') or llm_cfg_raw.get('api_key', '')
     base_url = os.getenv('OPENAI_BASE_URL') or llm_cfg_raw.get('base_url', '')
     model = llm_cfg_raw.get('model', 'gpt-4o-mini')
@@ -211,7 +111,7 @@ def validate_and_build_llm_config(cfg):
         base_url = 'https://api.openai.com/v1'
 
     llm_config = {
-        'api': 'openai',
+        'api': api,
         'model': model,
         'filter_model': filter_model,
         'api_key': api_key,
@@ -320,7 +220,7 @@ def cmd_init(args):
     # Check if file already exists
     if os.path.exists(output_path) and not args.force:
         print(f'❌ Config file already exists: {output_path}')
-        print(f'   Use --force to overwrite, or specify a different path with --output')
+        print('   Use --force to overwrite, or specify a different path with --output')
         sys.exit(1)
 
     # Create directory if needed
@@ -339,7 +239,9 @@ def cmd_init(args):
         print('📝 Next steps:')
         print(f'   1. Edit {output_path} to configure:')
         print('      - target.url: The website URL to test')
-        print('      - llm_config.api_key: Your OpenAI API key')
+        print('      - llm_config.api: The LLM API provider (openai, anthropic, etc.)')
+        print('      - llm_config.api_key: Your API key')
+        print('      - llm_config.base_url: The base URL of the API')
         print('      - test_config: Enable/disable test types')
         print()
         print('   2. Run tests:')
@@ -427,7 +329,8 @@ async def run_tests(cfg):
         sys.exit(1)
 
     # Build test configurations
-    cookies = cfg.get('browser_config', {}).get('cookies', [])
+    cookies_value = cfg.get('browser_config', {}).get('cookies', [])
+    cookies = load_cookies(cookies_value)
     test_configurations = build_test_configurations(cfg, cookies=cookies)
     target_url = cfg.get('target', {}).get('url', '')
 
@@ -457,7 +360,7 @@ async def run_tests(cfg):
         )
 
         if result_count:
-            print(f'📊 Results Summary:')
+            print('📊 Results Summary:')
             print(f"   Total: {result_count.get('total', 0)}")
             print(f"   ✅ Passed: {result_count.get('passed', 0)}")
             print(f"   ⚠️ Warning: {result_count.get('warning', 0)}")
@@ -517,7 +420,15 @@ async def run_case_mode(cfg):
     }
 
     # Get cookies if any
-    cookies = cfg.get('browser_config', {}).get('cookies', [])
+    cookies_value = cfg.get('browser_config', {}).get('cookies', [])
+    cookies = load_cookies(cookies_value)
+
+    # Get ignore rules if any
+    ignore_rules = cfg.get('ignore_rules', {})
+    if ignore_rules:
+        network_count = len(ignore_rules.get('network', []))
+        console_count = len(ignore_rules.get('console', []))
+        print(f'🚫 Ignore rules: {network_count} network, {console_count} console')
 
     # Execute cases
     try:
@@ -528,12 +439,13 @@ async def run_case_mode(cfg):
             llm_config=llm_config,
             browser_config=browser_config,
             cookies=cookies,
+            ignore_rules=ignore_rules,
             log_cfg=cfg.get('log', {'level': 'info'}),
             report_cfg=cfg.get('report', {'language': 'en-US'}),
         )
 
         if result_count:
-            print(f'📊 Results Summary:')
+            print('📊 Results Summary:')
             print(f"   Total: {result_count.get('total', 0)}")
             print(f"   ✅ Passed: {result_count.get('passed', 0)}")
             print(f"   ⚠️ Warning: {result_count.get('warning', 0)}")

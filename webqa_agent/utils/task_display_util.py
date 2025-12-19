@@ -1,17 +1,17 @@
 import asyncio
 import logging
-import re
 import os
+import re
 import sys
-import time
 import threading
+import time
+from collections import deque
 from dataclasses import dataclass
 from io import StringIO
-from typing import Optional, List
-from collections import deque
+from typing import List, Optional
 
-from webqa_agent.utils.get_log import COLORS
 from webqa_agent.utils import i18n
+from webqa_agent.utils.get_log import COLORS
 
 
 @dataclass
@@ -23,7 +23,7 @@ class TaskInfo:
 
 
 class _Tracker:
-    def __init__(self, display_util: "_Display", name):
+    def __init__(self, display_util: '_Display', name):
         self.display_util = display_util
         self.name = name
         self.start_time = None
@@ -74,16 +74,16 @@ class _Display:
         self.num_log = 5  # TODO: Make it configurable
         self.language = language
         self.localized_strings = {
-            "zh-CN": i18n.get_lang_data('zh-CN').get('display', {}),
-            "en-US": i18n.get_lang_data('en-US').get('display', {}),
+            'zh-CN': i18n.get_lang_data('zh-CN').get('display', {}),
+            'en-US': i18n.get_lang_data('en-US').get('display', {}),
         }
 
         for hdr in self.logger.handlers:
-            if isinstance(hdr, logging.StreamHandler) and hdr.name == "stream":
+            if isinstance(hdr, logging.StreamHandler) and hdr.name == 'stream':
                 hdr.setStream(self.captured_output)
                 self.logger_handlers.append(hdr)
 
-        self.log_pattern = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d+)(\s+)(\w+)(\s+\[.*?]\s+\[.*?]\s+-\s+)(.*)")
+        self.log_pattern = re.compile(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d+)(\s+)(\w+)(\s+\[.*?]\s+\[.*?]\s+-\s+)(.*)')
 
     def _get_text(self, key: str) -> str:
         """Get localized text for the given key."""
@@ -95,13 +95,13 @@ class _Display:
     def start(self):
         self._stop_event.clear()
         self._render_task = asyncio.create_task(self._render_loop())
-        sys.stdout.write("\x1b[?25l")
+        sys.stdout.write('\x1b[?25l')
 
     async def stop(self):
         self._stop_event.set()
         if self._render_task:
             await self._render_task
-        sys.stdout.write("\x1b[?25h")
+        sys.stdout.write('\x1b[?25h')
 
     async def _render_loop(self):
         while not self._stop_event.is_set():
@@ -121,25 +121,25 @@ class _Display:
         self._spinner_index = (self._spinner_index + 1) % len(self.SPINNER)
         spinner = self.SPINNER[self._spinner_index]
         out = sys.stdout
-        out.write("\x1b[H\x1b[J")
+        out.write('\x1b[H\x1b[J')
         with self._lock:
-            out.write(self._get_text("completed_tasks") + "\n")
+            out.write(self._get_text('completed_tasks') + '\n')
             for t in self.completed:
                 if t.end is None:
                     continue
                 duration = t.end - t.start
-                status = "✅" if t.error is None else "❌"
-                err = f" ⚠️ {t.error}" if t.error else ""
-                out.write(f"  {status} {t.name} ⏱️ {duration:.2f}s{err}\n")
+                status = '✅' if t.error is None else '❌'
+                err = f' ⚠️ {t.error}' if t.error else ''
+                out.write(f'  {status} {t.name} ⏱️ {duration:.2f}s{err}\n')
 
-            out.write("════════════════════════════════════════\n")
+            out.write('════════════════════════════════════════\n')
 
-            out.write(self._get_text("running_tasks") + "\n")
+            out.write(self._get_text('running_tasks') + '\n')
             now = time.monotonic()
             for t in self.running:
                 elapsed = now - t.start
-                out.write(f"  ⏳ {spinner} {t.name} [{elapsed:.2f}s]\n")
-            out.write("-" * col + "\n")
+                out.write(f'  ⏳ {spinner} {t.name} [{elapsed:.2f}s]\n')
+            out.write('-' * col + '\n')
             length = min(self.num_log, len(lines))
             for ln in range(length):
                 line = lines[-length + ln]
@@ -150,24 +150,24 @@ class _Display:
                         timestamp, space1, loglevel, middle, message = match.groups()
                         color = COLORS[loglevel]
                         end = COLORS['ENDC']
-                        colored_loglevel = f"{color}{loglevel}{end}"
-                        colored_message = f"{color}{message}{end}"
-                        _line = f"{timestamp}{space1}{colored_loglevel}{middle}{colored_message}"
-                        out.write(f"{_line}" + "...\n")
+                        colored_loglevel = f'{color}{loglevel}{end}'
+                        colored_message = f'{color}{message}{end}'
+                        _line = f'{timestamp}{space1}{colored_loglevel}{middle}{colored_message}'
+                        out.write(f'{_line}' + '...\n')
                     else:
-                        out.write(f"{_line[:col-3]}"+"...\n")
+                        out.write(f'{_line[:col-3]}'+'...\n')
                 else:
-                    out.write(line + "\n")
+                    out.write(line + '\n')
         out.flush()
 
     def render_summary(self):
         out = sys.stdout
-        out.write("\x1b[H\x1b[J")
+        out.write('\x1b[H\x1b[J')
         # captured = self.captured_output.getvalue()
         # if captured:
         #     out.write(captured)
-        out.write(self._get_text("task_execution_summary") + "\n")
-        out.write("════════════════════════════════════════\n")
+        out.write(self._get_text('task_execution_summary') + '\n')
+        out.write('════════════════════════════════════════\n')
 
         total = len(self.completed)
         success = sum(1 for t in self.completed if t.error is None)
@@ -180,7 +180,7 @@ class _Display:
         out.write(f"{self._get_text('total_time')}：{total_time:.2f}s\n")
 
         if failed > 0:
-            out.write(self._get_text("error_tasks") + "\n")
+            out.write(self._get_text('error_tasks') + '\n')
             for t in self.completed:
                 if t.error:
                     out.write(f"  ❌ {t.name} {self._get_text('error_message')} {t.error}\n")

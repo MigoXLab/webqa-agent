@@ -1,7 +1,8 @@
 """Utility functions for converting intermediate steps to messages format."""
 
 import logging
-from typing import List, Tuple, Any
+from typing import Any, List, Tuple
+
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
 
@@ -28,7 +29,7 @@ def convert_intermediate_steps_to_messages(
                 # Convert AIMessageChunk to proper AIMessage with tool_calls
                 if hasattr(ai_msg_chunk, 'tool_calls') and ai_msg_chunk.tool_calls:
                     ai_message = AIMessage(
-                        content=ai_msg_chunk.content or "",
+                        content=ai_msg_chunk.content or '',
                         tool_calls=ai_msg_chunk.tool_calls
                     )
                     messages.append(ai_message)
@@ -38,9 +39,9 @@ def convert_intermediate_steps_to_messages(
                     if tool_call_id:
                         # Ensure observation is a string, not a list
                         if isinstance(observation, list):
-                            observation_content = str(observation) if observation else "No response"
+                            observation_content = str(observation) if observation else 'No response'
                         elif observation is None:
-                            observation_content = "No response"
+                            observation_content = 'No response'
                         else:
                             observation_content = str(observation)
 
@@ -50,7 +51,7 @@ def convert_intermediate_steps_to_messages(
                         )
                         messages.append(tool_message)
                     else:
-                        logging.warning(f"No tool_call_id found for action: {action}")
+                        logging.warning(f'No tool_call_id found for action: {action}')
 
             elif hasattr(action, 'tool_call_id'):
                 # Fallback: If action has tool_call_id directly
@@ -63,7 +64,7 @@ def convert_intermediate_steps_to_messages(
                 }]
 
                 ai_message = AIMessage(
-                    content="",
+                    content='',
                     tool_calls=tool_calls
                 )
                 messages.append(ai_message)
@@ -71,9 +72,9 @@ def convert_intermediate_steps_to_messages(
                 # Add the corresponding ToolMessage
                 # Ensure observation is a string, not a list
                 if isinstance(observation, list):
-                    observation_content = str(observation) if observation else "No response"
+                    observation_content = str(observation) if observation else 'No response'
                 elif observation is None:
-                    observation_content = "No response"
+                    observation_content = 'No response'
                 else:
                     observation_content = str(observation)
 
@@ -83,10 +84,10 @@ def convert_intermediate_steps_to_messages(
                 )
                 messages.append(tool_message)
             else:
-                logging.debug(f"Skipping action without proper tool call structure: {type(action)}")
+                logging.debug(f'Skipping action without proper tool call structure: {type(action)}')
 
         except Exception as e:
-            logging.error(f"Error converting intermediate step to messages: {str(e)}")
+            logging.error(f'Error converting intermediate step to messages: {str(e)}')
             # Continue processing other steps even if one fails
             continue
 

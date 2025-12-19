@@ -1,13 +1,92 @@
 import json
+import re
 from datetime import datetime
+from typing import Dict, List, Optional
 
 from playwright.async_api import Page
 
 
+class IgnoreRuleMatcher:
+    """Helper class to match ignore rules with patterns."""
+
+    @staticmethod
+    def should_ignore_network(url: str, ignore_rules: Optional[List[Dict]] = None) -> bool:
+        """Check if a network request URL should be ignored.
+
+        Args:
+            url: The URL to check
+            ignore_rules: List of ignore rules with pattern and type
+
+        Returns:
+            True if the URL should be ignored, False otherwise
+        """
+        if not ignore_rules:
+            return False
+
+        for rule in ignore_rules:
+            pattern = rule.get('pattern', '')
+            rule_type = rule.get('type', 'url')
+
+            if not pattern:
+                continue
+
+            try:
+                if rule_type == 'domain':
+                    # Match domain in URL
+                    if re.search(pattern, url, re.IGNORECASE):
+                        return True
+                elif rule_type == 'url':
+                    # Match full URL
+                    if re.search(pattern, url, re.IGNORECASE):
+                        return True
+            except re.error:
+                # Invalid regex pattern, skip
+                continue
+
+        return False
+
+    @staticmethod
+    def should_ignore_console(message: str, ignore_rules: Optional[List[Dict]] = None) -> bool:
+        """Check if a console error message should be ignored.
+
+        Args:
+            message: The console error message to check
+            ignore_rules: List of ignore rules with pattern and match_type
+
+        Returns:
+            True if the message should be ignored, False otherwise
+        """
+        if not ignore_rules:
+            return False
+
+        for rule in ignore_rules:
+            pattern = rule.get('pattern', '')
+            match_type = rule.get('match_type', 'contains')
+
+            if not pattern:
+                continue
+
+            try:
+                if match_type == 'regex':
+                    # Use regex matching
+                    if re.search(pattern, message, re.IGNORECASE):
+                        return True
+                elif match_type == 'contains':
+                    # Simple substring matching
+                    if pattern.lower() in message.lower():
+                        return True
+            except re.error:
+                # Invalid regex pattern, skip
+                continue
+
+        return False
+
+
 class NetworkCheck:
-    def __init__(self, page: Page):
+    def __init__(self, page: Page, ignore_rules: Optional[List[Dict]] = None):
         self.page = page
-        self.network_messages = {'failed_requests': [], 'responses': [], 'requests': []}
+        self.ignore_rules = ignore_rules or []
+        self.network_messages = {'failed_requests': [], 'responses': [], 'requests': [], 'ignored_requests': []}
         self._response_callback = self._handle_response()
         self._request_callback = self._handle_request()
         self._requestfinished_callback = self._handle_request_finished()
@@ -55,6 +134,18 @@ class NetworkCheck:
     def _handle_response(self):
         async def response_callback(response):
             response_url = response.url
+
+            # Check if this URL should be ignored
+            if IgnoreRuleMatcher.should_ignore_network(response_url, self.ignore_rules):
+                # Track ignored requests for debugging
+                self.network_messages['ignored_requests'].append({
+                    'url': response_url,
+                    'status': response.status,
+                    'method': response.request.method,
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'),
+                })
+                return
+
             try:
                 current_request = None
                 for request in self.network_messages['requests']:
@@ -296,9 +387,11 @@ class NetworkCheck:
 
 
 class ConsoleCheck:
-    def __init__(self, page):
+    def __init__(self, page, ignore_rules: Optional[List[Dict]] = None):
         self.page = page
+        self.ignore_rules = ignore_rules or []
         self.console_messages = []
+        self.ignored_console_messages = []
         self._setup_listeners()
 
     def _setup_listeners(self):
@@ -308,10 +401,24 @@ class ConsoleCheck:
         if msg.type == 'error':
             error_message = msg.text
             error_location = getattr(msg, 'location', None)
+
+            # Check if this console error should be ignored
+            if IgnoreRuleMatcher.should_ignore_console(error_message, self.ignore_rules):
+                self.ignored_console_messages.append({
+                    'msg': error_message,
+                    'location': error_location,
+                    'ignored': True
+                })
+                return
+
             self.console_messages.append({'msg': error_message, 'location': error_location})
 
     def get_messages(self):
         return self.console_messages
+
+    def get_ignored_messages(self):
+        """Get list of ignored console messages for debugging."""
+        return self.ignored_console_messages
 
     def remove_listeners(self):
         try:

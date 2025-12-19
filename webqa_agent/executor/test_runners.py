@@ -14,9 +14,8 @@ from webqa_agent.data.test_structures import (SubTestReport, SubTestResult,
 from webqa_agent.testers import (LighthouseMetricsTest, PageButtonTest,
                                  PageContentTest, PageTextTest,
                                  WebAccessibilityTest)
-from webqa_agent.utils import Display
+from webqa_agent.utils import Display, i18n
 from webqa_agent.utils.log_icon import icon
-from webqa_agent.utils import i18n
 
 
 class BaseTestRunner(ABC):
@@ -58,9 +57,9 @@ class UIAgentLangGraphRunner(BaseTestRunner):
 
                 # Extract dynamic step generation configuration
                 dynamic_step_config = test_config.test_specific_config.get('dynamic_step_generation', {
-                    "enabled": False,
-                    "max_dynamic_steps": 5,
-                    "min_elements_threshold": 2
+                    'enabled': False,
+                    'max_dynamic_steps': 5,
+                    'min_elements_threshold': 2
                 })
 
                 cookies = test_config.test_specific_config.get('cookies')
@@ -97,36 +96,37 @@ class UIAgentLangGraphRunner(BaseTestRunner):
 
                 # 执行LangGraph工作流，直接使用 ainvoke 获取最终状态
                 final_state = await graph_app.ainvoke(initial_state, config=graph_config)
-                
+
                 # 从最终状态获取 recorded_cases
                 recorded_cases_from_graph = final_state.get('recorded_cases', [])
-                logging.info(f"Retrieved {len(recorded_cases_from_graph)} recorded cases from final graph state")
-                
+                logging.info(f'Retrieved {len(recorded_cases_from_graph)} recorded cases from final graph state')
+
                 # 从最终状态获取 completed_cases 用于状态映射
                 completed_cases = final_state.get('completed_cases', [])
                 for idx, case_res in enumerate(completed_cases):
                     case_name = case_res.get('case_name') or case_res.get('name') or f'Case_{idx + 1}'
                     graph_case_status_map[case_name] = case_res.get('status', 'failed').lower()
-                
+
                 # === 使用recorded_cases中的数据构建测试结果 ===
                 sub_tests = []
-                
+
                 if recorded_cases_from_graph:
                     logging.debug(f'Processing {len(recorded_cases_from_graph)} cases from recorded_cases')
-                    
+
                     # 将recorded_cases转换为TestResult.SubTestResult
                     for i, recorded_case in enumerate(recorded_cases_from_graph):
                         case_name = recorded_case.get('name', f"Unnamed test case - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
                         case_steps_raw = recorded_case.get('steps', [])
-                        
+
                         # 验证case数据完整性
                         logging.debug(f"Processing case {i + 1}: '{case_name}' with {len(case_steps_raw)} steps")
                         if not case_steps_raw:
                             logging.warning(f"Case '{case_name}' has no steps data")
-                        
+
                         # 转换步骤数据为SubTestStep格式
-                        from webqa_agent.data.test_structures import SubTestStep, SubTestScreenshot, SubTestReport
-                        
+                        from webqa_agent.data.test_structures import (
+                            SubTestReport, SubTestScreenshot, SubTestStep)
+
                         case_steps = []
                         for step_data in case_steps_raw:
                             # 转换截图数据
@@ -134,7 +134,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                             for scr in step_data.get('screenshots', []):
                                 if isinstance(scr, dict) and scr.get('type') == 'base64':
                                     screenshots.append(SubTestScreenshot(type='base64', data=scr.get('data', '')))
-                            
+
                             # 转换状态
                             step_status_str = step_data.get('status', 'passed').lower()
                             step_status = TestStatus.PASSED
@@ -142,7 +142,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                                 step_status = TestStatus.FAILED
                             elif step_status_str in ['warning', 'warn']:
                                 step_status = TestStatus.WARNING
-                            
+
                             case_steps.append(SubTestStep(
                                 id=step_data.get('id', 0),
                                 description=step_data.get('description', ''),
@@ -151,13 +151,13 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                                 actions=step_data.get('actions', []),
                                 status=step_status,
                             ))
-                        
+
                         # 获取case的整体状态
                         case_status_str = recorded_case.get('status', 'failed').lower()
                         # Prefer status from graph aggregation if available
                         if case_name in graph_case_status_map:
                             case_status_str = graph_case_status_map[case_name]
-                        
+
                         status_mapping = {
                             'pending': TestStatus.PENDING,
                             'running': TestStatus.RUNNING,
@@ -168,12 +168,12 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                             'cancelled': TestStatus.CANCELLED,
                         }
                         status_enum = status_mapping.get(case_status_str, TestStatus.FAILED)
-                        
+
                         # 构建报告
                         reports = []
                         if recorded_case.get('final_summary'):
                             reports.append(SubTestReport(title='Summary', issues=recorded_case.get('final_summary', '')))
-                        
+
                         sub_tests.append(
                             SubTestResult(
                                 sub_test_id=recorded_case.get('case_info', {}).get('case_id', ''),
@@ -188,29 +188,29 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                                 report=reports,
                             )
                         )
-                    
+
                     result.sub_tests = sub_tests
-                    
+
                     # 计算汇总指标
                     total_cases = len(recorded_cases_from_graph)
                     passed_cases = sum(1 for case in recorded_cases_from_graph if case.get('status', '').lower() in ['passed', 'completed'])
                     failed_cases = total_cases - passed_cases
                     total_steps = sum(len(case.get('steps', [])) for case in recorded_cases_from_graph)
                     success_rate = (passed_cases / total_cases * 100) if total_cases > 0 else 0
-                    
+
                     result.add_metric('test_case_count', total_cases)
                     result.add_metric('passed_test_cases', passed_cases)
                     result.add_metric('failed_test_cases', failed_cases)
                     result.add_metric('total_steps', total_steps)
                     result.add_metric('success_rate', success_rate)
-                    
+
                     # 设置整体状态
                     if failed_cases == 0:
                         result.status = TestStatus.PASSED
                     else:
                         result.status = TestStatus.FAILED
                         result.error_message = f'{failed_cases} out of {total_cases} test cases failed'
-                    
+
                 else:
                     logging.error('No recorded_cases data found in graph state')
                     result.status = TestStatus.FAILED

@@ -746,25 +746,57 @@
          * @returns {boolean} `true` if the element is on top, otherwise `false`.
          */
         function isTopElement(element) {
+            const rect = element.getBoundingClientRect();
+
+            // Check if element is outside viewport
+            const isOutsideViewport = rect.right < 0 || rect.left > window.innerWidth || rect.bottom < 0 || rect.top > window.innerHeight;
+
+            // If viewportOnly mode is enabled, exclude elements outside viewport
+            if (window._viewportOnly && isOutsideViewport) {
+                return false;
+            }
+
+            // If not in viewportOnly mode and element is outside viewport, skip elementFromPoint check
+            if (isOutsideViewport) {
+                return true;
+            }
+
+            // Basic check (same as copy.js) - filters out clip-hidden elements
+            const cx = rect.left + rect.width / 2;
+            const cy = rect.top + rect.height / 2;
+            try {
+                const topEl = document.elementFromPoint(cx, cy);
+                let curr = topEl;
+                while (curr && curr !== document.documentElement) {
+                    if (curr === element) break;  // Found it, continue to extended checks
+                    curr = curr.parentElement;
+                }
+                if (curr !== element) {
+                    return false;  // Basic check failed, element is hidden (e.g., clip-hidden input)
+                }
+            } catch {
+                // Continue to extended checks
+            }
+
+            // Extended checks (original enhanced logic)
             if (!window._viewportOnly) {
                 return true;
             }
             const viewportExpansion = 0;
 
-            const rects = element.getClientRects(element); // Replace element.getClientRects()
+            const rects = element.getClientRects();
 
             if (!rects || rects.length === 0) {
-                return false; // No geometry, cannot be top
+                return false;
             }
 
             let isAnyRectInViewport = false;
-            for (const rect of rects) {
-                // Use the same logic as isInExpandedViewport check
-                if (rect.width > 0 && rect.height > 0 && !( // Only check non-empty rects
-                    rect.bottom < -viewportExpansion ||
-                    rect.top > window.innerHeight + viewportExpansion ||
-                    rect.right < -viewportExpansion ||
-                    rect.left > window.innerWidth + viewportExpansion
+            for (const r of rects) {
+                if (r.width > 0 && r.height > 0 && !(
+                    r.bottom < -viewportExpansion ||
+                    r.top > window.innerHeight + viewportExpansion ||
+                    r.right < -viewportExpansion ||
+                    r.left > window.innerWidth + viewportExpansion
                 )) {
                     isAnyRectInViewport = true;
                     break;
@@ -772,19 +804,16 @@
             }
 
             if (!isAnyRectInViewport) {
-                return false; // All rects are outside the viewport area
+                return false;
             }
 
-
-            // Find the correct document context and root element
+            // iframe support
             let doc = element.ownerDocument;
-
-            // If we're in an iframe, elements are considered top by default
             if (doc !== window.document) {
                 return true;
             }
 
-            // For shadow DOM, we need to check within its own root context
+            // Shadow DOM support
             const shadowRoot = element.getRootNode();
             if (shadowRoot instanceof ShadowRoot) {
                 const centerX = rects[Math.floor(rects.length / 2)].left + rects[Math.floor(rects.length / 2)].width / 2;
@@ -805,18 +834,16 @@
                 }
             }
 
-            const margin = 10
-            const rect = rects[Math.floor(rects.length / 2)];
+            // Multi-point detection (center + 4 corners)
+            const margin = 10;
+            const rectMid = rects[Math.floor(rects.length / 2)];
 
-            // For elements in viewport, check if they're topmost. Do the check in the
-            // center of the element and at the corners to ensure we catch more cases.
             const checkPoints = [
-                // Initially only this was used, but it was not enough
-                {x: rect.left + rect.width / 2, y: rect.top + rect.height / 2},
-                {x: rect.left + margin, y: rect.top + margin},        // top left
-                {x: rect.right - margin, y: rect.top + margin},    // top right
-                {x: rect.left + margin, y: rect.bottom - margin},  // bottom left
-                {x: rect.right - margin, y: rect.bottom - margin},    // bottom right
+                {x: rectMid.left + rectMid.width / 2, y: rectMid.top + rectMid.height / 2},
+                {x: rectMid.left + margin, y: rectMid.top + margin},
+                {x: rectMid.right - margin, y: rectMid.top + margin},
+                {x: rectMid.left + margin, y: rectMid.bottom - margin},
+                {x: rectMid.right - margin, y: rectMid.bottom - margin},
             ];
 
             return checkPoints.some(({x, y}) => {
@@ -850,11 +877,13 @@
 
             // Standard element visibility detection
             const style = getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
             return (
-                element.offsetWidth > 0 &&
-                element.offsetHeight > 0 &&
-                style?.visibility !== "hidden" &&
-                style?.display !== "none"
+                rect.width > 0 &&          // Exclude 1px x 1px visually-hidden elements
+                rect.height > 0 &&         // Exclude 1px x 1px visually-hidden elements
+                style?.visibility !== 'hidden' &&
+                style?.display !== 'none' &&
+                style.opacity !== '0'
             );
         }
 

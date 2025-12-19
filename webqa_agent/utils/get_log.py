@@ -8,7 +8,6 @@ import contextvars
 # Context variable for parallel test execution logging
 test_id_var = contextvars.ContextVar('test_id', default='default')
 
-
 LEVEL = {
     'debug': logging.DEBUG,
     'info': logging.INFO,
@@ -47,7 +46,7 @@ class GetLog:
     logger: logging.Logger = None
 
     @classmethod
-    def get_log(cls, log_level: str = "info", save_locally: bool=False, shared_log_folder: str=None):
+    def get_log(cls, log_level: str = 'info', save_locally: bool=False, shared_log_folder: str=None):
         """Get logger and initialize logging system.
 
         Args:
@@ -55,11 +54,11 @@ class GetLog:
             save_locally (bool): Whether to save screenshots locally, default is False
             shared_log_folder (str): Shared log folder path for concurrent testing
         """
-        logging.getLogger("httpx").setLevel(logging.ERROR)
-        logging.getLogger("httpcore").setLevel(logging.ERROR)
-        logging.getLogger("openai").setLevel(logging.ERROR)
+        logging.getLogger('httpx').setLevel(logging.ERROR)
+        logging.getLogger('httpcore').setLevel(logging.ERROR)
+        logging.getLogger('openai').setLevel(logging.ERROR)
         if log_level not in log_level:
-            raise ValueError(f"Invalid log level: {log_level}")
+            raise ValueError(f'Invalid log level: {log_level}')
 
         # Set global screenshot save parameter
         cls.save_screenshots_locally = save_locally
@@ -70,12 +69,12 @@ class GetLog:
                 cls.log_folder = shared_log_folder
             else:
                 # Get current time and create corresponding log directory
-                log_dir = "./logs"
-                current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                log_dir = './logs'
+                current_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
                 cls.log_folder = os.path.join(log_dir, current_time)
 
                 # Store timestamp in environment variable
-                os.environ["WEBQA_TIMESTAMP"] = current_time
+                os.environ['WEBQA_TIMESTAMP'] = current_time
 
             # Create log directory if it doesn't exist
             if not os.path.exists(cls.log_folder):
@@ -87,26 +86,26 @@ class GetLog:
             cls.logger.setLevel(LEVEL[log_level])
 
             # Get handler - main log file handler
-            log_file = os.path.join(cls.log_folder, "log.log")
+            log_file = os.path.join(cls.log_folder, 'log.log')
             th = TimedRotatingFileHandler(
                 filename=log_file,
-                when="midnight",
+                when='midnight',
                 interval=1,
                 backupCount=3,
-                encoding="utf-8",
+                encoding='utf-8',
             )
-            th.name = "file"
+            th.name = 'file'
             th.setLevel(LEVEL[log_level])
 
             # Get ERROR log handler - error log file handler
-            error_log_file = os.path.join(cls.log_folder, "error.log")
-            eh = logging.FileHandler(filename=error_log_file, encoding="utf-8")
-            eh.name = "error"
-            eh.setLevel(LEVEL["warning"])
+            error_log_file = os.path.join(cls.log_folder, 'error.log')
+            eh = logging.FileHandler(filename=error_log_file, encoding='utf-8')
+            eh.name = 'error'
+            eh.setLevel(LEVEL['warning'])
 
-            fmt = "%(asctime)s - %(levelname)s - [%(test_id)s] %(message)s"
-            if log_level == "debug":
-                fmt = "%(asctime)s %(levelname)s [%(test_id)s] [%(name)s] [%(filename)s (%(funcName)s:%(lineno)d)] - %(message)s"
+            fmt = '%(asctime)s - %(levelname)s - %(message)s'
+            if log_level == 'debug':
+                fmt = '%(asctime)s %(levelname)s [%(name)s] [%(filename)s (%(funcName)s:%(lineno)d)] - %(message)s'
             fm = logging.Formatter(fmt)
             console_fm = ColoredFormatter(fmt)
 
@@ -122,7 +121,7 @@ class GetLog:
             cls.logger.addHandler(eh)
 
             ch = logging.StreamHandler()
-            ch.name = "stream"
+            ch.name = 'stream'
             ch.setLevel(LEVEL[log_level])
             ch.addFilter(context_filter)
             ch.setFormatter(console_fm)
