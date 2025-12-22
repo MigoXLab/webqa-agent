@@ -30,3 +30,7 @@ class MainGraphState(TypedDict):
     dynamic_step_generation: dict
     # For CentralCaseRecorder data storage
     recorded_cases: Annotated[list, operator.add]
+    # For parallel execution with session pool
+    session_pool: Any                    # BrowserSessionPool instance
+    llm_config: Optional[dict]           # LLM config for creating UITester
+    is_batch_complete: bool              # Batch sync flag
