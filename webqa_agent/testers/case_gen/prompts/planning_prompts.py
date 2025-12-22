@@ -53,8 +53,12 @@ def get_shared_test_design_standards(language: str = 'zh-CN') -> str:
 - Every test case MUST include at least ONE meaningful user action sequence that leads to a verifiable result.
 - Avoid test cases that only verify initial state without interaction.
 
-### Domain-Aware Test Case Structure Requirements
-Each test case must include these standardized components with enhanced business context:
+### Test Case Granularity Principle (CRITICAL)
+Each test case must focus on ONE specific functionality:
+- ✅ One navigation link = One test case
+- ✅ One search scenario = One test case  
+- ✅ One form field = One test case
+- ❌ All search scenarios = One test case (Too broad)
 
 - **`name`**: 简洁直观的测试名称，反映业务场景和测试目的 (使用{name_language}命名)
 - **`objective`**: Clear statement linking the test to specific business requirements and domain context
@@ -514,15 +518,28 @@ Please follow these steps for comprehensive page analysis:
    - Compliance and Security: Assess regulatory requirements and security implications
 
 === Test Case Generation Guidelines ===
-For each test case, provide:
-- **Clear test objectives**: Describe what functionality to verify
-- **Detailed test steps**: Specific operation sequences, including:
-  * Page navigation
-  * Element location and interaction
-  * Data input
-  * Verification points
-- **Success criteria**: Clear verification conditions
-- **Test data**: If data input is required, provide specific test data
+
+**CRITICAL - Test Case Granularity Requirements**:
+- **One Test Case = One Functionality**: Each test case must focus on testing ONE specific feature, link, button, or user action
+- **Separate Features**: If testing multiple navigation links, create separate test cases for each link (e.g., "Test Home Link", "Test About Link", etc.)
+- **Separate Scenarios**: If testing search functionality, create separate test cases for each scenario (e.g., "Exact Match Search", "Case Insensitive Search", "No Results Search")
+- **Independent Execution**: Each test case should be independently executable without depending on other test cases
+- **Avoid Comprehensive Tests**: Do NOT create comprehensive test cases that test multiple features in one case
+
+**Test Case Generation Rules**:
+For each SINGLE functionality, provide:
+- **Clear test objectives**: Describe the ONE specific functionality to verify
+- **Focused test steps**: Specific operation sequence for THIS functionality only, including:
+  * Minimal navigation (if needed)
+  * Element interaction for THIS feature
+  * Data input for THIS scenario
+  * Verification points for THIS functionality
+- **Success criteria**: Clear verification conditions for THIS feature only
+- **Test data**: Specific test data for THIS scenario only
+
+**Example Granularity**:
+- ✅ Generate 5 separate test cases for 5 different navigation links
+- ✅ Generate 4 separate test cases for 4 different search scenarios
 """
     else:
         role_and_objective = """

@@ -864,8 +864,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     # Instantiate tools with correct parameters
     # Note: All tools now use ui_tester_instance to dynamically get page
     tools = [
-        UITool(ui_tester_instance=ui_tester_instance),
-        UIAssertTool(ui_tester_instance=ui_tester_instance),
+        UITool(ui_tester_instance=ui_tester_instance, case_recorder=case_recorder),
+        UIAssertTool(ui_tester_instance=ui_tester_instance, case_recorder=case_recorder),
         UIUXViewportTool(ui_tester_instance=ui_tester_instance, llm_config=llm_config, case_recorder=case_recorder),
     ]
     logging.debug(f'Tools initialized: {[tool.name for tool in tools]}')

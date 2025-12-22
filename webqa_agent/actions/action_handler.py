@@ -1238,14 +1238,35 @@ class ActionHandler:
 
             await asyncio.sleep(1)
 
-            if not await self._fill_element_text(
-                element_id=str(id),
-                selector=selector,
-                xpath=xpath,
-                text=text,
-                action_name='type'
-            ):
-                return False
+            # Get selector and xpath from element
+            selector = element.get('selector')
+            xpath = element.get('xpath')
+
+            # If selector and xpath are available, use _fill_element_text
+            if selector or xpath:
+                if not await self._fill_element_text(
+                    element_id=str(id),
+                    selector=selector,
+                    xpath=xpath,
+                    text=text,
+                    action_name='type'
+                ):
+                    return False
+            else:
+                # If no selector/xpath, type directly using keyboard after click
+                try:
+                    page = self._get_current_page()
+                    await page.keyboard.type(text)
+                    logging.debug(f'Typed text into element {id} using keyboard after click')
+                except Exception as e:
+                    logging.error(f'Failed to type text using keyboard: {e}')
+                    ctx.set_error(
+                        ERROR_PLAYWRIGHT,
+                        f'Failed to type text using keyboard after click: {str(e)}',
+                        element_id=id,
+                        playwright_error=str(e)
+                    )
+                    return False
 
             await asyncio.sleep(1)
             return True

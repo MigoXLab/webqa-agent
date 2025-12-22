@@ -8,6 +8,7 @@
 
 
 class LLMPrompt:
+    
     planner_system_prompt = """
     ## Role
     You are a versatile professional in software UI automation. Your outstanding contributions will impact the user experience of billions of users.
@@ -32,6 +33,7 @@ class LLMPrompt:
     - **Tap, Input, Hover**: Require clickable/editable elements
     - **Scroll**: Requires scrollable content
     - **SelectDropdown**: Requires dropdown elements
+    - **Check**: Check if a condition is met and decide whether to continue or stop the task.
 
     **Critical Rule**: Only plan these when valid DOM elements are available.
 
@@ -265,6 +267,13 @@ class LLMPrompt:
         * `selection_path`: Text of the option to be selected (string for single-level, list for nested dropdowns)
         * if the selection_path is a string, it means the option is the first level of the dropdown.
         * if the selection_path is a list, it means the option is the nth level of the dropdown.
+        - type: 'Check', check if a condition is met to decide whether to continue or stop
+        * {{ param: {{ condition: string }} }}
+        * `condition`: Describe the completion condition (what state means "done").
+        * The system will check current page and return:
+            - "stop": Condition is satisfied, task is complete.
+            - "continue": Condition is NOT satisfied, need to keep going.
+        *  Note: If Check returns \"continue\", the system will automatically re-plan and execute more actions.
         - type: 'Mouse', unified mouse action for move and wheel
          {
            "param": {
@@ -308,6 +317,7 @@ class LLMPrompt:
     - SelectDropdown: Select an option from a dropdown menu. If the specific option element is visible and has an ID in the page description, directly select that option. Otherwise, click the dropdown container to expand it, then select the desired option by text.
     - GoToPage: Navigate directly to a specific URL. Useful for returning to the homepage, navigating to known pages, or entering a new web address. Requires a URL parameter.
     - GoBack: Navigate back to the previous page in the browser history, similar to clicking the browser's back button. Does not require any parameters.
+    - Check: Check if a completion condition is met. Returns "stop" (done) or "continue" (keep going). Use for long/iterative tasks like "wait until streaming finishes". Requires a condition parameter.
     - Mouse: Unified mouse action for move and wheel. Use wheel operation for precise scroll distance control or horizontal scrolling (deltaX, deltaY). Use move operation for coordinate-based cursor positioning.
 
     Please ensure the output is a valid **JSON** object. Do **not** include any markdown, backticks, or code block indicators.
@@ -485,6 +495,25 @@ class LLMPrompt:
           ]
         }
         ```
+
+        #### Example 8: Wait until streaming output is complete
+        ```json
+        {
+          \"actions\": [
+            {
+              \"type\": \"Sleep\",
+              \"thought\": \"Wait 30 seconds for the streaming output to progress\",
+              \"param\": { \"timeMs\": 30000 }
+            },
+            {
+              \"type\": \"Check\",
+              \"thought\": \"Check if streaming is complete by verifying the 'Stop Generation' button is gone\",
+              \"param\": { \"condition\": \"streaming is complete (the 'Stop Generation' button is gone, the full response is visible) \" }
+            }
+          ]
+        }
+        ```
+        Note: If Check returns \"continue\", the system will automatically re-plan and execute more actions.
 
         #### Example of what NOT to do
         - If the action's `locate` is null and element is **not in the screenshot**, don't continue planning. Instead:
@@ -1304,6 +1333,31 @@ class LLMPrompt:
 
       **Note on Focus Region**: If a focus region is specified, prioritize evidence from that region while correlating it with execution context (e.g., if the last action targeted an element in the focus region and DOM diff shows changes there, that's strong evidence of expected behavior).
 
+    """
+
+    check_system_prompt = """
+    ## Role
+    You are a web automation assistant. Your task is to check if the current task should continue or stop.
+
+    ## Context
+    - **Current Screenshot**: Visual state of the page.
+    - **Page Description**: Interactive elements on the page.
+    - **Condition**: The completion condition to check.
+
+    ## Decision Logic
+    - Return **"stop"** if the condition IS satisfied (task completed, goal reached).
+    - Return **"continue"** if the condition is NOT YET satisfied (need more actions/waiting).
+
+    ## Examples
+    - Condition: "chat completion is finished" → If still generating, return "continue". If finished, return "stop".
+    - Condition: "every form is checked" → If more forms to check, return "continue". If all checked, return "stop".
+
+    ## Output Format
+    Respond in strict JSON format:
+    {
+      "result": "continue" | "stop",
+      "thought": "Brief explanation of what you observed and why you made this decision"
+    }
     """
 
     page_default_prompt = """

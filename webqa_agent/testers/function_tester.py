@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -80,7 +81,7 @@ class UITester:
 
         await self._actions.go_to_page(self.page, url, cookies=cookies)
 
-    async def action(self, test_step: str, file_path: str = None, viewport_only: bool = False) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    async def action(self, test_step: str, file_path: str = None, viewport_only: bool = False, full_page: bool = True) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Execute AI-driven test instructions and return (step_dict,
         summary_dict)
 
@@ -95,7 +96,13 @@ class UITester:
             raise RuntimeError('ParallelUITester not initialized')
 
         start_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
+        all_execution_steps = []
+        all_plans = []  # Collect all planning iterations for modelIO
+        all_ordered_screenshots = []  # Collect all screenshots in chronological order
+        final_execution_result = {'success': False, 'message': 'No execution performed'}
+        last_check_thought = None
+        global_before_screenshot = None  # Will be assigned in the first iteration
+            
         try:
             logging.debug(f'Executing AI instruction: {test_step}')
             self.page = self.browser_session.page
@@ -104,98 +111,162 @@ class UITester:
             # This allows page-agnostic operations to execute on PDF/plugin pages
             is_likely_page_agnostic = self._is_instruction_page_agnostic(test_step)
 
-            # Crawl current page state
-            dp = DeepCrawler(self.page)
-            prev = await dp.crawl(highlight=True, viewport_only=viewport_only, cache_dom=True)
+            # # Remove any existing markers before taking the global before screenshot
+            # dp_pre = DeepCrawler(self.page)
+            # await dp_pre.remove_marker()
 
-            # Extract page status information for LLM context
-            page_status = getattr(prev, 'page_status', 'SUPPORTED')
-            page_type = getattr(prev, 'page_type', 'html')
+            # Take global before screenshot (not included in action step screenshots)
+            global_before_screenshot = await self._actions.b64_page_screenshot(
+                full_page=full_page,
+                file_name='global_before_screenshot',
+                context='verify'
+            )
+            
+            # Iterative planning loop for tasks that need check actions
+            max_iterations = 5
+            for iteration in range(max_iterations):
+                if iteration > 0:
+                    logging.debug(f'Iterative planning loop - iteration {iteration + 1}')
 
-            # Enhanced unsupported page handling with page-agnostic differentiation
-            # Check for unsupported page types (PDF, plugins, etc.)
-            if hasattr(prev, 'page_status') and prev.page_status == 'UNSUPPORTED_PAGE':
-                page_type = getattr(prev, 'page_type', 'unknown')
+                # Crawl current page state
+                dp = DeepCrawler(self.page)
+                prev = await dp.crawl(highlight=True, viewport_only=viewport_only, cache_dom=True)
 
-                # Smart differentiation: page-agnostic operations can continue
-                if is_likely_page_agnostic:
-                    logging.warning(
-                        f"[WARNING] Executing '{test_step}' on {page_type} page. "
-                        f'Operation is page-agnostic and will continue in degraded mode (no DOM interaction).'
-                    )
-                    # Page-agnostic operations don't need DOM data, allow execution to continue
-                    # Note: prev will have minimal data, but that's acceptable for browser-level operations
+                # Extract page status information for LLM context
+                page_status = getattr(prev, 'page_status', 'SUPPORTED')
+                page_type = getattr(prev, 'page_type', 'html')
+
+                # Enhanced unsupported page handling with page-agnostic differentiation
+                # Check for unsupported page types (PDF, plugins, etc.)
+                if hasattr(prev, 'page_status') and prev.page_status == 'UNSUPPORTED_PAGE':
+                    page_type = getattr(prev, 'page_type', 'unknown')
+
+                    # Smart differentiation: page-agnostic operations can continue
+                    if is_likely_page_agnostic:
+                        logging.warning(
+                            f"[WARNING] Executing '{test_step}' on {page_type} page. "
+                            f'Operation is page-agnostic and will continue in degraded mode (no DOM interaction).'
+                        )
+                        # Page-agnostic operations don't need DOM data, allow execution to continue
+                        # Note: prev will have minimal data, but that's acceptable for browser-level operations
+                    else:
+                        # DOM-dependent operation on unsupported page: must abort
+                        error_msg = f"Cannot execute action: current page type '{page_type}' is unsupported"
+                        logging.error(f'[CRITICAL] {error_msg}')
+
+                        end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+                        # Build error step structure
+                        error_steps_dict = {
+                            'description': f'action: {test_step}',
+                            'actions': all_execution_steps,
+                            'screenshots': [],
+                            'modelIO': '',
+                            'status': 'failed',
+                            'error': error_msg,
+                            'start_time': start_time,
+                            'end_time': end_time,
+                            'dom_diff': {}
+                        }
+
+                        # Build error result
+                        error_result = {
+                            'success': False,
+                            'unsupported_page': True,
+                            'page_type': page_type,
+                            'message': error_msg,
+                            'before_screenshot': global_before_screenshot,
+                            'dom_diff': {}
+                        }
+
+                        return error_steps_dict, error_result
+
+                await self._actions.update_element_buffer(prev.raw_dict())
+                logging.debug(f'previous dom before action (iteration {iteration + 1}): {prev.to_llm_json()}')
+
+                # Take screenshot
+                marker_screenshot = await self._actions.b64_page_screenshot(
+                    full_page=full_page,
+                    file_name=f'action_planning_marker_iter_{iteration}',
+                    context='test'
+                )
+                all_ordered_screenshots.append(marker_screenshot)
+
+                # Remove marker
+                await dp.remove_marker()
+
+                # Prepare LLM input with comprehensive element data for better planning
+                # Include ATTRIBUTES for input types, placeholders, and other action-relevant info
+                planning_template = [
+                    str(ElementKey.TAG_NAME),
+                    str(ElementKey.INNER_TEXT),
+                    str(ElementKey.ATTRIBUTES),
+                    str(ElementKey.CENTER_X),
+                    str(ElementKey.CENTER_Y)
+                ]
+                
+                # If we are in an iteration, add some context about what happened before
+                iterative_context = ""
+                if iteration > 0 and all_execution_steps:
+                    done_actions = [s.get('description', '') for s in all_execution_steps]
+                    iterative_context = f"\n\n**Progress**: We have already performed these actions: {', '.join(done_actions)}."
+                    if last_check_thought:
+                        iterative_context += f"\n**Last Observation**: {last_check_thought}"
+                    iterative_context += "\nNow continuing with the task."
+
+                user_prompt = self._prepare_prompt_action(
+                    test_step + iterative_context,
+                    prev.to_llm_json(template=planning_template),
+                    LLMPrompt.planner_output_prompt,
+                    page_status=page_status,
+                    page_type=page_type,
+                    is_page_agnostic=is_likely_page_agnostic
+                )
+                logging.debug(f'User prompt (iteration {iteration + 1}): {test_step + iterative_context}')
+                
+                # Generate plan
+                plan_json = await self._generate_plan(LLMPrompt.planner_system_prompt, user_prompt, marker_screenshot)
+                all_plans.append({
+                    'iteration': iteration + 1,
+                    'plan': plan_json
+                })
+
+                logging.debug(f'Generated plan (iteration {iteration + 1}): {plan_json}')
+
+                # Execute plan
+                execution_steps, execution_result = await self._execute_plan(plan_json=plan_json, file_path=file_path, viewport_only=viewport_only, full_page=full_page)
+                
+                # Aggregate steps
+                all_execution_steps.extend(execution_steps)
+                final_execution_result = execution_result
+                
+                # Add check LLM outputs to modelIO trace
+                for step in execution_steps:
+                    if step.get('raw_output'):
+                        all_plans.append({
+                            'iteration': iteration + 1,
+                            'check': step.get('raw_output')
+                        })
+                
+                # Add action screenshots from this iteration to the ordered list
+                for step in execution_steps:
+                    if step.get('screenshot'):
+                        all_ordered_screenshots.append(step.get('screenshot'))
+
+                # Check if we should continue iterating
+                if execution_result.get('check_result') == 'continue':
+                    last_check_thought = execution_result.get('thought')
+                    logging.info(f"Check action result is 'continue'. Iterating planning for task: {test_step}")
+                    continue
                 else:
-                    # DOM-dependent operation on unsupported page: must abort
-                    error_msg = f"Cannot execute action: current page type '{page_type}' is unsupported"
-                    logging.error(f'[CRITICAL] {error_msg}')
+                    break
 
-                    end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-                    # Build error step structure
-                    error_steps_dict = {
-                        'description': f'action: {test_step}',
-                        'actions': [],
-                        'screenshots': [],
-                        'modelIO': '',
-                        'status': 'failed',
-                        'error': error_msg,
-                        'start_time': start_time,
-                        'end_time': end_time,
-                        'dom_diff': {}
-                    }
-
-                    # Build error result
-                    error_result = {
-                        'success': False,
-                        'unsupported_page': True,
-                        'page_type': page_type,
-                        'message': error_msg,
-                        'dom_diff': {}
-                    }
-
-                    # Store error step
-                    # self.add_step_data(error_steps_dict, step_type="action")
-                    return error_steps_dict, error_result
-
-            await self._actions.update_element_buffer(prev.raw_dict())
-            logging.debug(f'previous dom before action : {prev.to_llm_json()}')
-
-            # Take screenshot
-            marker_screenshot = await self._actions.b64_page_screenshot(
-                full_page=True,
-                file_name='action_planning_marker',
-                context='test'
-            )
-
-            # Remove marker
-            await dp.remove_marker()
-
-            # Prepare LLM input with comprehensive element data for better planning
-            # Include ATTRIBUTES for input types, placeholders, and other action-relevant info
-            planning_template = [
-                str(ElementKey.TAG_NAME),
-                str(ElementKey.INNER_TEXT),
-                str(ElementKey.ATTRIBUTES),
-                str(ElementKey.CENTER_X),
-                str(ElementKey.CENTER_Y)
-            ]
-            user_prompt = self._prepare_prompt_action(
-                test_step,
-                prev.to_llm_json(template=planning_template),
-                LLMPrompt.planner_output_prompt,
-                page_status=page_status,
-                page_type=page_type,
-                is_page_agnostic=is_likely_page_agnostic
-            )
-
-            # Generate plan
-            plan_json = await self._generate_plan(LLMPrompt.planner_system_prompt, user_prompt, marker_screenshot)
-
-            logging.debug(f'Generated plan: {plan_json}')
-
-            # Execute plan
-            execution_steps, execution_result = await self._execute_plan(plan_json=plan_json, file_path=file_path, viewport_only=viewport_only)
+            execution_steps = all_execution_steps
+            execution_result = final_execution_result
+            
+            # Ensure the before_screenshot is the global one from the very beginning
+            if global_before_screenshot:
+                execution_result['before_screenshot'] = global_before_screenshot
 
             end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
@@ -208,13 +279,8 @@ class UITester:
             if diff_elems:
                 logging.debug(f'Diff element map after action: {diff_elems}')
 
-            # Aggregate screenshots: include only valid (non-None) images
-            screenshots_list = []
-            if marker_screenshot:
-                screenshots_list.append({'type': 'base64', 'data': marker_screenshot})
-            screenshots_list.extend(
-                [{'type': 'base64', 'data': step.get('screenshot')} for step in execution_steps if step.get('screenshot')]
-            )
+            # Aggregate screenshots: include only valid (non-None) images in the correct chronological order
+            screenshots_list = [{'type': 'base64', 'data': ss} for ss in all_ordered_screenshots if ss]
 
             # Build structure for case step format
             status_str = 'passed' if execution_result.get('success') else 'failed'
@@ -223,7 +289,7 @@ class UITester:
                 'description': f'action: {test_step}',
                 'actions': execution_steps,  # All actions aggregated together
                 'screenshots': screenshots_list,  # All screenshots aggregated together
-                'modelIO': json.dumps(plan_json, indent=2, ensure_ascii=False) if isinstance(plan_json, dict) else '',
+                'modelIO': json.dumps(all_plans, indent=2, ensure_ascii=False) if all_plans else '',
                 'status': status_str,
                 'start_time': start_time,
                 'end_time': end_time,
@@ -245,6 +311,9 @@ class UITester:
                 'actions': execution_steps
             })
 
+            # Clean up markers before returning to ensure clean state for next step
+            await dp.remove_marker()
+
             return execution_steps_dict, execution_result
 
         except Exception as e:
@@ -254,15 +323,15 @@ class UITester:
             end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
             # Safely get possibly undefined variables
-            safe_marker_screenshot = locals().get('marker_screenshot')
+            safe_all_ordered_screenshots = locals().get('all_ordered_screenshots', [])
             safe_plan_json = locals().get('plan_json', {})
 
             # Build error case execution step dictionary structure
-            error_screenshots = [{'type': 'base64', 'data': safe_marker_screenshot}] if safe_marker_screenshot else []
+            error_screenshots = [{'type': 'base64', 'data': ss} for ss in safe_all_ordered_screenshots if ss]
 
             error_execution_steps = {
                 'description': f'action: {test_step}',
-                'actions': [],
+                'actions': locals().get('all_execution_steps', []),
                 'screenshots': error_screenshots,
                 'modelIO': '',  # No valid model interaction output
                 'status': 'failed',
@@ -374,7 +443,8 @@ class UITester:
         assertion: str,
         execution_context: Optional[Dict[str, Any]] = None,
         focus_region: Optional[str] = None,
-        viewport_only: bool = False
+        viewport_only: bool = False,
+        full_page: bool = True,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Execute AI-driven assertion verification.
 
@@ -561,7 +631,7 @@ class UITester:
 
                 # Capture new screenshot
                 screenshot = await self._actions.b64_page_screenshot(
-                    full_page=True,
+                    full_page=full_page,
                     file_name='verification_clean',
                     context='test'
                 )
@@ -664,7 +734,7 @@ class UITester:
             # Try to get basic page information even if it fails
             try:
                 basic_screenshot = await self._actions.b64_page_screenshot(
-                    full_page=True,
+                    full_page=full_page,
                     file_name='assertion_failed',
                     context='error'
                 )
@@ -819,14 +889,14 @@ class UITester:
                 logging.warning(f'Plan generation attempt {attempt + 1} failed: {str(e)}, retrying...')
                 await asyncio.sleep(1)
 
-    async def _execute_plan(self, plan_json: Dict[str, Any], file_path: str = None, viewport_only: bool = False) -> Dict[str, Any]:
+    async def _execute_plan(self, plan_json: Dict[str, Any], file_path: str = None, viewport_only: bool = False, full_page: bool = True) -> Dict[str, Any]:
         """Execute test plan."""
         execute_results = []
         action_count = len(plan_json.get('actions', []))
 
         # Capture initial screenshot BEFORE any actions (plan-level before state)
         initial_screenshot = await self._actions.b64_page_screenshot(
-            full_page=True,
+            full_page=full_page,
             file_name='plan_initial_screenshot',
             context='verify'
         )
@@ -839,6 +909,8 @@ class UITester:
                 # Execute action
                 if action.get('type') == 'Upload' and file_path:
                     execution_result = await self._action_executor._execute_upload(action, file_path)
+                elif action.get('type') == 'Check':
+                    execution_result = await self._execute_plan_check(action, viewport_only=True, full_page=False)
                 else:
                     execution_result = await self._action_executor.execute(action)
 
@@ -846,9 +918,11 @@ class UITester:
                 if isinstance(execution_result, dict):
                     success = execution_result.get('success', False)
                     message = execution_result.get('message', 'No message provided')
+                    check_result = execution_result.get('check_result')
                 else:
                     success = bool(execution_result)
                     message = 'Legacy boolean result'
+                    check_result = None
 
                 # Wait for page to stabilize
                 self.page = self.browser_session.page
@@ -860,10 +934,14 @@ class UITester:
                     await asyncio.sleep(1)
 
                 # Take screenshot
-                post_action_ss = await self._actions.b64_page_screenshot(
-                    file_name=f'action_{action_desc}_{index}',
-                    context='test'
-                )
+                # Optimization: If Check action already returned a screenshot with markers, use it
+                if action.get('type') == 'Check' and execution_result.get('screenshot'):
+                    post_action_ss = execution_result.get('screenshot')
+                else:
+                    post_action_ss = await self._actions.b64_page_screenshot(
+                        file_name=f'action_{action_desc}_{index}',
+                        context='test'
+                    )
 
                 action_result = {
                     'description': action_desc,
@@ -872,6 +950,11 @@ class UITester:
                     'screenshot': post_action_ss,
                     'index': index,
                 }
+                if check_result:
+                    action_result['check_result'] = check_result
+                    action_result['thought'] = execution_result.get('thought')
+                    if execution_result.get('raw_output'):
+                        action_result['raw_output'] = execution_result.get('raw_output')
 
                 execute_results.append(action_result)
 
@@ -879,7 +962,7 @@ class UITester:
                     logging.error(f'Action {index} failed: {message}')
                     # Capture final screenshot even on failure
                     final_screenshot = await self._actions.b64_page_screenshot(
-                        full_page=True,
+                        full_page=full_page,
                         file_name='plan_final_screenshot_failed',
                         context='verify'
                     )
@@ -896,13 +979,20 @@ class UITester:
                     action_result['after_action_page_structure'] = ''  # 失败场景可为空
                     return execute_results, action_result
 
+                # If Check action returned 'stop', always stop the current plan immediately
+                # If it returned 'continue', we continue executing the rest of the current plan
+                # (e.g., executing a 'Sleep' that was planned after the 'Check')
+                if action.get('type') == 'Check' and check_result == 'stop':
+                    logging.info(f'Check action returned stop, finishing current plan')
+                    break
+
             except Exception as e:
                 error_msg = f'Action {index} failed with error: {str(e)}'
                 logging.error(error_msg)
                 # Capture final screenshot even on exception
                 try:
                     final_screenshot = await self._actions.b64_page_screenshot(
-                        full_page=True,
+                        full_page=full_page,
                         file_name='plan_final_screenshot_exception',
                         context='verify'
                     )
@@ -929,11 +1019,15 @@ class UITester:
 
         logging.debug('All actions executed successfully')
         # Capture final screenshot AFTER all actions (plan-level after state)
-        final_screenshot = await self._actions.b64_page_screenshot(
-            full_page=True,
-            file_name='plan_final_screenshot',
-            context='verify'
-        )
+        # Optimization: Reuse the screenshot from the last executed action if possible
+        if execute_results and execute_results[-1].get('screenshot'):
+            final_screenshot = execute_results[-1].get('screenshot')
+        else:
+            final_screenshot = await self._actions.b64_page_screenshot(
+                full_page=full_page,
+                file_name='plan_final_screenshot',
+                context='verify'
+            )
 
         # Capture page context at action completion time (for time-consistent verification)
         try:
@@ -950,7 +1044,8 @@ class UITester:
             file_name='final_success',
             context='test'
         )
-        return execute_results, {
+
+        final_result = {
             'success': True,
             'message': 'All actions executed successfully',
             'screenshot': post_action_ss,
@@ -960,6 +1055,94 @@ class UITester:
             'after_action_title': after_action_title,
             'after_action_page_structure': after_action_page_structure,
         }
+
+        # Find the latest Check action's result in the execution history of this plan
+        for step in reversed(execute_results):
+            if 'check_result' in step:
+                final_result['check_result'] = step['check_result']
+                final_result['thought'] = step.get('thought')
+                break
+
+        return execute_results, final_result
+
+    async def _execute_plan_check(self, action: Dict[str, Any], viewport_only: bool = False, full_page: bool = True) -> Dict[str, Any]:
+        """Execute check action to determine if the plan should continue.
+        
+        The Check action asks LLM to evaluate if a completion condition is met.
+        LLM directly returns "stop" (condition met) or "continue" (condition not met).
+        """
+        condition = action.get('param', {}).get('condition', '')
+        if not condition:
+            return {'success': False, 'message': 'Missing condition for Check action'}
+
+        try:
+            # Capture current state for checking
+            dp = DeepCrawler(self.page)
+            curr = await dp.crawl(highlight=True, viewport_only=viewport_only, cache_dom=True)
+
+            # Extract page status information
+            page_status = getattr(curr, 'page_status', 'SUPPORTED')
+            page_type = getattr(curr, 'page_type', 'html')
+
+            # Take screenshot with markers
+            marker_screenshot = await self._actions.b64_page_screenshot(
+                full_page=full_page,
+                file_name='check_action_marker',
+                context='test'
+            )
+
+            # Remove markers
+            await dp.remove_marker()
+
+            # Prepare prompt for check
+            check_template = [
+                str(ElementKey.TAG_NAME),
+                str(ElementKey.INNER_TEXT),
+                str(ElementKey.ATTRIBUTES),
+                str(ElementKey.CENTER_X),
+                str(ElementKey.CENTER_Y)
+            ]
+
+            prompt = (
+                f"Condition: {condition}\n"
+                f"====================\n"
+                f"PAGE STATUS: {page_status} ({page_type})\n"
+                f"pageDescription: {curr.to_llm_json(template=check_template)}"
+            )
+
+            # Call LLM
+            response = await self.llm.get_llm_response(LLMPrompt.check_system_prompt, prompt, images=marker_screenshot)
+
+            if isinstance(response, str):
+                try:
+                    result_json = json.loads(response)
+                except json.JSONDecodeError:
+                    # Try to extract JSON from markdown if necessary
+                    match = re.search(r'\{.*\}', response, re.DOTALL)
+                    if match:
+                        result_json = json.loads(match.group())
+                    else:
+                        raise ValueError(f'Invalid JSON response from LLM: {response}')
+            else:
+                result_json = response
+
+            # Parse LLM result - LLM directly decides "stop" or "continue"
+            check_result = result_json.get('result', 'stop')
+            thought = result_json.get('thought', 'No thought provided')
+
+            logging.info(f"Check action result: {check_result} (Thought: {thought})")
+
+            return {
+                'success': True,
+                'message': f'Check completed: {check_result}. {thought}',
+                'check_result': check_result,
+                'thought': thought,
+                'raw_output': result_json # 传出原始 LLM 输出
+            }
+
+        except Exception as e:
+            logging.error(f'Check action failed: {str(e)}')
+            return {'success': False, 'message': f'Check action failed: {str(e)}'}
 
     def get_monitoring_results(self) -> Dict[str, Any]:
         """Get monitoring results."""

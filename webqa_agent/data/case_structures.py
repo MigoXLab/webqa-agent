@@ -6,7 +6,7 @@ action and verify steps with extensible arguments.
 
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from webqa_agent.data.test_structures import TestStatus
 
@@ -21,6 +21,8 @@ class ActionArgs(BaseModel):
         file_path: File path(s) for upload operations. Supports single path or list.
         timeout: Action timeout (milliseconds).
     """
+    model_config = ConfigDict(extra='forbid')
+
     file_path: Optional[Union[str, List[str]]] = None
     timeout: Optional[int] = None
 
@@ -37,6 +39,8 @@ class VerifyArgs(BaseModel):
         context: Alias for use_context (backward compatible).
         timeout: Verification timeout (milliseconds).
     """
+    model_config = ConfigDict(extra='forbid')
+
     use_context: Optional[bool] = False
     context: Optional[bool] = None  # Alias for use_context
     timeout: Optional[int] = None
@@ -66,6 +70,8 @@ class StepAction(BaseModel):
             args:
               file_path: ./path/to/file.pdf
     """
+    model_config = ConfigDict(extra='forbid')
+
     description: str
     args: Optional[ActionArgs] = None
 
@@ -73,6 +79,8 @@ class StepAction(BaseModel):
     @classmethod
     def parse_yaml_format(cls, data: Any) -> Dict[str, Any]:
         """Auto-convert string format to dict format."""
+        if data is None:
+            raise ValueError('Action step content cannot be empty. Check indentation?')
         if isinstance(data, str):
             return {'description': data}
         if isinstance(data, dict):
@@ -96,6 +104,8 @@ class StepVerify(BaseModel):
             args:
               use_context: true
     """
+    model_config = ConfigDict(extra='forbid')
+
     assertion: str
     args: Optional[VerifyArgs] = None
 
@@ -103,6 +113,8 @@ class StepVerify(BaseModel):
     @classmethod
     def parse_yaml_format(cls, data: Any) -> Dict[str, Any]:
         """Auto-convert string format to dict format."""
+        if data is None:
+            raise ValueError('Verify step content cannot be empty. Check indentation?')
         if isinstance(data, str):
             return {'assertion': data}
         return data
@@ -120,6 +132,8 @@ class CaseStep(BaseModel):
           - action: click login button
           - verify: verify page display correctly
     """
+    model_config = ConfigDict(extra='forbid')
+
     step_type: str  # 'action' or 'verify'
     action: Optional[StepAction] = None
     verify: Optional[StepVerify] = None
@@ -132,11 +146,21 @@ class CaseStep(BaseModel):
             raise ValueError(f'Step must be a dict, got {type(data)}')
 
         if 'action' in data:
+            # Check for extra fields in CaseStep
+            extra_keys = set(data.keys()) - {'action'}
+            if extra_keys:
+                raise ValueError(f'Extra fields in action step: {extra_keys}. Check indentation?')
+            
             return {
                 'step_type': 'action',
                 'action': data['action']  # StepAction will handle its own parsing
             }
         elif 'verify' in data:
+            # Check for extra fields in CaseStep
+            extra_keys = set(data.keys()) - {'verify'}
+            if extra_keys:
+                raise ValueError(f'Extra fields in verify step: {extra_keys}. Check indentation?')
+
             return {
                 'step_type': 'verify',
                 'verify': data['verify']  # StepVerify will handle its own parsing
@@ -161,6 +185,8 @@ class Case(BaseModel):
               - action: click login button
               - verify: verify login successfully
     """
+    model_config = ConfigDict(extra='forbid')
+
     name: str = 'Unnamed Case'
     steps: List[CaseStep] = []
 

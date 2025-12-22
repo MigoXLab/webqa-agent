@@ -140,7 +140,7 @@ class CentralCaseRecorder:
                     description=str(s.get('description', '')),
                     screenshots=screenshots_models,
                     modelIO=str(s.get('modelIO', '')),
-                    actions=[],
+                    actions=s.get('actions', []),  # Preserve original actions data
                     status=status_enum,
                 )
             )

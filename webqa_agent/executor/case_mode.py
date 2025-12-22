@@ -10,6 +10,8 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+from pydantic import ValidationError
+
 from webqa_agent.browser.config import DEFAULT_CONFIG
 from webqa_agent.data import (ParallelTestSession, TestConfiguration,
                               TestResult, TestStatus, TestType)
@@ -104,8 +106,45 @@ class CaseMode:
 
         try:
             # Parse cases from YAML dicts to Case objects
-            parsed_cases = Case.from_yaml_list(cases)
-            logging.info(f'📋 Parsed {len(parsed_cases)} test cases')
+            try:
+                parsed_cases = Case.from_yaml_list(cases)
+                logging.info(f'📋 Parsed {len(parsed_cases)} test cases')
+            except ValidationError as e:
+                # Format friendly error message
+                error_details = []
+                for error in e.errors():
+                    # error['loc'] looks like (0, 'steps', 2, 'verify') or (0, 'name')
+                    loc = error['loc']
+                    msg = error['msg']
+                    
+                    # Clean up common pydantic prefixes
+                    if msg.startswith("Value error, "):
+                        msg = msg.replace("Value error, ", "")
+                    
+                    case_idx = loc[0] if len(loc) > 0 and isinstance(loc[0], int) else None
+                    case_name = "Unknown Case"
+                    if case_idx is not None and case_idx < len(cases):
+                        case_name = cases[case_idx].get('name', f'Case {case_idx + 1}')
+                    
+                    if len(loc) >= 3 and loc[1] == 'steps':
+                        step_idx = loc[2]
+                        step_info = f"Step {step_idx + 1}"
+                        
+                        # Try to get field name if available
+                        field = str(loc[3]) if len(loc) > 3 else ""
+                        if field:
+                            error_details.append(f"  - [{case_name}] {step_info} '{field}': {msg}")
+                        else:
+                            error_details.append(f"  - [{case_name}] {step_info}: {msg}")
+                    elif len(loc) >= 2:
+                        field = str(loc[1])
+                        error_details.append(f"  - [{case_name}] field '{field}': {msg}")
+                    else:
+                        error_details.append(f"  - [{case_name}]: {msg}")
+
+                friendly_msg = "Case format is invalid:\n" + "\n".join(error_details)
+                logging.error(f"{icon['cross']} {friendly_msg}")
+                raise ValueError(friendly_msg) from e
 
             # Initialize case executor
             case_executor = CaseExecutor(

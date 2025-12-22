@@ -70,8 +70,10 @@ class CaseExecutor:
             logging.info(f"{icon['running']} Executing case {idx}/{total_cases}: {case_name}")
 
             # Create a new session for each case
-            session_pool = BrowserSessionPool(browser_config=self.browser_config)
+            # TODO: use session pool once
+            session_pool = BrowserSessionPool(browser_config=self.browser_config) 
             await session_pool.initialize()
+            # TODO: 并行
             session = await session_pool.acquire()
 
             try:
@@ -166,7 +168,7 @@ class CaseExecutor:
     # Private Methods - Tester Lifecycle
     # ========================================================================
 
-    async def _initialize_tester(self, session: BrowserSession, case_name: str) -> 'UITester':
+    async def _initialize_tester(self, session: BrowserSession, case_name: str):
         """Initialize and start UI tester for case execution.
 
         Args:
@@ -311,7 +313,8 @@ class CaseExecutor:
         execution_steps_dict, execution_result = await tester.action(
             test_step=action.description,
             file_path=file_path,
-            viewport_only=True
+            viewport_only=True,
+            full_page=True
         )
 
         step_result = SubTestStep(
@@ -372,7 +375,8 @@ class CaseExecutor:
         verification_step, verification_result = await tester.verify(
             assertion=verify.assertion,
             execution_context=context_info,
-            viewport_only=True
+            viewport_only=True,
+            full_page=True
         )
 
         step_result = SubTestStep(

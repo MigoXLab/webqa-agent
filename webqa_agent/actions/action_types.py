@@ -33,6 +33,7 @@ class ActionType(str, Enum):
     KEYBOARD_PRESS = 'KeyboardPress'
     MOUSE = 'Mouse'
     SCROLL = 'Scroll'
+    CHECK = 'Check'
 
     # Page-agnostic actions (browser-level operations, work on PDF/plugin pages)
     GO_BACK = 'GoBack'
