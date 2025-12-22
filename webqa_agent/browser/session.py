@@ -210,15 +210,22 @@ class BrowserSessionPool:
         logging.info(f"[SessionPool] Initialized (lazy mode, max_size={self.pool_size})")
         return self
 
-    async def _create_session(self) -> _BrowserSession:
+    async def _create_session(self) -> Optional[_BrowserSession]:
+        # Allocate session ID under lock, but initialize outside lock for parallelism
+        async with self._creation_lock:
+            if self._session_counter >= self.pool_size:
+                return None  # Pool limit reached
+            session_id = f"pool_session_{self._session_counter}"
+            self._session_counter += 1
+
         s = _BrowserSession(
-            session_id=f"pool_session_{self._session_counter}",
+            session_id=session_id,
             browser_config=self.browser_config,
             _token=_POOL_TOKEN,
         )
-        self._session_counter += 1
-        await s.initialize()
-        self._sessions.append(s)
+        await s.initialize()  # Parallel browser init
+        async with self._creation_lock:
+            self._sessions.append(s)
         logging.info(f"[SessionPool] Created session: {s.session_id} (total: {len(self._sessions)}/{self.pool_size})")
         return s
 
@@ -228,11 +235,17 @@ class BrowserSessionPool:
         if self._closed:
             raise RuntimeError("BrowserSessionPool has been closed")
 
-        if self._available_sessions.empty():
-            async with self._creation_lock:
-                if len(self._sessions) < self.pool_size:
-                    return await self._create_session()
+        try:
+            return self._available_sessions.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
 
+        # Queue empty, try to create new session
+        s = await self._create_session()
+        if s is not None:
+            return s
+
+        # Pool full, wait for available session
         if timeout is None:
             return await self._available_sessions.get()
         return await asyncio.wait_for(self._available_sessions.get(), timeout=timeout)

@@ -33,15 +33,15 @@ from webqa_agent.utils import Display
 from webqa_agent.testers.function_tester import UITester
 
 
-_pending_case_queue: deque[dict] = deque()
-_queue_lock = asyncio.Lock()
 _completed_case_count = 0  # 全局已完成 case 计数
+_pending_case_queue: deque[dict] = deque()  # 用于旧代码兼容（replan 功能），新代码不使用
+_queue_lock = asyncio.Lock()  # 用于旧代码兼容
 
 
-async def setup_session(state: MainGraphState) -> Dict[str, Any]:
-    """Uses the provided UITester instance to start the browser session."""
-    logging.debug("Setting up browser session...")
-    return {"is_replan": False, "replan_count": 0}
+# async def setup_session(state: MainGraphState) -> Dict[str, Any]:
+#     """Uses the provided UITester instance to start the browser session."""
+#     logging.debug("Setting up browser session...")
+#     return {"is_replan": False, "replan_count": 0}
 
 
 async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any]]]:
@@ -311,61 +311,227 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             logging.debug(f"[plan_test_cases] Released session {s.session_id} back to pool")
 
 
-async def should_start_cases(state: MainGraphState) -> List[Send]:
-    """Determines if there are test cases to run.
+async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
+    """使用 asyncio worker pool 模式并发执行所有 test cases，实现真正的动态补位。"""
+    test_cases = state.get("test_cases", [])
+    if not test_cases:
+        logging.info("No test cases to execute")
+        return {"completed_cases": [], "recorded_cases": []}
 
-    If so, it routes to a node that will start execution loop.
-    """
-    if state.get("generate_only"):
-        logging.debug("'generate_only' is True, ending process after planning.")
-        return [Send("cleanup_session", {})]
-    if state.get("test_cases"):
-        logging.debug("Test cases found, starting execution.")
-        return await schedule_next_batch(state)
-    else:
-        logging.debug("No test cases generated, finishing up.")
-        return [Send("cleanup_session", {})]
-
-
-async def schedule_next_batch(state: MainGraphState) -> List[Send]:
-    """
-    Schedule next batch of test cases for parallel execution.
-    Returns multiple Send objects - LangGraph will execute them in parallel.
-    """
     sp = state["session_pool"]
+    pool_size = sp.pool_size
 
-    # get next batch of test cases
-    async with _queue_lock:
-        batch_size = min(sp.pool_size, len(_pending_case_queue))
-        if batch_size <= 0:
-            logging.debug("No more test cases to run.")
-            return []
-        case_batch = [_pending_case_queue.popleft() for _ in range(batch_size)]
-        logging.debug(f"Scheduling {len(case_batch)} cases for parallel execution, {len(_pending_case_queue)} remaining")
+    logging.info(f"Starting worker pool with {pool_size} workers for {len(test_cases)} cases")
 
-    # Create multiple Sends - LangGraph will execute them in parallel
-    sends = []
-    for case in case_batch:
-        logging.info(f"[Parallel] Creating Send for case: {case.get('name', 'UNNAMED')}")
-        send_data = {
-            "current_case": case,
-            "session_pool": sp,
-            "llm_config": state.get("llm_config"),
-            "language": state.get("language", "zh-CN"),
-            "url": state.get("url"),
-            "cookies": state.get("cookies"),
-            "test_cases": state.get("test_cases", []),
-            "completed_cases": state.get("completed_cases", []),
-            "dynamic_step_generation": state.get("dynamic_step_generation", {
-                "enabled": False,
-                "max_dynamic_steps": 0,
-                "min_elements_threshold": 2
-            }),
-            "case_ui_testers": {},
-        }
-        sends.append(Send("execute_single_case", send_data))
+    # 创建共享队列并填充 test cases
+    case_queue = asyncio.Queue()
+    for case in test_cases:
+        await case_queue.put(case)
 
-    return sends
+    # 共享结果存储
+    completed_cases = []
+    recorded_cases = []
+    results_lock = asyncio.Lock()
+
+    # Worker 函数：持续从队列拉取 case 并执行
+    async def worker(worker_id: int):
+        while True:
+            try:
+                case = case_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                logging.debug(f"Worker {worker_id}: No more cases, exiting")
+                break
+
+            case_name = case.get("name", "UNNAMED")
+            logging.info(f"Worker {worker_id}: Starting case '{case_name}'")
+
+            s = None
+            failed = False
+
+            try:
+                # 获取 session（阻塞直到有可用 session）
+                s = await sp.acquire(timeout=120.0)
+                logging.debug(f"Worker {worker_id}: Acquired session for '{case_name}'")
+
+                await s.navigate_to(state["url"], cookies=state.get("cookies", {}))
+
+                ui_tester = UITester(llm_config=state["llm_config"], browser_session=s)
+                await ui_tester.initialize()
+
+                # Set testcase context
+                ui_tester.current_test_objective = case.get("objective", case.get("name"))
+                ui_tester.current_success_criteria = case.get("success_criteria", [])
+                ui_tester.execution_history.clear()
+                ui_tester.last_action_context = None
+
+                lang = state.get('language', 'zh-CN')
+                default_text = '智能功能测试' if lang == 'zh-CN' else 'AI Function Test'
+
+                with Display.display(f"{default_text} - {case_name}"):
+                    logging.debug(f"Worker {worker_id}: Executing '{case_name}'")
+
+                    # Execute test case via agent worker
+                    worker_input_state = {
+                        "test_case": case,
+                        "completed_cases": state.get("completed_cases", []),
+                        "dynamic_step_generation": state.get("dynamic_step_generation", {
+                            "enabled": False,
+                            "max_dynamic_steps": 0,
+                            "min_elements_threshold": 2
+                        })
+                    }
+
+                    # 执行 case 并添加超时
+                    try:
+                        result = await asyncio.wait_for(
+                            agent_worker_node(worker_input_state, config={"configurable": {"ui_tester_instance": ui_tester}}),
+                            timeout=1800
+                        )
+                        logging.debug(f"Worker {worker_id}: Case '{case_name}' completed")
+                    except asyncio.TimeoutError:
+                        logging.error(f"Worker {worker_id}: Case '{case_name}' timed out (30 minutes)")
+                        failed = True
+                        case_result = {
+                            "case_name": case_name,
+                            "status": "failed",
+                            "failure_type": "timeout",
+                            "reason": "Case execution timed out after 30 minutes"
+                        }
+                        async with results_lock:
+                            completed_cases.append(case_result)
+                        continue
+
+                    # 处理执行结果
+                    case_result = result.get("case_result")
+                    modified_case = result.get("modified_case")
+                    recorded_case = result.get("recorded_case")
+
+                    # Handle case modification when dynamic steps were added
+                    if modified_case:
+                        logging.info(f"Worker {worker_id}: Case '{case_name}' was modified with dynamic steps")
+
+                    # Check if this is a critical failure that should skip reflection
+                    skip_reflection = False
+                    if case_result and case_result.get("status") == "failed":
+                        failure_type = case_result.get("failure_type")
+                        if failure_type == "critical":
+                            logging.warning(f"Worker {worker_id}: Critical failure in '{case_name}', skipping reflection")
+                            skip_reflection = True
+                        else:
+                            logging.info(f"Worker {worker_id}: Recoverable failure in '{case_name}', will reflect")
+
+                    # 执行反思（非 skip_reflection 时）
+                    if not skip_reflection:
+                        reflect_result = await _do_reflection(ui_tester, state, case_name)
+                        # Note: REPLAN logic would need to add cases back to queue, not implemented here for simplicity
+
+                    # 收集结果
+                    async with results_lock:
+                        if case_result:
+                            completed_cases.append(case_result)
+                        if recorded_case:
+                            recorded_cases.append(recorded_case)
+
+                        # 更新进度
+                        global _completed_case_count
+                        _completed_case_count += 1
+                        total = len(test_cases)
+                        logging.info(f"{icon['hourglass']} Progress: {_completed_case_count}/{total} cases completed")
+
+            except Exception as e:
+                logging.error(f"Worker {worker_id}: Exception during '{case_name}': {e}", exc_info=True)
+                failed = True
+                async with results_lock:
+                    completed_cases.append({
+                        "case_name": case_name,
+                        "status": "failed",
+                        "failure_type": "unexpected_error",
+                        "reason": f"Unexpected error: {str(e)}"
+                    })
+                    _completed_case_count += 1
+
+            finally:
+                # 释放或关闭 session
+                if s:
+                    # 检查队列中是否还有待处理的 case
+                    if case_queue.empty():
+                        # 队列已空，直接关闭 session 释放浏览器资源
+                        await s.close()
+                        logging.info(f"Worker {worker_id}: Closed session for '{case_name}' (queue empty, no more work)")
+                    else:
+                        # 队列中还有 case，释放 session 回 pool 以供复用
+                        await sp.release(s, failed=failed)
+                        logging.debug(f"Worker {worker_id}: Released session for '{case_name}' to pool (failed={failed})")
+
+    # 启动 K 个 workers
+    workers = [asyncio.create_task(worker(i), name=f"worker-{i}") for i in range(pool_size)]
+
+    # 等待所有 workers 完成
+    await asyncio.gather(*workers, return_exceptions=True)
+
+    logging.info(f"Worker pool completed: {len(completed_cases)} cases executed")
+
+    return {
+        "completed_cases": completed_cases,
+        "recorded_cases": recorded_cases
+    }
+
+
+# async def should_start_cases(state: MainGraphState) -> List[Send]:
+#     """Determines if there are test cases to run.
+#
+#     If so, it routes to a node that will start execution loop.
+#     """
+#     if state.get("generate_only"):
+#         logging.debug("'generate_only' is True, ending process after planning.")
+#         return [Send("cleanup_session", {})]
+#     if state.get("test_cases"):
+#         logging.debug("Test cases found, starting execution.")
+#         return await schedule_next_batch(state)
+#     else:
+#         logging.debug("No test cases generated, finishing up.")
+#         return [Send("cleanup_session", {})]
+#
+#
+# async def schedule_next_batch(state: MainGraphState) -> List[Send]:
+#     """
+#     Schedule next batch of test cases for parallel execution.
+#     Returns multiple Send objects - LangGraph will execute them in parallel.
+#     """
+#     sp = state["session_pool"]
+#
+#     # get next batch of test cases
+#     async with _queue_lock:
+#         batch_size = min(sp.pool_size, len(_pending_case_queue))
+#         if batch_size <= 0:
+#             logging.debug("No more test cases to run.")
+#             return []
+#         case_batch = [_pending_case_queue.popleft() for _ in range(batch_size)]
+#         logging.debug(f"Scheduling {len(case_batch)} cases for parallel execution, {len(_pending_case_queue)} remaining")
+#
+#     # Create multiple Sends - LangGraph will execute them in parallel
+#     sends = []
+#     for case in case_batch:
+#         logging.info(f"[Parallel] Creating Send for case: {case.get('name', 'UNNAMED')}")
+#         send_data = {
+#             "current_case": case,
+#             "session_pool": sp,
+#             "llm_config": state.get("llm_config"),
+#             "language": state.get("language", "zh-CN"),
+#             "url": state.get("url"),
+#             "cookies": state.get("cookies"),
+#             "test_cases": state.get("test_cases", []),
+#             "completed_cases": state.get("completed_cases", []),
+#             "dynamic_step_generation": state.get("dynamic_step_generation", {
+#                 "enabled": False,
+#                 "max_dynamic_steps": 0,
+#                 "min_elements_threshold": 2
+#             }),
+#             "case_ui_testers": {},
+#         }
+#         sends.append(Send("execute_single_case", send_data))
+#
+#     return sends
 
 
 async def execute_single_case(state: MainGraphState) -> dict:
@@ -543,27 +709,27 @@ async def _do_reflection(ui_tester: UITester, state: dict, case_name: str) -> di
         return {"reflection_history": [{"decision": "CONTINUE", "reasoning": str(e), "new_plan": []}]}
 
 
-async def should_replan_or_continue(state: MainGraphState) -> List[Send]:
-    """路由函数：检查是否还有待执行的 case。反思已在 execute_single_case 中完成。"""
-
-    # 显示进度（使用全局计数）
-    global _completed_case_count
-    total_planned = len(state.get("test_cases", []))
-    logging.info(f"{icon['hourglass']} Progress: {_completed_case_count}/{total_planned} cases completed")
-
-    # 检查是否还有待执行的 case
-    async with _queue_lock:
-        has_pending = len(_pending_case_queue) > 0
-
-    if has_pending:
-        logging.debug(f"Still have pending cases, scheduling next batch")
-        return await schedule_next_batch(state)
-    else:
-        logging.debug(f"No more pending cases, aggregating results")
-        return [Send("aggregate_results", {
-            "test_cases": state.get("test_cases", []),
-            "completed_cases": state.get("completed_cases", [])
-        })]
+# async def should_replan_or_continue(state: MainGraphState) -> List[Send]:
+#     """路由函数：检查是否还有待执行的 case。反思已在 execute_single_case 中完成。"""
+#
+#     # 显示进度（使用全局计数）
+#     global _completed_case_count
+#     total_planned = len(state.get("test_cases", []))
+#     logging.info(f"{icon['hourglass']} Progress: {_completed_case_count}/{total_planned} cases completed")
+#
+#     # 检查是否还有待执行的 case
+#     async with _queue_lock:
+#         has_pending = len(_pending_case_queue) > 0
+#
+#     if has_pending:
+#         logging.debug(f"Still have pending cases, scheduling next batch")
+#         return await schedule_next_batch(state)
+#     else:
+#         logging.debug(f"No more pending cases, aggregating results")
+#         return [Send("aggregate_results", {
+#             "test_cases": state.get("test_cases", []),
+#             "completed_cases": state.get("completed_cases", [])
+#         })]
 
 
 
@@ -581,13 +747,20 @@ async def aggregate_results(state: MainGraphState) -> Dict[str, Dict[str, Any]]:
 
 async def cleanup_session(state: MainGraphState) -> Dict:
     """Cleanup hook for graph workflow completion.
-    
-    Note: Browser session cleanup is handled by test_runners.py to collect
-    monitoring data. This node serves as a graph completion marker.
+
+    Closes any remaining browser sessions in the pool as a safety measure.
+    Most sessions should already be closed by workers when queue becomes empty.
     """
     logging.debug("Graph workflow cleanup node reached")
     async with _queue_lock:
         _pending_case_queue.clear()
+
+    # Close any remaining sessions in the pool (safety net)
+    sp = state.get("session_pool")
+    if sp:
+        await sp.close_all()
+        logging.info("Closed all remaining browser sessions in session pool")
+
     return {}
 
 
@@ -595,28 +768,15 @@ async def cleanup_session(state: MainGraphState) -> Dict:
 workflow = StateGraph(MainGraphState)
 
 # Add nodes
-workflow.add_node("setup_session", setup_session)
 workflow.add_node("plan_test_cases", plan_test_cases)
-workflow.add_node("execute_single_case", execute_single_case)
+workflow.add_node("run_test_cases", run_test_cases)  # 新增：worker pool 节点
 workflow.add_node("aggregate_results", aggregate_results)
 workflow.add_node("cleanup_session", cleanup_session)
 
-# Add edges
-workflow.set_entry_point("setup_session")
-workflow.add_edge("setup_session", "plan_test_cases")
-
-workflow.add_conditional_edges(
-    "plan_test_cases",
-    should_start_cases,
-)
-
-# execute_single_case 内部完成反思，直接路由到下一步
-workflow.add_conditional_edges(
-    "execute_single_case",
-    should_replan_or_continue,
-)
-
-# After execution, the results are aggregated.
+# Add edges - 简化的图结构
+workflow.set_entry_point("plan_test_cases")
+workflow.add_edge("plan_test_cases", "run_test_cases")  # 直接进入 worker pool
+workflow.add_edge("run_test_cases", "aggregate_results")  # worker pool 完成后聚合结果
 workflow.add_edge("aggregate_results", "cleanup_session")
 workflow.add_edge("cleanup_session", END)
 
