@@ -195,14 +195,17 @@ class ParallelTestExecutor:
             browser_failed = False
 
             try:
-                if test_config.test_type in [
-                    TestType.UI_AGENT_LANGGRAPH,
+                if test_config.test_type == TestType.UI_AGENT_LANGGRAPH:
+                    # LangGraph tests manage sessions internally via session pool
+                    session = None
+                    test_context.session_id = "langgraph_pool_mode"
+
+                elif test_config.test_type in [
                     TestType.UX_TEST,
                     TestType.BASIC_TEST
                     # TestType.BUTTON_TEST,
                     # TestType.WEB_BASIC_CHECK,
                 ]:
-
                     # Acquire browser session from pool
                     session = await self.session_pool.acquire()
                     test_context.session_id = session.session_id
@@ -238,6 +241,7 @@ class ParallelTestExecutor:
                     test_config=test_config,
                     llm_config=test_session.llm_config,
                     target_url=test_session.target_url,
+                    session_pool=self.session_pool,
                 )
 
                 # Mark execution outcome according to the returned result status.
