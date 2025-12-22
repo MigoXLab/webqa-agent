@@ -4,7 +4,9 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional, Union
 
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page
+from playwright.async_api import (Browser, BrowserContext, Page,
+                                  async_playwright)
+
 from webqa_agent.browser.config import DEFAULT_CONFIG
 
 __all__ = ["BrowserSessionPool", "BrowserSession"]  # BrowserSessionPool 为唯一入口，BrowserSession 为类型标注用
@@ -30,6 +32,7 @@ class _BrowserSession:
             *,
             session_id: str = None,
             browser_config: Dict[str, Any] = None,
+            disable_tab_interception: bool = False,
             _token: Optional[_SessionToken] = None,
     ):
         # Hard gate: only pool can create session
@@ -40,6 +43,7 @@ class _BrowserSession:
 
         self.session_id = session_id or str(uuid.uuid4())
         self.browser_config = {**DEFAULT_CONFIG, **(browser_config or {})}
+        self.disable_tab_interception = disable_tab_interception
 
         self._browser: Optional[Browser] = None
         self._context: Optional[BrowserContext] = None
@@ -90,11 +94,23 @@ class _BrowserSession:
             )
             self._page = await self._context.new_page()
 
-            # keep single-tab
-            self._context.on("page", self._close_unexpected_page)
-            self._page.on("popup", self._close_unexpected_page)
+            # keep single-tab (conditionally based on test type)
+            if not self.disable_tab_interception:
+                self._context.on('page', self._close_unexpected_page)
+                self._page.on('popup', self._close_unexpected_page)
+                logging.debug(f'Session {self.session_id} initialized - Tab interception ENABLED')
+            else:
+                logging.debug(f'Session {self.session_id} initialized - Tab interception DISABLED (multi-tab allowed)')
 
-            logging.debug(f"Session {self.session_id} initialized")
+            # Auto-handle browser dialogs (alert/confirm/prompt) to prevent test blocking
+            async def _handle_dialog(dialog):
+                dialog_type = dialog.type
+                message = dialog.message[:200] if dialog.message else ''
+                logging.info(f'[DIALOG] Auto-handled {dialog_type}: {message}')
+                await dialog.accept()
+
+            self._page.on('dialog', _handle_dialog)
+
             return self
 
     async def close(self) -> None:
@@ -191,6 +207,7 @@ class BrowserSessionPool:
 
         self.pool_size = pool_size
         self.browser_config = browser_config or {}
+        self.disable_tab_interception = False  # Control tab interception behavior
 
         self._available_sessions: asyncio.Queue[_BrowserSession] = asyncio.Queue(maxsize=pool_size)
         self._sessions: List[_BrowserSession] = []
@@ -221,6 +238,7 @@ class BrowserSessionPool:
         s = _BrowserSession(
             session_id=session_id,
             browser_config=self.browser_config,
+            disable_tab_interception=self.disable_tab_interception,
             _token=_POOL_TOKEN,
         )
         await s.initialize()  # Parallel browser init
@@ -274,6 +292,7 @@ class BrowserSessionPool:
         new_s = _BrowserSession(
             session_id=session_id,
             browser_config=self.browser_config,
+            disable_tab_interception=self.disable_tab_interception,
             _token=_POOL_TOKEN,
         )
         await new_s.initialize()

@@ -1,8 +1,8 @@
 import asyncio
-import logging
 import base64
 import datetime
 import json
+import logging
 import os
 import re
 from contextvars import ContextVar
@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from playwright.async_api import Page
-
 
 # ===== Action Context Infrastructure for Error Propagation =====
 
@@ -23,7 +22,8 @@ class ActionContext:
     """Stores detailed error context for action execution.
 
     This context is propagated through the execution chain using contextvars,
-    allowing detailed error information to be passed without changing return types.
+    allowing detailed error information to be passed without changing return
+    types.
     """
     error_type: Optional[str] = None
     error_reason: Optional[str] = None
@@ -52,17 +52,17 @@ class ActionContext:
 
 
 # Error type constants for consistent classification
-ERROR_SCROLL_FAILED = "scroll_failed"
-ERROR_SCROLL_TIMEOUT = "scroll_timeout_lazy_loading"
-ERROR_ELEMENT_NOT_FOUND = "element_not_found"
-ERROR_NOT_CLICKABLE = "element_not_clickable"
-ERROR_NOT_TYPEABLE = "element_not_typeable"
-ERROR_ELEMENT_OBSCURED = "element_obscured"
-ERROR_DROPDOWN_NO_MATCH = "dropdown_no_match"
-ERROR_DROPDOWN_NOT_FOUND = "dropdown_not_found"
-ERROR_FILE_UPLOAD_FAILED = "file_upload_failed"
-ERROR_ACTION_TIMEOUT = "action_timeout"
-ERROR_PLAYWRIGHT = "playwright_error"
+ERROR_SCROLL_FAILED = 'scroll_failed'
+ERROR_SCROLL_TIMEOUT = 'scroll_timeout_lazy_loading'
+ERROR_ELEMENT_NOT_FOUND = 'element_not_found'
+ERROR_NOT_CLICKABLE = 'element_not_clickable'
+ERROR_NOT_TYPEABLE = 'element_not_typeable'
+ERROR_ELEMENT_OBSCURED = 'element_obscured'
+ERROR_DROPDOWN_NO_MATCH = 'dropdown_no_match'
+ERROR_DROPDOWN_NOT_FOUND = 'dropdown_not_found'
+ERROR_FILE_UPLOAD_FAILED = 'file_upload_failed'
+ERROR_ACTION_TIMEOUT = 'action_timeout'
+ERROR_PLAYWRIGHT = 'playwright_error'
 
 
 class ActionHandler:
@@ -79,7 +79,7 @@ class ActionHandler:
             save_screenshots: Whether to save screenshots to local disk (default: False)
         """
         cls._save_screenshots = save_screenshots
-        logging.debug(f"Screenshot saving config set to: {save_screenshots}")
+        logging.debug(f'Screenshot saving config set to: {save_screenshots}')
 
     @classmethod
     def init_screenshot_session(cls) -> Path:
@@ -92,12 +92,12 @@ class ActionHandler:
             Path: The session directory path
         """
         if cls._screenshot_session_dir is None:
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            base_dir = Path(__file__).parent.parent / "crawler" / "screenshots"
+            timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            base_dir = Path(__file__).parent.parent / 'crawler' / 'screenshots'
             cls._screenshot_session_dir = base_dir / timestamp
             cls._screenshot_session_timestamp = timestamp
             cls._screenshot_session_dir.mkdir(parents=True, exist_ok=True)
-            logging.info(f"Initialized screenshot session directory: {cls._screenshot_session_dir}")
+            logging.info(f'Initialized screenshot session directory: {cls._screenshot_session_dir}')
         return cls._screenshot_session_dir
 
     def __init__(self):
@@ -131,10 +131,10 @@ class ActionHandler:
                 elif isinstance(cookies, (list, tuple)):
                     cookie_list = list(cookies)             # list/tuple → list
                 else:
-                    raise TypeError(f"Unsupported cookies type: {type(cookies)}")
+                    raise TypeError(f'Unsupported cookies type: {type(cookies)}')
 
                 if not isinstance(cookie_list, list):
-                    raise ValueError("Parsed cookies is not a list")
+                    raise ValueError('Parsed cookies is not a list')
 
                 await self.page.context.add_cookies(cookie_list)
             except Exception as e:
@@ -265,13 +265,13 @@ class ActionHandler:
 
     async def scroll(self, element_id: str, max_retries: int = 3, base_wait_time: float = 0.5) -> bool:
         """Scroll to a specific element, making it visible in the viewport.
-        
+
         This method scrolls the page to bring the target element into view.
         It uses Playwright's scroll_into_view_if_needed with fallback strategies.
-        
+
         For custom scroll behavior (horizontal scrolling, precise distance control),
         use the Mouse wheel action instead.
-        
+
         Args:
             element_id: The ID of the element to scroll to
             max_retries: Maximum retry attempts for lazy-loaded content (default: 3)
@@ -289,7 +289,7 @@ class ActionHandler:
         ctx = ActionContext()
         action_context_var.set(ctx)
         ctx.max_scroll_attempts = max_retries
-        ctx.element_info = {"element_id": element_id, "action": "scroll"}
+        ctx.element_info = {'element_id': element_id, 'action': 'scroll'}
 
         # Get element from buffer
         element = self.page_element_buffer.get(str(element_id))
@@ -297,7 +297,7 @@ class ActionHandler:
             logging.warning(f'Element {element_id} not found in buffer for scroll')
             ctx.set_error(
                 ERROR_ELEMENT_NOT_FOUND,
-                f"Element {element_id} not found in page element buffer",
+                f'Element {element_id} not found in page element buffer',
                 element_id=element_id
             )
             return False
@@ -324,7 +324,7 @@ class ActionHandler:
                 # Strategy 1: Use Playwright's scroll_into_view_if_needed (most reliable)
                 if self._is_valid_css_selector(selector):
                     try:
-                        ctx.attempted_strategies.append(f"css_selector_attempt_{attempt + 1}")
+                        ctx.attempted_strategies.append(f'css_selector_attempt_{attempt + 1}')
                         await page.locator(selector).scroll_into_view_if_needed(timeout=5000)
                         logging.debug(f'Scrolled to element {element_id} using CSS selector (attempt {attempt + 1})')
 
@@ -362,7 +362,7 @@ class ActionHandler:
                 # Strategy 2: Try XPath if CSS fails
                 if xpath:
                     try:
-                        ctx.attempted_strategies.append(f"xpath_attempt_{attempt + 1}")
+                        ctx.attempted_strategies.append(f'xpath_attempt_{attempt + 1}')
                         await page.locator(f'xpath={xpath}').scroll_into_view_if_needed(timeout=5000)
                         logging.debug(f'Scrolled to element {element_id} using XPath (attempt {attempt + 1})')
 
@@ -400,7 +400,7 @@ class ActionHandler:
                 # Strategy 3: Fallback to coordinate-based scrolling
                 center_y = element.get('center_y')
                 if center_y is not None:
-                    ctx.attempted_strategies.append(f"coordinates_attempt_{attempt + 1}")
+                    ctx.attempted_strategies.append(f'coordinates_attempt_{attempt + 1}')
                     viewport_height = await page.evaluate('window.innerHeight')
 
                     # Calculate target scroll position (center element in viewport)
@@ -423,7 +423,7 @@ class ActionHandler:
                     if not page_stable and attempt == max_retries - 1:
                         ctx.set_error(
                             ERROR_SCROLL_TIMEOUT,
-                            f"Element {element_id} scroll succeeded but page content unstable after {max_retries} attempts",
+                            f'Element {element_id} scroll succeeded but page content unstable after {max_retries} attempts',
                             selector=selector,
                             xpath=xpath,
                             center_y=center_y
@@ -447,7 +447,7 @@ class ActionHandler:
                     logging.error(f'Error scrolling to element {element_id} after {max_retries} attempts: {e}')
                     ctx.set_error(
                         ERROR_SCROLL_FAILED,
-                        f"All scroll strategies failed after {max_retries} attempts with exception: {str(e)}",
+                        f'All scroll strategies failed after {max_retries} attempts with exception: {str(e)}',
                         selector=selector,
                         xpath=xpath
                     )
@@ -457,233 +457,15 @@ class ActionHandler:
         logging.warning(f'Could not scroll to element {element_id} after {max_retries} attempts: no valid selectors or all strategies failed')
         ctx.set_error(
             ERROR_SCROLL_FAILED,
-            f"Could not scroll to element {element_id}: no valid selectors or all strategies failed",
+            f'Could not scroll to element {element_id}: no valid selectors or all strategies failed',
             selector=selector,
             xpath=xpath
         )
         return False
 
-    async def ensure_element_in_viewport(self, element_id: str, max_retries: int = 3, base_wait_time: float = 0.5) -> bool:
-        """Ensure element is in viewport by scrolling if needed with enhanced edge case handling.
-
-        This method enables full-page planning mode where elements can be planned
-        from a full-page screenshot but may be outside the viewport during execution.
-
-        Handles edge cases:
-        - Lazy-loaded content that appears after scrolling
-        - Infinite scroll pages with dynamic content
-        - Slow-loading pages with delayed element rendering
-
-        Args:
-            element_id: Element ID to scroll to
-            max_retries: Maximum retry attempts for lazy-loaded content (default: 3)
-            base_wait_time: Base wait time in seconds, will be adaptive (default: 0.5)
-
-        Returns:
-            bool: True if element is in viewport (or successfully scrolled to), False otherwise
-        """
-        # Get current active page
-        page = self._get_current_page()
-
-        # Get existing context or create new one (preserves parent context)
-        ctx = action_context_var.get()
-        if ctx is None:
-            ctx = ActionContext()
-            action_context_var.set(ctx)
-
-        # Update scroll-specific context info
-        ctx.max_scroll_attempts = max_retries
-        # Only set element_info if not already set by parent method
-        if not ctx.element_info.get("element_id"):
-            ctx.element_info = {"element_id": element_id, "action": "ensure_viewport"}
-
-        element = self.page_element_buffer.get(str(element_id))
-        if not element:
-            logging.warning(f'Element {element_id} not found in buffer for viewport check')
-            ctx.set_error(
-                ERROR_ELEMENT_NOT_FOUND,
-                f"Element {element_id} not found in page element buffer",
-                element_id=element_id
-            )
-            return False
-
-        # Check if element is already in viewport
-        is_in_viewport = element.get('isInViewport', True)
-        if is_in_viewport:
-            logging.debug(f'Element {element_id} already in viewport, no scroll needed')
-            return True
-
-        logging.info(f'Element {element_id} is outside viewport, scrolling to make it visible')
-
-        # Get element selectors
-        selector = element.get('selector')
-        xpath = element.get('xpath')
-
-        # Retry loop for handling lazy-loaded content
-        for attempt in range(max_retries):
-            try:
-                ctx.scroll_attempts = attempt + 1
-                # Adaptive wait time increases with retries for slow-loading content
-                current_wait_time = base_wait_time * (1 + attempt * 0.5)
-
-                # Strategy 1: Use Playwright's scroll_into_view_if_needed (most reliable)
-                if self._is_valid_css_selector(selector):
-                    try:
-                        ctx.attempted_strategies.append(f"css_selector_attempt_{attempt + 1}")
-                        await page.locator(selector).scroll_into_view_if_needed(timeout=5000)
-                        logging.debug(f'Scrolled to element {element_id} using CSS selector (attempt {attempt + 1})')
-
-                        # Wait for scroll animation + potential lazy-loading
-                        await asyncio.sleep(current_wait_time)
-
-                        # Verify page stability after scroll (for dynamic content)
-                        await self._wait_for_page_stability()
-
-                        # Verify element is actually in viewport using bounding_box
-                        try:
-                            rect = await page.locator(selector).bounding_box()
-                            if rect:
-                                viewport_height = await page.evaluate('window.innerHeight')
-                                viewport_width = await page.evaluate('window.innerWidth')
-                                is_in_viewport = (rect['y'] >= 0 and rect['y'] < viewport_height and
-                                                rect['x'] >= 0 and rect['x'] < viewport_width)
-                                if is_in_viewport:
-                                    logging.debug(f'Element {element_id} verified in viewport at ({rect["x"]:.1f}, {rect["y"]:.1f})')
-                                else:
-                                    logging.warning(f'Element {element_id} scrolled but still outside viewport: y={rect["y"]:.1f}, viewport_height={viewport_height}')
-                        except Exception as verify_error:
-                            logging.debug(f'Could not verify viewport position for element {element_id}: {verify_error}')
-
-                        return True
-                    except Exception as css_error:
-                        ctx.playwright_error = str(css_error)
-                        if attempt < max_retries - 1:
-                            logging.debug(f'CSS selector scroll failed on attempt {attempt + 1}: {css_error}, retrying...')
-                            await asyncio.sleep(current_wait_time)
-                            continue
-                        else:
-                            logging.debug(f'CSS selector scroll failed after {max_retries} attempts: {css_error}, trying XPath')
-
-                # Strategy 2: Try XPath if CSS fails
-                if xpath:
-                    try:
-                        ctx.attempted_strategies.append(f"xpath_attempt_{attempt + 1}")
-                        await page.locator(f'xpath={xpath}').scroll_into_view_if_needed(timeout=5000)
-                        logging.debug(f'Scrolled to element {element_id} using XPath (attempt {attempt + 1})')
-
-                        # Wait for scroll animation + potential lazy-loading
-                        await asyncio.sleep(current_wait_time)
-
-                        # Verify page stability after scroll
-                        await self._wait_for_page_stability()
-
-                        # Verify element is actually in viewport using bounding_box
-                        try:
-                            rect = await page.locator(f'xpath={xpath}').bounding_box()
-                            if rect:
-                                viewport_height = await page.evaluate('window.innerHeight')
-                                viewport_width = await page.evaluate('window.innerWidth')
-                                is_in_viewport = (rect['y'] >= 0 and rect['y'] < viewport_height and
-                                                rect['x'] >= 0 and rect['x'] < viewport_width)
-                                if is_in_viewport:
-                                    logging.debug(f'Element {element_id} verified in viewport at ({rect["x"]:.1f}, {rect["y"]:.1f})')
-                                else:
-                                    logging.warning(f'Element {element_id} scrolled but still outside viewport: y={rect["y"]:.1f}, viewport_height={viewport_height}')
-                        except Exception as verify_error:
-                            logging.debug(f'Could not verify viewport position for element {element_id}: {verify_error}')
-
-                        return True
-                    except Exception as xpath_error:
-                        ctx.playwright_error = str(xpath_error)
-                        if attempt < max_retries - 1:
-                            logging.debug(f'XPath scroll failed on attempt {attempt + 1}: {xpath_error}, retrying...')
-                            await asyncio.sleep(current_wait_time)
-                            continue
-                        else:
-                            logging.debug(f'XPath scroll failed after {max_retries} attempts: {xpath_error}, trying coordinate-based scroll')
-
-                # Strategy 3: Fallback to coordinate-based scrolling with retry support
-                center_y = element.get('center_y')
-                if center_y is not None:
-                    ctx.attempted_strategies.append(f"coordinates_attempt_{attempt + 1}")
-                    viewport_height = await page.evaluate('window.innerHeight')
-                    current_scroll_y = await page.evaluate('window.scrollY')
-
-                    # Calculate target scroll position (center element in viewport)
-                    target_scroll_y = center_y - viewport_height / 2
-                    target_scroll_y = max(0, target_scroll_y)  # Don't scroll above page top
-
-                    # Log scroll operation for debugging
-                    logging.debug(f'Scrolling element {element_id}: current scroll position={current_scroll_y}, target scroll position={target_scroll_y}')
-
-                    # Perform scroll with smooth behavior
-                    await page.evaluate(f'window.scrollTo({{top: {target_scroll_y}, behavior: "smooth"}})')
-                    logging.debug(f'Scrolled to element {element_id} using coordinates (y={target_scroll_y}, attempt {attempt + 1})')
-
-                    # Adaptive wait time for smooth scroll + lazy loading
-                    await asyncio.sleep(current_wait_time + 0.3)  # Extra time for smooth scroll
-
-                    # Verify page stability after scroll
-                    page_stable = await self._wait_for_page_stability()
-                    if not page_stable:
-                        # Page not stable, likely lazy-loading
-                        if attempt == max_retries - 1:
-                            ctx.set_error(
-                                ERROR_SCROLL_TIMEOUT,
-                                f"Element {element_id} viewport positioning succeeded but page content unstable after {max_retries} attempts, possible lazy-loading or infinite scroll",
-                                selector=selector,
-                                xpath=xpath,
-                                center_y=center_y
-                            )
-
-                    # Verify scroll position (coordinate-based scroll may not work with scroll containers)
-                    actual_scroll_y = await page.evaluate('window.scrollY')
-                    if abs(actual_scroll_y - target_scroll_y) > 10:
-                        logging.warning(
-                            f'Coordinate-based scroll for element {element_id} may have failed: '
-                            f'target={target_scroll_y:.1f}, actual={actual_scroll_y:.1f}. '
-                            f'This may indicate scroll containers.'
-                        )
-
-                    return True
-
-                # If all strategies failed but we have more retries, wait and continue
-                if attempt < max_retries - 1:
-                    logging.debug(f'All scroll strategies failed on attempt {attempt + 1}, waiting before retry...')
-                    await asyncio.sleep(current_wait_time * 2)  # Longer wait between full retry cycles
-                    continue
-
-            except Exception as e:
-                ctx.playwright_error = str(e)
-                if attempt < max_retries - 1:
-                    logging.warning(f'Error scrolling to element {element_id} on attempt {attempt + 1}: {e}, retrying...')
-                    await asyncio.sleep(current_wait_time)
-                    continue
-                else:
-                    logging.error(f'Error scrolling to element {element_id} after {max_retries} attempts: {e}')
-                    ctx.set_error(
-                        ERROR_SCROLL_FAILED,
-                        f"All scroll strategies failed after {max_retries} attempts with exception: {str(e)}",
-                        selector=selector,
-                        xpath=xpath
-                    )
-                    return False
-
-        # Final failure: all retries exhausted
-        logging.warning(f'Could not scroll to element {element_id} after {max_retries} attempts: no valid selectors or all strategies failed')
-        ctx.set_error(
-            ERROR_SCROLL_FAILED,
-            f"Could not scroll to element after {max_retries} attempts: no valid selectors or all scroll strategies (CSS, XPath, coordinates) failed",
-            selector=selector,
-            xpath=xpath,
-            has_valid_selector=self._is_valid_css_selector(selector) if selector else False,
-            has_xpath=xpath is not None,
-            has_coordinates=element.get('center_y') is not None
-        )
-        return False
-
     async def _wait_for_page_stability(self, timeout: float = 2.0, check_interval: float = 0.5) -> bool:
-        """Wait for page to stabilize after scroll (handles lazy-loading and dynamic content).
+        """Wait for page to stabilize after scroll (handles lazy-loading and
+        dynamic content).
 
         Args:
             timeout: Maximum time to wait for stability (default: 2.0 seconds)
@@ -791,7 +573,7 @@ class ActionHandler:
         stored_x: Optional[float] = None,
         stored_y: Optional[float] = None,
         validate_against_stored: bool = True,
-        action_name: str = "action"
+        action_name: str = 'action'
     ) -> Optional[tuple[float, float]]:
         """Get viewport coordinates for an element using multiple strategies.
 
@@ -869,7 +651,8 @@ class ActionHandler:
             return None
 
     async def ensure_element_in_viewport(self, element_id: str, max_retries: int = 3, base_wait_time: float = 0.5) -> bool:
-        """Ensure element is in viewport by scrolling if needed with enhanced edge case handling.
+        """Ensure element is in viewport by scrolling if needed with enhanced
+        edge case handling.
 
         This method enables full-page planning mode where elements can be planned
         from a full-page screenshot but may be outside the viewport during execution.
@@ -899,15 +682,15 @@ class ActionHandler:
         # Update scroll-specific context info
         ctx.max_scroll_attempts = max_retries
         # Only set element_info if not already set by parent method
-        if not ctx.element_info.get("element_id"):
-            ctx.element_info = {"element_id": element_id, "action": "ensure_viewport"}
+        if not ctx.element_info.get('element_id'):
+            ctx.element_info = {'element_id': element_id, 'action': 'ensure_viewport'}
 
         element = self.page_element_buffer.get(str(element_id))
         if not element:
             logging.warning(f'Element {element_id} not found in buffer for viewport check')
             ctx.set_error(
                 ERROR_ELEMENT_NOT_FOUND,
-                f"Element {element_id} not found in page element buffer",
+                f'Element {element_id} not found in page element buffer',
                 element_id=element_id
             )
             return False
@@ -934,7 +717,7 @@ class ActionHandler:
                 # Strategy 1: Use Playwright's scroll_into_view_if_needed (most reliable)
                 if self._is_valid_css_selector(selector):
                     try:
-                        ctx.attempted_strategies.append(f"css_selector_attempt_{attempt + 1}")
+                        ctx.attempted_strategies.append(f'css_selector_attempt_{attempt + 1}')
                         await page.locator(selector).scroll_into_view_if_needed(timeout=5000)
                         logging.debug(f'Scrolled to element {element_id} using CSS selector (attempt {attempt + 1})')
 
@@ -950,8 +733,7 @@ class ActionHandler:
                             if rect:
                                 viewport_height = await page.evaluate('window.innerHeight')
                                 viewport_width = await page.evaluate('window.innerWidth')
-                                is_in_viewport = (rect['y'] >= 0 and rect['y'] < viewport_height and
-                                                rect['x'] >= 0 and rect['x'] < viewport_width)
+                                is_in_viewport = (0 <= rect['y'] < viewport_height and 0 <= rect['x'] < viewport_width)
                                 if is_in_viewport:
                                     logging.debug(f'Element {element_id} verified in viewport at ({rect["x"]:.1f}, {rect["y"]:.1f})')
                                 else:
@@ -972,7 +754,7 @@ class ActionHandler:
                 # Strategy 2: Try XPath if CSS fails
                 if xpath:
                     try:
-                        ctx.attempted_strategies.append(f"xpath_attempt_{attempt + 1}")
+                        ctx.attempted_strategies.append(f'xpath_attempt_{attempt + 1}')
                         await page.locator(f'xpath={xpath}').scroll_into_view_if_needed(timeout=5000)
                         logging.debug(f'Scrolled to element {element_id} using XPath (attempt {attempt + 1})')
 
@@ -988,8 +770,7 @@ class ActionHandler:
                             if rect:
                                 viewport_height = await page.evaluate('window.innerHeight')
                                 viewport_width = await page.evaluate('window.innerWidth')
-                                is_in_viewport = (rect['y'] >= 0 and rect['y'] < viewport_height and
-                                                rect['x'] >= 0 and rect['x'] < viewport_width)
+                                is_in_viewport = (0 <= rect['y'] < viewport_height and 0 <= rect['x'] < viewport_width)
                                 if is_in_viewport:
                                     logging.debug(f'Element {element_id} verified in viewport at ({rect["x"]:.1f}, {rect["y"]:.1f})')
                                 else:
@@ -1010,7 +791,7 @@ class ActionHandler:
                 # Strategy 3: Fallback to coordinate-based scrolling with retry support
                 center_y = element.get('center_y')
                 if center_y is not None:
-                    ctx.attempted_strategies.append(f"coordinates_attempt_{attempt + 1}")
+                    ctx.attempted_strategies.append(f'coordinates_attempt_{attempt + 1}')
                     viewport_height = await page.evaluate('window.innerHeight')
                     current_scroll_y = await page.evaluate('window.scrollY')
 
@@ -1035,7 +816,7 @@ class ActionHandler:
                         if attempt == max_retries - 1:
                             ctx.set_error(
                                 ERROR_SCROLL_TIMEOUT,
-                                f"Element {element_id} viewport positioning succeeded but page content unstable after {max_retries} attempts, possible lazy-loading or infinite scroll",
+                                f'Element {element_id} viewport positioning succeeded but page content unstable after {max_retries} attempts, possible lazy-loading or infinite scroll',
                                 selector=selector,
                                 xpath=xpath,
                                 center_y=center_y
@@ -1068,7 +849,7 @@ class ActionHandler:
                     logging.error(f'Error scrolling to element {element_id} after {max_retries} attempts: {e}')
                     ctx.set_error(
                         ERROR_SCROLL_FAILED,
-                        f"All scroll strategies failed after {max_retries} attempts with exception: {str(e)}",
+                        f'All scroll strategies failed after {max_retries} attempts with exception: {str(e)}',
                         selector=selector,
                         xpath=xpath
                     )
@@ -1078,7 +859,7 @@ class ActionHandler:
         logging.warning(f'Could not scroll to element {element_id} after {max_retries} attempts: no valid selectors or all strategies failed')
         ctx.set_error(
             ERROR_SCROLL_FAILED,
-            f"Could not scroll to element after {max_retries} attempts: no valid selectors or all scroll strategies (CSS, XPath, coordinates) failed",
+            f'Could not scroll to element after {max_retries} attempts: no valid selectors or all scroll strategies (CSS, XPath, coordinates) failed',
             selector=selector,
             xpath=xpath,
             has_valid_selector=self._is_valid_css_selector(selector) if selector else False,
@@ -1086,192 +867,6 @@ class ActionHandler:
             has_coordinates=element.get('center_y') is not None
         )
         return False
-
-    async def _wait_for_page_stability(self, timeout: float = 2.0, check_interval: float = 0.5) -> bool:
-        """Wait for page to stabilize after scroll (handles lazy-loading and dynamic content).
-
-        Args:
-            timeout: Maximum time to wait for stability (default: 2.0 seconds)
-            check_interval: Interval between stability checks (default: 0.5 seconds)
-
-        Returns:
-            bool: True if page stabilized, False if timeout reached
-        """
-        # Get current active page
-        page = self._get_current_page()
-
-        try:
-            elapsed = 0.0
-            last_height = await page.evaluate('document.body.scrollHeight')
-
-            while elapsed < timeout:
-                await asyncio.sleep(check_interval)
-                elapsed += check_interval
-
-                current_height = await page.evaluate('document.body.scrollHeight')
-
-                # If page height hasn't changed, consider it stable
-                if current_height == last_height:
-                    logging.debug(f'Page stabilized after {elapsed:.1f}s')
-                    return True
-
-                last_height = current_height
-
-            logging.debug(f'Page stability timeout after {timeout}s (content may still be loading)')
-            return False
-
-        except Exception as e:
-            logging.warning(f'Error checking page stability: {e}')
-            return False
-
-    async def _convert_document_to_viewport_coords(self, x: float, y: float) -> tuple[float, float]:
-        """Convert document coordinates to viewport coordinates.
-
-        Document coordinates are relative to the entire page (top-left of document).
-        Viewport coordinates are relative to the visible area (top-left of viewport).
-
-        Playwright's mouse operations use viewport coordinates, while our crawler
-        captures document coordinates. This method performs the necessary conversion.
-
-        **IMPORTANT NOTE**: This method only works correctly with window-level scrolling.
-        For pages using scroll containers (elements with overflow: auto/scroll), the
-        window.pageYOffset will be 0 even after scrolling, causing incorrect conversion.
-        In such cases, use element.bounding_box() to get fresh viewport coordinates instead.
-
-        Args:
-            x: Document X coordinate (from element center_x)
-            y: Document Y coordinate (from element center_y)
-
-        Returns:
-            Tuple of (viewport_x, viewport_y)
-
-        Example:
-            # Element at document position (500, 1200) with scroll at (0, 800)
-            # viewport_y = 1200 - 800 = 400 (element is 400px from top of viewport)
-        """
-        # Get current active page
-        page = self._get_current_page()
-
-        # Get window scroll offset (only reflects window-level scrolling, not scroll containers)
-        scroll_x = await page.evaluate('window.pageXOffset || document.documentElement.scrollLeft')
-        scroll_y = await page.evaluate('window.pageYOffset || document.documentElement.scrollTop')
-
-        # Detect potential scroll container issues
-        # If coordinates are large but scroll offset is 0, likely using scroll containers
-        if (abs(x) > 100 or abs(y) > 100) and scroll_x == 0 and scroll_y == 0:
-            # Check if page has scroll containers
-            has_scroll_containers = await page.evaluate('''() => {
-                const scrollContainers = document.querySelectorAll('[style*="overflow"]');
-                const computedScrollContainers = Array.from(document.querySelectorAll('*')).filter(el => {
-                    const style = window.getComputedStyle(el);
-                    return (style.overflow === 'auto' || style.overflow === 'scroll' ||
-                            style.overflowY === 'auto' || style.overflowY === 'scroll');
-                });
-                return scrollContainers.length > 0 || computedScrollContainers.length > 0;
-            }''')
-
-            if has_scroll_containers:
-                logging.warning(
-                    f'Coordinate conversion may be inaccurate: document coords=({x}, {y}), '
-                    f'but window scroll offset=(0, 0) with scroll containers detected. '
-                    f'This indicates overflow scrolling. Consider using bounding_box() instead.'
-                )
-
-        viewport_x = x - scroll_x
-        viewport_y = y - scroll_y
-
-        logging.debug(
-            f'Coordinate conversion: document=({x:.1f}, {y:.1f}), '
-            f'scroll_offset=({scroll_x:.1f}, {scroll_y:.1f}), '
-            f'viewport=({viewport_x:.1f}, {viewport_y:.1f})'
-        )
-
-        return (viewport_x, viewport_y)
-
-    async def _get_element_viewport_coordinates(
-        self,
-        element_id: str,
-        selector: Optional[str] = None,
-        xpath: Optional[str] = None,
-        stored_x: Optional[float] = None,
-        stored_y: Optional[float] = None,
-        validate_against_stored: bool = True,
-        action_name: str = "action"
-    ) -> Optional[tuple[float, float]]:
-        """Get viewport coordinates for an element using multiple strategies.
-
-        This method provides a unified approach for obtaining viewport coordinates,
-        handling scroll containers correctly by using Playwright's bounding_box() API.
-
-        Tries strategies in order:
-        1. Fresh bounding_box() via CSS selector (most reliable)
-        2. Fresh bounding_box() via XPath (fallback if CSS fails)
-        3. Coordinate conversion from stored document coords (backward compatibility)
-
-        Args:
-            element_id: Element identifier for logging
-            selector: CSS selector
-            xpath: XPath selector
-            stored_x: Stored document X coordinate
-            stored_y: Stored document Y coordinate
-            validate_against_stored: Whether to validate fresh coords against stored
-            action_name: Name of the action for logging context (e.g., "click", "hover")
-
-        Returns:
-            Tuple of (viewport_x, viewport_y) if successful, None otherwise
-        """
-        # Get current active page
-        page = self._get_current_page()
-
-        rect = None
-
-        # Strategy 1: Try CSS selector for bounding_box()
-        if self._is_valid_css_selector(selector):
-            try:
-                rect = await page.locator(selector).bounding_box()
-            except Exception as e:
-                logging.debug(f'bounding_box() via CSS selector failed for element {element_id} ({action_name}): {e}')
-
-        # Strategy 2: Try XPath if CSS fails or returns None
-        if not rect and xpath:
-            try:
-                rect = await page.locator(f'xpath={xpath}').bounding_box()
-            except Exception as e:
-                logging.debug(f'bounding_box() via XPath failed for element {element_id} ({action_name}): {e}')
-
-        # Use fresh viewport coordinates if available
-        if rect:
-            viewport_x = rect['x'] + rect['width'] / 2
-            viewport_y = rect['y'] + rect['height'] / 2
-
-            # Optionally validate against stored coordinates to detect scroll container issues
-            if validate_against_stored and stored_x is not None and stored_y is not None:
-                calc_viewport_x, calc_viewport_y = await self._convert_document_to_viewport_coords(stored_x, stored_y)
-                diff_x = abs(viewport_x - calc_viewport_x)
-                diff_y = abs(viewport_y - calc_viewport_y)
-
-                if diff_x > 10 or diff_y > 10:
-                    logging.warning(
-                        f'Coordinate mismatch detected for element {element_id} ({action_name}): '
-                        f'fresh bounding_box=({viewport_x:.1f}, {viewport_y:.1f}), '
-                        f'calculated from stored=({calc_viewport_x:.1f}, {calc_viewport_y:.1f}), '
-                        f'diff=({diff_x:.1f}, {diff_y:.1f}). '
-                        f'Likely scroll container or CSS transform. Using fresh coordinates.'
-                    )
-
-            logging.debug(f'{action_name.capitalize()} at element {element_id}, fresh viewport coordinates=({viewport_x:.1f}, {viewport_y:.1f})')
-            return (viewport_x, viewport_y)
-
-        # Strategy 3: Fallback to stored coordinates with conversion
-        elif stored_x is not None and stored_y is not None:
-            logging.warning(f'bounding_box() returned None for element {element_id} ({action_name}), falling back to stored coordinates')
-            viewport_x, viewport_y = await self._convert_document_to_viewport_coords(stored_x, stored_y)
-            logging.debug(f'{action_name.capitalize()} at element {element_id}, document coordinates=({stored_x}, {stored_y}), calculated viewport=({viewport_x}, {viewport_y})')
-            return (viewport_x, viewport_y)
-
-        else:
-            logging.error(f'Element {element_id} has no valid coordinates for {action_name}: bounding_box=None, stored coordinates missing')
-            return None
 
     async def click(self, id) -> bool:
         # Get current active page
@@ -1282,7 +877,7 @@ class ActionHandler:
         # We only need to initialize context for click-specific failures
         ctx = ActionContext()
         action_context_var.set(ctx)
-        ctx.element_info = {"element_id": str(id), "action": "click"}
+        ctx.element_info = {'element_id': str(id), 'action': 'click'}
 
         # Inject comprehensive tab interception script (multi-layer defense)
         # This ensures all new tab attempts are redirected to current tab
@@ -1389,7 +984,7 @@ class ActionHandler:
                 logging.error(f'Element with id {id} not found in buffer for click action.')
                 ctx.set_error(
                     ERROR_ELEMENT_NOT_FOUND,
-                    f"Element {id} not found in page element buffer for click action",
+                    f'Element {id} not found in page element buffer for click action',
                     element_id=id
                 )
                 return False
@@ -1402,7 +997,7 @@ class ActionHandler:
             logging.error(f'failed to get element {id}, element: {self.page_element_buffer.get(id)}, error: {e}')
             ctx.set_error(
                 ERROR_PLAYWRIGHT,
-                f"Exception while retrieving element {id} from buffer: {str(e)}",
+                f'Exception while retrieving element {id} from buffer: {str(e)}',
                 element_id=id,
                 playwright_error=str(e)
             )
@@ -1439,7 +1034,7 @@ class ActionHandler:
             if current_ctx and not current_ctx.error_type:
                 current_ctx.set_error(
                     ERROR_NOT_CLICKABLE,
-                    f"Element {id} found and in viewport, but click action failed",
+                    f'Element {id} found and in viewport, but click action failed',
                     element_id=id,
                     tag_name=element.get('tagName'),
                     selector=element.get('selector')
@@ -1447,11 +1042,12 @@ class ActionHandler:
         return click_result
 
     async def click_using_coordinates(self, element, id) -> bool:
-        """Helper function to click using coordinates with scroll container handling.
+        """Helper function to click using coordinates with scroll container
+        handling.
 
         Uses Playwright's bounding_box() to get fresh viewport coordinates,
-        which correctly handles scroll containers, CSS transforms, and fixed positioning.
-        Falls back to stored coordinates if bounding_box() fails.
+        which correctly handles scroll containers, CSS transforms, and fixed
+        positioning. Falls back to stored coordinates if bounding_box() fails.
         """
         # Get current active page
         page = self._get_current_page()
@@ -1470,7 +1066,7 @@ class ActionHandler:
                 stored_x=stored_x,
                 stored_y=stored_y,
                 validate_against_stored=True,
-                action_name="mouse click"
+                action_name='mouse click'
             )
 
             if coords:
@@ -1488,7 +1084,8 @@ class ActionHandler:
         """Hover over element using fresh viewport coordinates.
 
         Uses Playwright's bounding_box() to get fresh viewport coordinates,
-        which correctly handles scroll containers, CSS transforms, and fixed positioning.
+        which correctly handles scroll containers, CSS transforms, and fixed
+        positioning.
         """
         # Get current active page
         page = self._get_current_page()
@@ -1496,14 +1093,14 @@ class ActionHandler:
         # Initialize action context for error propagation
         ctx = ActionContext()
         action_context_var.set(ctx)
-        ctx.element_info = {"element_id": str(id), "action": "hover"}
+        ctx.element_info = {'element_id': str(id), 'action': 'hover'}
 
         element = self.page_element_buffer.get(str(id))
         if not element:
             logging.error(f'Element with id {id} not found in buffer for hover action.')
             ctx.set_error(
                 ERROR_ELEMENT_NOT_FOUND,
-                f"Element {id} not found in page element buffer for hover action",
+                f'Element {id} not found in page element buffer for hover action',
                 element_id=id
             )
             return False
@@ -1532,7 +1129,7 @@ class ActionHandler:
                 stored_x=stored_x,
                 stored_y=stored_y,
                 validate_against_stored=False,  # Skip validation for hover (less critical)
-                action_name="hover"
+                action_name='hover'
             )
 
             if coords:
@@ -1543,7 +1140,7 @@ class ActionHandler:
             else:
                 ctx.set_error(
                     ERROR_ELEMENT_NOT_FOUND,
-                    f"Element {id} missing coordinate information (bounding_box and stored coordinates unavailable)",
+                    f'Element {id} missing coordinate information (bounding_box and stored coordinates unavailable)',
                     element_id=id,
                     has_center_x=stored_x is not None,
                     has_center_y=stored_y is not None
@@ -1554,7 +1151,7 @@ class ActionHandler:
             logging.error(f'Hover action failed for element {id}: {e}')
             ctx.set_error(
                 ERROR_PLAYWRIGHT,
-                f"Hover action failed with exception: {str(e)}",
+                f'Hover action failed with exception: {str(e)}',
                 element_id=id,
                 playwright_error=str(e)
             )
@@ -1582,7 +1179,7 @@ class ActionHandler:
         if ctx is None:
             ctx = ActionContext()
             action_context_var.set(ctx)
-        ctx.element_info = {"element_id": str(id), "action": "type", "text_length": len(text), "clear_before_type": clear_before_type}
+        ctx.element_info = {'element_id': str(id), 'action': 'type', 'text_length': len(text), 'clear_before_type': clear_before_type}
 
         try:
             element = self.page_element_buffer.get(str(id))
@@ -1590,7 +1187,7 @@ class ActionHandler:
                 logging.error(f'Element with id {id} not found in buffer for type action.')
                 ctx.set_error(
                     ERROR_ELEMENT_NOT_FOUND,
-                    f"Element {id} not found in page element buffer for type action",
+                    f'Element {id} not found in page element buffer for type action',
                     element_id=id
                 )
                 return False
@@ -1617,7 +1214,7 @@ class ActionHandler:
                     if current_ctx and not current_ctx.error_type:
                         current_ctx.set_error(
                             ERROR_NOT_CLICKABLE,
-                            f"Cannot type into element {id}: failed to click element for focus",
+                            f'Cannot type into element {id}: failed to click element for focus',
                             element_id=id
                         )
                     return False
@@ -1626,7 +1223,7 @@ class ActionHandler:
                 logging.error(f'id type {type(id)}, id: {id}')
                 ctx.set_error(
                     ERROR_PLAYWRIGHT,
-                    f"Exception while clicking element {id} to focus for typing: {str(e)}",
+                    f'Exception while clicking element {id} to focus for typing: {str(e)}',
                     element_id=id,
                     playwright_error=str(e)
                 )
@@ -1642,7 +1239,7 @@ class ActionHandler:
                 selector=selector,
                 xpath=xpath,
                 text=text,
-                action_name="type"
+                action_name='type'
             ):
                 return False
 
@@ -1652,7 +1249,7 @@ class ActionHandler:
             logging.error(f'Failed to type into element {id}: {e}')
             ctx.set_error(
                 ERROR_PLAYWRIGHT,
-                f"Unexpected exception during type action: {str(e)}",
+                f'Unexpected exception during type action: {str(e)}',
                 element_id=id,
                 playwright_error=str(e)
             )
@@ -1707,7 +1304,7 @@ class ActionHandler:
         selector: str,
         xpath: Optional[str],
         text: str,
-        action_name: str = "fill"
+        action_name: str = 'fill'
     ) -> bool:
         """Fill element text using CSS selector with XPath fallback.
 
@@ -1737,7 +1334,7 @@ class ActionHandler:
         if self._is_valid_css_selector(selector):
             try:
                 await page.locator(selector).fill(text)
-                logging.debug(f"{action_name.capitalize()}ed element {element_id} using CSS selector: {selector}")
+                logging.debug(f'{action_name.capitalize()}ed element {element_id} using CSS selector: {selector}')
                 return True
             except Exception as css_error:
                 logging.warning(f'CSS selector {action_name} failed for element {element_id}: {css_error}')
@@ -1748,7 +1345,7 @@ class ActionHandler:
                 if xpath:
                     try:
                         await page.locator(f'xpath={xpath}').fill(text)
-                        logging.debug(f"{action_name.capitalize()}ed element {element_id} using XPath fallback: {xpath}")
+                        logging.debug(f'{action_name.capitalize()}ed element {element_id} using XPath fallback: {xpath}')
                         return True
                     except Exception as xpath_error:
                         logging.error(
@@ -1758,7 +1355,7 @@ class ActionHandler:
                         if ctx:
                             ctx.set_error(
                                 ERROR_NOT_TYPEABLE,
-                                f"Both CSS selector and XPath strategies failed to {action_name} element {element_id}",
+                                f'Both CSS selector and XPath strategies failed to {action_name} element {element_id}',
                                 element_id=element_id,
                                 selector=selector,
                                 xpath=xpath,
@@ -1771,7 +1368,7 @@ class ActionHandler:
                     if ctx:
                         ctx.set_error(
                             ERROR_NOT_TYPEABLE,
-                            f"CSS selector failed to {action_name} element {element_id} and no XPath fallback available",
+                            f'CSS selector failed to {action_name} element {element_id} and no XPath fallback available',
                             element_id=element_id,
                             selector=selector,
                             has_xpath=False,
@@ -1785,14 +1382,14 @@ class ActionHandler:
             if xpath:
                 try:
                     await page.locator(f'xpath={xpath}').fill(text)
-                    logging.debug(f"{action_name.capitalize()}ed element {element_id} using XPath: {xpath}")
+                    logging.debug(f'{action_name.capitalize()}ed element {element_id} using XPath: {xpath}')
                     return True
                 except Exception as xpath_error:
                     logging.error(f'XPath {action_name} failed for element {element_id}: {xpath_error}')
                     if ctx:
                         ctx.set_error(
                             ERROR_NOT_TYPEABLE,
-                            f"XPath strategy failed to {action_name} element {element_id} (invalid CSS selector)",
+                            f'XPath strategy failed to {action_name} element {element_id} (invalid CSS selector)',
                             element_id=element_id,
                             selector=selector,
                             xpath=xpath,
@@ -1804,7 +1401,7 @@ class ActionHandler:
                 if ctx:
                     ctx.set_error(
                         ERROR_NOT_TYPEABLE,
-                        f"Invalid CSS selector format and no XPath available for element {element_id}",
+                        f'Invalid CSS selector format and no XPath available for element {element_id}',
                         element_id=element_id,
                         selector=selector,
                         has_xpath=False
@@ -1818,7 +1415,7 @@ class ActionHandler:
         if ctx is None:
             ctx = ActionContext()
             action_context_var.set(ctx)
-        ctx.element_info = {"element_id": str(id), "action": "clear"}
+        ctx.element_info = {'element_id': str(id), 'action': 'clear'}
 
         try:
             element_to_clear = self.page_element_buffer.get(str(id))
@@ -1826,7 +1423,7 @@ class ActionHandler:
                 logging.error(f'Element with id {id} not found in buffer for clear action.')
                 ctx.set_error(
                     ERROR_ELEMENT_NOT_FOUND,
-                    f"Element {id} not found in page element buffer for clear action",
+                    f'Element {id} not found in page element buffer for clear action',
                     element_id=id
                 )
                 return False
@@ -1853,7 +1450,7 @@ class ActionHandler:
                 selector=selector,
                 xpath=xpath,
                 text='',  # Empty string for clear
-                action_name="clear"
+                action_name='clear'
             ):
                 return False
 
@@ -1863,7 +1460,7 @@ class ActionHandler:
             logging.error(f'Failed to clear element {id}: {e}')
             ctx.set_error(
                 ERROR_PLAYWRIGHT,
-                f"Unexpected exception during clear action: {str(e)}",
+                f'Unexpected exception during clear action: {str(e)}',
                 element_id=id,
                 playwright_error=str(e)
             )
@@ -1881,7 +1478,7 @@ class ActionHandler:
         # Initialize action context for error propagation
         ctx = ActionContext()
         action_context_var.set(ctx)
-        ctx.element_info = {"action": "keyboard_press", "key": key}
+        ctx.element_info = {'action': 'keyboard_press', 'key': key}
 
         try:
             await self.page.keyboard.press(key)
@@ -1903,7 +1500,8 @@ class ActionHandler:
         file_name: Optional[str] = None,
         context: str = 'default'
     ) -> Optional[str]:
-        """Get page screenshot (Base64 encoded) and optionally save to local file.
+        """Get page screenshot (Base64 encoded) and optionally save to local
+        file.
 
         Args:
             full_page: whether to capture the whole page
@@ -1929,13 +1527,13 @@ class ActionHandler:
                 session_dir = self.init_screenshot_session()
 
                 # Generate timestamp and filename
-                timestamp = datetime.datetime.now().strftime("%H%M%S")
+                timestamp = datetime.datetime.now().strftime('%H%M%S')
 
                 # Build filename: {timestamp}_{context}_{file_name}.png
                 if file_name:
-                    filename = f"{timestamp}_{context}_{file_name}.png"
+                    filename = f'{timestamp}_{context}_{file_name}.png'
                 else:
-                    filename = f"{timestamp}_{context}_screenshot.png"
+                    filename = f'{timestamp}_{context}_screenshot.png'
 
                 file_path_str = str(session_dir / filename)
 
@@ -1952,14 +1550,14 @@ class ActionHandler:
             base64_data = f'data:image/png;base64,{screenshot_base64}'
 
             if self._save_screenshots and file_path_str:
-                logging.debug(f"Screenshot saved to {file_path_str}")
+                logging.debug(f'Screenshot saved to {file_path_str}')
             else:
-                logging.debug("Screenshot captured (not saved to disk)")
+                logging.debug('Screenshot captured (not saved to disk)')
 
             return base64_data
 
         except Exception as e:
-            logging.warning(f"Failed to capture screenshot: {e}")
+            logging.warning(f'Failed to capture screenshot: {e}')
             return None
 
     async def take_screenshot(
@@ -2068,7 +1666,6 @@ class ActionHandler:
             logging.error(f'GoBack: Unexpected error: {e}')
             return False
 
-
     async def upload_file(self, id, file_path: Union[str, List[str]]) -> bool:
         """File upload function.
 
@@ -2082,7 +1679,7 @@ class ActionHandler:
         # Initialize action context for error propagation
         ctx = ActionContext()
         action_context_var.set(ctx)
-        ctx.element_info = {"element_id": str(id), "action": "upload", "file_path": str(file_path)}
+        ctx.element_info = {'element_id': str(id), 'action': 'upload', 'file_path': str(file_path)}
 
         try:
             # Support single file and multiple files
@@ -2094,7 +1691,7 @@ class ActionHandler:
                 logging.error(f'file_path must be str or list, got {type(file_path)}')
                 ctx.set_error(
                     ERROR_FILE_UPLOAD_FAILED,
-                    f"Invalid file_path type: expected str or list, got {type(file_path)}",
+                    f'Invalid file_path type: expected str or list, got {type(file_path)}',
                     file_path_type=str(type(file_path))
                 )
                 return False
@@ -2153,7 +1750,7 @@ class ActionHandler:
                 logging.error('No file input elements found')
                 ctx.set_error(
                     ERROR_ELEMENT_NOT_FOUND,
-                    "No file input elements found on page for upload action",
+                    'No file input elements found on page for upload action',
                     element_id=id
                 )
                 return False
@@ -2179,7 +1776,7 @@ class ActionHandler:
             logging.error(f'Upload failed: {str(e)}')
             ctx.set_error(
                 ERROR_FILE_UPLOAD_FAILED,
-                f"File upload failed with exception: {str(e)}",
+                f'File upload failed with exception: {str(e)}',
                 playwright_error=str(e)
             )
             return False
@@ -2420,7 +2017,7 @@ class ActionHandler:
                         stored_x=stored_x,
                         stored_y=stored_y,
                         validate_against_stored=True,
-                        action_name="dropdown option click"
+                        action_name='dropdown option click'
                     )
 
                     if coords:
@@ -2968,7 +2565,7 @@ class ActionHandler:
         # Initialize action context for error propagation
         ctx = ActionContext()
         action_context_var.set(ctx)
-        ctx.element_info = {"action": "mouse_move", "x": x, "y": y}
+        ctx.element_info = {'action': 'mouse_move', 'x': x, 'y': y}
 
         try:
             # Coerce to numbers in case strings are provided
@@ -2994,15 +2591,15 @@ class ActionHandler:
                         f'Scroll containers detected. Consider using hover on element instead.'
                     )
 
-            logging.info(f"Mouse move: document=({target_x}, {target_y}) -> viewport=({viewport_x}, {viewport_y})")
+            logging.info(f'Mouse move: document=({target_x}, {target_y}) -> viewport=({viewport_x}, {viewport_y})')
             await self.page.mouse.move(viewport_x, viewport_y)
             await asyncio.sleep(0.1)
             return True
         except Exception as e:
-            logging.error(f"Mouse move failed: {str(e)}")
+            logging.error(f'Mouse move failed: {str(e)}')
             ctx.set_error(
                 ERROR_PLAYWRIGHT,
-                f"Mouse move action failed to position ({x}, {y})",
+                f'Mouse move action failed to position ({x}, {y})',
                 target_x=target_x if 'target_x' in locals() else x,
                 target_y=target_y if 'target_y' in locals() else y,
                 playwright_error=str(e)
@@ -3014,20 +2611,20 @@ class ActionHandler:
         # Initialize action context for error propagation
         ctx = ActionContext()
         action_context_var.set(ctx)
-        ctx.element_info = {"action": "mouse_wheel", "deltaX": delta_x, "deltaY": delta_y}
+        ctx.element_info = {'action': 'mouse_wheel', 'deltaX': delta_x, 'deltaY': delta_y}
 
         try:
             dx = float(delta_x) if delta_x is not None else 0.0
             dy = float(delta_y) if delta_y is not None else 0.0
             await self.page.mouse.wheel(dx, dy)
-            logging.info(f"mouse wheel by (deltaX={dx}, deltaY={dy})")
+            logging.info(f'mouse wheel by (deltaX={dx}, deltaY={dy})')
             await asyncio.sleep(0.1)
             return True
         except Exception as e:
-            logging.error(f"Mouse wheel failed: {str(e)}")
+            logging.error(f'Mouse wheel failed: {str(e)}')
             ctx.set_error(
                 ERROR_PLAYWRIGHT,
-                f"Mouse wheel action failed with delta ({delta_x}, {delta_y})",
+                f'Mouse wheel action failed with delta ({delta_x}, {delta_y})',
                 deltaX=dx if 'dx' in locals() else delta_x,
                 deltaY=dy if 'dy' in locals() else delta_y,
                 playwright_error=str(e)
