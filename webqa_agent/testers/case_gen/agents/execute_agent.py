@@ -325,9 +325,14 @@ async def generate_dynamic_steps_with_llm(
 ) -> dict:
     """Generate dynamic test steps or recover from failed steps using LLM.
 
-    This function serves two purposes:
-    1. DOM Change Mode (failure_recovery_mode=False): Generate new test steps for newly appeared UI elements
-    2. Failure Recovery Mode (failure_recovery_mode=True): Adapt test plan when steps fail due to stale DOM
+    This function operates in two distinct modes:
+    1. DOM Change Mode (failure_recovery_mode=False):
+       Automatically generates test steps when new UI elements appear (dropdowns, modals, forms)
+       to improve test coverage of dynamically revealed components.
+
+    2. Failure Recovery Mode (failure_recovery_mode=True):
+       Intelligently adapts the test plan when steps fail (element not found, operation timeout, etc.)
+       by analyzing the failure and generating alternative instructions.
 
     Args:
         dom_diff: New DOM elements detected (used in DOM change mode)
@@ -825,14 +830,23 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         'api_key': llm_config.get('api_key'),
     }
 
-    # Add base_url if present (both providers support it)
+    # Add base_url with provider-specific handling
     base_url = llm_config.get('base_url')
     if base_url:
+        # OpenAI, Gemini, and Anthropic support base_url directly
         llm_kwargs['base_url'] = base_url
+    else:
+        # Set default base_url for Gemini if not explicitly configured
+        if provider == 'gemini':
+            llm_kwargs['base_url'] = 'https://generativelanguage.googleapis.com/v1beta/openai/'
+            logging.debug('Gemini using official OpenAI compatibility endpoint')
 
     # Add temperature with provider-specific defaults
-    # Claude defaults to 1.0, OpenAI defaults to 0.1
-    default_temp = 1.0 if provider == 'anthropic' else 0.1
+    # Claude and Gemini default to 1.0, OpenAI defaults to 0.1
+    if provider in ('anthropic', 'gemini'):
+        default_temp = 1.0
+    else:
+        default_temp = 0.1
     cfg_temp = llm_config.get('temperature', default_temp)
     llm_kwargs['temperature'] = cfg_temp
 
@@ -840,6 +854,55 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     cfg_top_p = llm_config.get('top_p')
     if cfg_top_p is not None:
         llm_kwargs['top_p'] = cfg_top_p
+
+    # For Claude: Maps reasoning.effort → thinking.budget_tokens
+    # Claude uses Extended Thinking API with token budgets (1K-20K tokens)
+    # This is Claude-specific: thinking={"type": "enabled", "budget_tokens": N}
+    # Ref: https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking
+    if provider == 'anthropic':
+        reasoning_config = llm_config.get('reasoning')
+        if isinstance(reasoning_config, dict):
+            effort = reasoning_config.get('effort')
+            if effort:
+                # Map effort levels to thinking budget_tokens for ChatAnthropic
+                # Format: {"type": "enabled", "budget_tokens": N}
+                effort_mapping = {
+                    'minimal': 1024,   # Quick analysis, simple tasks
+                    'low': 4096,       # Basic reasoning, standard queries
+                    'medium': 10000,   # Balanced reasoning, recommended for testing
+                    'high': 20000,     # Deep analysis, complex scenarios
+                }
+                budget = effort_mapping.get(effort.lower())
+                if budget:
+                    llm_kwargs['thinking'] = {'type': 'enabled', 'budget_tokens': budget}
+                    logging.debug(f'Claude thinking enabled with budget_tokens={budget} based on effort={effort}')
+
+    # For OpenAI and Gemini: Maps reasoning.effort → reasoning_effort parameter
+    # Both providers use OpenAI SDK format but with different implementations:
+    # - OpenAI: Native reasoning models (o1, o3) with built-in reasoning
+    # - Gemini: OpenAI compatibility layer (generativelanguage.googleapis.com/v1beta/openai/)
+    # Ref: https://ai.google.dev/gemini-api/docs/openai (Gemini OpenAI compatibility)
+    if provider in ('openai', 'gemini'):
+        reasoning_config = llm_config.get('reasoning')
+        if isinstance(reasoning_config, dict):
+            effort = reasoning_config.get('effort')
+            if effort:
+                # Map effort to reasoning_effort for ChatOpenAI (OpenAI/Gemini compatible)
+                # OpenAI o1/o3 and Gemini 2.5/3.x support: low, medium, high
+                # We map 'minimal' → 'low' since OpenAI doesn't support 'minimal'
+                effort_mapping = {
+                    'minimal': 'low',   # Map minimal to low (OpenAI doesn't have 'minimal')
+                    'low': 'low',
+                    'medium': 'medium',
+                    'high': 'high',
+                }
+                reasoning_effort = effort_mapping.get(effort.lower())
+                if reasoning_effort:
+                    # Use model_kwargs for ChatOpenAI extra parameters
+                    if 'model_kwargs' not in llm_kwargs:
+                        llm_kwargs['model_kwargs'] = {}
+                    llm_kwargs['model_kwargs']['reasoning_effort'] = reasoning_effort
+                    logging.debug(f'{provider.capitalize()} reasoning_effort set to {reasoning_effort} based on effort={effort}')
 
     # Instantiate appropriate LangChain chat model
     if provider == 'anthropic':
@@ -851,8 +914,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         llm = ChatAnthropic(**llm_kwargs)
         logging.debug('Using ChatAnthropic for LangChain integration')
     else:
+        # OpenAI and Gemini models use ChatOpenAI (via OpenAI SDK)
         llm = ChatOpenAI(**llm_kwargs)
-        logging.debug('Using ChatOpenAI for LangChain integration')
+        logging.debug(f'Using ChatOpenAI for LangChain integration (provider: {provider})')
 
     logging.debug(
         f"LangGraph LLM params resolved: provider={provider}, model={llm_kwargs.get('model')}, "
@@ -1006,14 +1070,27 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     warning_steps = []  # Track steps with warnings (e.g., UX issues)
     case_modified = False  # Track if case was modified with dynamic steps
     dynamic_generation_count = 0  # Track how many times dynamic generation occurred
-    dom_diff_cache = []
-    step_retry_tracker = {}  # Track retry attempts per step for adaptive recovery
+    dom_diff_cache = []  # Stores DOM diff history for debugging and analysis (not used for deduplication)
+    step_retry_tracker = {}  # Track retry attempts per step for adaptive recovery (prevents infinite loops)
+
+    # ===================================================================
+    # State Machine Flow: Step-by-Step Test Execution Loop
+    # ===================================================================
+    # 1. Prepare Step (lines 1078-1102): Extract instruction, determine step type, format prompt
+    # 2. Generate Multi-Modal Context (lines 1104-1114): Capture screenshot with highlighted DOM
+    # 3. Create Message & Prune History (lines 1116-1148): Build agent input, optimize tokens
+    # 4. Execute Step with Tool Choice Masking (lines 1150-1193): Force correct tool based on step type
+    # 5. Critical Failure Check (lines 1203-1262): Abort test if unrecoverable error (Priority 0)
+    # 6. Regular Failure Check & Recovery (lines 1264-1465): Attempt adaptive recovery (Priority 1)
+    # 7. Check Objective Achievement (lines 1467-1471): Early termination if test goal met
+    # 8. Dynamic Step Generation (lines 1475-1608): Generate steps for new UI elements (Actions only)
+    # 9. Increment & Continue (line 1615): Move to next step unless retry/abort
+    # ===================================================================
 
     i = 0
     while i < len(case_steps):
         step = case_steps[i]
         instruction_to_execute = step.get('action') or step.get('verify') or step.get('ux_verify')
-        # step_type = "Action" if step.get("action") else "Assertion"
         if step.get('action'):
             step_type = 'Action'
         elif step.get('verify'):
@@ -1139,8 +1216,14 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             # ===================================================================
             # PRIORITY 0: Critical failure check (highest priority, independent of is_failure)
             # ===================================================================
-            # Critical errors are unrecoverable and should abort immediately
-            # to save resources. Check BEFORE regular failure handling.
+            # Critical failures are unrecoverable errors that prevent test continuation:
+            # - ELEMENT_NOT_FOUND: Target element missing from DOM (cannot interact)
+            # - PAGE_CRASHED: Browser page crashed (no recovery possible)
+            # - UNSUPPORTED_PAGE: PDF/plugin pages (no DOM access for automation)
+            # - PERMISSION_DENIED: Authentication expired or access blocked
+            # - NAVIGATION_FAILED: Page navigation failures
+            # These errors abort the test immediately to conserve resources.
+            # Check BEFORE regular failure handling to prevent wasted retry attempts.
             if _is_critical_failure_step(tool_output, intermediate_output):
 
                 # Smart differentiation: Check if unsupported page + page-agnostic operation
@@ -1281,7 +1364,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         failed_steps.append(i + 1)
                         logging.warning(f'Step {i + 1} element not found, but adaptive recovery is disabled')
 
-                # Priority 2: Other failures (non-critical, not ELEMENT_NOT_FOUND)
+                # Handle other failures: Non-critical failures not caused by ELEMENT_NOT_FOUND
+                # (e.g., GoBack with no history, operation timeout, permission issues)
                 else:
                     logging.warning(f'Step {i + 1} failed (non-ELEMENT_NOT_FOUND): {tool_output[:100]}')
 
@@ -1529,6 +1613,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 f'Detected {len(dom_diff)} new elements, but below threshold {min_elements_threshold}, skipping dynamic step generation')
                         else:
                             logging.debug('No DOM changes detected, skipping dynamic step generation')
+                    # Store DOM diff for debugging/analysis (not used for deduplication - each step gets fresh analysis)
                     dom_diff_cache.append(dom_diff)
 
                 else:
@@ -1974,7 +2059,7 @@ def _detect_llm_provider(model_name: str) -> str:
         model_name: Model name from configuration
 
     Returns:
-        str: 'anthropic' for Claude models, 'openai' for GPT models
+        str: 'anthropic' for Claude models, 'gemini' for Gemini models, 'openai' for GPT models
     """
     if not model_name:
         return 'openai'  # Default to OpenAI
@@ -1984,6 +2069,10 @@ def _detect_llm_provider(model_name: str) -> str:
     # Claude models (claude-3-*, claude-3.5-*, etc.)
     if model_lower.startswith('claude-'):
         return 'anthropic'
+
+    # Google Gemini models (gemini-2.5-*, gemini-3-*, etc.)
+    if model_lower.startswith('gemini-'):
+        return 'gemini'
 
     # OpenAI models (gpt-*, o1-*, o3-*)
     if model_lower.startswith(('gpt-', 'o1-', 'o3-')):

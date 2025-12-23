@@ -1,31 +1,126 @@
+"""LLM API Wrapper supporting OpenAI, Anthropic Claude, and Google Gemini
+models.
+
+This module provides a unified interface for multiple LLM providers:
+- OpenAI: Chat Completions API (gpt-4, gpt-4o, o1, o3) and Responses API (gpt-5 family)
+- Anthropic: Messages API with Extended Thinking support (Claude 3.5+)
+- Gemini: OpenAI-compatible endpoint (Gemini 2.5, 3.x)
+
+Key Features:
+- Auto-detection of provider based on model name prefix
+- Provider-specific defaults (temperature, base_url, reasoning parameters)
+- Defensive response handling for relay service compatibility
+- Comprehensive error handling with OpenAI SDK exception types
+
+Responses API (GPT-5 family):
+- Format: client.responses.create(model, instructions, input, reasoning, text)
+- Parameter constraints vary by model:
+  - GPT-5.1: temperature/top_p ONLY with reasoning.effort="none"
+  - Other GPT-5 models: NO temperature/top_p support
+  - Use reasoning.effort and text.verbosity as alternatives
+"""
+
 import logging
 
+import openai
 from openai import AsyncOpenAI
+
+# Anthropic SDK - optional dependency
+try:
+    from anthropic import AsyncAnthropic
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
+    AsyncAnthropic = None  # Type placeholder
 
 
 class LLMAPI:
     def __init__(self, llm_config) -> None:
         self.llm_config = llm_config
-        self.api_type = self.llm_config.get('api')
+        self.api_type = self.llm_config.get('api')  # Keep for backward compatibility
         self.model = self.llm_config.get('model')
         self.filter_model = self.llm_config.get('filter_model', self.model)  # For two-stage architecture
+
+        # Provider detection based on model name
+        self.provider = self._detect_provider(self.model)
+
         self.client = None
 
+    def _detect_provider(self, model_name: str) -> str:
+        """Detect provider based on model name.
+
+        Returns:
+            str: 'anthropic' for Claude models, 'gemini' for Gemini models, 'openai' for GPT models
+
+        Raises:
+            ImportError: If required library not installed for the model
+        """
+        if not model_name:
+            return 'openai'  # Default to OpenAI
+
+        model_lower = model_name.lower()
+
+        # Claude models (claude-3-*, claude-3.5-*, etc.)
+        if model_lower.startswith('claude-'):
+            if not ANTHROPIC_AVAILABLE:
+                raise ImportError(
+                    f"Model '{model_name}' requires 'anthropic' library. "
+                    'Install with: pip install anthropic>=0.40.0'
+                )
+            return 'anthropic'
+
+        # Google Gemini models (gemini-2.5-*, gemini-3-*, etc.)
+        # Uses OpenAI SDK for compatibility (no separate library required)
+        if model_lower.startswith('gemini-'):
+            return 'gemini'
+
+        # OpenAI models (gpt-*, o1-*, o3-*)
+        if model_lower.startswith(('gpt-', 'o1-', 'o3-')):
+            return 'openai'
+
+        # Default to OpenAI for unknown models
+        return 'openai'
+
     async def initialize(self):
-        if self.api_type == 'openai':
+        if self.provider in ('openai', 'gemini'):
+            # Unified AsyncOpenAI client for both OpenAI and Gemini models
             self.api_key = self.llm_config.get('api_key')
             if not self.api_key:
-                raise ValueError('API key is empty. OpenAI client not initialized.')
+                raise ValueError(f'API key is empty. {self.provider.capitalize()} client not initialized.')
+
             self.base_url = self.llm_config.get('base_url')
+
+            # Set default base_url for Gemini if not explicitly configured
+            # Gemini officially supports OpenAI SDK via this compatibility endpoint
+            if self.provider == 'gemini' and not self.base_url:
+                self.base_url = 'https://generativelanguage.googleapis.com/v1beta/openai/'
+
             # Use AsyncOpenAI client for async operations
             self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url, timeout=60) if self.base_url else AsyncOpenAI(
                 api_key=self.api_key, timeout=360)
-            logging.debug(f'AsyncOpenAI client initialized with Model: {self.model} and base URL: {self.base_url}')
+            logging.debug(
+                f'AsyncOpenAI client initialized - provider: {self.provider}, '
+                f'model: {self.model}, base_url: {self.base_url}'
+            )
+
+        elif self.provider == 'anthropic':
+            self.api_key = self.llm_config.get('api_key')
+            if not self.api_key:
+                raise ValueError('API key is empty. Anthropic client not initialized.')
+
+            # Anthropic client initialization (base_url is optional for custom endpoints)
+            self.base_url = self.llm_config.get('base_url')
+            if self.base_url:
+                self.client = AsyncAnthropic(api_key=self.api_key, base_url=self.base_url, timeout=360.0)
+                logging.debug(f'AsyncAnthropic client initialized with API key: {self.api_key}, Model: {self.model} and base URL: {self.base_url}')
+            else:
+                self.client = AsyncAnthropic(api_key=self.api_key, timeout=360.0)
+                logging.debug(f'AsyncAnthropic client initialized with API key: {self.api_key}, Model: {self.model}')
+
         else:
-            raise ValueError('Invalid API type or missing credentials. LLM client not initialized.')
+            raise ValueError(f"Invalid provider '{self.provider}' or missing credentials. LLM client not initialized.")
 
         return self
-
 
     async def get_llm_response(
         self,
@@ -39,20 +134,23 @@ class LLMAPI:
         reasoning=None,
         text=None,
     ):
-        """Get LLM response with support for GPT-5 Responses API.
+        """Get LLM response with unified interface for OpenAI and Anthropic
+        models.
 
         Args:
-            system_prompt: System prompt (used as 'instructions' in Responses API)
+            system_prompt: System prompt (used as 'instructions' in Responses API, 'system' in Anthropic)
             prompt: User prompt (used as 'input' in Responses API)
             images: Optional base64 image(s) for vision models
             temperature: Sampling temperature (0-2)
             top_p: Nucleus sampling parameter
-            max_tokens: Maximum output tokens
+            max_tokens: Maximum output tokens (REQUIRED for Claude models)
             model_override: Temporary model override (e.g., for two-stage architecture)
-            reasoning: Reasoning effort control for GPT-5 models. Can be:
-                - dict: {"effort": "none"|"low"|"medium"|"high"}
-                - str: "none"|"low"|"medium"|"high"
-                - None: Uses config or defaults ("none" for gpt-5.1, "medium" for gpt-5/mini/nano)
+            reasoning: Reasoning effort control. Can be:
+                - dict: {"effort": "minimal"|"low"|"medium"|"high"}
+                - str: "minimal"|"low"|"medium"|"high"
+                - None: Uses config or defaults
+                For OpenAI GPT-5: Auto-calculated reasoning budget
+                For Claude: Maps to thinking.budget_tokens (minimal=1024, low=4096, medium=10000, high=20000)
             text: Output verbosity control for GPT-5 models. Can be:
                 - dict: {"verbosity": "low"|"medium"|"high"}
                 - str: "low"|"medium"|"high"
@@ -62,29 +160,36 @@ class LLMAPI:
             str: Model response content
 
         Note:
-            - All GPT-5 family models (gpt-5, gpt-5.1, gpt-5-mini, gpt-5-nano) use Responses API
-            - Other models use Chat Completions API
+            - Claude models (claude-*) use Anthropic Messages API
+            - GPT-5 family models (gpt-5*) use OpenAI Responses API
+            - Other models use OpenAI Chat Completions API
         """
         # Allow temporary model override for two-stage architecture
         actual_model = model_override or self.model
-        if self.api_type == 'openai' and self.client is None:
+
+        # Detect provider for the actual model being used
+        actual_provider = self._detect_provider(actual_model)
+
+        # Initialize client if not already initialized
+        if self.client is None:
             await self.initialize()
 
-        # Determine which API to use based on model
-        use_responses_api = self._use_responses_api(actual_model)
+        # Auto-read reasoning from config if not explicitly passed
+        if reasoning is None:
+            reasoning = self.llm_config.get('reasoning')
 
         try:
             # Resolve common parameters
             resolved_max_tokens = max_tokens if max_tokens is not None else self.llm_config.get('max_tokens')
 
-            if use_responses_api:
-                # GPT-5 models -> Responses API
-                # Note: temperature/top_p only supported with GPT-5.1 + effort="none"
-                # Only pass if explicitly configured (no default)
-                resolved_temperature = temperature if temperature is not None else self.llm_config.get('temperature')
+            # Route to appropriate API based on provider
+            if actual_provider == 'anthropic':
+                # Claude models -> Anthropic Messages API
+                # Temperature defaults to 1.0 for Claude (Anthropic best practice)
+                resolved_temperature = temperature if temperature is not None else self.llm_config.get('temperature', 1.0)
                 resolved_top_p = top_p if top_p is not None else self.llm_config.get('top_p')
 
-                result = await self._call_responses_api(
+                result = await self._call_anthropic_api(
                     system_prompt=system_prompt,
                     prompt=prompt,
                     images=images,
@@ -95,21 +200,57 @@ class LLMAPI:
                     reasoning=reasoning,
                     text=text,
                 )
-            else:
-                # Non-GPT-5 models -> Chat Completions API
-                # Default temperature to 0.1 for Chat Completions
-                resolved_temperature = temperature if temperature is not None else self.llm_config.get('temperature', 0.1)
-                resolved_top_p = top_p if top_p is not None else self.llm_config.get('top_p')
 
-                result = await self._call_chat_completions_api(
-                    system_prompt=system_prompt,
-                    prompt=prompt,
-                    images=images,
-                    temperature=resolved_temperature,
-                    top_p=resolved_top_p,
-                    max_tokens=resolved_max_tokens,
-                    model=actual_model,
-                )
+            elif actual_provider in ('openai', 'gemini'):
+                # Unified OpenAI SDK path for both OpenAI and Gemini models
+                # Uses AsyncOpenAI client (raw OpenAI SDK, not LangChain wrapper)
+                # Gemini officially supports OpenAI compatibility: generativelanguage.googleapis.com/v1beta/openai/
+
+                # Determine which OpenAI API to use based on model
+                use_responses_api = self._use_responses_api(actual_model)
+
+                if use_responses_api:
+                    # GPT-5 models -> Responses API
+                    # Note: temperature/top_p only supported with GPT-5.1 + effort="none"
+                    # Only pass if explicitly configured (no default)
+                    resolved_temperature = temperature if temperature is not None else self.llm_config.get('temperature')
+                    resolved_top_p = top_p if top_p is not None else self.llm_config.get('top_p')
+
+                    result = await self._call_responses_api(
+                        system_prompt=system_prompt,
+                        prompt=prompt,
+                        images=images,
+                        temperature=resolved_temperature,
+                        top_p=resolved_top_p,
+                        max_tokens=resolved_max_tokens,
+                        model=actual_model,
+                        reasoning=reasoning,
+                        text=text,
+                    )
+                else:
+                    # Non-GPT-5 models -> Chat Completions API
+                    # Provider-specific temperature defaults: Gemini=1.0, OpenAI=0.1
+                    if actual_provider == 'gemini':
+                        default_temp = 1.0  # Gemini best practice
+                    else:
+                        default_temp = 0.1  # OpenAI default for deterministic output
+
+                    resolved_temperature = temperature if temperature is not None else self.llm_config.get('temperature', default_temp)
+                    resolved_top_p = top_p if top_p is not None else self.llm_config.get('top_p')
+
+                    result = await self._call_chat_completions_api(
+                        system_prompt=system_prompt,
+                        prompt=prompt,
+                        images=images,
+                        temperature=resolved_temperature,
+                        top_p=resolved_top_p,
+                        max_tokens=resolved_max_tokens,
+                        model=actual_model,
+                        reasoning=reasoning,
+                    )
+
+            else:
+                raise ValueError(f"Unknown provider '{actual_provider}' for model '{actual_model}'")
 
             return result
         except Exception as e:
@@ -191,19 +332,8 @@ class LLMAPI:
     ):
         """Call OpenAI Responses API for GPT-5/GPT-5.1 models.
 
-        Responses API format:
-            response = client.responses.create(
-                model="gpt-5.1",
-                instructions="System prompt here",
-                input="User input here" or [{"role": "user", "content": [...]}],
-                reasoning={"effort": "low"},
-                text={"verbosity": "medium"},
-            )
-
-        Parameter compatibility:
-            - temperature, top_p, logprobs: ONLY supported with GPT-5.1 + reasoning.effort="none"
-            - Other GPT-5 models (gpt-5, gpt-5-mini, gpt-5-nano) do NOT support these parameters
-            - Use reasoning.effort, text.verbosity, max_output_tokens as alternatives
+        See module docstring for detailed Responses API format and parameter
+        compatibility.
         """
         try:
             actual_model = model or self.llm_config.get('model')
@@ -219,11 +349,17 @@ class LLMAPI:
 
             if not supports_sampling_params and (temperature is not None or top_p is not None):
                 if is_gpt51:
+                    # GPT-5.1 design: reasoning and sampling are mutually exclusive
+                    # When reasoning is active (effort != "none"), model uses internal reasoning process
+                    # that doesn't support external sampling control (temperature/top_p)
                     logging.debug(
-                        "GPT-5.1 with reasoning.effort='%s': temperature/top_p not supported (only allowed with effort='none').",
+                        "GPT-5.1 with reasoning.effort='%s': temperature/top_p not supported (only allowed with effort='none'). "
+                        'Reasoning models use internal sampling that cannot be externally controlled.',
                         resolved_effort
                     )
                 else:
+                    # Other GPT-5 models don't support temperature/top_p at all
+                    # Use reasoning.effort and text.verbosity for output control instead
                     logging.debug(
                         "Model '%s' does not support temperature/top_p. Use reasoning.effort/text.verbosity instead.",
                         actual_model
@@ -309,10 +445,13 @@ class LLMAPI:
         top_p=None,
         max_tokens=None,
         model=None,
+        reasoning=None,
     ):
         """Call OpenAI Chat Completions API for non-GPT-5 models.
 
-        Note: This API does NOT support reasoning/text parameters.
+        Supports reasoning_effort parameter for:
+        - OpenAI o1/o3 models
+        - Gemini models (via OpenAI compatibility endpoint)
         """
         try:
             actual_model = model or self.llm_config.get('model')
@@ -340,6 +479,24 @@ class LLMAPI:
             if max_tokens is not None:
                 create_kwargs['max_tokens'] = max_tokens
 
+            # Add reasoning_effort if reasoning config is provided
+            # Works for both OpenAI o1/o3 and Gemini models
+            if reasoning and isinstance(reasoning, dict):
+                effort = reasoning.get('effort')
+                if effort:
+                    # Map effort levels to reasoning_effort parameter
+                    # Supports: minimal, low, medium, high (OpenAI/Gemini compatible)
+                    effort_mapping = {
+                        'minimal': 'low',
+                        'low': 'low',
+                        'medium': 'medium',
+                        'high': 'high',
+                    }
+                    reasoning_effort = effort_mapping.get(effort.lower())
+                    if reasoning_effort:
+                        create_kwargs['reasoning_effort'] = reasoning_effort
+                        logging.debug(f"Using reasoning_effort='{reasoning_effort}' for model '{actual_model}'")
+
             logging.debug(
                 'Chat Completions API request - model: %s, temperature: %s, max_tokens: %s',
                 actual_model,
@@ -348,16 +505,296 @@ class LLMAPI:
             )
 
             completion = await self.client.chat.completions.create(**create_kwargs)
-            content = completion.choices[0].message.content
 
-            logging.debug(f'Chat Completions API response received, length: {len(content) if content else 0}')
+            # Defensive response extraction - handles both ChatCompletion objects and string responses
+            content = None
+
+            # Try standard ChatCompletion object structure
+            if hasattr(completion, 'choices') and completion.choices:
+                content = completion.choices[0].message.content
+                logging.debug(f'Chat Completions API response received (ChatCompletion object), length: {len(content) if content else 0}')
+
+            # Fallback: Handle relay services that return plain strings
+            # Some relay services (particularly third-party Gemini relays) return strings
+            # instead of ChatCompletion objects when using reasoning_effort parameter
+            elif isinstance(completion, str):
+                content = completion
+                if 'reasoning_effort' in create_kwargs:
+                    # Warn about potential relay service incompatibility with reasoning features
+                    logging.warning(
+                        f"Relay service at '{self.base_url}' returned plain string instead of ChatCompletion object. "
+                        f'This may indicate incompatibility with reasoning_effort parameter. '
+                        f'Consider using official Gemini endpoint or disabling reasoning configuration.'
+                    )
+                logging.debug(f'Chat Completions API response received (string fallback), length: {len(content)}')
+
+            # Handle unexpected response types
+            else:
+                response_type = type(completion).__name__
+                raise ValueError(
+                    f"Unexpected response type '{response_type}' from Chat Completions API. "
+                    f'Expected ChatCompletion object or string. '
+                    f'Base URL: {self.base_url}, Model: {actual_model}'
+                )
+
             content = self._clean_response(content)
             return content
 
+        # Official OpenAI SDK error handling patterns
+        except openai.APIConnectionError as e:
+            error_msg = f"Chat Completions API connection failed for model '{model}': {str(e)}"
+            logging.error(error_msg)
+            logging.debug(f'Underlying cause: {e.__cause__}')
+            raise ValueError(error_msg)
+
+        except openai.RateLimitError as e:
+            error_msg = f"Rate limit exceeded for model '{model}' (429 status)"
+            logging.error(error_msg)
+            logging.debug(f"Request ID: {e.request_id if hasattr(e, 'request_id') else 'N/A'}")
+            raise ValueError(error_msg)
+
+        except openai.APIStatusError as e:
+            # This catches relay service errors and other API issues
+            error_msg = f"Chat Completions API error for model '{model}': Status {e.status_code}"
+            logging.error(error_msg)
+            logging.debug(f'Response: {e.response}')
+            logging.debug(f"Request ID: {e.request_id if hasattr(e, 'request_id') else 'N/A'}")
+            raise ValueError(error_msg)
+
+        except AttributeError as e:
+            # Catch response attribute access errors (e.g., str has no 'choices')
+            error_msg = (
+                f"Invalid response format from Chat Completions API for model '{model}': {str(e)}. "
+                f'This may indicate relay service incompatibility with reasoning_effort parameter. '
+                f'Base URL: {self.base_url}'
+            )
+            logging.error(error_msg)
+            raise ValueError(error_msg)
+
         except Exception as e:
+            # General fallback for unexpected errors
             error_msg = f"Chat Completions API request failed for model '{model}': {str(e)}"
             logging.error(error_msg)
             raise ValueError(error_msg)
+
+    async def _call_anthropic_api(
+        self,
+        system_prompt: str,
+        prompt: str,
+        images=None,
+        temperature=None,
+        top_p=None,
+        max_tokens=None,
+        model=None,
+        reasoning=None,
+        text=None,
+    ):
+        """Call Anthropic Messages API for Claude models.
+
+        Anthropic Messages API format:
+            response = client.messages.create(
+                model="claude-3-5-sonnet-20241022",
+                system="System prompt here",
+                messages=[{"role": "user", "content": "User input"}],
+                max_tokens=1024,  # REQUIRED
+                temperature=1.0,  # Optional, defaults to 1.0
+                thinking={         # Optional, for extended thinking
+                    "type": "enabled",
+                    "budget_tokens": 10000
+                }
+            )
+
+        Parameter differences from OpenAI:
+            - system: Separate parameter (not in messages array)
+            - max_tokens: REQUIRED (API fails without it)
+            - temperature: Defaults to 1.0 (not 0.1 like OpenAI)
+            - thinking: Manual token budget allocation based on reasoning.effort
+        """
+        try:
+            actual_model = model or self.llm_config.get('model')
+
+            # max_tokens is REQUIRED for Claude API
+            if max_tokens is None:
+                max_tokens = self.llm_config.get('max_tokens')
+                if max_tokens is None:
+                    # Default to 4096 if not specified (Claude's safe default)
+                    max_tokens = 4096
+                    logging.debug(f'max_tokens not specified, using default: {max_tokens}')
+
+            # Build messages array (system is separate in Anthropic API)
+            messages = []
+            user_content = []
+
+            # Add text content
+            user_content.append({'type': 'text', 'text': prompt})
+
+            # Add images if provided (base64 format)
+            if images:
+                self._append_images_to_anthropic_content(user_content, images)
+
+            messages.append({'role': 'user', 'content': user_content})
+
+            # Build request kwargs
+            create_kwargs = {
+                'model': actual_model,
+                'system': system_prompt,  # Separate parameter in Anthropic API
+                'messages': messages,
+                'max_tokens': max_tokens,  # REQUIRED
+                'timeout': 360.0,
+            }
+
+            # Temperature defaults to 1.0 for Claude (Anthropic best practice)
+            resolved_temperature = temperature if temperature is not None else self.llm_config.get('temperature', 1.0)
+            create_kwargs['temperature'] = resolved_temperature
+
+            # top_p is optional
+            if top_p is not None:
+                create_kwargs['top_p'] = top_p
+
+            # Handle reasoning.effort → thinking.budget_tokens mapping
+            if reasoning is not None:
+                thinking_config = self._map_effort_to_thinking(reasoning, actual_model)
+                if thinking_config:
+                    create_kwargs['thinking'] = thinking_config
+                    logging.debug(f'Extended thinking enabled: {thinking_config}')
+
+            logging.debug(
+                'Anthropic Messages API request - model: %s, temperature: %s, max_tokens: %s, thinking: %s',
+                actual_model,
+                create_kwargs.get('temperature'),
+                create_kwargs.get('max_tokens'),
+                create_kwargs.get('thinking'),
+            )
+
+            response = await self.client.messages.create(**create_kwargs)
+
+            # Extract content from response
+            content = ''
+            for block in response.content:
+                if hasattr(block, 'type') and block.type == 'text':
+                    content += block.text
+
+            if not content:
+                content = str(response)
+
+            logging.debug(f'Anthropic Messages API response received, length: {len(content) if content else 0}')
+            content = self._clean_response(content)
+            return content
+
+        # Catch-all exception handler for Anthropic Messages API
+        # Converts all exceptions to ValueError for consistent error handling across providers
+        # Logs original exception message for debugging before re-raising as ValueError
+        except Exception as e:
+            error_msg = f"Anthropic Messages API request failed for model '{model}': {str(e)}"
+            logging.error(error_msg)
+            raise ValueError(error_msg)
+
+    def _map_effort_to_thinking(self, reasoning, model: str) -> dict:
+        """Map reasoning.effort to Anthropic thinking configuration.
+
+        Reasoning effort to budget_tokens mapping (based on industry best practices):
+            - minimal: 1024 tokens  (quick, low-cost reasoning)
+            - low: 4096 tokens      (basic analysis)
+            - medium: 10000 tokens  (balanced, recommended for testing)
+            - high: 20000 tokens    (deep analysis, complex scenarios)
+
+        Args:
+            reasoning: Can be dict {"effort": "medium"} or str "medium"
+            model: Model name for logging
+
+        Returns:
+            dict: {"type": "enabled", "budget_tokens": N} or None if effort is None
+        """
+        effort = None
+
+        # Extract effort from reasoning parameter
+        if isinstance(reasoning, dict):
+            effort = reasoning.get('effort')
+        elif isinstance(reasoning, str):
+            effort = reasoning
+        else:
+            # Check config
+            config_reasoning = self.llm_config.get('reasoning')
+            if isinstance(config_reasoning, dict):
+                effort = config_reasoning.get('effort')
+
+        if not effort:
+            return None  # No thinking configuration
+
+        # Map effort levels to Claude Extended Thinking budget token counts
+        # Based on Anthropic's Extended Thinking recommendations:
+        # - minimal: 1024 tokens (quick analysis, simple tasks)
+        # - low: 4096 tokens (basic reasoning, standard queries)
+        # - medium: 10000 tokens (balanced reasoning, recommended for most use cases)
+        # - high: 20000 tokens (deep analysis, complex scenarios)
+        # Ref: https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking
+        effort_mapping = {
+            'minimal': 1024,
+            'low': 4096,
+            'medium': 10000,
+            'high': 20000,
+        }
+
+        budget_tokens = effort_mapping.get(effort.lower())
+        if budget_tokens:
+            return {'type': 'enabled', 'budget_tokens': budget_tokens}
+        else:
+            logging.warning(f"Unknown reasoning effort '{effort}' for model '{model}', skipping thinking configuration")
+            return None
+
+    def _append_images_to_anthropic_content(self, content: list, images):
+        """Append images to Anthropic Messages API content array.
+
+        Format for Anthropic Messages API:
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": "base64_string_without_prefix"
+                }
+            }
+
+        Note: Anthropic expects base64 data WITHOUT the "data:image/jpeg;base64," prefix
+        """
+        try:
+            if isinstance(images, str):
+                content.append(self._format_anthropic_image(images))
+            elif isinstance(images, list):
+                for image_base64 in images:
+                    content.append(self._format_anthropic_image(image_base64))
+            else:
+                raise ValueError("Invalid type for 'images'. Expected a base64 string or a list of base64 strings.")
+        except Exception as e:
+            logging.error(f'Error appending images to Anthropic Messages content: {e}')
+            raise
+
+    def _format_anthropic_image(self, image_base64: str) -> dict:
+        """Format a base64 image for Anthropic Messages API.
+
+        Args:
+            image_base64: Base64 image string (may include "data:image/...;base64," prefix)
+
+        Returns:
+            dict: Anthropic image content block
+        """
+        # Remove data URL prefix if present
+        if 'base64,' in image_base64:
+            # Extract media type and data
+            prefix, data = image_base64.split('base64,', 1)
+            # Extract media type from prefix (e.g., "data:image/jpeg;")
+            media_type = prefix.replace('data:', '').replace(';', '').strip()
+            if not media_type:
+                media_type = 'image/jpeg'  # Default
+        else:
+            # No prefix, assume raw base64 data
+            media_type = 'image/jpeg'
+            data = image_base64
+
+        return {
+            'type': 'image',
+            'source': {'type': 'base64', 'media_type': media_type, 'data': data},
+        }
 
     def _append_images_to_content(self, content: list, images):
         """Append images to Responses API content array.

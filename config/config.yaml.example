@@ -14,9 +14,9 @@ test_config: # Test configuration
     type: ai  # default or ai
     business_objectives: Test Baidu website functionality, generate 3 test cases
     dynamic_step_generation:
-      enabled: True  # Default: False (this example enables it as recommended)
-      max_dynamic_steps: 10  # Default: 5 (this example increases the limit)
-      min_elements_threshold: 1  # Default: 2 (this example uses 1 for higher sensitivity)
+      enabled: True  # Optional, default: False (this example enables it as recommended)
+      max_dynamic_steps: 10  # Optional, default: 5 (this example increases the limit)
+      min_elements_threshold: 1  # Optional, default: 2 (this example uses 1 for higher sensitivity)
   ux_test:
     enabled: False
   performance_test:
@@ -24,20 +24,69 @@ test_config: # Test configuration
   security_test:
     enabled: False
 
-llm_config: # LLM configuration, currently only supports OpenAI SDK compatible format
+llm_config: # LLM configuration, supports OpenAI, Anthropic Claude, and Google Gemini models
+  # =========================
+  # OpenAI Configuration Example
+  # =========================
   api: openai
   model: gpt-4.1-2025-04-14  # Primary model for Stage 2 test planning (Recommended)
   filter_model: gpt-4o-mini  # Lightweight model for Stage 1 element filtering (cost-effective)
-  api_key: your_api_key
-  base_url:  https://api.example.com/v1
-  temperature: 0.1   # Optional, default 0.1
-  # top_p: 0.9       # Optional, if not set, this parameter will not be passed
-  # max_tokens: 8192  # Optional, maximum output tokens (supports generating more test cases)
-  # GPT-5 family reasoning & text verbosity configuration (optional)
+  api_key: your_openai_api_key  # Or set OPENAI_API_KEY environment variable
+  base_url: https://api.openai.com/v1  # Optional, OpenAI default endpoint
+  temperature: 0.1   # Optional, default 0.1 for OpenAI
+  # top_p: 0.9       # Optional, nucleus sampling parameter
+  # max_tokens: 8192  # Optional, maximum output tokens
+
+  # GPT-5 family reasoning configuration (optional)
   # reasoning:
-  #   effort: none    # none | low | medium | high (gpt-5.1 defaults to 'none' for low-latency)
+  #   effort: medium    # minimal | low | medium | high
+  #                     # OpenAI auto-calculates reasoning budget internally
   # text:
-  #   verbosity: medium  # low | medium | high (default 'medium')
+  #   verbosity: medium  # low | medium | high (GPT-5 only)
+
+  # =========================
+  # Anthropic Claude Configuration Example
+  # =========================
+  # model: claude-sonnet-4-5-20250929  # Claude 4.5 Sonnet (Recommended for testing)
+  # filter_model: claude-haiku-4-5-20251001  # Claude 4.5 Haiku (Fast & cost-effective filtering)
+  # api_key: your_anthropic_api_key  # Or set ANTHROPIC_API_KEY environment variable
+  # base_url:  # Optional, leave empty to use Anthropic default
+  # temperature: 1.0  # Optional, default 1.0 for Claude (Anthropic best practice)
+  # max_tokens: 8192  # Recommended for Claude (required by Anthropic API)
+
+  # Claude extended thinking configuration (optional, maps to thinking.budget_tokens)
+  # reasoning:
+  #   effort: medium    # minimal | low | medium | high
+  #                     # Maps to: minimal=1024, low=4096, medium=10000, high=20000 tokens
+  #                     # 'medium' (10000 tokens) recommended for testing scenarios
+
+  # =========================
+  # Google Gemini Configuration Example (RECOMMENDED)
+  # =========================
+  # model: gemini-3-flash-preview  # Latest Gemini 3 Flash (recommended default)
+  # filter_model: gemini-2.5-flash-lite  # Cost-effective filtering
+  # api_key: your_gemini_api_key  # Or set GEMINI_API_KEY environment variable
+  # temperature: 1.0  # Default 1.0 for Gemini (Google best practice)
+  # max_tokens: 8192  # Recommended for comprehensive test generation
+  # top_k: 40  # Optional, Gemini-specific diversity control
+  #
+  # Gemini reasoning configuration (via OpenAI SDK):
+  # reasoning:
+  #   effort: medium    # minimal|low|medium|high
+  #                     # Gemini uses OpenAI's reasoning_effort parameter
+  #                     # Works for both Gemini 2.5 and Gemini 3.x models
+  #                     # Mapped to OpenAI-compatible values via SDK
+  #
+  # base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+  #           # Official Gemini OpenAI compatibility endpoint (auto-set if omitted)
+  #           # For third-party relay: http://your-relay-service:port/
+  #
+  # Recommended Gemini Models (with usage scenarios):
+  # - gemini-3-flash-preview: Pro-level intelligence at Flash speed (recommended default for general testing)
+  # - gemini-3-pro-preview: Best for complex reasoning tasks (advanced test generation, edge case detection)
+  # - gemini-2.5-pro: Production-ready model (stable, high quality for enterprise use)
+  # - gemini-2.5-flash: General purpose testing (balanced speed/quality, cost-effective)
+  # - gemini-2.5-flash-lite: Lightweight filtering (Stage 1 element prioritization only)
 
 browser_config:
   viewport: {"width": 1280, "height": 720}
