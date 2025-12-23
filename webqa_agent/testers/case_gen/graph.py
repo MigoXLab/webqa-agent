@@ -224,9 +224,6 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
 
             logging.debug(f"Generated {len(test_cases)} test cases.")
             logging.info(f"{icon['rocket']} Designed {len(test_cases)} functional test cases")
-            # Ensure the current_test_case_index is initialized if not present
-            if "current_test_case_index" not in state:
-                return {"test_cases": test_cases, "current_test_case_index": 0}
             return {"test_cases": test_cases}
         except (json.JSONDecodeError, IndexError, ValueError) as e:
             logging.error(f"Failed to parse test cases from LLM response: {e}\nResponse: {response}")

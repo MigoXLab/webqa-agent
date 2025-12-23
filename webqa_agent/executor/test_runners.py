@@ -66,22 +66,27 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                 cookies = test_config.test_specific_config.get('cookies')
 
                 initial_state = {
+                    # Core configuration
                     'url': target_url,
                     'business_objectives': business_objectives,
                     'cookies': cookies,
-                    'completed_cases': [],
-                    'reflection_history': [],
-                    'recorded_cases': [],
-                    'remaining_objectives': business_objectives,
-                    'session_pool': session_pool,           # Pool for parallel execution
-                    'llm_config': llm_config,               # LLM config for creating UITester
-                    'ui_tester_instance': None,             # Graph manages sessions internally
-                    'current_test_case_index': 0,
-                    'skip_reflection': False,
-                    'is_batch_complete': False,             # Batch sync flag
                     'language': test_config.report_config.get('language', 'zh-CN'),
+
+                    # Test data
+                    'test_cases': [],  # Will be populated by plan_test_cases
+                    'completed_cases': [],
+                    'recorded_cases': [],
+
+                    # Control flags
+                    'generate_only': False,
+                    'skip_reflection': False,
+
+                    # Feature configuration
                     'dynamic_step_generation': dynamic_step_config,
-                    'case_ui_testers': {},                  # For passing ui_tester between execute and reflect nodes
+
+                    # Infrastructure
+                    'session_pool': session_pool,
+                    'llm_config': llm_config,
                 }
 
                 graph_config = {'recursion_limit': 100}
