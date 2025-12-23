@@ -281,10 +281,11 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
         nonlocal replan_count, all_test_cases  # 声明需要修改外部变量
 
         while True:
-            try:
-                case = case_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                logging.debug(f"Worker {worker_id}: No more cases, exiting")
+            case = await case_queue.get()  # wait for new cases (including replanned ones)
+
+            # Check for sentinel value(None) to exit
+            if case is None:
+                logging.debug(f"Worker {worker_id}: Received sentinel, exiting")
                 break
 
             case_name = case.get("name", "UNNAMED")
@@ -388,7 +389,7 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
 
                                     # 加入队列供 workers 消费
                                     for new_case in new_cases:
-                                        await case_queue.put(new_case)
+                                        await case_queue.put(new_case)  # 计数器+1
                                         all_test_cases.append(new_case)
 
                                     logging.info(
@@ -441,22 +442,34 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                     _completed_case_count += 1
 
             finally:
-                # 释放或关闭 session
+                # Release or close session based on remaining work
                 if s:
-                    # 检查队列中是否还有待处理的 case
-                    if case_queue.empty():
-                        # 队列已空，直接关闭 session 释放浏览器资源
+                    # Check if there are more cases waiting in the queue
+                    # If queue is empty, close the session to free browser resources
+                    # If queue has pending cases, release back to pool for reuse
+                    if case_queue.qsize() == 0:
                         await s.close()
-                        logging.info(f"Worker {worker_id}: Closed session for '{case_name}' (queue empty, no more work)")
+                        logging.info(f"Worker {worker_id}: Closed session for '{case_name}' (no more pending cases)")
                     else:
-                        # 队列中还有 case，释放 session 回 pool 以供复用
                         await sp.release(s, failed=failed)
                         logging.debug(f"Worker {worker_id}: Released session for '{case_name}' to pool (failed={failed})")
+
+                # Mark task as done AFTER session is handled, so join() only unblocks
+                # when all resources are properly managed
+                case_queue.task_done()
 
     # 启动 K 个 workers
     workers = [asyncio.create_task(worker(i), name=f"worker-{i}") for i in range(pool_size)]
 
-    # 等待所有 workers 完成
+    # Wait for all items in the queue to be processed (including replanned cases)
+    # This blocks until task_done() has been called for every item that was put into the queue
+    await case_queue.join()
+
+    # All work is done - send sentinel values (None) to signal workers to exit
+    for _ in range(pool_size):
+        await case_queue.put(None)
+
+    # Wait for all workers to cleanly exit after receiving sentinel
     await asyncio.gather(*workers, return_exceptions=True)
 
     logging.info(
@@ -471,188 +484,6 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
         "test_cases": all_test_cases,  # 包含所有 test cases（原始 + replanned）
         "replan_count": replan_count,
     }
-
-
-# async def should_start_cases(state: MainGraphState) -> List[Send]:
-#     """Determines if there are test cases to run.
-#
-#     If so, it routes to a node that will start execution loop.
-#     """
-#     if state.get("generate_only"):
-#         logging.debug("'generate_only' is True, ending process after planning.")
-#         return [Send("cleanup_session", {})]
-#     if state.get("test_cases"):
-#         logging.debug("Test cases found, starting execution.")
-#         return await schedule_next_batch(state)
-#     else:
-#         logging.debug("No test cases generated, finishing up.")
-#         return [Send("cleanup_session", {})]
-#
-#
-# async def schedule_next_batch(state: MainGraphState) -> List[Send]:
-#     """
-#     Schedule next batch of test cases for parallel execution.
-#     Returns multiple Send objects - LangGraph will execute them in parallel.
-#     """
-#     sp = state["session_pool"]
-#
-#     # get next batch of test cases
-#     async with _queue_lock:
-#         batch_size = min(sp.pool_size, len(_pending_case_queue))
-#         if batch_size <= 0:
-#             logging.debug("No more test cases to run.")
-#             return []
-#         case_batch = [_pending_case_queue.popleft() for _ in range(batch_size)]
-#         logging.debug(f"Scheduling {len(case_batch)} cases for parallel execution, {len(_pending_case_queue)} remaining")
-#
-#     # Create multiple Sends - LangGraph will execute them in parallel
-#     sends = []
-#     for case in case_batch:
-#         logging.info(f"[Parallel] Creating Send for case: {case.get('name', 'UNNAMED')}")
-#         send_data = {
-#             "current_case": case,
-#             "session_pool": sp,
-#             "llm_config": state.get("llm_config"),
-#             "language": state.get("language", "zh-CN"),
-#             "url": state.get("url"),
-#             "cookies": state.get("cookies"),
-#             "test_cases": state.get("test_cases", []),
-#             "completed_cases": state.get("completed_cases", []),
-#             "dynamic_step_generation": state.get("dynamic_step_generation", {
-#                 "enabled": False,
-#                 "max_dynamic_steps": 0,
-#                 "min_elements_threshold": 2
-#             }),
-#             "case_ui_testers": {},
-#         }
-#         sends.append(Send("execute_single_case", send_data))
-#
-#     return sends
-
-
-# async def execute_single_case(state: MainGraphState) -> dict:
-#     """Executes a single test case using the agent worker node.
-#     Each case gets its own session from the pool, executes independently, and releases the session back when done.
-#     """
-#     case = state["current_case"]
-#     case_name = case.get("name")
-#     s = None
-#     sp = state["session_pool"]
-#     failed = False
-#
-#     try:
-#         s = await sp.acquire(timeout=120.0)
-#         await s.navigate_to(state["url"], cookies=state.get("cookies", {}))
-#
-#         ui_tester = UITester(llm_config=state["llm_config"], browser_session=s)
-#         await ui_tester.initialize()
-#
-#         # Set testcase context
-#         ui_tester.current_test_objective = case.get("objective", case.get("name"))
-#         ui_tester.current_success_criteria = case.get("success_criteria", [])
-#         ui_tester.execution_history.clear()
-#         ui_tester.last_action_context = None
-#
-#         lang = state.get('language', 'zh-CN')
-#         default_text = '智能功能测试' if lang == 'zh-CN' else 'AI Function Test'
-#
-#         with Display.display(f"{default_text} - {case_name}"):
-#             logging.debug(f"Executing functional test: {case_name}")
-#
-#             # Execute test case via agent worker
-#             worker_input_state = {
-#                 "test_case": case,
-#                 "completed_cases": state.get("completed_cases", []),
-#                 "dynamic_step_generation": state.get("dynamic_step_generation", {
-#                     "enabled": False,
-#                     "max_dynamic_steps": 0,
-#                     "min_elements_threshold": 2
-#                 })
-#             }
-#
-#             # add timeout
-#             try:
-#                 result = await  asyncio.wait_for(
-#                     agent_worker_node(worker_input_state, config={"configurable": {"ui_tester_instance": ui_tester}}),
-#                     timeout=1800
-#                 )
-#                 logging.debug(f"Case completed: {case_name}")
-#             except asyncio.TimeoutError:
-#                 logging.error(f"Case '{case_name}' timed out (30 minutes)")
-#                 failed = True
-#                 return {
-#                     "completed_cases": None
-#                 }
-#
-#             # The result from the worker now contains the single case result
-#             case_result = result.get("case_result")
-#             modified_case = result.get("modified_case")
-#             recorded_case = result.get("recorded_case")  # recorded_case contains all step data
-#
-#             # Handle case modification when dynamic steps were added
-#             if modified_case:
-#                 logging.info(f"Test case '{case_name}' was modified with dynamic steps, updating test_cases and saving to case.json")
-#                 try:
-#                     timestamp = os.getenv("WEBQA_REPORT_TIMESTAMP")
-#                     report_dir = f"./reports/test_{timestamp}"
-#                     os.makedirs(report_dir, exist_ok=True)
-#                     cases_path = os.path.join(report_dir, "cases.json")
-#                     with open(cases_path, "w", encoding="utf-8") as f:
-#                         json.dump(state.get("test_cases", []), f, ensure_ascii=False, indent=4)
-#                     logging.info(f"Successfully updated case.json with {modified_case.get('_dynamic_steps_count', 0)} dynamic steps")
-#                 except Exception as e:
-#                     logging.error(f"Failed to save modified cases to case.json: {e}")
-#
-#             # Check if this is a critical failure that should skip reflection
-#             if case_result and case_result.get("status") == "failed":
-#                 failure_type = case_result.get("failure_type")
-#                 case_name = case_result.get("case_name", "Unknown")
-#
-#                 if failure_type == "critical":
-#                     logging.warning(f"Critical failure detected in test case '{case_name}'. Skipping reflection and moving to next case.")
-#                     return_value = {"completed_cases": [case_result], "skip_reflection": True}
-#                 else:
-#                     logging.info(f"Recoverable failure in test case '{case_name}'. Will proceed with reflection for potential replan.")
-#                     return_value = {"completed_cases": [case_result] if case_result else []}
-#             else:
-#                 return_value = {"completed_cases": [case_result] if case_result else []}
-#
-#             # Include updated test_cases if case was modified
-#             if modified_case:
-#                 return_value["test_cases"] = state.get("test_cases", [])
-#
-#             # Store recorded_case data from CentralCaseRecorder into graph state
-#             if recorded_case:
-#                 return_value["recorded_cases"] = [recorded_case]
-#
-#             # 执行反思（非 skip_reflection 时）
-#             if not return_value.get("skip_reflection"):
-#                 reflect_result = await _do_reflection(ui_tester, state, case_name)
-#                 return_value.update(reflect_result)
-#
-#             return return_value
-#
-#     except Exception as e:
-#         logging.error(f"execute_single_case 执行异常 for '{case_name}': {e}", exc_info=True)
-#         failed = True
-#         return {
-#             "completed_cases": [{
-#                 "case_name": case_name,
-#                 "status": "failed",
-#                 "failure_type": "unexpected_error",
-#                 "reason": f"Unexpected error: {str(e)}"
-#             }],
-#             "skip_reflection": True
-#         }
-#
-#     finally:
-#         # 无论成功失败，执行+反思完成后立即释放 session
-#         if s:
-#             await sp.release(s, failed=failed)
-#             logging.debug(f"Case '{case_name}': released session (failed={failed})")
-#         # 增加全局完成计数
-#         global _completed_case_count
-#         _completed_case_count += 1
 
 
 async def _do_reflection(ui_tester: UITester, state: dict, case_name: str) -> dict:
@@ -705,29 +536,6 @@ async def _do_reflection(ui_tester: UITester, state: dict, case_name: str) -> di
         return {"reflection_history": [{"decision": "CONTINUE", "reasoning": str(e), "new_plan": []}]}
 
 
-# async def should_replan_or_continue(state: MainGraphState) -> List[Send]:
-#     """路由函数：检查是否还有待执行的 case。反思已在 execute_single_case 中完成。"""
-#
-#     # 显示进度（使用全局计数）
-#     global _completed_case_count
-#     total_planned = len(state.get("test_cases", []))
-#     logging.info(f"{icon['hourglass']} Progress: {_completed_case_count}/{total_planned} cases completed")
-#
-#     # 检查是否还有待执行的 case
-#     async with _queue_lock:
-#         has_pending = len(_pending_case_queue) > 0
-#
-#     if has_pending:
-#         logging.debug(f"Still have pending cases, scheduling next batch")
-#         return await schedule_next_batch(state)
-#     else:
-#         logging.debug(f"No more pending cases, aggregating results")
-#         return [Send("aggregate_results", {
-#             "test_cases": state.get("test_cases", []),
-#             "completed_cases": state.get("completed_cases", [])
-#         })]
-
-
 
 async def aggregate_results(state: MainGraphState) -> Dict[str, Dict[str, Any]]:
     """Aggregates the results from all test case workers."""
@@ -744,8 +552,10 @@ async def aggregate_results(state: MainGraphState) -> Dict[str, Dict[str, Any]]:
 async def cleanup_session(state: MainGraphState) -> Dict:
     """Cleanup hook for graph workflow completion.
 
-    Closes any remaining browser sessions in the pool as a safety measure.
-    Most sessions should already be closed by workers when queue becomes empty.
+    Closes any remaining browser sessions in the pool. Workers close their sessions
+    directly when no more pending cases exist, or release back to pool for reuse
+    when more cases are waiting. This node serves as a safety net for any sessions
+    that weren't closed during normal execution.
     """
     logging.debug("Graph workflow cleanup node reached")
 
