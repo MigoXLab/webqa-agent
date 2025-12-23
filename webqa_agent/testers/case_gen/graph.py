@@ -23,29 +23,23 @@ from webqa_agent.testers.case_gen.prompts.planning_prompts import (
     get_planning_prompt, get_reflection_prompt)
 from webqa_agent.testers.case_gen.state.schemas import MainGraphState
 from webqa_agent.utils import Display
-from webqa_agent.utils.log_icon import icon
-
 from webqa_agent.testers.function_tester import UITester
+
+from webqa_agent.utils.log_icon import icon
 
 
 _completed_case_count = 0  # 全局已完成 case 计数
 
 
 async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any]]]:
-    """Analyzes the initial page and generates test cases.
-
-    If is_replan is True, it appends the replanned cases instead of generating
-    new ones.
-    """
+    """Analyzes the initial page and generates test cases."""
     ui_tester = None
     s = None  # session
     sp = state.get("session_pool", None)
     llm_cfg = state.get("llm_config", None)
-    is_replan = state.get("is_replan", False)
     business_objectives = state.get("business_objectives", "No specific business objectives provided.")
     language = state.get('language', 'zh-CN')
 
-    # If not a replan, proceed with two-stage LLM-driven planning
     logging.debug("=== Stage 0: Generating initial test plan with two-stage architecture ===")
 
     # === Stage 0: Data Collection ===
@@ -65,12 +59,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
         if hasattr(crawl_result, 'page_status') and crawl_result.page_status == "UNSUPPORTED_PAGE":
             page_type = getattr(crawl_result, 'page_type', 'unknown')
             logging.warning(f"Initial page type ({page_type}) is unsupported, cannot generate test cases")
-            return {
-                "test_cases": [],
-                "is_replan": False,
-                "replan_count": 0,
-                "replanned_cases": []
-            }
+            return {"test_cases": []}
         screenshot = await ui_tester._actions.b64_page_screenshot(
             full_page=True,
             file_name="plan_full_page",
@@ -134,7 +123,6 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             system_prompt=filter_system,
             prompt=filter_user,
             images=None,  # No image needed for filtering
-            temperature=0.3,
             model_override=filter_model
         )
         stage1_duration = (datetime.datetime.now() - stage1_start).total_seconds()
@@ -179,7 +167,6 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             system_prompt=system_prompt,
             prompt=user_prompt,
             images=screenshot,
-            temperature=0.1,
             max_tokens=configured_max_tokens  # Use config value for flexibility
         )
 
@@ -235,9 +222,6 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
 
             logging.debug(f"Generated {len(test_cases)} test cases.")
             logging.info(f"{icon['rocket']} Designed {len(test_cases)} functional test cases")
-            # Ensure the current_test_case_index is initialized if not present
-            if "current_test_case_index" not in state:
-                return {"test_cases": test_cases, "current_test_case_index": 0}
             return {"test_cases": test_cases}
         except (json.JSONDecodeError, IndexError, ValueError) as e:
             logging.error(f"Failed to parse test cases from LLM response: {e}\nResponse: {response}")
@@ -251,6 +235,19 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
 
 async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
     """使用 asyncio worker pool 模式并发执行所有 test cases，实现真正的动态补位。"""
+    # 重置全局计数（每次新的测试运行从0开始）
+    global _completed_case_count
+    _completed_case_count = 0
+
+    # 支持 generate_only 模式：仅生成测试用例，不执行
+    if state.get("generate_only"):
+        logging.info("'generate_only' is True, skipping test case execution")
+        return {
+            "completed_cases": [],
+            "recorded_cases": [],
+            "test_cases": state.get("test_cases", []),
+        }
+
     test_cases = state.get("test_cases", [])
     if not test_cases:
         logging.info("No test cases to execute")
@@ -258,6 +255,7 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
 
     sp = state["session_pool"]
     pool_size = sp.pool_size
+    max_replan_count = state.get("max_replan_count", 3)  # 限制最大 replan 次数，防止无限循环
 
     logging.info(f"Starting worker pool with {pool_size} workers for {len(test_cases)} cases")
 
@@ -269,19 +267,25 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
     # 共享结果存储
     completed_cases = []
     recorded_cases = []
+    all_test_cases = list(test_cases)  # 跟踪所有 test cases（包括 replanned 的）
+    replan_count = 0  # 全局 replan 计数
     results_lock = asyncio.Lock()
 
     # Worker 函数：持续从队列拉取 case 并执行
     async def worker(worker_id: int):
+        nonlocal replan_count, all_test_cases  # 声明需要修改外部变量
+
         while True:
-            try:
-                case = case_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                logging.debug(f"Worker {worker_id}: No more cases, exiting")
+            case = await case_queue.get()  # wait for new cases (including replanned ones)
+
+            # Check for sentinel value(None) to exit
+            if case is None:
+                logging.debug(f"Worker {worker_id}: Received sentinel, exiting")
                 break
 
             case_name = case.get("name", "UNNAMED")
-            logging.info(f"Worker {worker_id}: Starting case '{case_name}'")
+            is_replanned = case.get("_is_replanned", False)  # 标记是否为 replan 生成的 case
+            logging.info(f"Worker {worker_id}: Starting case '{case_name}'" + (" [REPLANNED]" if is_replanned else ""))
 
             s = None
             failed = False
@@ -360,8 +364,51 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
 
                     # 执行反思（非 skip_reflection 时）
                     if not skip_reflection:
-                        reflect_result = await _do_reflection(ui_tester, state, case_name)
-                        # Note: REPLAN logic would need to add cases back to queue, not implemented here for simplicity
+                        reflect_result = await _do_reflection(ui_tester, dict(state), case_name)
+
+                        # 处理 REPLAN 结果：将新 cases 加入队列
+                        if reflect_result.get("is_replan") and reflect_result.get("replanned_cases"):
+                            async with results_lock:
+                                if replan_count < max_replan_count:
+                                    new_cases = reflect_result["replanned_cases"]
+                                    replan_count += 1
+
+                                    # 为新 cases 添加元数据
+                                    for new_case in new_cases:
+                                        new_case["status"] = "pending"
+                                        new_case["completed_steps"] = []
+                                        new_case["test_context"] = {}
+                                        new_case["url"] = state["url"]
+                                        new_case["_is_replanned"] = True  # 标记为 replan 生成
+                                        new_case["_replan_source"] = case_name  # 记录来源 case
+
+                                    # 加入队列供 workers 消费
+                                    for new_case in new_cases:
+                                        await case_queue.put(new_case)  # 计数器+1
+                                        all_test_cases.append(new_case)
+
+                                    logging.info(
+                                        f"Worker {worker_id}: REPLAN triggered by '{case_name}', "
+                                        f"added {len(new_cases)} new cases to queue "
+                                        f"(replan #{replan_count}/{max_replan_count})"
+                                    )
+
+                                    # 保存更新后的 cases.json
+                                    try:
+                                        timestamp = os.getenv("WEBQA_REPORT_TIMESTAMP")
+                                        report_dir = f"./reports/test_{timestamp}"
+                                        os.makedirs(report_dir, exist_ok=True)
+                                        cases_path = os.path.join(report_dir, "cases.json")
+                                        with open(cases_path, "w", encoding="utf-8") as f:
+                                            json.dump(all_test_cases, f, ensure_ascii=False, indent=4)
+                                        logging.debug(f"Saved updated test cases with replanned cases to {cases_path}")
+                                    except Exception as save_err:
+                                        logging.error(f"Failed to save replanned cases: {save_err}")
+                                else:
+                                    logging.warning(
+                                        f"Worker {worker_id}: REPLAN requested by '{case_name}' but "
+                                        f"max replan count ({max_replan_count}) reached, skipping"
+                                    )
 
                     # 收集结果
                     async with results_lock:
@@ -373,8 +420,9 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                         # 更新进度
                         global _completed_case_count
                         _completed_case_count += 1
-                        total = len(test_cases)
-                        logging.info(f"{icon['hourglass']} Progress: {_completed_case_count}/{total} cases completed")
+                        total = len(all_test_cases)
+                        pending = case_queue.qsize()
+                        logging.info(f"{icon['hourglass']} Progress: {_completed_case_count}/{total} cases completed ({pending} pending)")
 
             except Exception as e:
                 logging.error(f"Worker {worker_id}: Exception during '{case_name}': {e}", exc_info=True)
@@ -389,29 +437,47 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                     _completed_case_count += 1
 
             finally:
-                # 释放或关闭 session
+                # Release or close session based on remaining work
                 if s:
-                    # 检查队列中是否还有待处理的 case
-                    if case_queue.empty():
-                        # 队列已空，直接关闭 session 释放浏览器资源
+                    # Check if there are more cases waiting in the queue
+                    # If queue is empty, close the session to free browser resources
+                    # If queue has pending cases, release back to pool for reuse
+                    if case_queue.qsize() == 0:
                         await s.close()
-                        logging.info(f"Worker {worker_id}: Closed session for '{case_name}' (queue empty, no more work)")
+                        logging.info(f"Worker {worker_id}: Closed session for '{case_name}' (no more pending cases)")
                     else:
-                        # 队列中还有 case，释放 session 回 pool 以供复用
                         await sp.release(s, failed=failed)
                         logging.debug(f"Worker {worker_id}: Released session for '{case_name}' to pool (failed={failed})")
+
+                # Mark task as done AFTER session is handled, so join() only unblocks
+                # when all resources are properly managed
+                case_queue.task_done()
 
     # 启动 K 个 workers
     workers = [asyncio.create_task(worker(i), name=f"worker-{i}") for i in range(pool_size)]
 
-    # 等待所有 workers 完成
+    # Wait for all items in the queue to be processed (including replanned cases)
+    # This blocks until task_done() has been called for every item that was put into the queue
+    await case_queue.join()
+
+    # All work is done - send sentinel values (None) to signal workers to exit
+    for _ in range(pool_size):
+        await case_queue.put(None)
+
+    # Wait for all workers to cleanly exit after receiving sentinel
     await asyncio.gather(*workers, return_exceptions=True)
 
-    logging.info(f"Worker pool completed: {len(completed_cases)} cases executed")
+    logging.info(
+        f"Worker pool completed: {len(completed_cases)} cases executed "
+        f"(initial: {len(test_cases)}, replanned: {len(all_test_cases) - len(test_cases)}, "
+        f"replan count: {replan_count}/{max_replan_count})"
+    )
 
     return {
         "completed_cases": completed_cases,
-        "recorded_cases": recorded_cases
+        "recorded_cases": recorded_cases,
+        "test_cases": all_test_cases,  # 包含所有 test cases（原始 + replanned）
+        "replan_count": replan_count,
     }
 
 
@@ -466,7 +532,6 @@ async def _do_reflection(ui_tester: UITester, state: dict, case_name: str) -> di
 
 
 
-
 async def aggregate_results(state: MainGraphState) -> Dict[str, Dict[str, Any]]:
     """Aggregates the results from all test case workers."""
     logging.debug("Aggregating test results...")
@@ -482,8 +547,10 @@ async def aggregate_results(state: MainGraphState) -> Dict[str, Dict[str, Any]]:
 async def cleanup_session(state: MainGraphState) -> Dict:
     """Cleanup hook for graph workflow completion.
 
-    Closes any remaining browser sessions in the pool as a safety measure.
-    Most sessions should already be closed by workers when queue becomes empty.
+    Closes any remaining browser sessions in the pool. Workers close their sessions
+    directly when no more pending cases exist, or release back to pool for reuse
+    when more cases are waiting. This node serves as a safety net for any sessions
+    that weren't closed during normal execution.
     """
     logging.debug("Graph workflow cleanup node reached")
 
