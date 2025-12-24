@@ -581,12 +581,3 @@ workflow.add_edge("cleanup_session", END)
 
 # Compile the graph
 app = workflow.compile()
-
-# from IPython.display import Image, display
-graph = app.get_graph()
-# graph.print_ascii()
-# display(Image(graph.draw_mermaid_png()))
-
-png_bytes = graph.draw_mermaid_png()
-with open("graph.png", "wb") as f:
-    f.write(png_bytes)
