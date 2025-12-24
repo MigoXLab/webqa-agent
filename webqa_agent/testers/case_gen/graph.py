@@ -123,7 +123,6 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             system_prompt=filter_system,
             prompt=filter_user,
             images=None,  # No image needed for filtering
-            temperature=0.3,
             model_override=filter_model
         )
         stage1_duration = (datetime.datetime.now() - stage1_start).total_seconds()
@@ -168,7 +167,6 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             system_prompt=system_prompt,
             prompt=user_prompt,
             images=screenshot,
-            temperature=0.1,
             max_tokens=configured_max_tokens  # Use config value for flexibility
         )
 
