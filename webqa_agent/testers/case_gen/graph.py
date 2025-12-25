@@ -293,7 +293,7 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                 s = await sp.acquire(timeout=120.0)
                 logging.debug(f"Worker {worker_id}: Acquired session for '{case_name}'")
 
-                await s.navigate_to(state["url"], cookies=state.get("cookies", {}))
+                await s.navigate_to(state["url"], cookies=state.get("cookies"))
 
                 ui_tester = UITester(llm_config=state["llm_config"], browser_session=s)
                 await ui_tester.initialize()
