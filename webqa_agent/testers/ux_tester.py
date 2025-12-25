@@ -5,7 +5,7 @@ import json
 import logging
 import uuid
 from io import BytesIO
-from typing import List, Dict, Any, Optional
+from typing import List
 
 from html2text import html2text
 from playwright.async_api import Page
@@ -18,9 +18,8 @@ from webqa_agent.data.test_structures import (SubTestReport, SubTestResult,
                                               TestStatus)
 from webqa_agent.llm.llm_api import LLMAPI
 from webqa_agent.llm.prompt import LLMPrompt
-from webqa_agent.utils import Display
+from webqa_agent.utils import Display, i18n
 from webqa_agent.utils.log_icon import icon
-from webqa_agent.utils import i18n
 
 try:
     from PIL import Image, ImageDraw
@@ -35,12 +34,12 @@ class PageTextTest:
         self.llm_config = llm_config
         self.user_cases = user_cases or LLMPrompt.TEXT_USER_CASES
         self.llm = LLMAPI(self.llm_config)
-        self.language = report_config["language"] if report_config else "zh-CN"
+        self.language = report_config['language'] if report_config else 'zh-CN'
         self.localized_strings = {
             'zh-CN': i18n.get_lang_data('zh-CN').get('testers', {}).get('ux', {}),
             'en-US': i18n.get_lang_data('en-US').get('testers', {}).get('ux', {}),
         }
-    
+
     def _get_text(self, key: str) -> str:
         """Get localized text for the given key."""
         return self.localized_strings.get(self.language, {}).get(key, key)
@@ -138,12 +137,12 @@ class PageTextTest:
                     "reason": "Overall problem description"
                 }}
                 """
-    
+
     def format_issues_to_markdown(self, issues_content: str) -> str:
         # Format issues to markdown
         if not issues_content or issues_content == self._get_text('no_issues_found'):
             return issues_content
-        
+
         try:
             if isinstance(issues_content, str):
                 if issues_content.strip().startswith('{'):
@@ -152,18 +151,18 @@ class PageTextTest:
                     return issues_content
             else:
                 data = issues_content
-                
+
             if 'error' in data and 'reason' in data:
                 errors = data['error']
                 reason_summary = data['reason']
-                
+
                 if not errors:
                     return self._get_text('no_issues_found')
-                
+
                 markdown_content = ''
                 if reason_summary:
                     markdown_content += f"{self._get_text('overall_problem')}{reason_summary}\n\n"
-                
+
                 if isinstance(errors, list):
                     for i, error_item in enumerate(errors, 1):
                         if isinstance(error_item, dict):
@@ -171,7 +170,7 @@ class PageTextTest:
                             current = error_item.get('current', '')
                             suggested = error_item.get('suggested', '')
                             error_type = error_item.get('type', self._get_text('unknown_type'))
-                            
+
                             markdown_content += f"{self._get_text('issue_details')}".format(i)
                             markdown_content += f"{self._get_text('location')}{location}\n\n"
                             markdown_content += f"{self._get_text('error_content')}`{current}`\n\n"
@@ -182,11 +181,11 @@ class PageTextTest:
                             markdown_content += f"{self._get_text('error_content')}{error_item}\n\n"
                 else:
                     markdown_content += f"{self._get_text('error_content')}{errors}\n\n"
-                
+
                 return markdown_content
             else:
                 return issues_content
-                
+
         except (json.JSONDecodeError, KeyError, TypeError):
             return issues_content
 
@@ -197,12 +196,12 @@ class PageContentTest:
         self.llm_config = llm_config
         self.user_cases = user_cases or LLMPrompt.CONTENT_USER_CASES
         self.llm = LLMAPI(self.llm_config)
-        self.language = report_config["language"] if report_config else "zh-CN"
+        self.language = report_config['language'] if report_config else 'zh-CN'
         self.localized_strings = {
             'zh-CN': i18n.get_lang_data('zh-CN').get('testers', {}).get('ux', {}),
             'en-US': i18n.get_lang_data('en-US').get('testers', {}).get('ux', {}),
         }
-    
+
     def _get_text(self, key: str) -> str:
         """Get localized text for the given key."""
         return self.localized_strings.get(self.language, {}).get(key, key)
@@ -226,9 +225,9 @@ class PageContentTest:
         crawl_result = await dp.crawl(highlight=True, filter_text=False, viewport_only=False, include_styles=True)
 
         # Check for unsupported page types (PDF, plugins, etc.)
-        if hasattr(crawl_result, 'page_status') and crawl_result.page_status == "UNSUPPORTED_PAGE":
+        if hasattr(crawl_result, 'page_status') and crawl_result.page_status == 'UNSUPPORTED_PAGE':
             page_type = getattr(crawl_result, 'page_type', 'unknown')
-            logging.warning(f"Cannot execute UX test on {page_type} page, skipping")
+            logging.warning(f'Cannot execute UX test on {page_type} page, skipping')
             layout_result.status = TestStatus.FAILED
             layout_result.messages = {'page': f"Page type '{page_type}' is unsupported, cannot execute UX test"}
             return [layout_result]
@@ -435,7 +434,7 @@ class PageContentTest:
             # no valid content from LLM, treat as no issues found
             case_status = TestStatus.PASSED
             issues_text = self._get_text('no_issues_found')
-            logging.debug(f'LLM returned no content, treating as PASSED')
+            logging.debug('LLM returned no content, treating as PASSED')
 
         result.report.append(SubTestReport(title=self._get_text('report_title'), issues=issues_text))
         # aggregate overall status: any WARNING -> WARNING; else PASSED

@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from playwright.async_api import Page
+from playwright.async_api import Page, Frame
 
 # ===== Action Context Infrastructure for Error Propagation =====
 
@@ -112,6 +112,42 @@ class ActionHandler:
     def _get_current_page(self) -> Page:
         """Get current active page."""
         return self.page
+
+    def _get_frame_for_element(self, element: dict) -> Page | Frame:
+        """Get the correct frame context for an element.
+        
+        If the element has a frame_url, find the matching frame.
+        Otherwise, return the main page.
+        
+        Args:
+            element: Element dict that may contain 'frame_url' field
+            
+        Returns:
+            Frame or Page object to use for locating the element
+        """
+        frame_url = element.get('frame_url')
+        if not frame_url:
+            # Element is in main frame
+            return self.page
+        
+        # Find the frame with matching URL
+        try:
+            for frame in self.page.frames:
+                if frame.url == frame_url:
+                    logging.debug(f'Found matching frame for element: {frame_url}')
+                    return frame
+            
+            # Fallback: try partial URL match (some frames may have slightly different URLs)
+            for frame in self.page.frames:
+                if frame_url in frame.url or frame.url in frame_url:
+                    logging.debug(f'Found partial matching frame for element: {frame.url} (expected: {frame_url})')
+                    return frame
+            
+            logging.warning(f'Could not find frame with URL {frame_url}, falling back to main page')
+            return self.page
+        except Exception as e:
+            logging.warning(f'Error finding frame for element: {e}, falling back to main page')
+            return self.page
 
     async def update_element_buffer(self, new_element):
         """Update page_element_buffer :param new_buffer: CrawlerHandler fetched
@@ -282,7 +318,7 @@ class ActionHandler:
         """
         logging.debug(f'Start scrolling to element {element_id}')
 
-        # Get current active page
+        # Get current active page (for coordinate-based scrolling)
         page = self._get_current_page()
 
         # Initialize action context for error propagation
@@ -310,9 +346,12 @@ class ActionHandler:
 
         logging.info(f'Element {element_id} is outside viewport, scrolling to make it visible')
 
-        # Get element selectors
+        # Get element selectors and frame context
         selector = element.get('selector')
         xpath = element.get('xpath')
+        
+        # Get the correct frame for locator-based operations
+        frame = self._get_frame_for_element(element)
 
         # Retry loop for handling lazy-loaded content
         for attempt in range(max_retries):
@@ -322,10 +361,11 @@ class ActionHandler:
                 current_wait_time = base_wait_time * (1 + attempt * 0.5)
 
                 # Strategy 1: Use Playwright's scroll_into_view_if_needed (most reliable)
+                # Use frame context for locator operations (supports iframe elements)
                 if self._is_valid_css_selector(selector):
                     try:
                         ctx.attempted_strategies.append(f'css_selector_attempt_{attempt + 1}')
-                        await page.locator(selector).scroll_into_view_if_needed(timeout=5000)
+                        await frame.locator(selector).scroll_into_view_if_needed(timeout=5000)
                         logging.debug(f'Scrolled to element {element_id} using CSS selector (attempt {attempt + 1})')
 
                         # Wait for scroll animation + potential lazy-loading
@@ -336,7 +376,7 @@ class ActionHandler:
 
                         # Verify element is actually in viewport using bounding_box
                         try:
-                            rect = await page.locator(selector).bounding_box()
+                            rect = await frame.locator(selector).bounding_box()
                             if rect:
                                 viewport_height = await page.evaluate('window.innerHeight')
                                 viewport_width = await page.evaluate('window.innerWidth')
@@ -363,7 +403,7 @@ class ActionHandler:
                 if xpath:
                     try:
                         ctx.attempted_strategies.append(f'xpath_attempt_{attempt + 1}')
-                        await page.locator(f'xpath={xpath}').scroll_into_view_if_needed(timeout=5000)
+                        await frame.locator(f'xpath={xpath}').scroll_into_view_if_needed(timeout=5000)
                         logging.debug(f'Scrolled to element {element_id} using XPath (attempt {attempt + 1})')
 
                         # Wait for scroll animation + potential lazy-loading
@@ -374,7 +414,7 @@ class ActionHandler:
 
                         # Verify element is actually in viewport using bounding_box
                         try:
-                            rect = await page.locator(f'xpath={xpath}').bounding_box()
+                            rect = await frame.locator(f'xpath={xpath}').bounding_box()
                             if rect:
                                 viewport_height = await page.evaluate('window.innerHeight')
                                 viewport_width = await page.evaluate('window.innerWidth')
@@ -548,7 +588,7 @@ class ActionHandler:
             }''')
 
             if has_scroll_containers:
-                logging.warning(
+                logging.debug(
                     f'Coordinate conversion may be inaccurate: document coords=({x}, {y}), '
                     f'but window scroll offset=(0, 0) with scroll containers detected. '
                     f'This indicates overflow scrolling. Consider using bounding_box() instead.'
@@ -573,7 +613,8 @@ class ActionHandler:
         stored_x: Optional[float] = None,
         stored_y: Optional[float] = None,
         validate_against_stored: bool = True,
-        action_name: str = 'action'
+        action_name: str = 'action',
+        frame_url: Optional[str] = None
     ) -> Optional[tuple[float, float]]:
         """Get viewport coordinates for an element using multiple strategies.
 
@@ -581,8 +622,8 @@ class ActionHandler:
         handling scroll containers correctly by using Playwright's bounding_box() API.
 
         Tries strategies in order:
-        1. Fresh bounding_box() via CSS selector (most reliable)
-        2. Fresh bounding_box() via XPath (fallback if CSS fails)
+        1. Fresh bounding_box() via XPath (most reliable - unique and stable)
+        2. Fresh bounding_box() via CSS selector (fallback if XPath fails)
         3. Coordinate conversion from stored document coords (backward compatibility)
 
         Args:
@@ -593,28 +634,33 @@ class ActionHandler:
             stored_y: Stored document Y coordinate
             validate_against_stored: Whether to validate fresh coords against stored
             action_name: Name of the action for logging context (e.g., "click", "hover")
+            frame_url: Optional frame URL if element is in an iframe
 
         Returns:
             Tuple of (viewport_x, viewport_y) if successful, None otherwise
         """
-        # Get current active page
-        page = self._get_current_page()
+        # Get the correct frame context for the element
+        page = self._get_frame_for_element({'frame_url': frame_url})
 
         rect = None
 
-        # Strategy 1: Try CSS selector for bounding_box()
-        if self._is_valid_css_selector(selector):
-            try:
-                rect = await page.locator(selector).bounding_box()
-            except Exception as e:
-                logging.debug(f'bounding_box() via CSS selector failed for element {element_id} ({action_name}): {e}')
-
-        # Strategy 2: Try XPath if CSS fails or returns None
-        if not rect and xpath:
+        # Strategy 1: Try XPath for bounding_box() (most stable and unique)
+        if xpath:
             try:
                 rect = await page.locator(f'xpath={xpath}').bounding_box()
+                if rect:
+                    logging.debug(f'Successfully located element {element_id} via XPath for {action_name}')
             except Exception as e:
                 logging.debug(f'bounding_box() via XPath failed for element {element_id} ({action_name}): {e}')
+
+        # Strategy 2: Try CSS selector if XPath fails or returns None
+        if not rect and self._is_valid_css_selector(selector):
+            try:
+                rect = await page.locator(selector).bounding_box()
+                if rect:
+                    logging.debug(f'Successfully located element {element_id} via CSS selector for {action_name}')
+            except Exception as e:
+                logging.debug(f'bounding_box() via CSS selector failed for element {element_id} ({action_name}): {e}')
 
         # Use fresh viewport coordinates if available
         if rect:
@@ -628,7 +674,7 @@ class ActionHandler:
                 diff_y = abs(viewport_y - calc_viewport_y)
 
                 if diff_x > 10 or diff_y > 10:
-                    logging.warning(
+                    logging.debug(
                         f'Coordinate mismatch detected for element {element_id} ({action_name}): '
                         f'fresh bounding_box=({viewport_x:.1f}, {viewport_y:.1f}), '
                         f'calculated from stored=({calc_viewport_x:.1f}, {calc_viewport_y:.1f}), '
@@ -670,7 +716,7 @@ class ActionHandler:
         Returns:
             bool: True if element is in viewport (or successfully scrolled to), False otherwise
         """
-        # Get current active page
+        # Get current active page (for coordinate-based scrolling)
         page = self._get_current_page()
 
         # Get existing context or create new one (preserves parent context)
@@ -703,9 +749,13 @@ class ActionHandler:
 
         logging.info(f'Element {element_id} is outside viewport, scrolling to make it visible')
 
-        # Get element selectors
+        # Get element selectors and frame context
         selector = element.get('selector')
         xpath = element.get('xpath')
+        frame_url = element.get('frame_url')
+        
+        # Get the correct frame for locator-based operations
+        frame = self._get_frame_for_element(element)
 
         # Retry loop for handling lazy-loaded content
         for attempt in range(max_retries):
@@ -715,10 +765,11 @@ class ActionHandler:
                 current_wait_time = base_wait_time * (1 + attempt * 0.5)
 
                 # Strategy 1: Use Playwright's scroll_into_view_if_needed (most reliable)
+                # Use frame context for locator operations (supports iframe elements)
                 if self._is_valid_css_selector(selector):
                     try:
                         ctx.attempted_strategies.append(f'css_selector_attempt_{attempt + 1}')
-                        await page.locator(selector).scroll_into_view_if_needed(timeout=5000)
+                        await frame.locator(selector).scroll_into_view_if_needed(timeout=5000)
                         logging.debug(f'Scrolled to element {element_id} using CSS selector (attempt {attempt + 1})')
 
                         # Wait for scroll animation + potential lazy-loading
@@ -729,7 +780,7 @@ class ActionHandler:
 
                         # Verify element is actually in viewport using bounding_box
                         try:
-                            rect = await page.locator(selector).bounding_box()
+                            rect = await frame.locator(selector).bounding_box()
                             if rect:
                                 viewport_height = await page.evaluate('window.innerHeight')
                                 viewport_width = await page.evaluate('window.innerWidth')
@@ -755,7 +806,7 @@ class ActionHandler:
                 if xpath:
                     try:
                         ctx.attempted_strategies.append(f'xpath_attempt_{attempt + 1}')
-                        await page.locator(f'xpath={xpath}').scroll_into_view_if_needed(timeout=5000)
+                        await frame.locator(f'xpath={xpath}').scroll_into_view_if_needed(timeout=5000)
                         logging.debug(f'Scrolled to element {element_id} using XPath (attempt {attempt + 1})')
 
                         # Wait for scroll animation + potential lazy-loading
@@ -766,7 +817,7 @@ class ActionHandler:
 
                         # Verify element is actually in viewport using bounding_box
                         try:
-                            rect = await page.locator(f'xpath={xpath}').bounding_box()
+                            rect = await frame.locator(f'xpath={xpath}').bounding_box()
                             if rect:
                                 viewport_height = await page.evaluate('window.innerHeight')
                                 viewport_width = await page.evaluate('window.innerWidth')
@@ -1056,6 +1107,7 @@ class ActionHandler:
         xpath = element.get('xpath')
         stored_x = element.get('center_x')
         stored_y = element.get('center_y')
+        frame_url = element.get('frame_url')
 
         try:
             # Use unified coordinate retrieval method
@@ -1066,7 +1118,8 @@ class ActionHandler:
                 stored_x=stored_x,
                 stored_y=stored_y,
                 validate_against_stored=True,
-                action_name='mouse click'
+                action_name='mouse click',
+                frame_url=frame_url
             )
 
             if coords:
@@ -1120,6 +1173,7 @@ class ActionHandler:
             xpath = element.get('xpath')
             stored_x = element.get('center_x')
             stored_y = element.get('center_y')
+            frame_url = element.get('frame_url')
 
             # Use unified coordinate retrieval method
             coords = await self._get_element_viewport_coordinates(
@@ -1129,7 +1183,8 @@ class ActionHandler:
                 stored_x=stored_x,
                 stored_y=stored_y,
                 validate_against_stored=False,  # Skip validation for hover (less critical)
-                action_name='hover'
+                action_name='hover',
+                frame_url=frame_url
             )
 
             if coords:
@@ -1172,8 +1227,16 @@ class ActionHandler:
         return True
 
     async def type(self, id, text, clear_before_type: bool = False) -> bool:
-        """Types text into the specified element, optionally clearing it
-        first."""
+        """Types text into the specified element using keyboard input.
+
+        Args:
+            id: Element ID
+            text: Text to type
+            clear_before_type: Whether to clear existing text before typing
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
         # Get existing context or create new one (preserves context from helpers)
         ctx = action_context_var.get()
         if ctx is None:
@@ -1199,14 +1262,13 @@ class ActionHandler:
             # Ensure element is in viewport before typing (for full-page planning mode)
             if not await self.ensure_element_in_viewport(str(id)):
                 logging.error(f'Cannot type into element {id}: failed to scroll element into viewport after multiple attempts')
-                # Context already populated by ensure_element_in_viewport, preserve it
                 return False
 
             if clear_before_type:
                 if not await self.clear(id):
                     logging.warning(f'Failed to clear element {id} before typing, but will attempt to type anyway.')
 
-            # click element to get focus
+            # Click element to get focus
             try:
                 if not await self.click(str(id)):
                     # Context already populated by click(), check and enhance if needed
@@ -1230,21 +1292,41 @@ class ActionHandler:
                 return False
 
             await asyncio.sleep(1)
-            # Type text using unified fill method
-            selector = element['selector']
+
+            # Get selector and xpath from element
+            selector = element.get('selector')
             xpath = element.get('xpath')
 
-            if not await self._fill_element_text(
-                element_id=str(id),
-                selector=selector,
-                xpath=xpath,
-                text=text,
-                action_name='type'
-            ):
-                return False
+            # If selector and xpath are available, use _fill_element_text
+            if selector or xpath:
+                if not await self._fill_element_text(
+                    element_id=str(id),
+                    selector=selector,
+                    xpath=xpath,
+                    text=text,
+                    action_name='type',
+                    frame_url=element.get('frame_url')
+                ):
+                    return False
+            else:
+                # If no selector/xpath, type directly using keyboard after click
+                try:
+                    page = self._get_current_page()
+                    await page.keyboard.type(text)
+                    logging.debug(f'Typed text into element {id} using keyboard after click')
+                except Exception as e:
+                    logging.error(f'Failed to type text using keyboard: {e}')
+                    ctx.set_error(
+                        ERROR_PLAYWRIGHT,
+                        f'Failed to type text using keyboard after click: {str(e)}',
+                        element_id=id,
+                        playwright_error=str(e)
+                    )
+                    return False
 
             await asyncio.sleep(1)
             return True
+
         except Exception as e:
             logging.error(f'Failed to type into element {id}: {e}')
             ctx.set_error(
@@ -1304,7 +1386,8 @@ class ActionHandler:
         selector: str,
         xpath: Optional[str],
         text: str,
-        action_name: str = 'fill'
+        action_name: str = 'fill',
+        frame_url: Optional[str] = None
     ) -> bool:
         """Fill element text using CSS selector with XPath fallback.
 
@@ -1317,12 +1400,13 @@ class ActionHandler:
             xpath: Optional XPath selector for fallback
             text: Text to fill (empty string for clear operation)
             action_name: Name of action for logging/errors (e.g., "type", "clear")
+            frame_url: Optional frame URL if element is in an iframe
 
         Returns:
             True if successful, False otherwise (with error context set)
         """
-        # Get current active page
-        page = self._get_current_page()
+        # Get the correct frame context for the element
+        page = self._get_frame_for_element({'frame_url': frame_url})
 
         # Get existing context or create new one if none exists
         ctx = action_context_var.get()
@@ -1436,13 +1520,11 @@ class ActionHandler:
             if not await self.click(str(id)):
                 logging.warning(f'Could not focus element {id} before clearing, but proceeding anyway.')
 
-            # Get the selector for the element
-            if 'selector' not in element_to_clear:
-                logging.error(f'Element {id} has no selector for clearing.')
-                return False
-
             selector = element_to_clear['selector']
             xpath = element_to_clear.get('xpath')
+            if not selector and not xpath:
+                logging.error(f'Element {id} has no selector or xpath for clearing.')
+                return False
 
             # Clear input using unified fill method
             if not await self._fill_element_text(
@@ -1450,7 +1532,8 @@ class ActionHandler:
                 selector=selector,
                 xpath=xpath,
                 text='',  # Empty string for clear
-                action_name='clear'
+                action_name='clear',
+                frame_url=element_to_clear.get('frame_url')
             ):
                 return False
 
@@ -1717,35 +1800,57 @@ class ActionHandler:
                 )
                 return False
 
-            # Get file extension for accept check
+            # If id is provided, use expect_file_chooser method first
+            if id:
+                element = self.page_element_buffer.get(str(id))
+                if element:
+                    try:
+                        logging.info(f"Trying expect_file_chooser method for element: {element}")
+                        
+                        # Use expect_file_chooser to listen for file chooser
+                        async with self.page.expect_file_chooser() as fc_info:
+                            # Click element to trigger file chooser
+                            await self.page.mouse.click(element['center_x'], element['center_y'])
+                        
+                        # Get file chooser and set files
+                        file_chooser = await fc_info.value
+                        await file_chooser.set_files(valid_file_paths)
+                        
+                        logging.info(f"Successfully uploaded files using expect_file_chooser: {valid_file_paths}")
+                        await asyncio.sleep(1)
+                        return True
+                    
+                    except Exception as e:
+                        logging.warning(f"expect_file_chooser method failed: {str(e)}, falling back to input[type='file'] method")
+                else:
+                    logging.warning(f"Element with id {id} not found in buffer, falling back to input[type='file'] method")
+            
+            # Fallback: find all file input elements
+            # Take the extension of the first file for accept check
             file_extension = os.path.splitext(valid_file_paths[0])[1].lower() if valid_file_paths else ''
 
-            # Find all file input elements and get more detailed selector
-            file_inputs = await self.page.evaluate(
-                """(fileExt) => {
+            file_inputs = await self.page.evaluate("""(fileExt) => {
                 return Array.from(document.querySelectorAll('input[type=\"file\"]'))
                     .map(input => {
                         const accept = input.getAttribute('accept') || '';
                         let selector = `input[type=\"file\"]`;
-
+                        
                         if (input.name) {
                             selector += `[name=\"${input.name}\"]`;
                         }
-
+                        
                         if (accept) {
                             selector += `[accept=\"${accept}\"]`;
                         }
-
+                        
                         return {
                             selector: selector,
                             accept: accept,
                             acceptsFile: accept ? accept.toLowerCase().includes(fileExt) : true
                         };
                     });
-            }""",
-                file_extension,
-            )
-
+            }""", file_extension)
+            
             if not file_inputs:
                 logging.error('No file input elements found')
                 ctx.set_error(
@@ -2007,6 +2112,7 @@ class ActionHandler:
                 xpath = element.get('xpath')
                 stored_x = element.get('center_x')
                 stored_y = element.get('center_y')
+                frame_url = element.get('frame_url')
 
                 try:
                     # Use unified coordinate retrieval method
@@ -2017,7 +2123,8 @@ class ActionHandler:
                         stored_x=stored_x,
                         stored_y=stored_y,
                         validate_against_stored=True,
-                        action_name='dropdown option click'
+                        action_name='dropdown option click',
+                        frame_url=frame_url
                     )
 
                     if coords:

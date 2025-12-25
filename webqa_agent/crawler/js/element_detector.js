@@ -598,7 +598,7 @@
                 return true;
             }
 
-            // Added enhancement to capture dropdown interactive elements
+            // Added enhancement to capture dropdown and slider interactive elements
             if (element.classList && (
                 element.classList.contains("button") ||
                 element.classList.contains('dropdown-toggle') ||
@@ -606,6 +606,13 @@
                 element.getAttribute('data-toggle') === 'dropdown' ||
                 element.getAttribute('aria-haspopup') === 'true'
             )) {
+                return true;
+            }
+
+            // Simple slider/captcha detection (matches slide-btn, slider-control, etc.)
+            const className = (element.getAttribute('class') || '').toLowerCase();
+            if ((className.includes('slide') || className.includes('slider')) && 
+                (className.includes('btn') || className.includes('control') || className.includes('handle'))) {
                 return true;
             }
 
@@ -746,25 +753,57 @@
          * @returns {boolean} `true` if the element is on top, otherwise `false`.
          */
         function isTopElement(element) {
+            const rect = element.getBoundingClientRect();
+
+            // Check if element is outside viewport
+            const isOutsideViewport = rect.right < 0 || rect.left > window.innerWidth || rect.bottom < 0 || rect.top > window.innerHeight;
+
+            // If viewportOnly mode is enabled, exclude elements outside viewport
+            if (window._viewportOnly && isOutsideViewport) {
+                return false;
+            }
+
+            // If not in viewportOnly mode and element is outside viewport, skip elementFromPoint check
+            if (isOutsideViewport) {
+                return true;
+            }
+
+            // Basic check (same as copy.js) - filters out clip-hidden elements
+            const cx = rect.left + rect.width / 2;
+            const cy = rect.top + rect.height / 2;
+            try {
+                const topEl = document.elementFromPoint(cx, cy);
+                let curr = topEl;
+                while (curr && curr !== document.documentElement) {
+                    if (curr === element) break;  // Found it, continue to extended checks
+                    curr = curr.parentElement;
+                }
+                if (curr !== element) {
+                    return false;  // Basic check failed, element is hidden (e.g., clip-hidden input)
+                }
+            } catch {
+                // Continue to extended checks
+            }
+
+            // Extended checks (original enhanced logic)
             if (!window._viewportOnly) {
                 return true;
             }
             const viewportExpansion = 0;
 
-            const rects = element.getClientRects(element); // Replace element.getClientRects()
+            const rects = element.getClientRects();
 
             if (!rects || rects.length === 0) {
-                return false; // No geometry, cannot be top
+                return false;
             }
 
             let isAnyRectInViewport = false;
-            for (const rect of rects) {
-                // Use the same logic as isInExpandedViewport check
-                if (rect.width > 0 && rect.height > 0 && !( // Only check non-empty rects
-                    rect.bottom < -viewportExpansion ||
-                    rect.top > window.innerHeight + viewportExpansion ||
-                    rect.right < -viewportExpansion ||
-                    rect.left > window.innerWidth + viewportExpansion
+            for (const r of rects) {
+                if (r.width > 0 && r.height > 0 && !(
+                    r.bottom < -viewportExpansion ||
+                    r.top > window.innerHeight + viewportExpansion ||
+                    r.right < -viewportExpansion ||
+                    r.left > window.innerWidth + viewportExpansion
                 )) {
                     isAnyRectInViewport = true;
                     break;
@@ -772,19 +811,16 @@
             }
 
             if (!isAnyRectInViewport) {
-                return false; // All rects are outside the viewport area
+                return false;
             }
 
-
-            // Find the correct document context and root element
+            // iframe support
             let doc = element.ownerDocument;
-
-            // If we're in an iframe, elements are considered top by default
             if (doc !== window.document) {
                 return true;
             }
 
-            // For shadow DOM, we need to check within its own root context
+            // Shadow DOM support
             const shadowRoot = element.getRootNode();
             if (shadowRoot instanceof ShadowRoot) {
                 const centerX = rects[Math.floor(rects.length / 2)].left + rects[Math.floor(rects.length / 2)].width / 2;
@@ -805,18 +841,16 @@
                 }
             }
 
-            const margin = 10
-            const rect = rects[Math.floor(rects.length / 2)];
+            // Multi-point detection (center + 4 corners)
+            const margin = 10;
+            const rectMid = rects[Math.floor(rects.length / 2)];
 
-            // For elements in viewport, check if they're topmost. Do the check in the
-            // center of the element and at the corners to ensure we catch more cases.
             const checkPoints = [
-                // Initially only this was used, but it was not enough
-                {x: rect.left + rect.width / 2, y: rect.top + rect.height / 2},
-                {x: rect.left + margin, y: rect.top + margin},        // top left
-                {x: rect.right - margin, y: rect.top + margin},    // top right
-                {x: rect.left + margin, y: rect.bottom - margin},  // bottom left
-                {x: rect.right - margin, y: rect.bottom - margin},    // bottom right
+                {x: rectMid.left + rectMid.width / 2, y: rectMid.top + rectMid.height / 2},
+                {x: rectMid.left + margin, y: rectMid.top + margin},
+                {x: rectMid.right - margin, y: rectMid.top + margin},
+                {x: rectMid.left + margin, y: rectMid.bottom - margin},
+                {x: rectMid.right - margin, y: rectMid.bottom - margin},
             ];
 
             return checkPoints.some(({x, y}) => {
@@ -850,49 +884,76 @@
 
             // Standard element visibility detection
             const style = getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
             return (
-                element.offsetWidth > 0 &&
-                element.offsetHeight > 0 &&
-                style?.visibility !== "hidden" &&
-                style?.display !== "none"
+                rect.width > 0 &&          // Exclude 1px x 1px visually-hidden elements
+                rect.height > 0 &&         // Exclude 1px x 1px visually-hidden elements
+                style?.visibility !== 'hidden' &&
+                style?.display !== 'none' &&
+                style.opacity !== '0'
             );
         }
 
+        const esc = (v) => {
+            if (!v) return '';
+            if (CSS.escape) return CSS.escape(v);
+            return v.replace(/([\[\]\\!"#$%&'()*+,.\/:;<=>?@^`{|}~])/g, '\\$1');
+        };
+
+        const isUnique = (s) => {
+            try {
+                return s && document.querySelectorAll(s).length === 1 ? s : null;
+            } catch (e) {
+                return null;
+            }
+        };
+
         /**
-         * Generates a simplified CSS selector for an element.
-         *
-         * This function creates a selector based on the element's tag name, ID (if available),
-         * and class names. It is not guaranteed to be unique but is useful for providing
-         * a human-readable identifier.
-         *
+         * Generates a unique CSS selector for an element.
+         * The strategy is: ID > Data attributes > semantic class names (+nth-child) > pure Tag (+nth-child)
          * @param {HTMLElement} elem The element for which to generate a selector.
-         * @returns {string | null} A CSS selector string, or `null` if the element is invalid.
+         * @returns {string | null} A unique CSS selector string, or `null` if the element is invalid.
          */
         function generateSelector(elem) {
-            if (!elem) return null;
+            if (!elem || !(elem instanceof Element)) return null;
 
-            let sel = elem.tagName.toLowerCase();
+            const tag = elem.tagName.toLowerCase();
+            const parent = elem.parentElement;
+            const index = parent ? Array.from(parent.children).indexOf(elem) + 1 : null;
 
-            // use id first
+            // 1. Use ID first (most stable)
             if (elem.id) {
-                sel += `#${elem.id}`;
-                return sel;
+                return isUnique(`${tag}#${esc(elem.id)}`) || isUnique(`#${esc(elem.id)}`);
             }
 
-            // try to get class from classList, fallback to getAttribute if not existed
-            let classes = [];
-            if (elem.classList && elem.classList.length > 0) {
-                classes = Array.from(elem.classList);
-            } else {
-                const raw = elem.getAttribute('class') || '';
-                classes = raw.trim().split(/\s+/).filter(Boolean);
+            // 2. Try common Data attributes (data-testid, etc.)
+            const dataAttrs = ['data-testid', 'data-id', 'data-test', 'data-cy'];
+            for (const attr of dataAttrs) {
+                const val = elem.getAttribute(attr);
+                if (val) {
+                    const s = isUnique(`${tag}[${attr}="${val}"]`);
+                    if (s) return s;
+                }
             }
+
+            // 3. Semantic class name strategy
+            // Filtering rules: exclude hash classes (CSS Modules) and too long Tailwind utility classes (more than 2 dashes)
+            const classes = Array.from(elem.classList)
+                .filter(cls => {
+                    const isHash = /_[a-z0-9]{5,}/i.test(cls) || /-{2}[a-z0-9]{5,}/i.test(cls);
+                    const isTooGeneric = (cls.match(/-/g) || []).length > 2;
+                    return !isHash && !isTooGeneric;
+                })
+                .slice(0, 3);
 
             if (classes.length > 0) {
-                sel += `.${classes.join('.')}`;
+                const classSel = `${tag}.${classes.map(esc).join('.')}`;
+                const s = isUnique(classSel) || (index ? isUnique(`${classSel}:nth-child(${index})`) : null);
+                if (s) return s;
             }
 
-            return sel;
+            // 4. Fallback strategy: Tag + nth-child or pure Tag
+            return (index ? isUnique(`${tag}:nth-child(${index})`) : null) || tag;
         }
 
         /**
@@ -1122,6 +1183,14 @@
         }
 
         /**
+         * Simple check if element is a slider component (for additional metadata)
+         */
+        function isSliderComponent(elem) {
+            const text = ((elem.getAttribute('class') || '') + ' ' + (elem.id || '')).toLowerCase();
+            return text.includes('slide') || text.includes('slider') || text.includes('captcha');
+        }
+
+        /**
          * Gathers comprehensive information about a DOM element.
          *
          * This function collects a wide range of properties for an element, including its identity,
@@ -1161,6 +1230,9 @@
                 isMediaElement: isMediaElement(elem),
                 isTopElement: isTopElement(elem),
                 isInViewport: !(r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth),
+
+                // Simple slider/captcha flag for metadata
+                isSlider: isSliderComponent(elem),
 
                 isParentHighlighted: isParentHighlighted,
                 xpath: generateXPath(elem),
@@ -1407,7 +1479,31 @@
                 window.addEventListener('scroll', () => renderHighlights(tree), {passive: true, capture: true});
                 window.addEventListener('resize', () => renderHighlights(tree));
             }
-            return [tree, highlightIdMap];
+
+            // Remove DOM node references to make the result serializable
+            function removeNodeReferences(node) {
+                if (!node) return null;
+                const result = {};
+                if (node.node) {
+                    const {node: domNode, ...serializableInfo} = node.node;
+                    result.node = serializableInfo;
+                }
+                if (node.children) {
+                    result.children = node.children.map(removeNodeReferences).filter(Boolean);
+                }
+                return result;
+            }
+
+            const serializableTree = removeNodeReferences(tree);
+
+            // Clean highlightIdMap - remove 'node' property from each entry
+            const serializableHighlightIdMap = {};
+            for (const [key, value] of Object.entries(highlightIdMap)) {
+                const {node: domNode, ...serializableInfo} = value;
+                serializableHighlightIdMap[key] = serializableInfo;
+            }
+
+            return [serializableTree, serializableHighlightIdMap];
         }
     }
 )();

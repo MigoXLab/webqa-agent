@@ -1,4 +1,5 @@
 <!-- SEO Meta Information and Structured Data -->
+
 <div itemscope itemtype="https://schema.org/SoftwareApplication" align="center" xmlns="http://www.w3.org/1999/html">
   <meta itemprop="name" content="WebQA Agent: Autonomous Web Testing & Quality Assurance">
   <meta itemprop="description" content="AI-powered autonomous web browser agent that audits performance, functionality, UX, and security for comprehensive website testing and quality assurance">
@@ -13,6 +14,7 @@
 <h1 align="center" itemprop="name">WebQA Agent</h1>
 
 <!-- badges -->
+
 <p align="center">
   <a href="https://github.com/MigoXLab/webqa-agent/blob/main/LICENSE"><img src="https://img.shields.io/github/license/MigoXLab/webqa-agent" alt="License"></a>
   <a href="https://github.com/MigoXLab/webqa-agent/stargazers"><img src="https://img.shields.io/github/stars/MigoXLab/webqa-agent" alt="GitHub stars"></a>
@@ -108,6 +110,7 @@ curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/start.sh 
 ```
 
 ### 🛠️ From source
+
 ```bash
 git clone https://github.com/MigoXLab/webqa-agent.git
 cd webqa-agent
@@ -120,9 +123,11 @@ uv run webqa-agent run -c ./config/config.yaml
 ```
 
 ### Optional Dependencies
+
 Performance (Lighthouse): `npm install lighthouse chrome-launcher` (Node.js ≥18)
 
 Security (Nuclei):
+
 ```bash
 brew install nuclei      # macOS
 nuclei -ut               # update templates
@@ -182,7 +187,6 @@ log:
 - **Functional Testing (default mode)**: Focuses on whether UI interactions (clicks, navigations) complete successfully.
 - **User Experience Testing**: Multi-modal analysis (screenshots + DOM structure + text) to assess visual quality, detect typos/grammar issues, and validate layout rendering. Model outputs include best-practice suggestions for optimization.
 
-
 ### 📖 CLI Reference
 
 #### init - Create Configuration
@@ -227,16 +231,14 @@ webqa-agent ui -l zh-CN
 webqa-agent ui --host 0.0.0.0 --port 9000
 ```
 
-
 ### 🧠 Recommended Models
 
-| Model                             | Recommendation              |
-|-----------------------------------|-----------------------------|
-| **gpt-4.1-2025-04-14**            | High accuracy and reliability |
-| **gpt-4.1-mini-2025-04-14**       | Economical and practical |
-| **qwen3-vl-235b-a22b-instruct**   | Open-source model, preferred for on-premise |
+| Model                             | Recommendation                                      |
+| --------------------------------- | --------------------------------------------------- |
+| **gpt-4.1-2025-04-14**            | High accuracy and reliability                       |
+| **gpt-4.1-mini-2025-04-14**       | Economical and practical                            |
+| **qwen3-vl-235b-a22b-instruct**   | Open-source model, preferred for on-premise         |
 | **doubao-seed-1-6-vision-250815** | Good web understanding, supports visual recognition |
-
 
 ### 📊 View Results
 

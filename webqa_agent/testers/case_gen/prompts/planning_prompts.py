@@ -4,7 +4,8 @@ import json
 
 
 def get_shared_test_design_standards(language: str = 'zh-CN') -> str:
-    """Get shared test case design standards for reuse in plan and reflect modules.
+    """Get shared test case design standards for reuse in plan and reflect
+    modules.
 
     Args:
         language: Language for test case naming (zh-CN or en-US)
@@ -51,9 +52,13 @@ def get_shared_test_design_standards(language: str = 'zh-CN') -> str:
 **Test Case Completeness Requirements**:
 - Every test case MUST include at least ONE meaningful user action sequence that leads to a verifiable result.
 - Avoid test cases that only verify initial state without interaction.
-  
-### Domain-Aware Test Case Structure Requirements
-Each test case must include these standardized components with enhanced business context:
+
+### Test Case Granularity Principle (CRITICAL)
+Each test case must focus on ONE specific functionality:
+- ✅ One navigation link = One test case
+- ✅ One search scenario = One test case  
+- ✅ One form field = One test case
+- ❌ All search scenarios = One test case (Too broad)
 
 - **`name`**: 简洁直观的测试名称，反映业务场景和测试目的 (使用{name_language}命名)
 - **`objective`**: Clear statement linking the test to specific business requirements and domain context
@@ -457,7 +462,7 @@ def get_test_case_planning_system_prompt(
 
     # Decide mode based on whether business_objectives is empty
     # Handle case where business_objectives might be a list
-    business_objectives_str = business_objectives if isinstance(business_objectives, str) else str(business_objectives) if business_objectives else ""
+    business_objectives_str = business_objectives if isinstance(business_objectives, str) else str(business_objectives) if business_objectives else ''
     if business_objectives_str and business_objectives_str.strip():
         role_and_objective = """
 ## Role
@@ -513,15 +518,28 @@ Please follow these steps for comprehensive page analysis:
    - Compliance and Security: Assess regulatory requirements and security implications
 
 === Test Case Generation Guidelines ===
-For each test case, provide:
-- **Clear test objectives**: Describe what functionality to verify
-- **Detailed test steps**: Specific operation sequences, including:
-  * Page navigation
-  * Element location and interaction
-  * Data input
-  * Verification points
-- **Success criteria**: Clear verification conditions
-- **Test data**: If data input is required, provide specific test data
+
+**CRITICAL - Test Case Granularity Requirements**:
+- **One Test Case = One Functionality**: Each test case must focus on testing ONE specific feature, link, button, or user action
+- **Separate Features**: If testing multiple navigation links, create separate test cases for each link (e.g., "Test Home Link", "Test About Link", etc.)
+- **Separate Scenarios**: If testing search functionality, create separate test cases for each scenario (e.g., "Exact Match Search", "Case Insensitive Search", "No Results Search")
+- **Independent Execution**: Each test case should be independently executable without depending on other test cases
+- **Avoid Comprehensive Tests**: Do NOT create comprehensive test cases that test multiple features in one case
+
+**Test Case Generation Rules**:
+For each SINGLE functionality, provide:
+- **Clear test objectives**: Describe the ONE specific functionality to verify
+- **Focused test steps**: Specific operation sequence for THIS functionality only, including:
+  * Minimal navigation (if needed)
+  * Element interaction for THIS feature
+  * Data input for THIS scenario
+  * Verification points for THIS functionality
+- **Success criteria**: Clear verification conditions for THIS feature only
+- **Test data**: Specific test data for THIS scenario only
+
+**Example Granularity**:
+- ✅ Generate 5 separate test cases for 5 different navigation links
+- ✅ Generate 4 separate test cases for 4 different search scenarios
 """
     else:
         role_and_objective = """
@@ -647,12 +665,12 @@ def get_test_case_planning_user_prompt(
     """
 
     # Build page content summary section
-    content_section = ""
+    content_section = ''
     if page_text_summary:
-        coverage = page_text_summary.get("coverage", "N/A")
-        text_content = page_text_summary.get("text_content", [])
-        estimated_tokens = page_text_summary.get("estimated_tokens", 0)
-        strategy = page_text_summary.get("strategy_used", "unknown")
+        coverage = page_text_summary.get('coverage', 'N/A')
+        text_content = page_text_summary.get('text_content', [])
+        estimated_tokens = page_text_summary.get('estimated_tokens', 0)
+        strategy = page_text_summary.get('strategy_used', 'unknown')
 
         # Show representative sample of text content
         sample_text = text_content[:30] if len(text_content) > 30 else text_content
@@ -672,7 +690,7 @@ def get_test_case_planning_user_prompt(
 """
 
     # Build priority elements section
-    elements_section = ""
+    elements_section = ''
     if priority_elements:
         elements_count = len(priority_elements)
         # Show compact representation
@@ -766,7 +784,7 @@ Generate business-relevant, effective test scenarios that validate key functiona
 """
 
     return user_prompt
-  
+
 def get_planning_prompt(
     business_objectives: str,
     state_url: str,
@@ -973,7 +991,7 @@ def get_reflection_user_prompt(
     current_plan_json = json.dumps(current_plan, indent=2)
 
     # Build interactive elements mapping section
-    interactive_elements_section = ""
+    interactive_elements_section = ''
     if page_content_summary:
         interactive_elements_json = json.dumps(page_content_summary, indent=2)
         interactive_elements_section = f"""
@@ -986,7 +1004,7 @@ The screenshot shows the ENTIRE webpage from top to bottom, not just the visible
 
     # Determine test mode for reflection decision
     # Handle case where business_objectives might be a list
-    business_objectives_str = business_objectives if isinstance(business_objectives, str) else str(business_objectives) if business_objectives else ""
+    business_objectives_str = business_objectives if isinstance(business_objectives, str) else str(business_objectives) if business_objectives else ''
     if business_objectives_str and business_objectives_str.strip():
         mode_context = f"""
 ## Testing Mode: Enhanced Context-Aware Intent-Driven Testing
@@ -1073,7 +1091,8 @@ def get_reflection_prompt(
     page_content_summary: dict = None,
     language: str = 'zh-CN',
 ) -> tuple[str, str]:
-    """Generate prompts for reflection and replanning (returns system and user prompt).
+    """Generate prompts for reflection and replanning (returns system and user
+    prompt).
 
     Args:
         business_objectives: Overall business objectives
@@ -1101,7 +1120,7 @@ def get_element_filtering_system_prompt(language: str = 'zh-CN') -> str:
     Returns:
         System prompt for element filtering
     """
-    role_desc = "专业QA工程师" if language == 'zh-CN' else "Professional QA Engineer"
+    role_desc = '专业QA工程师' if language == 'zh-CN' else 'Professional QA Engineer'
 
     return f"""You are a {role_desc} analyzing web pages to identify critical interactive elements for testing.
 
@@ -1191,8 +1210,9 @@ The following elements have been extracted from the page. Each element contains:
 
 
 def get_dynamic_step_generation_prompt() -> str:
-    """Enhanced prompt for dynamic test step generation with state awareness and UI lifecycle understanding.
-    
+    """Enhanced prompt for dynamic test step generation with state awareness
+    and UI lifecycle understanding.
+
     This prompt uses the QAG (Question-Answer Generation) methodology enhanced with:
     - State Management: Understanding UI element states (open/closed, visible/hidden)
     - Precondition Awareness: Knowing when setup steps are needed
@@ -1264,7 +1284,7 @@ Before the standard QAG questions, assess the UI state:
 Are the new elements ephemeral (will disappear after interaction)?
 Answer: [EPHEMERAL/PERSISTENT/MIXED]
 
-**S2: Access Requirements Check**  
+**S2: Access Requirements Check**
 Do the new elements require specific preconditions to access them again?
 Answer: [YES/NO] - If YES, note the precondition
 
@@ -1436,7 +1456,7 @@ Skip generation when new elements are:
   },
   "analysis": {
     "q1_can_complete_alone": true/false,
-    "q2_different_aspects": true/false,  
+    "q2_different_aspects": true/false,
     "q3_remaining_redundant": true/false,
     "q4_abstraction_gap": true/false
   },
@@ -1556,7 +1576,7 @@ Skip generation when new elements are:
   },
   "analysis": {
     "q1_can_complete_alone": false,
-    "q2_different_aspects": false, 
+    "q2_different_aspects": false,
     "q3_remaining_redundant": false,
     "q4_abstraction_gap": false
   },
@@ -1684,7 +1704,7 @@ Skip generation when new elements are:
 }
 ```
 
-### Example 9: Advanced Form Fields - Configuration Expansion Pattern  
+### Example 9: Advanced Form Fields - Configuration Expansion Pattern
 **Test Objective**: "Configure application settings"
 **Previous Action**: "Clicked 'Advanced Settings' toggle"
 **New Elements**: Detailed configuration fields that were previously hidden
@@ -1724,7 +1744,7 @@ Skip generation when new elements are:
 {
   "state_analysis": {
     "element_persistence": "persistent",
-    "access_requirements": "none", 
+    "access_requirements": "none",
     "state_dependencies": "Pagination and filters depend on data presence"
   },
   "analysis": {
@@ -1764,7 +1784,7 @@ Skip generation when new elements are:
     "q3_remaining_redundant": true,
     "q4_abstraction_gap": true
   },
-  "strategy": "replace", 
+  "strategy": "replace",
   "reason": "QAG: Q4=Yes (specific search results replace abstract 'verify search works' assumptions), Q1=Yes (actual results enable comprehensive search testing), Q2=No (same search validation functionality), Q3=Yes (generic search steps become obsolete).",
   "steps": [
     {"verify": "Verify search returned relevant results for 'user management'"},
@@ -1781,7 +1801,7 @@ Skip generation when new elements are:
 
 **State Management:**
 - Batch ephemeral interactions while element is accessible
-- Document how to restore access to closed elements  
+- Document how to restore access to closed elements
 - Follow dependency hierarchies and verify state transitions
 
 **Step Quality:**

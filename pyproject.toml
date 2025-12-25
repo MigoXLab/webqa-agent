@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "webqa-agent"
-version = "0.2.1"
+version = "0.2.2"
 description = "WebQA Agent is an autonomous web browser agent that audits performance, functionality & UX for engineers and vibe-coding creators."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -33,6 +33,7 @@ dependencies = [
     "openai>=1.93.0",
     "pillow==11.3.0",
     "playwright==1.52.0",
+    "pre-commit>=4.5.1",
     "pydantic==2.9.2",
     "pytest>=8.4.1",
     "pytest-asyncio>=1.3.0",

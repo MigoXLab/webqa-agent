@@ -8,40 +8,40 @@ from webqa_agent.browser.config import DEFAULT_CONFIG
 
 # 侧边栏标题（默认）
 CATEGORY_TITLES: Dict[str, Dict[str, str]] = {
-    "zh-CN": {
-        "function": "功能测试",
-        "ux": "UX测试",
-        "performance": "性能测试",
-        "security": "安全测试",
+    'zh-CN': {
+        'function': '功能测试',
+        'ux': 'UX测试',
+        'performance': '性能测试',
+        'security': '安全测试',
     },
-    "en-US": {
-        "function": "Function Test",
-        "ux": "UX Test",
-        "performance": "Performance Test",
-        "security": "Security Test",
+    'en-US': {
+        'function': 'Function Test',
+        'ux': 'UX Test',
+        'performance': 'Performance Test',
+        'security': 'Security Test',
     }
 }
 
 
 class TestCategory(str, Enum):
-    FUNCTION = "function"
-    UX = "ux"
-    SECURITY = "security"
-    PERFORMANCE = "performance"
+    FUNCTION = 'function'
+    UX = 'ux'
+    SECURITY = 'security'
+    PERFORMANCE = 'performance'
 
 # 测试类型
 class TestType(str, Enum):
     """Test type enumeration."""
 
-    UNKNOWN = "unknown"
-    BASIC_TEST = "basic_test"
+    UNKNOWN = 'unknown'
+    BASIC_TEST = 'basic_test'
     # BUTTON_TEST = "button_test"
-    UI_AGENT_LANGGRAPH = "ui_agent_langgraph"
-    UX_TEST = "ux_test"
-    PERFORMANCE = "performance_test"
+    UI_AGENT_LANGGRAPH = 'ui_agent_langgraph'
+    UX_TEST = 'ux_test'
+    PERFORMANCE = 'performance_test'
     # WEB_BASIC_CHECK = "web_basic_check"
-    SECURITY_TEST = "security_test"
-    SEO_TEST = "seo_test"
+    SECURITY_TEST = 'security_test'
+    SEO_TEST = 'seo_test'
 
 def get_category_for_test_type(test_type: TestType) -> TestCategory:
     """Map TestType to TestCategory."""
@@ -60,28 +60,28 @@ def get_category_for_test_type(test_type: TestType) -> TestCategory:
 
 # 报告子标题栏
 TEST_TYPE_DEFAULT_NAMES: Dict[str, Dict[TestType, str]] = {
-    "zh-CN": {
-        TestType.UI_AGENT_LANGGRAPH: "智能功能测试",
-        TestType.BASIC_TEST: "遍历测试",
+    'zh-CN': {
+        TestType.UI_AGENT_LANGGRAPH: '智能功能测试',
+        TestType.BASIC_TEST: '遍历测试',
         # TestType.BUTTON_TEST: "功能测试",
         # TestType.WEB_BASIC_CHECK: "技术健康度检查",
-        TestType.UX_TEST: "用户体验测试",
-        TestType.PERFORMANCE: "性能测试",
-        TestType.SECURITY_TEST: "安全测试",
+        TestType.UX_TEST: '用户体验测试',
+        TestType.PERFORMANCE: '性能测试',
+        TestType.SECURITY_TEST: '安全测试',
     },
-    "en-US": {
-        TestType.UI_AGENT_LANGGRAPH: "AI Function Test",
-        TestType.BASIC_TEST: "Basic Function Test",
+    'en-US': {
+        TestType.UI_AGENT_LANGGRAPH: 'AI Function Test',
+        TestType.BASIC_TEST: 'Basic Function Test',
         # TestType.BUTTON_TEST: "Traversal Test",
         # TestType.WEB_BASIC_CHECK: "Technical Health Check",
-        TestType.UX_TEST: "UX Test",
-        TestType.PERFORMANCE: "Performance Test",
-        TestType.SECURITY_TEST: "Security Test",
+        TestType.UX_TEST: 'UX Test',
+        TestType.PERFORMANCE: 'Performance Test',
+        TestType.SECURITY_TEST: 'Security Test',
     }
 }
 
 
-def get_default_test_name(test_type: TestType, language: str = "zh-CN") -> str:
+def get_default_test_name(test_type: TestType, language: str = 'zh-CN') -> str:
     """Return the internal default test name for a given TestType.
 
     Names are hardcoded and not user-configurable.
@@ -92,24 +92,27 @@ def get_default_test_name(test_type: TestType, language: str = "zh-CN") -> str:
 class TestStatus(str, Enum):
     """Test status enumeration."""
 
-    PENDING = "pending"
-    RUNNING = "running"
-    PASSED = "passed"
-    WARNING = "warning"
-    INCOMPLETED = "incompleted"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
+    PENDING = 'pending'
+    RUNNING = 'running'
+    PASSED = 'passed'
+    WARNING = 'warning'
+    INCOMPLETED = 'incompleted'
+    FAILED = 'failed'
+    CANCELLED = 'cancelled'
 
+# ==============================================================
+# Test Config & Execution Context Structures
+# ==============================================================
 
 class TestConfiguration(BaseModel):
     """Test configuration for parallel execution."""
 
     test_id: Optional[str] = None
     test_type: Optional[TestType] = TestType.BASIC_TEST
-    test_name: Optional[str] = ""
+    test_name: Optional[str] = ''
     enabled: Optional[bool] = True
     browser_config: Optional[Dict[str, Any]] = DEFAULT_CONFIG
-    report_config: Optional[Dict[str, Any]] = {"language": "zh-CN"}
+    report_config: Optional[Dict[str, Any]] = {'language': 'zh-CN'}
     test_specific_config: Optional[Dict[str, Any]] = {}
     timeout: Optional[int] = 300  # seconds
     retry_count: Optional[int] = 0
@@ -124,7 +127,7 @@ class TestExecutionContext(BaseModel):
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     status: Optional[TestStatus] = TestStatus.PENDING
-    error_message: Optional[str] = ""
+    error_message: Optional[str] = ''
     retry_attempts: Optional[int] = 0
 
     def start_execution(self):
@@ -132,7 +135,7 @@ class TestExecutionContext(BaseModel):
         self.start_time = datetime.now().replace(microsecond=0)
         self.status = TestStatus.RUNNING
 
-    def complete_execution(self, success: bool = True, error_message: str = ""):
+    def complete_execution(self, success: bool = True, error_message: str = ''):
         """Mark test as completed."""
         self.end_time = datetime.now().replace(microsecond=0)
         self.status = TestStatus.PASSED if success else TestStatus.FAILED
@@ -145,6 +148,10 @@ class TestExecutionContext(BaseModel):
             return (self.end_time - self.start_time).total_seconds()
         return None
 
+
+# ============================================================================
+# Sub Test Structures
+# ============================================================================
 
 class SubTestScreenshot(BaseModel):
     type: str
@@ -160,11 +167,11 @@ class SubTestAction(BaseModel):
 class SubTestStep(BaseModel):
     id: int
     screenshots: Optional[List[SubTestScreenshot]] = []
-    modelIO: Optional[str] = ""
+    modelIO: Optional[str] = ''
     actions: Optional[List[SubTestAction]] = []
-    description: Optional[str] = ""
+    description: Optional[str] = ''
     status: Optional[TestStatus] = TestStatus.PASSED
-    errors: Optional[str] = ""
+    errors: Optional[str] = ''
 
 
 class SubTestReport(BaseModel):
@@ -186,17 +193,21 @@ class SubTestResult(BaseModel):
     messages: Optional[Dict[str, Any]] = {}  # Browser monitoring data
     start_time: Optional[str] = None
     end_time: Optional[str] = None
-    final_summary: Optional[str] = ""
+    final_summary: Optional[str] = ''
     report: Optional[List[SubTestReport]] = []
 
+
+# ==============================================================
+# Test Result Structures
+# ==============================================================
 
 class TestResult(BaseModel):
     """Isolated test result data."""
 
-    test_id: Optional[str] = ""
+    test_id: Optional[str] = ''
     test_type: Optional[TestType] = TestType.UNKNOWN
-    test_name: Optional[str] = ""
-    module_name: Optional[str] = ""
+    test_name: Optional[str] = ''
+    module_name: Optional[str] = ''
     status: Optional[TestStatus] = TestStatus.PENDING
     # New field to indicate test category (function/ui/performance)
 
@@ -216,7 +227,7 @@ class TestResult(BaseModel):
     traces: Optional[List[str]] = []
 
     # Error information
-    error_message: Optional[str] = ""
+    error_message: Optional[str] = ''
     error_details: Optional[Dict[str, Any]] = {}
 
     # Metrics
@@ -234,12 +245,14 @@ class TestResult(BaseModel):
         """Add data to results."""
         self.results[key] = value
 
-
+# ==============================================================
+# Parallel Test Session Structures
+# ==============================================================
 class ParallelTestSession(BaseModel):
     """Session data for parallel test execution."""
 
     session_id: Optional[str] = None
-    target_url: Optional[str] = ""
+    target_url: Optional[str] = ''
     llm_config: Optional[Dict[str, Any]] = {}
 
     # Test configurations
@@ -255,9 +268,9 @@ class ParallelTestSession(BaseModel):
 
     # Aggregated results
     aggregated_results: Optional[Dict[str, Any]] = {}
-    llm_summary: Optional[str] = ""
-    report_path: Optional[str] = ""
-    html_report_path: Optional[str] = ""
+    llm_summary: Optional[str] = ''
+    report_path: Optional[str] = ''
+    html_report_path: Optional[str] = ''
 
     def add_test_configuration(self, test_config: TestConfiguration):
         """Add test configuration to session."""
@@ -298,12 +311,12 @@ class ParallelTestSession(BaseModel):
         return [config for config in self.test_configurations if config.enabled]
 
     def get_summary_stats(self) -> Dict[str, Any]:
-        """Get session summary statistics"""
+        """Get session summary statistics."""
         return {
-            "session_id": self.session_id,
-            "target_url": self.target_url,
-            "start_time": self.start_time.replace(microsecond=0).isoformat() if self.start_time else None,
-            "end_time": self.end_time.replace(microsecond=0).isoformat() if self.end_time else None,
+            'session_id': self.session_id,
+            'target_url': self.target_url,
+            'start_time': self.start_time.replace(microsecond=0).isoformat() if self.start_time else None,
+            'end_time': self.end_time.replace(microsecond=0).isoformat() if self.end_time else None,
         }
 
     def to_dict(self) -> Dict[str, Any]:
@@ -311,24 +324,24 @@ class ParallelTestSession(BaseModel):
         grouped_results: Dict[str, Dict[str, Any]] = {}
 
         if self.test_configurations and len(self.test_configurations) > 0:
-            language = self.test_configurations[0].report_config.get("language", "zh-CN")
+            language = self.test_configurations[0].report_config.get('language', 'zh-CN')
 
         for cat in TestCategory:
-            key = f"{cat.value}_test_results"
-            grouped_results[key] = {"title": CATEGORY_TITLES[language].get(cat.value, cat.name), "items": []}
+            key = f'{cat.value}_test_results'
+            grouped_results[key] = {'title': CATEGORY_TITLES[language].get(cat.value, cat.name), 'items': []}
 
         for result in self.test_results.values():
-            key = f"{result.category.value}_test_results"
+            key = f'{result.category.value}_test_results'
             if key not in grouped_results:
                 grouped_results[key] = {
-                    "title": CATEGORY_TITLES[language].get(result.category.value, result.category.name.title()),
-                    "items": [],
+                    'title': CATEGORY_TITLES[language].get(result.category.value, result.category.name.title()),
+                    'items': [],
                 }
-            grouped_results[key]["items"].append(result.dict())
+            grouped_results[key]['items'].append(result.dict())
 
         return {
-            "session_info": self.get_summary_stats(),
-            "aggregated_results": self.aggregated_results,
-            "test_results": grouped_results,
-            "llm_summary": self.llm_summary,
+            'session_info': self.get_summary_stats(),
+            'aggregated_results': self.aggregated_results,
+            'test_results': grouped_results,
+            'llm_summary': self.llm_summary,
         }

@@ -1,3 +1,8 @@
+# WebQA Agent Configuration - AI Mode (default)
+# This mode uses AI to automatically generate and execute test cases
+# To create this config: webqa-agent init
+# Documentation: https://github.com/MigoXLab/webqa-agent
+
 target:
   url: https://baidu.com
   description: Test search functionality
@@ -7,19 +12,20 @@ test_config: # Test configuration
   function_test:
     enabled: True
     type: ai  # default or ai
-    business_objectives: Test Baidu search functionality, generate 3 test cases
+    business_objectives: Test Baidu website functionality, generate 3 test cases
     dynamic_step_generation:
       enabled: True  # Default: False (this example enables it as recommended)
       max_dynamic_steps: 10  # Default: 5 (this example increases the limit)
       min_elements_threshold: 1  # Default: 2 (this example uses 1 for higher sensitivity)
   ux_test:
-    enabled: True
+    enabled: False
   performance_test:
     enabled: False
   security_test:
     enabled: False
 
 llm_config: # LLM configuration, currently only supports OpenAI SDK compatible format
+  api: openai
   model: gpt-4.1-2025-04-14  # Primary model for Stage 2 test planning (Recommended)
   filter_model: gpt-4o-mini  # Lightweight model for Stage 1 element filtering (cost-effective)
   api_key: your_api_key

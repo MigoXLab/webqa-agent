@@ -4,7 +4,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-
 I18N_DIR = Path(__file__).resolve().parents[1] / 'static' / 'i18n'
 
 
@@ -37,5 +36,3 @@ def t(lang: str, key: str, default: str | None = None) -> str:
 def get_lang_data(lang: str) -> dict[str, Any]:
     """Return the full language dict (read-only)."""
     return _load_lang(lang).copy()
-
-

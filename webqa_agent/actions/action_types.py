@@ -1,5 +1,4 @@
-"""
-Centralized Action Type Definitions and Metadata
+"""Centralized Action Type Definitions and Metadata.
 
 This module provides unified action type constants and metadata to avoid
 string hardcoding across the codebase and ensure consistent behavior.
@@ -24,21 +23,22 @@ class ActionType(str, Enum):
     """
 
     # DOM-dependent actions (require interactive elements on page)
-    TAP = "Tap"
-    INPUT = "Input"
-    HOVER = "Hover"
-    CLEAR = "Clear"
-    SELECT_DROPDOWN = "SelectDropdown"
-    DRAG = "Drag"
-    UPLOAD = "Upload"
-    KEYBOARD_PRESS = "KeyboardPress"
-    MOUSE = "Mouse"
-    SCROLL = "Scroll"
+    TAP = 'Tap'
+    INPUT = 'Input'
+    HOVER = 'Hover'
+    CLEAR = 'Clear'
+    SELECT_DROPDOWN = 'SelectDropdown'
+    DRAG = 'Drag'
+    UPLOAD = 'Upload'
+    KEYBOARD_PRESS = 'KeyboardPress'
+    MOUSE = 'Mouse'
+    SCROLL = 'Scroll'
+    CHECK = 'Check'
 
     # Page-agnostic actions (browser-level operations, work on PDF/plugin pages)
-    GO_BACK = "GoBack"
-    GO_TO_PAGE = "GoToPage"
-    SLEEP = "Sleep"
+    GO_BACK = 'GoBack'
+    GO_TO_PAGE = 'GoToPage'
+    SLEEP = 'Sleep'
 
 
 # Page-agnostic actions set (can execute on PDF/plugin pages)
@@ -53,30 +53,30 @@ PAGE_AGNOSTIC_ACTIONS: Set[str] = {
 # Provides additional information about each action type
 ACTION_METADATA: Dict[str, Dict] = {
     ActionType.GO_BACK: {
-        "is_page_agnostic": True,
-        "requires_dom": False,
-        "requires_target": False,
-        "default_phrase": "Navigate back to the previous page",
-        "aliases": [
-            "go back",
-            "navigate back",
-            "back",
-            "browser back",
+        'is_page_agnostic': True,
+        'requires_dom': False,
+        'requires_target': False,
+        'default_phrase': 'Navigate back to the previous page',
+        'aliases': [
+            'go back',
+            'navigate back',
+            'back',
+            'browser back',
         ],
-        "description": "Navigates back in browser history",
+        'description': 'Navigates back in browser history',
     },
     ActionType.SLEEP: {
-        "is_page_agnostic": True,
-        "requires_dom": False,
-        "requires_target": False,
-        "default_phrase_template": "Wait for {value} milliseconds",
-        "aliases": [
-            "wait",
-            "sleep",
-            "pause",
-            "wait for",
+        'is_page_agnostic': True,
+        'requires_dom': False,
+        'requires_target': False,
+        'default_phrase_template': 'Wait for {value} milliseconds',
+        'aliases': [
+            'wait',
+            'sleep',
+            'pause',
+            'wait for',
         ],
-        "description": "Pauses execution for specified duration",
+        'description': 'Pauses execution for specified duration',
     },
 }
 
@@ -102,7 +102,7 @@ def is_page_agnostic_action(action_type: str) -> bool:
     return action_type in PAGE_AGNOSTIC_ACTIONS
 
 
-def get_action_default_phrase(action_type: str, target: str = "", value: str = "") -> str:
+def get_action_default_phrase(action_type: str, target: str = '', value: str = '') -> str:
     """Get default action phrase for instruction building.
 
     This function provides standardized action phrases to avoid inconsistent
@@ -127,17 +127,17 @@ def get_action_default_phrase(action_type: str, target: str = "", value: str = "
     metadata = ACTION_METADATA.get(action_type, {})
 
     # Use template if available (e.g., Sleep action)
-    if "default_phrase_template" in metadata:
-        return metadata["default_phrase_template"].format(value=value or "1000")
+    if 'default_phrase_template' in metadata:
+        return metadata['default_phrase_template'].format(value=value or '1000')
 
     # Use default phrase if available
-    elif "default_phrase" in metadata:
-        return metadata["default_phrase"]
+    elif 'default_phrase' in metadata:
+        return metadata['default_phrase']
 
     # Fallback: construct from action type and target
     else:
         if target:
-            return f"{action_type} on {target}"
+            return f'{action_type} on {target}'
         else:
             return action_type
 
@@ -158,7 +158,7 @@ def get_action_aliases(action_type: str) -> list:
         ["go back", "navigate back", "back", ...]
     """
     metadata = ACTION_METADATA.get(action_type, {})
-    return metadata.get("aliases", [])
+    return metadata.get('aliases', [])
 
 
 def requires_dom_elements(action_type: str) -> bool:
@@ -172,7 +172,7 @@ def requires_dom_elements(action_type: str) -> bool:
     """
     metadata = ACTION_METADATA.get(action_type, {})
     # Default to True (safe default - most actions need DOM)
-    return metadata.get("requires_dom", True)
+    return metadata.get('requires_dom', True)
 
 
 def get_page_agnostic_keywords() -> list:

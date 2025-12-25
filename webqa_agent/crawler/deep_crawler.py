@@ -1,17 +1,18 @@
 import datetime
 import json
-import time
 import logging
 import re
-from pathlib import Path
-from playwright.async_api import Page
-from webqa_agent.crawler.dom_tree import DomTreeNode as dtree
-from webqa_agent.crawler.dom_cacher import DomCacher
-from typing import List, Dict, Optional, Any, Tuple, Union, Iterable
-from pydantic import BaseModel, Field
+import time
 from enum import Enum
 from itertools import groupby
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
+from playwright.async_api import Page
+from pydantic import BaseModel, Field
+
+from webqa_agent.crawler.dom_cacher import DomCacher
+from webqa_agent.crawler.dom_tree import DomTreeNode as dtree
 
 # ============================================================================
 # UTILITY FUNCTIONS
@@ -19,19 +20,19 @@ from itertools import groupby
 
 def get_time() -> str:
     """Get the current time as a formatted string.
-    
+
     Returns:
         Timestamp format: YYYYMMDD_HH_MM_SS
     """
-    return datetime.datetime.now().strftime("%Y%m%d_%H_%M_%S")
+    return datetime.datetime.now().strftime('%Y%m%d_%H_%M_%S')
 
 
-def _normalize_keys(template: Optional[Iterable[Union[str, "ElementKey"]]]) -> Optional[List[str]]:
+def _normalize_keys(template: Optional[Iterable[Union[str, 'ElementKey']]]) -> Optional[List[str]]:
     """Normalize template keys to string format.
-    
+
     Args:
         template: Template containing ElementKey enums or strings.
-        
+
     Returns:
         List of normalized string keys, or None if template is None.
     """
@@ -41,7 +42,7 @@ def _normalize_keys(template: Optional[Iterable[Union[str, "ElementKey"]]]) -> O
     normalized = []
     for key in template:
         try:
-            normalized.append(key.value if hasattr(key, "value") else str(key))
+            normalized.append(key.value if hasattr(key, 'value') else str(key))
         except Exception:
             normalized.append(str(key))
     return normalized
@@ -53,22 +54,22 @@ def _normalize_keys(template: Optional[Iterable[Union[str, "ElementKey"]]]) -> O
 
 class ElementKey(Enum):
     """Enumeration for element attribute keys."""
-    NODE = "node"
-    TAG_NAME = "tagName"
-    CLASS_NAME = "className"
-    INNER_TEXT = "innerText"
-    ATTRIBUTES = "attributes"
-    VIEWPORT = "viewport"
-    CENTER_X = "center_x"
-    CENTER_Y = "center_y"
-    IS_VISIBLE = "isVisible"
-    IS_INTERACTIVE = "isInteractive"
-    IS_VALID_TEXT = "isValidText"
-    IS_TOP_ELEMENT = "isTopElement"
-    IS_IN_VIEWPORT = "isInViewport"
-    XPATH = "xpath"
-    SELECTOR = "selector"
-    STYLES = "styles"
+    NODE = 'node'
+    TAG_NAME = 'tagName'
+    CLASS_NAME = 'className'
+    INNER_TEXT = 'innerText'
+    ATTRIBUTES = 'attributes'
+    VIEWPORT = 'viewport'
+    CENTER_X = 'center_x'
+    CENTER_Y = 'center_y'
+    IS_VISIBLE = 'isVisible'
+    IS_INTERACTIVE = 'isInteractive'
+    IS_VALID_TEXT = 'isValidText'
+    IS_TOP_ELEMENT = 'isTopElement'
+    IS_IN_VIEWPORT = 'isInViewport'
+    XPATH = 'xpath'
+    SELECTOR = 'selector'
+    STYLES = 'styles'
 
     def __str__(self) -> str:
         """Return the string representation of the enum value."""
@@ -89,16 +90,18 @@ DEFAULT_OUTPUT_TEMPLATE = [
 # ============================================================================
 
 class ElementMap(BaseModel):
-    """A wrapper for a dictionary of elements that provides a cleansing method."""
+    """A wrapper for a dictionary of elements that provides a cleansing
+    method."""
     data: Dict[str, Any] = Field(default_factory=dict)
 
     def clean(self, output_template: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Cleanses the element map, returning a new dictionary with filtered attributes.
-    
+        """Cleanses the element map, returning a new dictionary with filtered
+        attributes.
+
         Args:
             output_template: A list of keys to include in the cleansed output.
                              If None, DEFAULT_OUTPUT_TEMPLATE is used.
-    
+
         Returns:
             A dictionary with the cleansed element data.
         """
@@ -107,7 +110,7 @@ class ElementMap(BaseModel):
 
         def to_key(k):
             """Convert key to string format."""
-            return k.value if hasattr(k, "value") else str(k)
+            return k.value if hasattr(k, 'value') else str(k)
 
         keys = [to_key(k) for k in output_template]
         result = {}
@@ -128,30 +131,32 @@ class ElementMap(BaseModel):
 
 
 class CrawlResultModel(BaseModel):
-    """Model for crawl results containing flattened and hierarchical element data."""
+    """Model for crawl results containing flattened and hierarchical element
+    data."""
     element_tree: Dict[str, Any] = Field(default_factory=dict)
     flat_element_map: ElementMap = Field(default_factory=ElementMap)
     diff_element_map: ElementMap = Field(default_factory=ElementMap)
 
     # Page status fields for unsupported page detection (backward compatible)
-    page_status: str = Field(default="NORMAL", description="NORMAL or UNSUPPORTED_PAGE")
-    page_type: Optional[str] = Field(default=None, description="pdf, plugin, download, etc.")
+    page_status: str = Field(default='NORMAL', description='NORMAL or UNSUPPORTED_PAGE')
+    page_type: Optional[str] = Field(default=None, description='pdf, plugin, download, etc.')
 
     def raw_dict(self) -> Dict[str, Any]:
         """Get raw flattened element data with all fields."""
         return self.flat_element_map.data
 
-    def clean_dict(self, template: Optional[Iterable[Union[str, "ElementKey"]]] = None) -> Dict[str, Any]:
-        """Get cleaned flattened element data with fields filtered by template."""
+    def clean_dict(self, template: Optional[Iterable[Union[str, 'ElementKey']]] = None) -> Dict[str, Any]:
+        """Get cleaned flattened element data with fields filtered by
+        template."""
         return self.flat_element_map.clean(output_template=_normalize_keys(template))
 
-    def diff_dict(self, template: Optional[Iterable[Union[str, "ElementKey"]]] = None) -> Dict[str, Any]:
+    def diff_dict(self, template: Optional[Iterable[Union[str, 'ElementKey']]] = None) -> Dict[str, Any]:
         """Get DOM difference element data with specified template."""
         return self.diff_element_map.clean(output_template=_normalize_keys(template))
 
-    def to_llm_json(self, template: Optional[Iterable[Union[str, "ElementKey"]]] = None) -> str:
+    def to_llm_json(self, template: Optional[Iterable[Union[str, 'ElementKey']]] = None) -> str:
         """Convert filtered elements to LLM-compatible JSON format."""
-        return json.dumps(self.clean_dict(template=template), ensure_ascii=False, separators=(",", ":"))
+        return json.dumps(self.clean_dict(template=template), ensure_ascii=False, separators=(',', ':'))
 
 
 # ============================================================================
@@ -159,33 +164,34 @@ class CrawlResultModel(BaseModel):
 # ============================================================================
 
 class DeepCrawler:
-    """A deep crawler for recursively extracting structured element data from web pages.
+    """A deep crawler for recursively extracting structured element data from
+    web pages.
 
-    This class injects JavaScript payloads into Playwright pages to build hierarchical
-    DOM element trees, capturing properties such as visibility, interactivity, and
-    positioning. It supports element highlighting for debugging and provides comprehensive
-    DOM change detection capabilities.
+    This class injects JavaScript payloads into Playwright pages to build
+    hierarchical DOM element trees, capturing properties such as visibility,
+    interactivity, and positioning. It supports element highlighting for
+    debugging and provides comprehensive DOM change detection capabilities.
     """
 
     # Class-level constants
     _default_dir = Path(__file__).parent
-    DETECTOR_JS = _default_dir / "js" / "element_detector.js"
-    REMOVER_JS = _default_dir / "js" / "marker_remover.js"
-    RESULTS_DIR = _default_dir / "results"
-    SCREENSHOTS_DIR = _default_dir / "screenshots"
+    DETECTOR_JS = _default_dir / 'js' / 'element_detector.js'
+    REMOVER_JS = _default_dir / 'js' / 'marker_remover.js'
+    RESULTS_DIR = _default_dir / 'results'
+    SCREENSHOTS_DIR = _default_dir / 'screenshots'
 
     def __init__(self, page: Page, depth: int = 0):
         """Initialize the DeepCrawler instance.
-    
+
         Args:
             page: The Playwright Page object to crawl.
             depth: The current crawling depth level.
-            
+
         Raises:
             ValueError: If page is not a valid Playwright Page object.
         """
         if not isinstance(page, Page):
-            raise ValueError("Crawler page must be a Playwright Page object")
+            raise ValueError('Crawler page must be a Playwright Page object')
 
         self.page = page
         self.depth = depth
@@ -199,7 +205,8 @@ class DeepCrawler:
     # ------------------------------------------------------------------------
 
     async def _detect_page_type(self, page: Page) -> Tuple[str, Optional[str]]:
-        """Detect if the page is an unsupported type (PDF, plugin, etc.) using multi-layered detection.
+        """Detect if the page is an unsupported type (PDF, plugin, etc.) using
+        multi-layered detection.
 
         Uses a 3-layer detection strategy for high reliability:
         1. URL extension check (fast, reliable)
@@ -222,15 +229,15 @@ class DeepCrawler:
 
             # PDF detection via URL
             if url.endswith('.pdf'):
-                logging.info(f"Detected PDF via URL suffix: {url}")
-                return ("UNSUPPORTED_PAGE", "pdf")
+                logging.info(f'Detected PDF via URL suffix: {url}')
+                return ('UNSUPPORTED_PAGE', 'pdf')
 
             # Download file detection via URL
-            download_extensions = [".zip", ".rar", ".exe", ".dmg", ".pkg", ".deb", ".tar", ".gz"]
+            download_extensions = ['.zip', '.rar', '.exe', '.dmg', '.pkg', '.deb', '.tar', '.gz']
             for ext in download_extensions:
                 if url.endswith(ext):
-                    logging.info(f"Detected download file via URL: {url}")
-                    return ("UNSUPPORTED_PAGE", "download")
+                    logging.info(f'Detected download file via URL: {url}')
+                    return ('UNSUPPORTED_PAGE', 'download')
 
             # === Layer 2: PDF Embed Element Detection (Catches Chromium PDF Viewer) ===
             has_pdf_embed = await page.evaluate("""() => {
@@ -240,35 +247,35 @@ class DeepCrawler:
             }""")
 
             if has_pdf_embed:
-                logging.info(f"Detected embedded PDF viewer on page: {url}")
-                return ("UNSUPPORTED_PAGE", "pdf")
+                logging.info(f'Detected embedded PDF viewer on page: {url}')
+                return ('UNSUPPORTED_PAGE', 'pdf')
 
             # === Layer 3: document.contentType Check (Backup Method) ===
             content_type = await page.evaluate("() => document.contentType || ''")
 
             # PDF detection via content type
-            if content_type == "application/pdf":
-                logging.info(f"Detected PDF via document.contentType: {url}")
-                return ("UNSUPPORTED_PAGE", "pdf")
+            if content_type == 'application/pdf':
+                logging.info(f'Detected PDF via document.contentType: {url}')
+                return ('UNSUPPORTED_PAGE', 'pdf')
 
             # Plugin detection (Flash, Silverlight, etc.)
             plugin_patterns = [
-                "application/x-shockwave-flash",
-                "application/x-silverlight",
-                "application/x-java-applet"
+                'application/x-shockwave-flash',
+                'application/x-silverlight',
+                'application/x-java-applet'
             ]
             for pattern in plugin_patterns:
                 if pattern in content_type:
-                    logging.info(f"Detected plugin content ({pattern}): {url}")
-                    return ("UNSUPPORTED_PAGE", "plugin")
+                    logging.info(f'Detected plugin content ({pattern}): {url}')
+                    return ('UNSUPPORTED_PAGE', 'plugin')
 
             # Regular HTML page
-            return ("NORMAL", None)
+            return ('NORMAL', None)
 
         except Exception as e:
             # On any error, fail safely to NORMAL to avoid false positives
-            logging.warning(f"Page type detection failed (assuming NORMAL page): {e}")
-            return ("NORMAL", None)
+            logging.warning(f'Page type detection failed (assuming NORMAL page): {e}')
+            return ('NORMAL', None)
 
     # ------------------------------------------------------------------------
     # CORE CRAWLING METHODS
@@ -284,7 +291,8 @@ class DeepCrawler:
             include_styles: bool = False,
             cache_dom: bool = False,
     ) -> CrawlResultModel:
-        """Inject JavaScript to crawl the page and return structured element data.
+        """Inject JavaScript to crawl the page and return structured element
+        data.
 
         Args:
             page: The Playwright Page to crawl. Defaults to instance page.
@@ -303,8 +311,8 @@ class DeepCrawler:
 
         # Multi-layer detection of unsupported page types (PDF, plugins, etc.)
         page_status, page_type = await self._detect_page_type(page)
-        if page_status == "UNSUPPORTED_PAGE":
-            logging.warning(f"Detected unsupported page type: {page_type}, skipping crawl")
+        if page_status == 'UNSUPPORTED_PAGE':
+            logging.warning(f'Detected unsupported page type: {page_type}, skipping crawl')
             return CrawlResultModel(
                 flat_element_map=ElementMap(data={}),
                 element_tree={},
@@ -313,7 +321,7 @@ class DeepCrawler:
             )
 
         try:
-            
+
             try:
                 if hasattr(page, 'frames') and len(page.frames) > 1:
                     _, merged_id_map = await self.crawl_all_frames(page=page, enable_highlight=highlight)
@@ -323,18 +331,18 @@ class DeepCrawler:
                     )
             except Exception:
                 pass
-            
+
             # Build JavaScript payload for element detection
             payload = (
-                f"(() => {{"
-                f"window._highlight = {str(highlight).lower()};"
-                f"window._filterText = {str(filter_text).lower()};\n"
-                f"window._filterMedia = {str(filter_media).lower()};\n"
-                f"window._viewportOnly = {str(viewport_only).lower()};\n"
-                f"window._includeStyles = {str(include_styles).lower()};\n"
-                f"\n{self.read_js(self.DETECTOR_JS)}"
-                f"\nreturn buildElementTree();"
-                f"}})()"
+                f'(() => {{'
+                f'window._highlight = {str(highlight).lower()};'
+                f'window._filterText = {str(filter_text).lower()};\n'
+                f'window._filterMedia = {str(filter_media).lower()};\n'
+                f'window._viewportOnly = {str(viewport_only).lower()};\n'
+                f'window._includeStyles = {str(include_styles).lower()};\n'
+                f'\n{self.read_js(self.DETECTOR_JS)}'
+                f'\nreturn buildElementTree();'
+                f'}})()'
             )
 
             # Execute JavaScript and extract results
@@ -355,23 +363,24 @@ class DeepCrawler:
                     current_url=page.url
                 )
 
-                if diff_elements["has_changes"]:
-                    logging.debug(f"DOM change result: {diff_elements}")
+                if diff_elements['has_changes']:
+                    logging.debug(f'DOM change result: {diff_elements}')
 
                 result.diff_element_map = ElementMap(data=self.extract_interactive_elements(get_new_elems=True))
 
             return result
 
         except Exception as e:
-            logging.error(f"JavaScript injection failed during element detection: {e}")
+            logging.error(f'JavaScript injection failed during element detection: {e}')
             return CrawlResultModel()
 
     def extract_interactive_elements(self, get_new_elems: bool = False) -> Dict:
-        """Extract interactive elements with comprehensive attribute information.
+        """Extract interactive elements with comprehensive attribute
+        information.
 
         Args:
             get_new_elems: Whether to return only newly detected elements.
-            
+
         Returns:
             Dictionary mapping element IDs to their attribute dictionaries.
         """
@@ -404,7 +413,7 @@ class DeepCrawler:
 
                 # Validate viewport dimensions
                 viewport = node.viewport or {}
-                if viewport.get("width") is None or viewport.get("height") is None:
+                if viewport.get('width') is None or viewport.get('height') is None:
                     continue
 
                 # Build comprehensive element attribute dictionary
@@ -426,16 +435,15 @@ class DeepCrawler:
 
         return elements
 
-    def get_text(self, fmt: str = "json") -> str:
-        """
-        Extract and concatenate all text content from the crawled DOM tree.
-        
+    def get_text(self, fmt: str = 'json') -> str:
+        """Extract and concatenate all text content from the crawled DOM tree.
+
         This method intelligently filters text content to avoid duplicates and wrapper nodes,
         collecting only meaningful leaf text nodes and deduplicating consecutive identical texts.
-        
+
         Args:
             fmt: Output format, currently supports "json" (default).
-            
+
         Returns:
             JSON string containing array of extracted text content.
         """
@@ -447,11 +455,12 @@ class DeepCrawler:
 
         def _has_text(n) -> bool:
             """Check if a node has meaningful text content."""
-            return bool(getattr(n, "innerText", None) and n.innerText.strip())
+            return bool(getattr(n, 'innerText', None) and n.innerText.strip())
 
         def _is_leaf_text_node(n) -> bool:
-            """Determine if a node is a leaf text node (no children with text)."""
-            children = getattr(n, "children", None) or []
+            """Determine if a node is a leaf text node (no children with
+            text)."""
+            children = getattr(n, 'children', None) or []
             return not any(_has_text(c) for c in children)
 
         def _dedupe_consecutive(seq):
@@ -460,12 +469,12 @@ class DeepCrawler:
 
         # Early return if no element tree available
         if not self.element_tree:
-            return ""
+            return ''
 
         # Build DOM tree from hierarchical data
         root = dtree.build_root(self.element_tree)
         if root is None:
-            return ""
+            return ''
 
         # Collect only leaf text nodes and skip wrapper nodes
         items = []
@@ -494,11 +503,10 @@ class DeepCrawler:
         items = _dedupe_consecutive(items)
 
         # Return as compact JSON array
-        return json.dumps(items, ensure_ascii=False, separators=(",", ":"))
+        return json.dumps(items, ensure_ascii=False, separators=(',', ':'))
 
     async def crawl_all_frames(self, page=None, enable_highlight=False):
-        """
-        爬取主页面及所有 iframe 的元素（支持跨域与嵌套），并返回统一的 id 列表与映射。
+        """爬取主页面及所有 iframe 的元素（支持跨域与嵌套），并返回统一的 id 列表与映射。
 
         返回值:
             (ids, id_map)
@@ -517,9 +525,9 @@ class DeepCrawler:
         # helper: frame scroll
         async def _get_frame_scroll(f):
             try:
-                return await f.evaluate("() => ({x: window.scrollX, y: window.scrollY})")
+                return await f.evaluate('() => ({x: window.scrollX, y: window.scrollY})')
             except Exception:
-                return {"x": 0, "y": 0}
+                return {'x': 0, 'y': 0}
 
         # helper: accumulate iframe offsets to top-page viewport
         async def _accumulate_iframe_offsets(f):
@@ -531,7 +539,7 @@ class DeepCrawler:
                     break
                 try:
                     el = await cur.frame_element()
-                    rect = await el.evaluate("(el) => el.getBoundingClientRect()")
+                    rect = await el.evaluate('(el) => el.getBoundingClientRect()')
                     total_left += rect.get('left', 0) or 0
                     total_top  += rect.get('top', 0) or 0
                 except Exception:
@@ -541,16 +549,19 @@ class DeepCrawler:
 
         # 1) main frame first (base = 0)
         try:
-            payload_main = f"window.__highlightBase__ = 0; window._highlight = {str(enable_highlight).lower()};\n{self.read_js(self.DETECTOR_JS)}"
+            payload_main = f'window.__highlightBase__ = 0; window._highlight = {str(enable_highlight).lower()};\n{self.read_js(self.DETECTOR_JS)}'
             await page.evaluate(payload_main)
-            main_tree, main_id_map = await page.evaluate("buildElementTree()")
+            main_tree, main_id_map = await page.evaluate('buildElementTree()')
             # 保持与单 frame 逻辑一致：直接使用 detector 返回的文档坐标（含主页面滚动）
             for k, v in (main_id_map or {}).items():
                 key = str(k)
                 ids.append(key)
-                merged_id_map[key] = {kk: v.get(kk) for kk in ('tagName','className','innerText','center_x','center_y') if v.get(kk) is not None}
+                # Keep all fields from the detector, ensuring we have selector/xpath for actions
+                # Mark as main frame (frame_url=None means main frame)
+                v['frame_url'] = None
+                merged_id_map[key] = v
         except Exception as e:
-            logging.warning(f"Main frame crawl failed: {e}")
+            logging.warning(f'Main frame crawl failed: {e}')
 
         # 2) sub frames
         frames = page.frames
@@ -559,13 +570,16 @@ class DeepCrawler:
                 continue
             try:
                 highlight_base = (idx + 1) * 1000
-                payload = f"window.__highlightBase__ = {highlight_base}; window._highlight = {str(enable_highlight).lower()};\n{self.read_js(self.DETECTOR_JS)}"
+                payload = f'window.__highlightBase__ = {highlight_base}; window._highlight = {str(enable_highlight).lower()};\n{self.read_js(self.DETECTOR_JS)}'
                 await frame.evaluate(payload)
-                iframe_tree, iframe_id_map = await frame.evaluate("buildElementTree()")
+                iframe_tree, iframe_id_map = await frame.evaluate('buildElementTree()')
                 frame_scroll = await _get_frame_scroll(frame)
                 total_left, total_top = await _accumulate_iframe_offsets(frame)
                 top_scroll = await _get_frame_scroll(page)
 
+                # Get frame URL for later action execution in correct frame context
+                frame_url = frame.url
+                
                 for k, v in (iframe_id_map or {}).items():
                     try:
                         # frame document -> frame viewport
@@ -583,9 +597,12 @@ class DeepCrawler:
                         pass
                     key = str(k)
                     ids.append(key)
-                    merged_id_map[key] = {kk: v.get(kk) for kk in ('tagName','className','innerText','center_x','center_y') if v.get(kk) is not None}
+                    # Keep all fields from the detector, ensuring we have selector/xpath for actions
+                    # Store frame URL so ActionHandler can execute actions in the correct frame context
+                    v['frame_url'] = frame_url
+                    merged_id_map[key] = v
             except Exception as e:
-                logging.warning(f"Sub frame crawl failed: {e}")
+                logging.warning(f'Sub frame crawl failed: {e}')
 
         return ids, merged_id_map
 
@@ -605,23 +622,21 @@ class DeepCrawler:
 
     @staticmethod
     def read_js(file_path: Path) -> str:
-        """
-        Read and return the content of a JavaScript file.
-        
+        """Read and return the content of a JavaScript file.
+
         Args:
             file_path: Path to the JavaScript file.
-            
+
         Returns:
             The content of the JavaScript file as a string.
         """
-        with open(file_path, "r", encoding="utf-8") as file:
+        with open(file_path, 'r', encoding='utf-8') as file:
             return file.read()
 
     @staticmethod
     def dump_json(node: Dict[str, Any], path: Path) -> None:
-        """
-        Serialize a dictionary to a JSON file with proper formatting.
-        
+        """Serialize a dictionary to a JSON file with proper formatting.
+
         Args:
             node: The dictionary to serialize.
             path: The output file path.
@@ -634,10 +649,10 @@ class DeepCrawler:
     def smart_truncate_page_text(
         text_array: List[str],
         max_tokens: int = 3000,
-        strategy: str = "head_tail_sample"
+        strategy: str = 'head_tail_sample'
     ) -> Dict[str, Any]:
-        """
-        Intelligently truncate page text while preserving semantic completeness.
+        """Intelligently truncate page text while preserving semantic
+        completeness.
 
         Based on 2024 research on semantic chunking and context preservation:
         - Avoids "lost-in-the-middle" problem
@@ -658,18 +673,18 @@ class DeepCrawler:
         """
         if not text_array:
             return {
-                "summary": "No text content found",
-                "text_content": [],
-                "coverage": "0/0 (0%)",
-                "estimated_tokens": 0,
-                "strategy_used": strategy
+                'summary': 'No text content found',
+                'text_content': [],
+                'coverage': '0/0 (0%)',
+                'estimated_tokens': 0,
+                'strategy_used': strategy
             }
 
         total_items = len(text_array)
         # Conservative estimate: 1 token ≈ 2 chars (mixed Chinese/English)
         char_budget = max_tokens * 2
 
-        if strategy == "head_tail_sample":
+        if strategy == 'head_tail_sample':
             result_parts = []
             current_chars = 0
 
@@ -703,11 +718,11 @@ class DeepCrawler:
                 current_chars += len(item)
 
             return {
-                "summary": f"Intelligently sampled {len(result_parts)} from {total_items} text segments",
-                "text_content": result_parts,
-                "coverage": f"{len(result_parts)}/{total_items} ({len(result_parts)/total_items*100:.1f}%)",
-                "estimated_tokens": current_chars // 2,
-                "strategy_used": strategy
+                'summary': f'Intelligently sampled {len(result_parts)} from {total_items} text segments',
+                'text_content': result_parts,
+                'coverage': f'{len(result_parts)}/{total_items} ({len(result_parts)/total_items*100:.1f}%)',
+                'estimated_tokens': current_chars // 2,
+                'strategy_used': strategy
             }
 
         else:
@@ -721,11 +736,11 @@ class DeepCrawler:
                 chars += len(item)
 
             return {
-                "summary": f"Simple truncation: {len(result)}/{total_items} items",
-                "text_content": result,
-                "coverage": f"{len(result)}/{total_items} ({len(result)/total_items*100:.1f}%)",
-                "estimated_tokens": chars // 2,
-                "strategy_used": "simple_truncate"
+                'summary': f'Simple truncation: {len(result)}/{total_items} items',
+                'text_content': result,
+                'coverage': f'{len(result)}/{total_items} ({len(result)/total_items*100:.1f}%)',
+                'estimated_tokens': chars // 2,
+                'strategy_used': 'simple_truncate'
             }
 
     # ------------------------------------------------------------------------
@@ -733,9 +748,8 @@ class DeepCrawler:
     # ------------------------------------------------------------------------
 
     async def remove_marker(self, page: Optional[Page] = None) -> None:
-        """
-        Remove visual highlight markers from the page.
-        
+        """Remove visual highlight markers from the page and all frames.
+
         Args:
             page: The Playwright Page to clean. Defaults to instance page.
         """
@@ -743,18 +757,27 @@ class DeepCrawler:
             page = self.page
         try:
             script = self.read_js(self.REMOVER_JS)
+            # Execute in main page
             await page.evaluate(script)
+
+            # Execute in all frames
+            if hasattr(page, 'frames'):
+                for frame in page.frames:
+                    try:
+                        await frame.evaluate(script)
+                    except Exception:
+                        # Ignore errors for individual frames (e.g., cross-origin)
+                        pass
         except Exception as e:
-            logging.error(f"Failed to remove highlight markers: {e}")
+            logging.error(f'Failed to remove highlight markers: {e}')
 
     async def take_screenshot(
             self,
             page: Optional[Page] = None,
             screenshot_path: Optional[str] = None
     ) -> None:
-        """
-        Capture a full-page screenshot and save it to disk.
-        
+        """Capture a full-page screenshot and save it to disk.
+
         Args:
             page: The Playwright Page to screenshot. Defaults to instance page.
             screenshot_path: Custom path for the screenshot. Auto-generated if None.
@@ -765,8 +788,8 @@ class DeepCrawler:
         if screenshot_path:
             path = Path(screenshot_path)
         else:
-            path = self.SCREENSHOTS_DIR / f"{get_time()}_marker.png"
+            path = self.SCREENSHOTS_DIR / f'{get_time()}_marker.png'
 
         path.parent.mkdir(parents=True, exist_ok=True)
         await page.screenshot(path=str(path), full_page=True)
-        logging.debug(f"Screenshot saved to {path}")
+        logging.debug(f'Screenshot saved to {path}')
