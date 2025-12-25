@@ -61,185 +61,190 @@ Vibecoding, Vibe coding, 网页测试自动化, 浏览器测试工具, AI驱动�
 ## 📹 示例演示
 
 - **🤖 对话界面**: [AI 自主生成目标与步骤，在动态聊天页面中理解上下文并执行](https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/%E6%99%BA%E8%83%BDCase%E7%94%9F%E6%88%90.mp4)
-
 - **🎨 静态页面**: [AI 自主探索页面结构、识别元素](https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/vibecoding.mp4)
 
 体验Demo： [🤗Hugging Face](https://huggingface.co/spaces/mmmay0722/WebQA-Agent) · [🚀ModelScope](https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary)
 
-## 安装与配置
+## 🚀 快速开始
 
-### 🚀 Docker一键启动
+### 🏎️ 推荐：uv 本地安装
+```bash
+# 1) 创建项目并安装包
+uv init my-webqa && cd my-webqa
+uv add webqa-agent
 
-在开始之前，请确保已安装 Docker。如未安装，请参考官方安装指南：[Docker 安装指南](https://docs.docker.com/get-started/get-docker/)。
+# 2) 安装浏览器（必需）
+uv run playwright install chromium
 
-推荐版本： Docker >= 24.0, Docker Compose >= 2.32.
+# 3) 生成配置模板
+uv run webqa-agent init            # 创建 config.yaml
+
+# 4) 编辑 config.yaml
+#    - target.url: 你要测试的网站
+#    - llm_config.api_key: 你的 OpenAI 密钥（或设 OPENAI_API_KEY）
+#    更多配置说明见下方“使用说明 > 测试配置”
+
+# 5) 运行
+uv run webqa-agent run
+```
+
+### 🐳 Docker 一键启动
+
+在开始之前，请确保已安装 Docker（推荐 Docker >= 24.0，Docker Compose >= 2.32）。官方指南：[Docker 安装](https://docs.docker.com/get-started/get-docker/)
 
 ```bash
-# 1. 下载配置文件模板
-mkdir -p config && curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/config/config.yaml.example -o config/config.yaml
+mkdir -p config \
+  && curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/config/config.yaml.example -o config/config.yaml
 
-# 2. 编辑配置文件
-# 设置 target.url、llm_config.api_key 等参数
+# 编辑 config.yaml：设置 target.url、llm_config.api_key 等
 
-# 3. 一键启动
 curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/start.sh | bash
 ```
 
-### 源码安装
-
+### 🛠️ 源码安装
 ```bash
 git clone https://github.com/MigoXLab/webqa-agent.git
 cd webqa-agent
-```
-
-1. 推荐使用 [uv](https://github.com/astral-sh/uv) 安装依赖（Python>=3.11）：
-
-```bash
 uv sync
-```
-
-2. 安装 Chromium 浏览器：
-
-```bash
 uv run playwright install chromium
+cp ./config/config.yaml.example ./config/config.yaml
+# 编辑 config.yaml：设置 target.url、llm_config.api_key 等
+uv run webqa-agent run -c ./config/config.yaml
 ```
 
-性能分析 - Lighthouse 安装（可选）
+### 🔧 可选依赖
+性能测试（Lighthouse）：`npm install lighthouse chrome-launcher`（需 Node.js ≥18）
 
+安全测试（Nuclei）：
 ```bash
-# 需要 Node.js >= 18.0.0
-npm install
+brew install nuclei      # macOS
+nuclei -ut               # 更新模板
+# Linux/Windows: https://github.com/projectdiscovery/nuclei/releases
 ```
 
-安全扫描 - Nuclei 安装（可选）
-
-下载地址： [Nuclei Releases](https://github.com/projectdiscovery/nuclei/releases/)
-
-```bash
-# MacOS
-brew install nuclei
-
-# 其他系统请从上述下载地址获取对应架构的版本
-
-# 安装后更新模板并验证
-nuclei -ut -v          # 更新 Nuclei 模板
-nuclei -version        # 验证安装成功
-
-```
-
-参考"使用说明 > 测试配置"进行 `config/config.yaml` 配置后，运行下方命令。
-
-```bash
-uv run python webqa-agent.py
-```
-
-### 🖥️ 可视化 Web 界面
-
-WebQA Agent 提供了基于 Gradio 的可视化界面，操作更加便捷。
-
-```bash
-# 安装 Gradio
-uv add "gradio>5.44.0"
-# 启动 Web UI
-uv run python app.py
-
-# 启动中文界面
-GRADIO_LANGUAGE=zh-CN uv run python app.py
-```
-
-访问地址：http://localhost:7860。
-
-## 使用说明
+## ⚙️ 使用说明
 
 ### 测试配置
 
-`webqa-agent` 通过 YAML 配置测试运行参数：
-
 ```yaml
 target:
-  url: https://example.com/                       # 需要测试的网站URL
-  description: example description
-  # max_concurrent_tests: 2                       # 可选，默认并行2个
+  url: https://example.com              # 需要测试的网站 URL
+  description: 网站质量保证测试
+  # max_concurrent_tests: 2             # 可选，默认并发数 2
 
-test_config:                                      # 测试项配置
-  function_test:                                  # 功能测试
+test_config:
+  function_test:                        # 功能测试
     enabled: True
-    type: ai                                      # default or ai
-    business_objectives: example business objectives  # 建议加入测试范围，如：测试搜索功能
-    dynamic_step_generation:                      # 可选，动态生成步骤配置
-      enabled: True                               # 可选, 默认False，建议设置为True使能动态步骤生成
-      max_dynamic_steps: 10                       # 可选，默认为5，此示例使用10
-      min_elements_threshold: 1                   # 可选，默认为2，此示例使用1以提高灵敏度
-  ux_test:                                        # 用户体验测试
+    type: ai                            # 'default' 或 'ai'
+    business_objectives: 测试搜索功能，生成3个测试用例
+    dynamic_step_generation:
+      enabled: True                     # 启用动态步骤生成
+      max_dynamic_steps: 10
+      min_elements_threshold: 1
+  ux_test:                              # 用户体验测试
     enabled: True
-  performance_test:                               # 性能分析
+  performance_test:                     # 性能分析（需要 Lighthouse）
     enabled: False
-  security_test:                                  # 安全扫描
+  security_test:                        # 安全扫描（需要 Nuclei）
     enabled: False
 
-llm_config:                                       # 视觉模型配置，当前仅支持 OpenAI SDK 兼容格式
-  model: gpt-4.1-2025-04-14                       # 第二阶段测试规划的主模型（推荐）
-  filter_model: gpt-4o-mini                       # 第一阶段元素过滤的轻量级模型（经济实用）
-  api_key: your_api_key
-  base_url: https://api.example.com/v1
-  temperature: 0.1                                # 可选，默认0.1
-  # top_p: 0.9                                    # 可选，如未设置将不传递该参数
-  # max_tokens: 8192                              # 可选，最大输出token数（支持生成更多测试用例）
+llm_config:
+  model: gpt-4.1-2025-04-14             # 视觉模型配置，当前仅支持 OpenAI SDK 兼容格式
+  filter_model: gpt-4o-mini             # 轻量级模型用于元素过滤
+  api_key: your_api_key                 # 或使用 OPENAI_API_KEY 环境变量
+  base_url: https://api.openai.com/v1   # 或使用 OPENAI_BASE_URL 环境变量
+  temperature: 0.1
 
 browser_config:
   viewport: {"width": 1280, "height": 720}
-  headless: False                                 # Docker环境会自动覆盖为True
-  language: zh-CN
+  headless: False                       # Docker 环境自动设为 True
+  language: en-US
   cookies: []
-  save_screenshots: False                         # 是否将截图保存到本地磁盘（默认：False）
+  save_screenshots: False
 
 report:
-  language: en-US                                 # zh-CN, en-US
+  language: en-US                       # zh-CN 或 en-US
 
 log:
-  level: info
+  level: info                           # debug, info, warning, error
 ```
 
-在配置和运行测试时，请注意以下重要事项：
+### 执行说明
 
-#### 1. 功能测试说明
+- **功能测试（AI 模式）**：两阶段规划。Stage 1（`filter_model`）优先筛选元素提升效率，Stage 2（主模型）生成完整用例。根据页面状态与覆盖率会自适应反思/重规划，实际执行用例数可能与初始不同。开启 `dynamic_step_generation` 时，DOM diff 发现的新元素（如下拉、弹窗）会自动生成额外步骤。
+- **功能测试（default 模式）**：聚焦交互是否成功（点击、跳转等）。
+- **用户体验测试**：多模态（截图 + DOM + 文本）评估视觉质量、排版/语法、布局渲染，并给出基于最佳实践的优化建议。
 
-- **AI模式**：采用两阶段规划架构，第一阶段（filter_model）优先排序元素以实现高效分析，第二阶段（主模型）生成全面的测试用例。系统会根据实际页面情况和测试覆盖率进行反思和重新规划，这可能导致最终执行的测试用例数量与初始设定存在一定出入，以确保测试的有效性。当启用 `dynamic_step_generation` 时，系统会通过DOM差异分析自动为新出现的UI元素（如下拉菜单、模态框）生成额外的测试步骤。
+### 📖 CLI 命令参考
 
-- **Default模式**：功能测试的 `default` 模式主要验证UI元素的点击行为是否成功执行，包括按钮点击、链接跳转等基本交互功能。
+#### init - 创建配置
 
-#### 2. 用户体验测试说明
+```bash
+# 在当前目录创建 config.yaml
+webqa-agent init
 
-UX（用户体验）评估关注网页可用性与友好性。采用多模态分析，结合截图、DOM结构和文本内容来评估视觉质量、检测拼写/语法问题以及验证布局渲染。结果中的模型输出基于最佳实践给出改进建议，便于设计与开发参考。
+# 指定输出路径
+webqa-agent init -o myconfig.yaml
+
+# 覆盖已存在的文件
+webqa-agent init --force
+```
+
+#### run - 执行测试
+
+```bash
+# 自动发现配置文件（./config.yaml 或 ./config/config.yaml）
+webqa-agent run
+
+# 指定配置文件
+webqa-agent run -c /path/to/config.yaml
+```
+
+#### ui - 可视化界面
+
+WebQA Agent 提供了基于 Gradio 的可视化界面：
+
+```bash
+# 安装 Gradio
+uv add "gradio>=5.44.0"
+
+# 启动 Web UI（默认英文）
+webqa-agent ui
+# 访问地址：http://localhost:7860
+
+# 启动中文界面
+webqa-agent ui -l zh-CN
+
+# 可选：自定义 host/port 且不自动打开浏览器
+webqa-agent ui --host 0.0.0.0 --port 9000 --no-browser
+```
 
 ### 🧠 推荐模型
 
-以下模型经过适配与验证，推荐使用：
+| 模型 | 说明 |
+|------|------|
+| **gpt-4.1-2025-04-14** | 准确性与可靠性较高 |
+| **gpt-4.1-mini-2025-04-14** | 经济实用 |
+| **qwen3-vl-235b-a22b-instruct** | 开源模型，私有部署首选 |
+| **doubao-seed-1-6-vision-250815** | 网页理解较优异，支持视觉 |
 
-| 模型                                | 推荐理由 |
-|-----------------------------------|------|
-| **gpt-4.1-2025-04-14**            | 准确性与可靠性较高 |
-| **gpt-4.1-mini-2025-04-14**       | 经济实用，性价比高 |
-| **qwen3-vl-235b-a22b-instruct**   | 开源模型，私有部署首选 |
-| **doubao-seed-1-6-vision-250815** | 网页理解较优异，支持视觉识别 |
+### 📊 查看结果
 
-### 查看结果
+测试报告生成在 `reports/` 目录下，打开 HTML 文件即可查看详细结果。
 
-在 `reports` 目录会生成本次测试的文件夹，打开其中的 HTML 报告即可查看结果。
-
-## RoadMap
+## 🗺️ RoadMap
 
 1. AI智能功能功能测试持续优化：提升覆盖率与准确性
 2. 功能遍历与页面校验：校验业务逻辑正确性与数据完整性
-3. 交互与可视化：测试项可视化与本地服务实时展示推理过程
+3. 交互与可视化：实时展示推理过程
 4. 能力扩展：多模型接入与更多评估维度集成
 
-## 致谢
+## 🙏 致谢
 
 - [natbot](https://github.com/nat/natbot): 通过GPT-3驱动浏览器
 - [Midscene.js](https://github.com/web-infra-dev/midscene/)：Web、Android、自动化和测试的AI Operator
 - [browser-use](https://github.com/browser-use/browser-use/)：用于浏览器控制的AI Agent
 
-## 开源许可证
+## 📄 开源许可证
 
-该项目采用 [Apache 2.0 开源许可证](LICENSE)。
+该项目采用 [Apache 2.0 开源许可证](LICENSE)

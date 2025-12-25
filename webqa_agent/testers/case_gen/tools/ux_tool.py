@@ -58,8 +58,8 @@ class UIUXViewportTool(BaseTool):
         try:
             logging.debug(f"Executing UX verification: {assertion}")
 
-            # Dynamically get current page from driver
-            page = self.ui_tester_instance.driver.get_page()
+            # Dynamically get current page from browser session
+            page = self.ui_tester_instance.browser_session.page
 
             dp = DeepCrawler(page)
             # Crawl for interactive elements with layout info (for layout check)

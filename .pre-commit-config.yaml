@@ -62,8 +62,10 @@ repos:
     rev: v8.27.0
     hooks:
     -   id: gitleaks
-        entry: "gitleaks dir"
+        entry: "gitleaks"
         args: [
+          "protect",
+          "--staged",
           "--verbose",
           "--redact=50"
         ]

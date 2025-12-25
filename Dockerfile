@@ -49,5 +49,5 @@ COPY . /app
 # Update nuclei templates
 RUN nuclei -ut -v
 
-# Set to run webqa-agent
-CMD ["python", "webqa-agent.py"]
+# Default: run tests with auto-discovered config (/app/config/config.yaml)
+CMD ["webqa-agent", "run", "-c", "/app/config/config.yaml"]

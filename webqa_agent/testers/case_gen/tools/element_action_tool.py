@@ -104,7 +104,7 @@ class UITool(BaseTool):
             viewport_only: 是否只获取视窗内容，默认True（用于错误检测场景）
         """
         logging.debug(f"Retrieving page context for analysis (viewport_only={viewport_only})")
-        page = self.ui_tester_instance.driver.get_page()
+        page = self.ui_tester_instance.browser_session.page
         dp = DeepCrawler(page)
         await dp.crawl(highlight=True, filter_text=True, viewport_only=viewport_only)
         page_structure = dp.get_text()

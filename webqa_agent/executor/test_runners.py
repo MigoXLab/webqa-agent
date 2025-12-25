@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
-from webqa_agent.browser.session import BrowserSession
+from webqa_agent.browser import BrowserSession
 from webqa_agent.data import TestConfiguration, TestResult, TestStatus
 from webqa_agent.data.test_structures import (SubTestReport, SubTestResult,
                                               get_category_for_test_type)
@@ -24,7 +24,8 @@ class BaseTestRunner(ABC):
 
     @abstractmethod
     async def run_test(
-        self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
+        self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str,
+        session_pool=None
     ) -> TestResult:
         """Run the test and return results."""
         pass
@@ -34,14 +35,14 @@ class UIAgentLangGraphRunner(BaseTestRunner):
     """Runner for UIAgent LangGraph tests."""
 
     async def run_test(
-        self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
+        self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str,
+        session_pool=None
     ) -> TestResult:
         """Run UIAgent LangGraph test using LangGraph workflow with
         ParallelUITester."""
 
         with Display.display(test_config.test_name):
             from webqa_agent.testers.case_gen.graph import app as graph_app
-            from webqa_agent.testers.function_tester import UITester
 
             result = TestResult(
                 test_id=test_config.test_id,
@@ -51,11 +52,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                 category=get_category_for_test_type(test_config.test_type),
             )
 
-            parallel_tester: UITester | None = None
             try:
-                parallel_tester = UITester(llm_config=llm_config, browser_session=session)
-                await parallel_tester.initialize()
-
                 business_objectives = test_config.test_specific_config.get('business_objectives', '')
                 logging.info(f"{icon['running']} Running test: {test_config.test_name} with business objectives: {business_objectives}")
 
@@ -69,20 +66,30 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                 cookies = test_config.test_specific_config.get('cookies')
 
                 initial_state = {
+                    # Core configuration
                     'url': target_url,
                     'business_objectives': business_objectives,
                     'cookies': cookies,
-                    'completed_cases': [],
-                    'reflection_history': [],
-                    'remaining_objectives': business_objectives,
-                    'ui_tester_instance': parallel_tester,
-                    'current_test_case_index': 0,
-                    'skip_reflection': False,  # Initialize skip reflection flag
                     'language': test_config.report_config.get('language', 'zh-CN'),
-                    'dynamic_step_generation': dynamic_step_config,  # Pass dynamic step generation config
+
+                    # Test data
+                    'test_cases': [],  # Will be populated by plan_test_cases
+                    'completed_cases': [],
+                    'recorded_cases': [],
+
+                    # Control flags
+                    'generate_only': False,
+                    'skip_reflection': False,
+
+                    # Feature configuration
+                    'dynamic_step_generation': dynamic_step_config,
+
+                    # Infrastructure
+                    'session_pool': session_pool,
+                    'llm_config': llm_config,
                 }
 
-                graph_config = {'configurable': {'ui_tester_instance': parallel_tester}, 'recursion_limit': 100}
+                graph_config = {'recursion_limit': 100}
 
                 # Mapping from case name to status obtained from LangGraph aggregate_results
                 graph_case_status_map: Dict[str, str] = {}
@@ -218,10 +225,8 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                 raise
 
             finally:
-                # Note: Browser monitoring data collection already handled in main flow
-                # No additional cleanup needed here
-                if parallel_tester:
-                    logging.debug('UITester cleanup completed in main flow')
+                # Note: Browser session cleanup is handled by graph internally
+                logging.debug('LangGraph test cleanup completed')
 
             return result
 
@@ -231,7 +236,8 @@ class UXTestRunner(BaseTestRunner):
     dependencies."""
 
     async def run_test(
-        self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
+        self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str,
+        session_pool=None
     ) -> TestResult:
         """Run UX tests with enhanced screenshot and data collection."""
 
@@ -246,7 +252,7 @@ class UXTestRunner(BaseTestRunner):
 
             try:
                 logging.info(f"{icon['running']} Running UX test: {test_config.test_name}")
-                page = session.get_page()
+                page = session.page
 
                 text_test = PageTextTest(llm_config, report_config=test_config.report_config)
                 text_result: SubTestResult = await text_test.run(page=page)
@@ -290,7 +296,8 @@ class LighthouseTestRunner(BaseTestRunner):
     """Runner for Lighthouse."""
 
     async def run_test(
-        self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
+        self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str,
+        session_pool=None  # Not used - Lighthouse manages its own Chrome instance
     ) -> TestResult:
         """Run Lighthouse tests."""
 
@@ -305,7 +312,8 @@ class LighthouseTestRunner(BaseTestRunner):
 
             try:
                 logging.info(f"{icon['running']} Running test: {test_config.test_name}")
-                browser_config = session.browser_config
+                # Get browser config from test_config instead of session (session is None for performance tests)
+                browser_config = test_config.browser_config
 
                 # Only run Lighthouse on Chromium browsers
                 if browser_config.get('browser_type') != 'chromium':
@@ -336,7 +344,8 @@ class BasicTestRunner(BaseTestRunner):
     """Runner for Traversal tests."""
 
     async def run_test(
-        self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
+        self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str,
+        session_pool=None
     ) -> TestResult:
         """Run UX tests with enhanced screenshot and data collection."""
 
@@ -351,7 +360,7 @@ class BasicTestRunner(BaseTestRunner):
 
             try:
                 logging.info(f"{icon['running']} Running test: {test_config.test_name}")
-                page = session.get_page()
+                page = session.page
                 browser_config = session.browser_config
 
                 # Discover clickable elements via crawler
@@ -428,7 +437,7 @@ class BasicTestRunner(BaseTestRunner):
 
 #             try:
 #                 logging.info(f"{icon['running']} Running test: {test_config.test_name}")
-#                 page = session.get_page()
+#                 page = session.page
 #                 browser_config = session.browser_config
 
 #                 # Discover clickable elements via crawler
@@ -484,7 +493,7 @@ class BasicTestRunner(BaseTestRunner):
 
 #             try:
 #                 logging.info(f"{icon['running']} Running test: {test_config.test_name}")
-#                 page = session.get_page()
+#                 page = session.page
 
 #                 # Discover page elements
 #                 from webqa_agent.crawler.crawl import CrawlHandler
@@ -554,7 +563,8 @@ class SecurityTestRunner(BaseTestRunner):
         }
 
     async def run_test(
-        self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str
+        self, session: BrowserSession, test_config: TestConfiguration, llm_config: Dict[str, Any], target_url: str,
+        session_pool=None  # Not used - Nuclei manages its own scanning
     ) -> TestResult:
         """Run Security tests using Nuclei scanning."""
 
