@@ -658,6 +658,60 @@ For each test case, provide:
     shared_standards = get_shared_test_design_standards(language)
     custom_tools_section = _get_custom_tools_planning_section()
 
+    # ============================================================================
+    # Solution A+: Dynamic JSON Examples for Custom Tools
+    # ============================================================================
+    # Dynamically collect ALL custom tool step examples from registry
+    custom_step_examples = []
+    if custom_tools_section:  # Only if custom tools exist
+        from webqa_agent.testers.case_gen.tools.registry import get_registry
+        registry = get_registry()
+        for name in registry.get_tool_names():
+            metadata = registry.get_metadata(name)
+            # Filter for custom category with step_type defined
+            if (metadata and hasattr(metadata, 'category') and metadata.category == 'custom'
+                    and hasattr(metadata, 'step_type') and metadata.step_type):
+                # Use tool's first example or generate a simple one
+                example_instruction = (
+                    metadata.examples[0] if metadata.examples
+                    else f'Use {metadata.step_type} for appropriate scenario'
+                )
+                custom_step_examples.append(
+                    f'{{"type": "{metadata.step_type}", "instruction": "{example_instruction}"}}'
+                )
+
+    # Build dynamic steps example based on available custom tools
+    if custom_step_examples:
+        # Randomly select 1-2 custom tool examples to show (avoid prompt bloat)
+        import random
+        selected = random.sample(
+            custom_step_examples,
+            min(2, len(custom_step_examples))
+        )
+
+        # Build steps array with both standard and custom step types
+        steps_example = f"""      {{"action": "specific_action_instruction"}},
+      {{"verify": "precise_validation_instruction"}},
+      {selected[0]}"""
+
+        if len(selected) > 1:
+            steps_example += f""",
+      {selected[1]}"""
+
+        steps_example += """,
+      {{"action": "another_action_instruction"}},
+      {{"ux_verify": "final_validation_instruction"}}"""
+
+        # Add explanatory note for custom step types
+        custom_steps_note = '\n**Important**: The `steps` array can contain BOTH standard step types (action/verify/ux_verify) AND custom step types (type/instruction) as demonstrated above. Use custom step types when business objectives align with their use cases.\n'
+    else:
+        # No custom tools - standard format only
+        steps_example = """      {{"action": "specific_action_instruction"}},
+      {{"verify": "precise_validation_instruction"}},
+      {{"action": "another_action_instruction"}},
+      {{"ux_verify": "final_validation_instruction"}}"""
+        custom_steps_note = ''
+
     system_prompt = f"""
 {role_and_objective}
 
@@ -670,7 +724,7 @@ For each test case, provide:
 ## Output Format Requirements
 
 Your response must be ONLY in JSON format. Do not include any analysis, explanation, or additional text outside the JSON structure.
-
+{custom_steps_note}
 ```json
 [
   {{
@@ -683,10 +737,7 @@ Your response must be ONLY in JSON format. Do not include any analysis, explanat
     "test_data_requirements": "domain_appropriate_data_requirements",
     "preamble_actions": [optional_setup_steps],
     "steps": [
-      {{"action": "specific_action_instruction"}},
-      {{"verify": "precise_validation_instruction"}}
-      {{"action": "specific_action_instruction"}},
-      {{"ux_verify": "precise_validation_instruction"}}
+{steps_example}
     ],
     "reset_session": boolean_isolation_flag,
     "success_criteria": ["measurable_success_conditions"]
