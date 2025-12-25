@@ -36,7 +36,7 @@ repos:
         args: ["--remove"]
     -   id: mixed-line-ending
         args: ["--fix=lf"]
-    # -   id: detect-private-key
+    -   id: detect-private-key
     -   id: check-json
 -   repo: https://github.com/executablebooks/mdformat
     rev: 0.7.9
