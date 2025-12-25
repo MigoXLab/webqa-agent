@@ -1,7 +1,7 @@
 target:
   url: https://baidu.com
   description: Test search functionality
-  # max_concurrent_tests: 2  # Optional, default parallel 2
+  max_concurrent_tests: 2  # Optional, default parallel 2
 
 test_config: # Test configuration
   function_test:

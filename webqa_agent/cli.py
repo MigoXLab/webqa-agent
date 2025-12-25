@@ -27,7 +27,7 @@ CONFIG_TEMPLATE = """# WebQA Agent Configuration File
 target:
   url: https://example.com  # Target URL to test
   description: Website quality assurance testing
-  # max_concurrent_tests: 2  # Optional, default parallel 2
+  max_concurrent_tests: 2  # Optional, default parallel 2
 
 test_config:
   function_test:
@@ -63,7 +63,7 @@ report:
   language: en-US  # zh-CN or en-US
 
 log:
-  level: info  # debug, info, warning, error
+  level: info  # debug, info
 """
 
 
