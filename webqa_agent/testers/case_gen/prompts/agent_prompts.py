@@ -1,5 +1,68 @@
 """Prompt templates for execution agent."""
 
+from webqa_agent.testers.case_gen.tools.registry import get_registry
+
+
+def get_custom_tools_prompt_section() -> str:
+    """Generate documentation ONLY for custom tools (category='custom').
+
+    This appends to existing tool documentation, does NOT replace it.
+    Core tools (execute_ui_action, execute_ui_assertion, execute_ux_verify)
+    retain their carefully crafted descriptions.
+
+    Returns:
+        Formatted string with custom tools documentation, or empty string if none
+    """
+    try:
+        registry = get_registry()
+
+        # Only get custom category tools from metadata cache
+        custom_tools = []
+        for name in registry.get_tool_names():
+            metadata = registry.get_metadata(name)
+            if metadata and getattr(metadata, 'category', '') == 'custom':
+                custom_tools.append((name, metadata))
+
+        if not custom_tools:
+            return ''  # No custom tools, no additional prompt
+
+        sections = ['\n## Additional Custom Tools\n', 'The following custom tools are also available:\n']
+
+        for name, metadata in custom_tools:
+            section = f'\n- **`{name}`**:\n'
+
+            # Short description
+            if hasattr(metadata, 'description_short') and metadata.description_short:
+                section += f'  {metadata.description_short}\n'
+
+            # Detailed description
+            if hasattr(metadata, 'description_long') and metadata.description_long:
+                section += f'  {metadata.description_long}\n'
+
+            # When to use this tool
+            if hasattr(metadata, 'use_when') and metadata.use_when:
+                section += '  - ✅ **Use when**: ' + ', '.join(metadata.use_when) + '\n'
+
+            # When NOT to use this tool
+            if hasattr(metadata, 'dont_use_when') and metadata.dont_use_when:
+                section += '  - ❌ **Avoid when**: ' + ', '.join(metadata.dont_use_when) + '\n'
+
+            # Usage examples
+            if hasattr(metadata, 'examples') and metadata.examples:
+                section += '  - 📝 **Examples**:\n'
+                for example in metadata.examples[:3]:
+                    section += f'    * `{example}`\n'
+
+            sections.append(section)
+
+        return ''.join(sections)
+
+    except Exception as e:
+        # Fail silently - custom tools are optional
+        import logging
+        logging.debug(f'Failed to generate custom tools prompt section: {e}')
+        return ''
+
 
 def get_execute_system_prompt(case: dict) -> str:
     """Generate detailed system prompt for execution agent."""
@@ -506,6 +569,11 @@ When all test steps are completed or an unrecoverable error occurs:
 - **Traceability**: Clear audit trail of all actions and decisions
 - **Adaptability**: Intelligent response to dynamic UI conditions
 - **Completeness**: Thorough validation of success criteria"""
+
+    # Append custom tools section if any custom tools are registered
+    custom_tools_section = get_custom_tools_prompt_section()
+    if custom_tools_section:
+        system_prompt += custom_tools_section
 
     return system_prompt
 

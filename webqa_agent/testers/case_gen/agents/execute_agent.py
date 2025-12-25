@@ -34,6 +34,7 @@ from webqa_agent.testers.case_gen.prompts.planning_prompts import \
     get_dynamic_step_generation_prompt
 from webqa_agent.testers.case_gen.tools.element_action_tool import (
     UIAssertTool, UITool)
+from webqa_agent.testers.case_gen.tools.registry import get_registry
 from webqa_agent.testers.case_gen.tools.ux_tool import UIUXViewportTool
 from webqa_agent.testers.case_gen.utils.case_recorder import \
     CentralCaseRecorder
@@ -44,6 +45,85 @@ from webqa_agent.utils.log_icon import icon
 LONG_STEPS = 30
 RETRY_STABILIZATION_DELAY = 1.0
 MIN_RECOVERY_CONFIDENCE = 0.7
+
+
+# ============================================================================
+# Tool Registry Helper Functions
+# ============================================================================
+
+def _get_tools(ui_tester_instance, llm_config, case_recorder):
+    """Get tools from registry or fallback to hardcoded list.
+
+    Uses the Tool Registry for dynamic tool loading. Falls back to hardcoded
+    tool instantiation if registry fails for backward compatibility.
+
+    Args:
+        ui_tester_instance: UITester instance for browser access
+        llm_config: LLM configuration dict
+        case_recorder: CentralCaseRecorder instance
+
+    Returns:
+        List of instantiated tool objects
+    """
+    try:
+        registry = get_registry()
+        tool_names = registry.get_tool_names()
+        if tool_names:
+            # Registry has tools registered
+            tools = registry.get_tools(
+                ui_tester_instance=ui_tester_instance,
+                llm_config=llm_config,
+                case_recorder=case_recorder
+            )
+            if tools:
+                logging.debug(f'Tools loaded from registry: {[t.name for t in tools]}')
+                return tools
+    except Exception as e:
+        logging.warning(f'Registry loading failed, using fallback: {e}')
+
+    # Fallback to hardcoded (backward compatibility)
+    logging.debug('Using fallback hardcoded tool instantiation')
+    return [
+        UITool(ui_tester_instance=ui_tester_instance),
+        UIAssertTool(ui_tester_instance=ui_tester_instance),
+        UIUXViewportTool(
+            ui_tester_instance=ui_tester_instance,
+            llm_config=llm_config,
+            case_recorder=case_recorder
+        ),
+    ]
+
+
+# ============================================================================
+# Step Type Parsing Helper
+# ============================================================================
+
+def _parse_step_type(step: dict) -> str:
+    """Parse step type from test step dict.
+
+    Supports both core fields (action, verify, ux_verify) and custom tool fields (type).
+
+    Args:
+        step: Test step dictionary
+
+    Returns:
+        Step type string: 'Action', 'Assertion', 'UX_Verify', or custom step type
+    """
+    if step.get('action'):
+        return 'Action'
+    elif step.get('verify'):
+        return 'Assertion'
+    elif step.get('ux_verify'):
+        return 'UX_Verify'
+    elif step.get('type'):
+        # Custom tool step type (e.g., 'custom_api_test')
+        step_type = step['type']
+        logging.debug(f'Custom step type detected: {step_type}')
+        return step_type
+    else:
+        # Fallback to Assertion for unknown step formats
+        logging.warning(f'Unknown step format, defaulting to Assertion: {step}')
+        return 'Assertion'
 
 
 # ============================================================================
@@ -935,13 +1015,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     )
     logging.debug(f"LLM configured: {llm_config.get('model')} at {llm_config.get('base_url')}")
 
-    # Instantiate tools with correct parameters
-    # Note: All tools now use ui_tester_instance to dynamically get page
-    tools = [
-        UITool(ui_tester_instance=ui_tester_instance, case_recorder=case_recorder),
-        UIAssertTool(ui_tester_instance=ui_tester_instance, case_recorder=case_recorder),
-        UIUXViewportTool(ui_tester_instance=ui_tester_instance, llm_config=llm_config, case_recorder=case_recorder),
-    ]
+    # Instantiate tools via registry (with fallback to hardcoded for compatibility)
+    tools = _get_tools(ui_tester_instance, llm_config, case_recorder)
     logging.debug(f'Tools initialized: {[tool.name for tool in tools]}')
 
     # The prompt now includes the system message
@@ -1100,16 +1175,17 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     i = 0
     while i < len(case_steps):
         step = case_steps[i]
-        instruction_to_execute = step.get('action') or step.get('verify') or step.get('ux_verify')
-        if step.get('action'):
-            step_type = 'Action'
-        elif step.get('verify'):
-            step_type = 'Assertion'
-        elif step.get('ux_verify'):
-            step_type = 'UX_Verify'
-        else:
-            logging.warning(f'Unknown step type: {step}')
-            step_type = 'Assertion'
+
+        # Parse step type (supports core fields and custom tool type field)
+        step_type = _parse_step_type(step)
+
+        # Extract instruction (supports core fields and custom tool instruction field)
+        instruction_to_execute = (
+            step.get('action') or
+            step.get('verify') or
+            step.get('ux_verify') or
+            step.get('instruction')  # Support custom tool instruction
+        )
 
         logging.info(f'Executing Step {i + 1}/{total_steps} ({step_type}), step instruction: {instruction_to_execute}')
 
@@ -1170,19 +1246,6 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         )
         # ---------------------------------------------
 
-        # --- Tool Choice Masking ---
-        tool_choice = None
-        if step_type == 'Action':
-            tool_choice = {'type': 'function', 'function': {'name': 'execute_ui_action'}}
-            logging.debug('Forcing tool choice: execute_ui_action')
-        elif step_type == 'Assertion':
-            tool_choice = {'type': 'function', 'function': {'name': 'execute_ui_assertion'}}
-            logging.debug('Forcing tool choice: execute_ui_assertion')
-        elif step_type == 'UX_Verify':
-            tool_choice = {'type': 'function', 'function': {'name': 'execute_ux_verify'}}
-            logging.debug('Forcing tool choice: execute_ux_verify')
-        # -------------------------
-
         try:
             # The agent's history includes all prior messages
             logging.debug(f'Step {i + 1} - Calling Agent to execute {step_type}...')
@@ -1190,7 +1253,6 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
             result = await agent_executor.ainvoke(
                 {'messages': pruned_messages},
-                config={'configurable': {'tool_choice': tool_choice}} if tool_choice else {},
             )
 
             end_time = datetime.datetime.now()

@@ -2,6 +2,52 @@
 
 import json
 
+from webqa_agent.testers.case_gen.tools.base import ActionTypes
+from webqa_agent.testers.case_gen.tools.registry import get_registry
+
+
+def _get_custom_tools_planning_section() -> str:
+    """Generate custom tools documentation for planning prompt.
+
+    Returns dynamic section documenting custom tools with step_type for LLM to use
+    in test case planning. Only includes custom tools that have step_type defined.
+
+    Returns:
+        Formatted string describing custom step types, or empty string if none exist
+    """
+    registry = get_registry()
+    custom_tools = []
+    for name in registry.get_tool_names():
+        metadata = registry.get_metadata(name)
+        if metadata and hasattr(metadata, 'category') and metadata.category == 'custom' and hasattr(metadata, 'step_type') and metadata.step_type:
+            custom_tools.append((name, metadata))
+
+    if not custom_tools:
+        return ''
+
+    section = '\n### 📌 Available Custom Step Types:\n'
+    section += 'In addition to standard action/verify/ux_verify steps, you can use these custom step types:\n\n'
+
+    for name, metadata in custom_tools:
+        section += f'- **`{metadata.step_type}`**: {metadata.description_short}\n'
+
+        # Add use cases
+        if metadata.use_when:
+            section += f"  - ✅ **Use for**: {', '.join(metadata.use_when)}\n"
+
+        # Add anti-patterns
+        if metadata.dont_use_when:
+            section += f"  - ❌ **Don't use for**: {', '.join(metadata.dont_use_when)}\n"
+
+        # Add example usage
+        if metadata.examples:
+            section += f"  - 📝 **Example step**: `{{\"type\": \"{metadata.step_type}\", \"instruction\": \"{metadata.examples[0]}\"}}`\n"
+
+        section += '\n'
+
+    section += '**Note**: Custom step types use `type` and `instruction` fields instead of `action`/`verify`/`ux_verify` fields.\n'
+    return section
+
 
 def get_shared_test_design_standards(language: str = 'zh-CN') -> str:
     """Get shared test case design standards for reuse in plan and reflect
@@ -14,6 +60,8 @@ def get_shared_test_design_standards(language: str = 'zh-CN') -> str:
         String containing complete test case design standards
     """
     name_language = '中文' if language == 'zh-CN' else 'English'
+    # Get dynamic action types from registry (supports custom extensions)
+    action_types_str = ActionTypes.get_prompt_string()
     return f"""## Test Case Design Standards
 
 ### Test Case Granularity Principle (CRITICAL - HIGHEST PRIORITY)
@@ -81,7 +129,7 @@ Each test case must focus on ONE specific functionality:
 - **`success_criteria`**: Measurable, verifiable conditions that define test pass/fail status
 
 #### Step Decomposition Rules:
-1. **One Action Per Step**: Each step in the `steps` array must contain ONLY ONE atomic action, and the action type must be one of: "Tap", "Input", "Scroll", "SelectDropdown", "Clear", "Hover", "KeyboardPress", "Upload", "Drag", "GoToPage", "GoBack", "Sleep", "Mouse".
+1. **One Action Per Step**: Each step in the `steps` array must contain ONLY ONE atomic action, and the action type must be one of: {action_types_str}.
 2. **Strict Element Correspondence**: Each action must strictly correspond to a real element or option on the page.
 3. **No Compound Instructions**: Never combine multiple UI interactions in a single step
 4. **Navigation Return Strategy**: When a step navigates to a new page (via link click, form submission, etc.) and subsequent steps require the original page context:
@@ -608,6 +656,7 @@ For each test case, provide:
 """
 
     shared_standards = get_shared_test_design_standards(language)
+    custom_tools_section = _get_custom_tools_planning_section()
 
     system_prompt = f"""
 {role_and_objective}
@@ -615,6 +664,8 @@ For each test case, provide:
 {mode_section}
 
 {shared_standards}
+
+{custom_tools_section}
 
 ## Output Format Requirements
 
@@ -822,6 +873,7 @@ def get_reflection_system_prompt(language: str = 'zh-CN') -> str:
     """
     name_language = '中文' if language == 'zh-CN' else 'English'
     shared_standards = get_shared_test_design_standards(language)
+    custom_tools_section = _get_custom_tools_planning_section()
 
     return f"""## Role
 You are a Senior QA Testing Professional responsible for dynamic test execution oversight with enhanced business domain awareness and contextual understanding. Your expertise includes business process analysis, domain-specific testing, user experience evaluation, and strategic decision-making based on comprehensive execution insights.
@@ -950,6 +1002,8 @@ IF (len(completed_cases) < len(current_plan)
 ```
 
 {shared_standards}
+
+{custom_tools_section}
 
 ## Enhanced Decision Quality Standards
 - **Business Context-Aware**: All decisions must consider business domain, user needs, and industry context
