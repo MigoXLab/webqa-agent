@@ -186,7 +186,7 @@ class ParallelTestExecutor:
     ) -> TestResult:
         """Execute a single test with proper isolation."""
 
-        # Set test_id context for logging (format: test_name|case_id for readability)
+        # Set test-level context for logging. This will be overridden by case-level context where applicable.
         token = test_id_var.set(test_config.test_name)
 
         async with semaphore:
