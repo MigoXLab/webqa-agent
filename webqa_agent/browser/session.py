@@ -244,7 +244,8 @@ class BrowserSessionPool:
         await s.initialize()  # Parallel browser init
         async with self._creation_lock:
             self._sessions.append(s)
-        logging.info(f"[SessionPool] Created session: {s.session_id} (total: {len(self._sessions)}/{self.pool_size})")
+            sessions_count = len(self._sessions)
+        logging.info(f"[SessionPool] Created session: {s.session_id} (total: {sessions_count}/{self.pool_size})")
         return s
 
     async def acquire(self, timeout: Optional[float] = 60.0) -> _BrowserSession:
