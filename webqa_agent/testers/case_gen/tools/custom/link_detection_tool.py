@@ -70,8 +70,8 @@ class DynamicLinkDetectionTool(WebQABaseTool):
     to maintain state across multiple invocations within the same test case.
 
     Architecture:
-    - Category: 'action' - Updates last_action_context for state tracking
-    - Trigger: LLM autonomous choice (step_type=None) for effectiveness
+    - Category: 'custom' - Custom user-defined tool
+    - Trigger: Explicit step_type for LLM planning prompt inclusion
     - Browser Access: Requires ui_tester_instance for page interaction
     - Validation: Reuses WebAccessibilityTest methods for consistency
 
@@ -105,8 +105,8 @@ class DynamicLinkDetectionTool(WebQABaseTool):
         """Return tool metadata for registration and prompt generation."""
         return WebQAToolMetadata(
             name='detect_dynamic_links',
-            category='action',  # Updates last_action_context
-            step_type=None,  # LLM autonomous choice for effectiveness
+            category='custom',  # Custom tool - marks as user-defined
+            step_type='detect_dynamic_links',  # Explicit step type for planning
             description_short='Detects new links appearing after user interactions',
             description_long=(
                 'Identifies and validates new links that appear dynamically after user '
@@ -150,7 +150,7 @@ class DynamicLinkDetectionTool(WebQABaseTool):
 
         This tool requires ui_tester_instance for browser access.
         """
-        return {'ui_tester_instance': 'UITester instance for browser page access'}
+        return {'ui_tester_instance': 'ui_tester_instance'}
 
     async def _arun(
         self,

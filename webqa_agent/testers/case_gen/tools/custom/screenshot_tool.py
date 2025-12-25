@@ -46,10 +46,9 @@ class ScreenshotTool(WebQABaseTool):
     - Updating last_action_context for assertion chain
     - Proper error handling with format helpers
 
-    Design Note: This tool uses step_type=None, meaning it is NOT forced by
-    test plan step types. Instead, the LLM can freely choose to use this tool
-    during execution when appropriate (e.g., for visual documentation, debugging).
-    For tools that should be forced by step_type, see api_tool.py example.
+    Design Note: This tool uses an explicit step_type to appear in LLM planning
+    prompts. The LLM can choose to use this tool when generating test plans
+    (e.g., for visual documentation, debugging). See api_tool.py for reference.
     """
 
     name: str = 'capture_screenshot'
@@ -70,8 +69,8 @@ class ScreenshotTool(WebQABaseTool):
         """Return tool metadata for registration."""
         return WebQAToolMetadata(
             name='capture_screenshot',
-            category='action',  # Action category - part of action chain
-            # No step_type - this tool is used via LLM choice, not forced
+            category='custom',  # Custom tool - marks as user-defined
+            step_type='capture_screenshot',  # Explicit step type for planning
             description_short='Captures a screenshot of the current page.',
             description_long=(
                 'Captures a screenshot of the current browser viewport or full page. '
