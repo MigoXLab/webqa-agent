@@ -160,7 +160,12 @@ class CentralCaseRecorder:
         if self.current_case_data and self.current_case_data.get("final_summary"):
             reports.append(SubTestReport(title="Summary", issues=self.current_case_data.get("final_summary", "")))
 
+        # Extract case_id from case_info if available
+        case_info = self.current_case_data.get("case_info", {}) if self.current_case_data else {}
+        case_id = case_info.get("case_id", "") if isinstance(case_info, dict) else ""
+
         return SubTestResult(
+            sub_test_id=case_id,
             name=name,
             status=final_status,
             steps=steps_models,
