@@ -556,7 +556,10 @@ class DeepCrawler:
             for k, v in (main_id_map or {}).items():
                 key = str(k)
                 ids.append(key)
-                merged_id_map[key] = {kk: v.get(kk) for kk in ('tagName','className','innerText','center_x','center_y') if v.get(kk) is not None}
+                # Keep all fields from the detector, ensuring we have selector/xpath for actions
+                # Mark as main frame (frame_url=None means main frame)
+                v['frame_url'] = None
+                merged_id_map[key] = v
         except Exception as e:
             logging.warning(f'Main frame crawl failed: {e}')
 
@@ -574,6 +577,9 @@ class DeepCrawler:
                 total_left, total_top = await _accumulate_iframe_offsets(frame)
                 top_scroll = await _get_frame_scroll(page)
 
+                # Get frame URL for later action execution in correct frame context
+                frame_url = frame.url
+                
                 for k, v in (iframe_id_map or {}).items():
                     try:
                         # frame document -> frame viewport
@@ -591,7 +597,10 @@ class DeepCrawler:
                         pass
                     key = str(k)
                     ids.append(key)
-                    merged_id_map[key] = {kk: v.get(kk) for kk in ('tagName','className','innerText','center_x','center_y') if v.get(kk) is not None}
+                    # Keep all fields from the detector, ensuring we have selector/xpath for actions
+                    # Store frame URL so ActionHandler can execute actions in the correct frame context
+                    v['frame_url'] = frame_url
+                    merged_id_map[key] = v
             except Exception as e:
                 logging.warning(f'Sub frame crawl failed: {e}')
 

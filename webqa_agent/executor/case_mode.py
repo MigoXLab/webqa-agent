@@ -109,6 +109,8 @@ class CaseMode:
             try:
                 parsed_cases = Case.from_yaml_list(cases)
                 logging.info(f'📋 Parsed {len(parsed_cases)} test cases')
+                # Set total count early for report summary
+                result_count['total'] = len(parsed_cases)
             except ValidationError as e:
                 # Format friendly error message
                 error_details = []
@@ -206,37 +208,20 @@ class CaseMode:
 
             logging.info(f"{icon['check']} Cases executed: {passed_cases}/{total_cases} passed")
 
-            # Generate HTML report
-            if case_executor and case_executor.report_dir:
-                html_report_path = self._generate_html_with_jinja2(
-                    test_session, report_cfg, case_executor.report_dir, result_count
-                )
-                test_session.html_report_path = html_report_path
-
         except Exception as e:
-            logging.error(f"{icon['cross']} Case mode execution failed: {str(e)}")
-
-            # Create failed result if not already created
-            if test_result is None:
-                end_time = datetime.now()
-                test_result = TestResult(
-                    test_id=test_config.test_id,
-                    test_type=test_config.test_type,
-                    test_name=test_config.test_name,
-                    status=TestStatus.FAILED,
-                    category=get_category_for_test_type(test_config.test_type),
-                    start_time=test_session.start_time,
-                    end_time=end_time,
-                    error_message=str(e),
-                    sub_tests=case_results if case_results else [],
-                )
-                test_result.duration = (end_time - test_session.start_time).total_seconds()
-                test_session.update_test_result(test_config.test_id, test_result)
-                test_session.complete_session()
-
-            raise
-
+            raise e
         finally:
+            # Generate HTML report if possible (even if some cases failed or crashed)
+            if case_executor and case_executor.report_dir:
+                try:
+                    html_report_path = self._generate_html_with_jinja2(
+                        test_session, report_cfg, case_executor.report_dir, result_count
+                    )
+                    if html_report_path:
+                        test_session.html_report_path = html_report_path
+                except Exception as report_err:
+                    logging.warning(f'Failed to generate final report: {report_err}')
+
             # Cleanup Display (with error protection)
             try:
                 await Display.display.stop()
@@ -325,8 +310,16 @@ class CaseMode:
         passed_count = result_count.get('passed', 0)
         warning_count = result_count.get('warning', 0)
         failed_count = result_count.get('failed', 0)
-        exception_count = result_count.get('total', 0) - passed_count - warning_count - failed_count
-        total_count = result_count.get('total', 0)
+        
+        # Recalculate summary from actual data found on disk for accuracy (especially on crashes)
+        if test_data:
+            passed_count = sum(1 for c in test_data if c.get('status') == 'passed')
+            warning_count = sum(1 for c in test_data if c.get('status') == 'warning')
+            failed_count = sum(1 for c in test_data if c.get('status') == 'failed')
+
+        total_count = result_count.get('total', len(test_data))
+        exception_count = total_count - passed_count - warning_count - failed_count
+        total_count = total_count # Keep as is for template usage
 
         # render template with Jinja2
         try:
@@ -474,6 +467,21 @@ class CaseMode:
             logging.debug(f'Loading template from: {template_path}')
             template_string = template_path.read_text(encoding='utf-8')
 
+            # Load i18n resources
+            language = report_cfg.get('language', 'en-US')
+            i18n_file = static_dir / 'i18n' / f'{language}.json'
+            i18n_data = {}
+            
+            if i18n_file.exists():
+                try:
+                    with open(i18n_file, 'r', encoding='utf-8') as f:
+                        i18n_data = json.load(f)
+                    logging.debug(f'Loaded i18n file: {i18n_file}')
+                except Exception as e:
+                    logging.warning(f'Failed to load i18n file {i18n_file}: {e}')
+            else:
+                logging.warning(f'i18n file not found: {i18n_file}, using default language')
+
             # get template
             template = env.from_string(template_string)
 
@@ -485,7 +493,9 @@ class CaseMode:
                 warning_count=warning_count,
                 failed_count=failed_count,
                 exception_count=exception_count,
-                total_count=total_count
+                total_count=total_count,
+                language=language,
+                i18n=i18n_data
             )
 
             # save rendered HTML to file

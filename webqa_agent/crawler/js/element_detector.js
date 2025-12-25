@@ -598,7 +598,7 @@
                 return true;
             }
 
-            // Added enhancement to capture dropdown interactive elements
+            // Added enhancement to capture dropdown and slider interactive elements
             if (element.classList && (
                 element.classList.contains("button") ||
                 element.classList.contains('dropdown-toggle') ||
@@ -606,6 +606,13 @@
                 element.getAttribute('data-toggle') === 'dropdown' ||
                 element.getAttribute('aria-haspopup') === 'true'
             )) {
+                return true;
+            }
+
+            // Simple slider/captcha detection (matches slide-btn, slider-control, etc.)
+            const className = (element.getAttribute('class') || '').toLowerCase();
+            if ((className.includes('slide') || className.includes('slider')) && 
+                (className.includes('btn') || className.includes('control') || className.includes('handle'))) {
                 return true;
             }
 
@@ -887,41 +894,66 @@
             );
         }
 
+        const esc = (v) => {
+            if (!v) return '';
+            if (CSS.escape) return CSS.escape(v);
+            return v.replace(/([\[\]\\!"#$%&'()*+,.\/:;<=>?@^`{|}~])/g, '\\$1');
+        };
+
+        const isUnique = (s) => {
+            try {
+                return s && document.querySelectorAll(s).length === 1 ? s : null;
+            } catch (e) {
+                return null;
+            }
+        };
+
         /**
-         * Generates a simplified CSS selector for an element.
-         *
-         * This function creates a selector based on the element's tag name, ID (if available),
-         * and class names. It is not guaranteed to be unique but is useful for providing
-         * a human-readable identifier.
-         *
+         * Generates a unique CSS selector for an element.
+         * The strategy is: ID > Data attributes > semantic class names (+nth-child) > pure Tag (+nth-child)
          * @param {HTMLElement} elem The element for which to generate a selector.
-         * @returns {string | null} A CSS selector string, or `null` if the element is invalid.
+         * @returns {string | null} A unique CSS selector string, or `null` if the element is invalid.
          */
         function generateSelector(elem) {
-            if (!elem) return null;
+            if (!elem || !(elem instanceof Element)) return null;
 
-            let sel = elem.tagName.toLowerCase();
+            const tag = elem.tagName.toLowerCase();
+            const parent = elem.parentElement;
+            const index = parent ? Array.from(parent.children).indexOf(elem) + 1 : null;
 
-            // use id first
+            // 1. Use ID first (most stable)
             if (elem.id) {
-                sel += `#${elem.id}`;
-                return sel;
+                return isUnique(`${tag}#${esc(elem.id)}`) || isUnique(`#${esc(elem.id)}`);
             }
 
-            // try to get class from classList, fallback to getAttribute if not existed
-            let classes = [];
-            if (elem.classList && elem.classList.length > 0) {
-                classes = Array.from(elem.classList);
-            } else {
-                const raw = elem.getAttribute('class') || '';
-                classes = raw.trim().split(/\s+/).filter(Boolean);
+            // 2. Try common Data attributes (data-testid, etc.)
+            const dataAttrs = ['data-testid', 'data-id', 'data-test', 'data-cy'];
+            for (const attr of dataAttrs) {
+                const val = elem.getAttribute(attr);
+                if (val) {
+                    const s = isUnique(`${tag}[${attr}="${val}"]`);
+                    if (s) return s;
+                }
             }
+
+            // 3. Semantic class name strategy
+            // Filtering rules: exclude hash classes (CSS Modules) and too long Tailwind utility classes (more than 2 dashes)
+            const classes = Array.from(elem.classList)
+                .filter(cls => {
+                    const isHash = /_[a-z0-9]{5,}/i.test(cls) || /-{2}[a-z0-9]{5,}/i.test(cls);
+                    const isTooGeneric = (cls.match(/-/g) || []).length > 2;
+                    return !isHash && !isTooGeneric;
+                })
+                .slice(0, 3);
 
             if (classes.length > 0) {
-                sel += `.${classes.join('.')}`;
+                const classSel = `${tag}.${classes.map(esc).join('.')}`;
+                const s = isUnique(classSel) || (index ? isUnique(`${classSel}:nth-child(${index})`) : null);
+                if (s) return s;
             }
 
-            return sel;
+            // 4. Fallback strategy: Tag + nth-child or pure Tag
+            return (index ? isUnique(`${tag}:nth-child(${index})`) : null) || tag;
         }
 
         /**
@@ -1151,6 +1183,14 @@
         }
 
         /**
+         * Simple check if element is a slider component (for additional metadata)
+         */
+        function isSliderComponent(elem) {
+            const text = ((elem.getAttribute('class') || '') + ' ' + (elem.id || '')).toLowerCase();
+            return text.includes('slide') || text.includes('slider') || text.includes('captcha');
+        }
+
+        /**
          * Gathers comprehensive information about a DOM element.
          *
          * This function collects a wide range of properties for an element, including its identity,
@@ -1190,6 +1230,9 @@
                 isMediaElement: isMediaElement(elem),
                 isTopElement: isTopElement(elem),
                 isInViewport: !(r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth),
+
+                // Simple slider/captcha flag for metadata
+                isSlider: isSliderComponent(elem),
 
                 isParentHighlighted: isParentHighlighted,
                 xpath: generateXPath(elem),

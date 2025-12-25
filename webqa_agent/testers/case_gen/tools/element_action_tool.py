@@ -239,17 +239,13 @@ class UITool(BaseTool):
                 screenshots = execution_steps.get('screenshots', [])
                 actions = execution_steps.get('actions', [])
                 step_status = execution_steps.get('status', 'passed')
+                model_io = execution_steps.get('modelIO', '')
 
                 # Record the action step
                 recorder.add_step(
                     description=instruction,
                     screenshots=screenshots,
-                    model_io=json.dumps({
-                        'action': action,
-                        'target': target,
-                        'value': value,
-                        'result': result
-                    }, ensure_ascii=False),
+                    model_io=model_io,
                     actions=actions,
                     status=step_status,
                     step_type='action',
@@ -533,16 +529,13 @@ class UIAssertTool(BaseTool):
                 screenshots = execution_steps.get('screenshots', [])
                 actions = execution_steps.get('actions', [])
                 step_status = execution_steps.get('status', 'passed')
+                model_io = execution_steps.get('modelIO', '')
 
                 # Record the verify step
                 recorder.add_step(
                     description=f'Verify: {assertion}',
                     screenshots=screenshots,
-                    model_io=json.dumps({
-                        'assertion': assertion,
-                        'focus_region': focus_region,
-                        'result': result
-                    }, ensure_ascii=False),
+                    model_io=model_io,
                     actions=actions,
                     status=step_status,
                     step_type='verify',

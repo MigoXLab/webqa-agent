@@ -431,6 +431,6 @@ class LLMAPI:
             return response
 
     async def close(self):
-        if self._client:
-            await self._client.aclose()
-            self._client = None
+        if self.client:
+            await self.client.aclose()
+            self.client = None

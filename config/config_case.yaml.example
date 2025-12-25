@@ -1,0 +1,41 @@
+target:
+  url: https://baidu.com/
+
+llm_config:
+    api: openai
+    model: gpt-5-mini-2025-08-07
+    api_key: your_api_key
+    base_url:  https://api.example.com/v1
+    reasoning:
+      effort: low    # none | low | medium | high (gpt-5.1 defaults to 'none' for low-latency)
+    text:
+      verbosity: low  # low | medium | high (default 'medium')
+
+browser_config:
+    headless: False
+    language: zh-CN
+
+log:
+  level: info
+
+report:
+  language: en-US # zh-CN, en-US
+
+cases:
+  - name: Baidu Search - Basic Search Test
+    steps:
+      - verify: Verify the page displays the Baidu logo and search input box
+      - action: Click on the search input box in the center of the page
+      - action: Type "Python programming" in the search input box, then press Enter, Wait for 3 seconds for search results to load
+      - verify: Verify the page displays search results related to "Python programming", and there are no error messages on the page
+
+  - name: Baidu Image Upload
+    steps:
+      - action: Click on the "图片" (Images) link at the top of the page, Wait for 2 seconds for the image search page to load
+      - verify: Verify the page displays an image search interface with a search input box
+      - action: The upload icon is the image icon inside the input box, next to the Baidu Search button, used to upload the file
+        args:
+          file_path: ./tests/data/test.jpeg
+      - action: Wait until the image is uploaded
+      - verify: Verify that the input field displays an open palm/hand icon image
+      - action: Type "How many fingers are in the picture?" in the search input box, then press Enter, Wait for 2 seconds

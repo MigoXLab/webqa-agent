@@ -88,27 +88,8 @@ class CaseExecutor:
                         logging.info(f'{status_icon} Case {idx}/{total_cases} completed: {case_name} - {case_result.status}')
 
                     except Exception as e:
-                        logging.error(f"{icon['cross']} Case {idx}/{total_cases} failed: {case_name} - {str(e)}")
-                        # Create failed result for the case
-                        case_result = SubTestResult(
-                            name=case_name,
-                            status=TestStatus.FAILED,
-                            metrics={},
-                            steps=[],
-                            messages={
-                                'error': str(e),
-                                'console_error_message': [],
-                                'network_message': {
-                                    'responses': [],
-                                    'failed_requests': []
-                                }
-                            },
-                            start_time=datetime.now().isoformat(),
-                            end_time=datetime.now().isoformat(),
-                            final_summary=f'Case execution failed: {str(e)}',
-                            report=[SubTestReport(title='Execution Error', issues=str(e))],
-                        )
-                        results.append(case_result)
+                        # Re-raise the exception to stop execution immediately
+                        raise e
 
                     finally:
                         # Save case result to json file (only if case_result was created)
@@ -276,19 +257,7 @@ class CaseExecutor:
                     case_status = TestStatus.WARNING
 
             except Exception as e:
-                logging.error(f"{icon['cross']} Step {step_idx} execution error: {str(e)}")
-                failed_step = SubTestStep(
-                    id=step_idx,
-                    description=str(step),
-                    screenshots=[],
-                    modelIO='',
-                    actions=[],
-                    status=TestStatus.FAILED,
-                    errors=f'Step execution failed: {str(e)}',
-                )
-                executed_steps.append(failed_step)
-                case_status = TestStatus.FAILED
-                error_messages.append(f'Step {step_idx} exception: {str(e)}')
+                raise e
 
         return executed_steps, case_status, error_messages, prev_step_context
 

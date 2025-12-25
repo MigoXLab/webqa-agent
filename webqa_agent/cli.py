@@ -459,8 +459,6 @@ async def run_case_mode(cfg):
             sys.exit(1)
 
     except Exception:
-        print('\n❌ Case execution failed:', file=sys.stderr)
-        traceback.print_exc()
         sys.exit(1)
 
 

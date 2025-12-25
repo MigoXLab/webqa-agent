@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-    <html lang="en">
+    <html lang="{{ language[:2] if language else 'en' }}">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>webqa agent 测试报告</title>
+        <title>{{ i18n.template.report_title if i18n.template else 'webqa agent Test Report' }}</title>
         <style>
             :root {
                 --success-color: #28a745;
@@ -731,6 +731,22 @@
                 background-color: var(--hover-bg);
             }
 
+            .network-row.error-row {
+                background-color: var(--failure-bg);
+            }
+
+            .network-row.error-row:hover {
+                background-color: #f5c6cb;
+            }
+
+            .network-row.warning-row {
+                background-color: var(--warning-bg);
+            }
+
+            .network-row.warning-row:hover {
+                background-color: #ffeaa7;
+            }
+
             .status-col {
                 width: 60px;
             }
@@ -1066,19 +1082,19 @@
         <div class="header">
             <div class="header-top">
                 <div class="header-left">
-                    <div class="test-title">webqa agent 测试报告</div>
+                    <div class="test-title">{{ i18n.template.report_title if i18n.template else 'webqa agent Test Report' }}</div>
                     <div class="config-tab" onclick="toggleConfig()">
-                        测试配置
+                        {{ i18n.template.test_config if i18n.template else 'Test Configuration' }}
                     </div>
                     <div class="github-link">
                         <a href="https://github.com/MigoXLab/webqa-agent" target="_blank">GitHub</a> Star ⭐
                     </div>
                 </div>
                 <div class="test-stats">
-                    <div class="stat-item success">通过: {{ passed_count + warning_count }}{% if warning_count > 0 %} <span class="warning-text warning-tooltip">警告<span class="tooltip-text">{{ warning_count }} 个用例有警告</span></span>{% endif %}</div>
-                    <div class="stat-item failure">失败: {{ failed_count }}</div>
-                    <div class="stat-item warning">异常: {{ exception_count }}</div>
-                    <div class="stat-item">总计: {{ total_count }}</div>
+                    <div class="stat-item success">{{ i18n.template.passed if i18n.template else 'Passed' }}: {{ passed_count + warning_count }}{% if warning_count > 0 %} <span class="warning-text warning-tooltip">{{ i18n.template.warning if i18n.template else 'Warning' }}<span class="tooltip-text">{{ warning_count }} {{ i18n.template.warning_tooltip if i18n.template else 'test cases have warnings' }}</span></span>{% endif %}</div>
+                    <div class="stat-item failure">{{ i18n.template.failed if i18n.template else 'Failed' }}: {{ failed_count }}</div>
+                    <div class="stat-item warning">{{ i18n.template.exception if i18n.template else 'Exception' }}: {{ exception_count }}</div>
+                    <div class="stat-item">{{ i18n.template.total if i18n.template else 'Total' }}: {{ total_count }}</div>
                 </div>
             </div>
 
@@ -1089,18 +1105,18 @@
                         {% if loop.first and case.config %}
                             {% if case.config.target_url %}
                             <div class="config-item">
-                                <div class="config-label">目标 URL</div>
+                                <div class="config-label">{{ i18n.template.target_url if i18n.template else 'Target URL' }}</div>
                                 <div class="config-value">{{ case.config.target_url }}</div>
                             </div>
                             {% endif %}
 
                             {% if case.config.llm_model %}
                             <div class="config-item">
-                                <div class="config-label">使用模型</div>
+                                <div class="config-label">{{ i18n.template.model_used if i18n.template else 'Model Used' }}</div>
                                 <div class="config-value">
-                                    <div>主模型: {{ case.config.llm_model }}</div>
+                                    <div>{{ i18n.template.main_model if i18n.template else 'Main Model' }}: {{ case.config.llm_model }}</div>
                                     <!-- {% if case.config.filter_model %}
-                                    <div style="margin-top: 4px;">过滤模型: {{ case.config.filter_model }}</div>
+                                    <div style="margin-top: 4px;">{{ i18n.template.filter_model if i18n.template else 'Filter Model' }}: {{ case.config.filter_model }}</div>
                                     {% endif %} -->
                                 </div>
                             </div>
@@ -1108,21 +1124,21 @@
 
                             {% if case.config.browser_config %}
                             <div class="config-item">
-                                <div class="config-label">浏览器配置</div>
+                                <div class="config-label">{{ i18n.template.browser_config if i18n.template else 'Browser Config' }}</div>
                                 <div class="config-value">
                                     {% if case.config.browser_config.viewport %}
                                     <div style="margin-bottom: 4px;">
-                                        <strong>窗口大小:</strong> {{ case.config.browser_config.viewport.width }} × {{ case.config.browser_config.viewport.height }}
+                                        <strong>{{ i18n.template.window_size if i18n.template else 'Window Size' }}:</strong> {{ case.config.browser_config.viewport.width }} × {{ case.config.browser_config.viewport.height }}
                                     </div>
                                     {% endif %}
                                     {% if case.config.browser_config.language %}
                                     <div style="margin-bottom: 4px;">
-                                        <strong>浏览器语言:</strong> {{ case.config.browser_config.language }}
+                                        <strong>{{ i18n.template.browser_language if i18n.template else 'Browser Language' }}:</strong> {{ case.config.browser_config.language }}
                                     </div>
                                     {% endif %}
                                     {% if case.config.browser_config.headless is defined %}
                                     <div style="margin-bottom: 4px;">
-                                        <strong>无头模式:</strong> {{ '是' if case.config.browser_config.headless else '否' }}
+                                        <strong>{{ i18n.template.headless_mode if i18n.template else 'Headless Mode' }}:</strong> {{ (i18n.template.yes if i18n.template else 'Yes') if case.config.browser_config.headless else (i18n.template.no if i18n.template else 'No') }}
                                     </div>
                                     {% endif %}
                                 </div>
@@ -1131,11 +1147,11 @@
 
                             {% if case.config.ignore_rules %}
                             <div class="config-item">
-                                <div class="config-label">忽略规则</div>
+                                <div class="config-label">{{ i18n.template.ignore_rules if i18n.template else 'Ignore Rules' }}</div>
                                 <div class="config-value">
                                     {% if case.config.ignore_rules.console %}
                                     <div style="margin-bottom: 8px;">
-                                        <strong>Console 错误:</strong>
+                                        <strong>{{ i18n.template.console_errors if i18n.template else 'Console Errors' }}:</strong>
                                         <ul style="margin: 4px 0; padding-left: 20px;">
                                             {% for rule in case.config.ignore_rules.console %}
                                             <li>
@@ -1148,7 +1164,7 @@
                                     {% endif %}
                                     {% if case.config.ignore_rules.network %}
                                     <div>
-                                        <strong>Network 请求:</strong>
+                                        <strong>{{ i18n.template.network_requests if i18n.template else 'Network Requests' }}:</strong>
                                         <ul style="margin: 4px 0; padding-left: 20px;">
                                             {% for rule in case.config.ignore_rules.network %}
                                             <li>
@@ -1165,7 +1181,7 @@
 
                             {% if case.config.env %}
                             <div class="config-item">
-                                <div class="config-label">环境</div>
+                                <div class="config-label">{{ i18n.template.environment if i18n.template else 'Environment' }}</div>
                                 <div class="config-value">{{ case.config.env }}</div>
                             </div>
                             {% endif %}
@@ -1175,44 +1191,44 @@
             </div>
 
             <div class="case-bar">
-                <button class="case-nav" id="casePrev" title="上一组">‹</button>
+                <button class="case-nav" id="casePrev" title="{{ i18n.template.prev_group if i18n.template else 'Previous' }}">‹</button>
                 <div class="case-buttons-viewport">
                     <div class="case-buttons" id="caseButtons">
                         {% for summary in case_summaries %}
-                        <div class="case-button" data-case="case-{{ summary.index }}" title="用例 {{ summary.index }}: {{ summary.name }}">
-                            <span class="case-label">用例 {{ summary.index }}: {{ summary.name }}</span>
+                        <div class="case-button" data-case="case-{{ summary.index }}" title="{{ i18n.template.case if i18n.template else 'Case' }} {{ summary.index }}: {{ summary.name }}">
+                            <span class="case-label">{{ i18n.template.case if i18n.template else 'Case' }} {{ summary.index }}: {{ summary.name }}</span>
                             {% if summary.status == "passed" %}
-                            <span class="badge badge-success">通过</span>
+                            <span class="badge badge-success">{{ i18n.template.passed if i18n.template else 'Passed' }}</span>
                             {% elif summary.status == "warning" %}
-                            <span class="badge badge-success">通过
-                                <span class="warning-text warning-tooltip">警告
-                                    <span class="tooltip-text">此用例有警告</span>
+                            <span class="badge badge-success">{{ i18n.template.passed if i18n.template else 'Passed' }}
+                                <span class="warning-text warning-tooltip">{{ i18n.template.warning if i18n.template else 'Warning' }}
+                                    <span class="tooltip-text">{{ i18n.template.this_case_has_warning if i18n.template else 'This test case has warnings' }}</span>
                                 </span>
                             </span>
                             {% else %}
-                            <span class="badge badge-failure">失败</span>
+                            <span class="badge badge-failure">{{ i18n.template.failed if i18n.template else 'Failed' }}</span>
                             {% endif %}
                         </div>
                         {% endfor %}
                     </div>
                 </div>
-                <button class="case-nav" id="caseNext" title="下一组">›</button>
+                <button class="case-nav" id="caseNext" title="{{ i18n.template.next_group if i18n.template else 'Next' }}">›</button>
                 <div class="case-more">
-                    <button class="case-more-btn" id="caseMore" title="更多">…</button>
+                    <button class="case-more-btn" id="caseMore" title="{{ i18n.template.more if i18n.template else 'More' }}">…</button>
                     <div class="case-more-menu" id="caseMoreMenu">
                         {% for summary in case_summaries %}
-                        <div class="case-more-item" data-case="case-{{ summary.index }}" title="用例 {{ summary.index }}: {{ summary.name }}">
-                            <span>用例 {{ summary.index }}: {{ summary.name }}</span>
+                        <div class="case-more-item" data-case="case-{{ summary.index }}" title="{{ i18n.template.case if i18n.template else 'Case' }} {{ summary.index }}: {{ summary.name }}">
+                            <span>{{ i18n.template.case if i18n.template else 'Case' }} {{ summary.index }}: {{ summary.name }}</span>
                             {% if summary.status == "passed" %}
-                            <span class="badge badge-success">通过</span>
+                            <span class="badge badge-success">{{ i18n.template.passed if i18n.template else 'Passed' }}</span>
                             {% elif summary.status == "warning" %}
-                            <span class="badge badge-success">通过
+                            <span class="badge badge-success">{{ i18n.template.passed if i18n.template else 'Passed' }}
                                 <span class="warning-text warning-tooltip">⚠
-                                    <span class="tooltip-text">此用例有警告</span>
+                                    <span class="tooltip-text">{{ i18n.template.this_case_has_warning if i18n.template else 'This test case has warnings' }}</span>
                                 </span>
                             </span>
                             {% else %}
-                            <span class="badge badge-failure">失败</span>
+                            <span class="badge badge-failure">{{ i18n.template.failed if i18n.template else 'Failed' }}</span>
                             {% endif %}
                         </div>
                         {% endfor %}
@@ -1222,7 +1238,7 @@
         </div>
 
         <div class="mobile-hint">
-            👈 左右滑动查看不同面板 👉
+            👈 {{ 'Swipe left and right to view different panels' if language == 'en-US' else '左右滑动查看不同面板' }} 👉
         </div>
 
         <div class="content-container">
@@ -1235,13 +1251,13 @@
                         data-case="{{ case_index }}"
                         data-step="{{ loop.index0 }}">
                     <div class="step-number">
-                        步骤 {{ step.number }}
+                        {{ i18n.template.step if i18n.template else 'Step' }} {{ step.number }}
                         {% if step.status == "passed" %}
-                        <span class="badge badge-success">通过</span>
+                        <span class="badge badge-success">{{ i18n.template.passed if i18n.template else 'Passed' }}</span>
                         {% elif step.status == "warning" %}
-                        <span class="badge badge-warning">警告</span>
+                        <span class="badge badge-warning">{{ i18n.template.warning if i18n.template else 'Warning' }}</span>
                         {% else %}
-                        <span class="badge badge-failure">失败</span>
+                        <span class="badge badge-failure">{{ i18n.template.failed if i18n.template else 'Failed' }}</span>
                         {% endif %}
                     </div>
                     <div class="step-description">{{ step.description }}</div>
@@ -1285,7 +1301,7 @@
                             </div>
                             {% endfor %}
                         {% else %}
-                            <div class="no-data">此步骤无截图</div>
+                            <div class="no-data">{{ i18n.template.no_screenshots if i18n.template else 'No screenshots' }}</div>
                         {% endif %}
                     </div>
                     {% endfor %}
@@ -1298,7 +1314,7 @@
                     {% set step_index = loop.index0 %}
                     <div class="step-actions-io step-{{ step_index }}-case-{{ case_index }} ">
                         <div class="actions-list">
-                            <div class="panel-title">执行动作</div>
+                            <div class="panel-title">{{ i18n.template.action if i18n.template else 'Action' }}</div>
                             {% if step.actions %}
                                 {% for action in step.actions %}
                                 {% set action_index = loop.index0 %}
@@ -1308,7 +1324,7 @@
                                     <div class="action-header">
                                         <div class="action-title">{{ loop.index }}. {{ action.description }}</div>
                                         <div class="action-result {% if action.success %}success{% else %}failure{% endif %}">
-                                            {% if action.success %}✓ 成功{% else %}✗ 失败{% endif %}
+                                            {% if action.success %}✓ {{ 'Success' if language == 'en-US' else '成功' }}{% else %}✗ {{ 'Failed' if language == 'en-US' else '失败' }}{% endif %}
                                         </div>
                                     </div>
                                     {% if action.details %}
@@ -1327,7 +1343,7 @@
                                         {{ step.modelIO|render_modelio|safe }}
                                     </div>
                                 {% else %}
-                                    <div class="no-data">此步骤无模型数据</div>
+                                    <div class="no-data">{{ 'No model data in this step' if language == 'en-US' else '此步骤无模型数据' }}</div>
                                 {% endif %}
                             </div>
                         </div>
@@ -1335,13 +1351,13 @@
                     {% endfor %}
 
                     <!-- Case-level page results -->
-                    <div class="panel-title" style="margin-top: 25px;">页面结果</div>
+                    <div class="panel-title" style="margin-top: 25px;">{{ 'Page Results' if language == 'en-US' else '页面结果' }}</div>
                     <div class="page-result">
                         {% if case.messages %}
                             <!-- Console Errors Tab -->
                             <div class="page-result-section">
                                 <div class="page-section-header">
-                                    <div class="page-section-title">控制台错误</div>
+                                    <div class="page-section-title">{{ 'Console Errors' if language == 'en-US' else '控制台错误' }}</div>
                                     <div class="badge-count">{{ case.messages.console_error_message|length }}</div>
                                 </div>
                                 <div class="page-section-content">
@@ -1355,7 +1371,7 @@
                                         </div>
                                         {% endfor %}
                                     {% else %}
-                                        <div class="no-data">无控制台错误</div>
+                                        <div class="no-data">{{ i18n.template.no_console_logs if i18n.template else 'No console logs' }}</div>
                                     {% endif %}
                                 </div>
                             </div>
@@ -1363,7 +1379,7 @@
                             <!-- Network Tab -->
                             <div class="page-result-section">
                                 <div class="page-section-header">
-                                    <div class="page-section-title">网络请求</div>
+                                    <div class="page-section-title">{{ 'Network Requests' if language == 'en-US' else '网络请求' }}</div>
                                     <div class="badge-count">{{ case.messages.network_message.responses|length + case.messages.network_message.failed_requests|length }}</div>
                                 </div>
                                 <div class="page-section-content">
@@ -1373,16 +1389,16 @@
                                         <table class="network-table">
                                             <thead>
                                                 <tr>
-                                                    <th class="status-col failed">失败</th>
-                                                    <th class="method-col">Method</th>
-                                                    <th class="url-col">URL</th>
-                                                    <th class="error-col">错误</th>
+                                                    <th class="status-col failed">{{ i18n.template.failed if i18n.template else 'Failed' }}</th>
+                                                    <th class="method-col">{{ i18n.template.method if i18n.template else 'Method' }}</th>
+                                                    <th class="url-col">{{ i18n.template.url if i18n.template else 'URL' }}</th>
+                                                    <th class="error-col">{{ 'Error' if language == 'en-US' else '错误' }}</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
                                                 {% for request in case.messages.network_message.failed_requests %}
                                                 <tr class="network-row failed" data-request-id="{{ loop.index0 }}">
-                                                    <td class="status-col">失败</td>
+                                                    <td class="status-col">{{ i18n.template.failed if i18n.template else 'Failed' }}</td>
                                                     <td class="method-col">{{ request.method }}</td>
                                                     <td class="url-col">{{ request.url }}</td>
                                                     <td class="error-col">{{ request.error }}</td>
@@ -1423,15 +1439,15 @@
                                     <table class="network-table">
                                         <thead>
                                             <tr>
-                                                <th class="status-col">Status</th>
-                                                <th class="method-col">Method</th>
-                                                <th class="type-col">Content-type</th>
-                                                <th class="url-col">URL</th>
+                                                <th class="status-col">{{ i18n.template.status if i18n.template else 'Status' }}</th>
+                                                <th class="method-col">{{ i18n.template.method if i18n.template else 'Method' }}</th>
+                                                <th class="type-col">{{ i18n.template.type if i18n.template else 'Type' }}</th>
+                                                <th class="url-col">{{ i18n.template.url if i18n.template else 'URL' }}</th>
                                             </tr>
                                         </thead>
                                         <tbody>
                                             {% for response in case.messages.network_message.responses %}
-                                            <tr class="network-row" data-response-id="{{ loop.index0 }}">
+                                            <tr class="network-row {% if response.status >= 400 %}error-row{% elif response.status >= 300 %}warning-row{% endif %}" data-response-id="{{ loop.index0 }}">
                                                 <td class="status-col {% if response.status >= 400 %}error{% elif response.status >= 300 %}warning{% else %}success{% endif %}">
                                                     {{ response.status }}
                                                 </td>
@@ -1501,12 +1517,12 @@
                                     {% endif %}
 
                                     {% if not case.messages.network_message.responses and not case.messages.network_message.failed_requests %}
-                                        <div class="no-data">无网络请求</div>
+                                        <div class="no-data">{{ i18n.template.no_network_activity if i18n.template else 'No network activity' }}</div>
                                     {% endif %}
                                 </div>
                             </div>
                         {% else %}
-                            <div class="no-data">无页面结果数据</div>
+                            <div class="no-data">{{ 'No page results data' if language == 'en-US' else '无页面结果数据' }}</div>
                         {% endif %}
                     </div>
                 </div>

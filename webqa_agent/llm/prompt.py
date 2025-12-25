@@ -267,13 +267,6 @@ class LLMPrompt:
         * `selection_path`: Text of the option to be selected (string for single-level, list for nested dropdowns)
         * if the selection_path is a string, it means the option is the first level of the dropdown.
         * if the selection_path is a list, it means the option is the nth level of the dropdown.
-        - type: 'Check', check if a condition is met to decide whether to continue or stop
-        * {{ param: {{ condition: string }} }}
-        * `condition`: Describe the completion condition (what state means "done").
-        * The system will check current page and return:
-            - "stop": Condition is satisfied, task is complete.
-            - "continue": Condition is NOT satisfied, need to keep going.
-        *  Note: If Check returns \"continue\", the system will automatically re-plan and execute more actions.
         - type: 'Mouse', unified mouse action for move and wheel
          {
            "param": {
@@ -288,6 +281,13 @@ class LLMPrompt:
            "locate": null
          }
         * When op is omitted, auto-detect by provided fields: x+y => move; deltaX/deltaY => wheel.
+        - type: 'Check', Determine whether the current task or interaction is still in progress or has reached a stable completion state.
+        * {{ param: {{ condition: string }} }}
+        * `condition`: The task is considered complete when there are no visible UI elements, indicators, or state changes that suggest the system is still processing, generating, loading, or awaiting user interruption.
+        * The system will check current page and return:
+            - "stop": Condition is satisfied, task is complete.
+            - "continue": Condition is NOT satisfied, need to keep going.
+        *  Note: If Check returns \"continue\", the system will automatically re-plan and execute more actions.
 """
 
     planner_output_prompt = """
@@ -502,8 +502,8 @@ class LLMPrompt:
           \"actions\": [
             {
               \"type\": \"Sleep\",
-              \"thought\": \"Wait 30 seconds for the streaming output to progress\",
-              \"param\": { \"timeMs\": 30000 }
+              \"thought\": \"Wait 20 seconds for the streaming output to progress\",
+              \"param\": { \"timeMs\": 20000 }
             },
             {
               \"type\": \"Check\",
@@ -514,6 +514,22 @@ class LLMPrompt:
         }
         ```
         Note: If Check returns \"continue\", the system will automatically re-plan and execute more actions.
+        
+        ### Example 9: If the page shows “xxx" button, click it.
+        Actually, the button is not in the screenshot, should plan check action
+        ```json
+        {
+          \"actions\": [
+            {
+              \"type\": \"Check\",
+              \"thought\": \"The instruction is conditional. The specified 'xxx' button is not present on the page, so the condition for taking action is not met.\",
+              \"param\": {
+                \"condition\": \"The page does not display the specified 'xxx' button, therefore no action is required.\"
+              }
+            }
+          ]
+        }
+        ```
 
         #### Example of what NOT to do
         - If the action's `locate` is null and element is **not in the screenshot**, don't continue planning. Instead:

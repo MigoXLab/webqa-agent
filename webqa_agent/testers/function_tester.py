@@ -182,7 +182,6 @@ class UITester:
                         return error_steps_dict, error_result
 
                 await self._actions.update_element_buffer(prev.raw_dict())
-                logging.debug(f'previous dom before action (iteration {iteration + 1}): {prev.to_llm_json()}')
 
                 # Take screenshot
                 marker_screenshot = await self._actions.b64_page_screenshot(
@@ -477,7 +476,7 @@ class UITester:
                     'last_action': self.last_action_context,
                     'test_objective': self.current_test_objective,
                 }
-                logging.debug('Using instance-stored execution context for verification')
+                logging.debug('Using instance-stored execution context for verification')            
 
             # Determine verification strategy
             verification_strategy = self._determine_verification_strategy(execution_context)
@@ -1201,13 +1200,13 @@ class UITester:
         except Exception as e:
             logging.warning(f'UITester.end_session error during cleanup: {e}')
 
-        # 2. Close LLM API client (critical for preventing connection leaks)
-        try:
-            if self.llm:
-                await self.llm.close()
-                logging.debug('LLM API client closed')
-        except Exception as e:
-            logging.warning(f'Failed to close LLM client: {e}')
+        # # 2. Close LLM API client (critical for preventing connection leaks)
+        # try:
+        #     if self.llm:
+        #         await self.llm.close()
+        #         logging.debug('LLM API client closed')
+        # except Exception as e:
+        #     logging.warning(f'Failed to close LLM client: {e}')
 
         # 3. Clear references to browser objects
         self.page = None
