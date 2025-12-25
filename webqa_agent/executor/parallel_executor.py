@@ -17,6 +17,7 @@ from webqa_agent.executor.test_runners import (BasicTestRunner,
                                                SecurityTestRunner,
                                                UIAgentLangGraphRunner,
                                                UXTestRunner)
+from webqa_agent.utils.get_log import test_id_var
 
 
 class ParallelTestExecutor:
@@ -185,6 +186,9 @@ class ParallelTestExecutor:
     ) -> TestResult:
         """Execute a single test with proper isolation."""
 
+        # Set test-level context for logging. This will be overridden by case-level context where applicable.
+        token = test_id_var.set(test_config.test_name)
+
         async with semaphore:
             test_context = test_session.test_contexts[test_config.test_id]
             test_context.start_execution()
@@ -300,6 +304,8 @@ class ParallelTestExecutor:
                 # Release browser session back to pool
                 if session is not None:
                     await self.session_pool.release(session, failed=browser_failed)
+                # Reset test_id context
+                test_id_var.reset(token)
 
     def _resolve_test_dependencies(self, tests: List[TestConfiguration]) -> List[List[TestConfiguration]]:
         """Resolve test dependencies and return execution batches.

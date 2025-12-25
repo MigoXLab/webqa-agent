@@ -2,6 +2,11 @@ import logging
 import os
 from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
+import contextvars
+
+
+# Context variable for parallel test execution logging
+test_id_var = contextvars.ContextVar('test_id', default='default')
 
 
 LEVEL = {
@@ -28,6 +33,14 @@ class ColoredFormatter(logging.Formatter):
             record.levelname = f"{COLORS[levelname]}{levelname:>8}{COLORS['ENDC']}"
             record.msg = f"{COLORS[levelname]}{record.msg}{COLORS['ENDC']}"
         return super().format(record)
+
+
+class ContextFilter(logging.Filter):
+    """Filter that adds test_id from contextvars to log records."""
+
+    def filter(self, record):
+        record.test_id = test_id_var.get()
+        return True
 
 
 class GetLog:
@@ -91,11 +104,16 @@ class GetLog:
             eh.name = "error"
             eh.setLevel(LEVEL["warning"])
 
-            fmt = "%(asctime)s - %(levelname)s - %(message)s"
+            fmt = "%(asctime)s - %(levelname)s - [%(test_id)s] %(message)s"
             if log_level == "debug":
-                fmt = "%(asctime)s %(levelname)s [%(name)s] [%(filename)s (%(funcName)s:%(lineno)d)] - %(message)s"
+                fmt = "%(asctime)s %(levelname)s [%(test_id)s] [%(name)s] [%(filename)s (%(funcName)s:%(lineno)d)] - %(message)s"
             fm = logging.Formatter(fmt)
             console_fm = ColoredFormatter(fmt)
+
+            # Add context filter to include test_id in log records
+            context_filter = ContextFilter()
+            th.addFilter(context_filter)
+            eh.addFilter(context_filter)
 
             th.setFormatter(fm)
             eh.setFormatter(fm)
@@ -106,7 +124,7 @@ class GetLog:
             ch = logging.StreamHandler()
             ch.name = "stream"
             ch.setLevel(LEVEL[log_level])
-
+            ch.addFilter(context_filter)
             ch.setFormatter(console_fm)
             cls.logger.addHandler(ch)
 

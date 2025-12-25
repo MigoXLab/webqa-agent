@@ -178,6 +178,7 @@ class SubTestResult(BaseModel):
     TODO: Update type of `messages`
     """
 
+    sub_test_id: Optional[str] = ""  # 对应 case 的 case_id
     name: str
     status: Optional[TestStatus] = TestStatus.PENDING
     metrics: Optional[Dict[str, Any]] = {}

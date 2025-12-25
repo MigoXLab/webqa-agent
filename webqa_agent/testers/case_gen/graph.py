@@ -24,9 +24,22 @@ from webqa_agent.testers.case_gen.state.schemas import MainGraphState
 from webqa_agent.utils import Display
 from webqa_agent.testers.function_tester import UITester
 from webqa_agent.utils.log_icon import icon
+from webqa_agent.utils.get_log import test_id_var
 
 
 _completed_case_count = 0  # 全局已完成 case 计数
+
+# Case ID 生成器（协程安全）
+_case_id_counter = 0
+_case_id_lock = asyncio.Lock()
+
+
+async def get_next_case_id() -> str:
+    """安全地获取下一个 case_id（格式: case_1, case_2, ...）"""
+    global _case_id_counter
+    async with _case_id_lock:
+        _case_id_counter += 1
+        return f"case_{_case_id_counter}"
 
 
 async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any]]]:
@@ -206,6 +219,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
                 case["completed_steps"] = []
                 case["test_context"] = {}
                 case["url"] = state["url"]
+                case["case_id"] = await get_next_case_id()  # 为 graph 生成的 case 添加递增 ID
 
             try:
                 timestamp = os.getenv("WEBQA_REPORT_TIMESTAMP")
@@ -282,13 +296,18 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                 break
 
             case_name = case.get("name", "UNNAMED")
+            case_id = case.get("case_id", "N/A")  # 获取 case_id 用于日志
             is_replanned = case.get("_is_replanned", False)  # 标记是否为 replan 生成的 case
-            logging.info(f"Worker {worker_id}: Starting case '{case_name}'" + (" [REPLANNED]" if is_replanned else ""))
 
-            s = None
-            failed = False
-
+            # 设置日志上下文（case_id + case_name 组合，方便 grep 和识别）
+            log_context = f"AI Function Test | {case_id}"
+            token = test_id_var.set(log_context)
             try:
+                logging.info(f"Worker {worker_id}: Starting case '{case_name}'" + (" [REPLANNED]" if is_replanned else ""))
+
+                s = None
+                failed = False
+
                 # 获取 session（阻塞直到有可用 session）
                 s = await sp.acquire(timeout=120.0)
                 logging.debug(f"Worker {worker_id}: Acquired session for '{case_name}'")
@@ -377,6 +396,7 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                                         new_case["completed_steps"] = []
                                         new_case["test_context"] = {}
                                         new_case["url"] = state["url"]
+                                        new_case["case_id"] = await get_next_case_id()  # 为 replan 生成的 case 添加递增 ID
                                         new_case["_is_replanned"] = True  # 标记为 replan 生成
                                         new_case["_replan_source"] = case_name  # 记录来源 case
 
@@ -435,6 +455,8 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                     _completed_case_count += 1
 
             finally:
+                # 重置日志上下文
+                test_id_var.reset(token)
                 # Release or close session based on remaining work
                 if s:
                     # Check if there are more cases waiting in the queue

@@ -176,6 +176,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                         
                         sub_tests.append(
                             SubTestResult(
+                                sub_test_id=recorded_case.get('case_info', {}).get('case_id', ''),
                                 name=case_name,
                                 status=status_enum,
                                 metrics={},
