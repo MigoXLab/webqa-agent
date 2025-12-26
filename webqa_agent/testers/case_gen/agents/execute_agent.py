@@ -27,6 +27,7 @@ except ImportError:
 from webqa_agent.actions.action_types import (ActionType,
                                               get_page_agnostic_keywords)
 from webqa_agent.crawler.deep_crawler import DeepCrawler
+from webqa_agent.llm.llm_api import EXTENDED_THINKING_EFFORT_MAPPING
 from webqa_agent.testers.case_gen.prompts.agent_prompts import \
     get_execute_system_prompt
 from webqa_agent.testers.case_gen.prompts.planning_prompts import \
@@ -855,6 +856,11 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     if cfg_top_p is not None:
         llm_kwargs['top_p'] = cfg_top_p
 
+    # Add max_tokens if specified (with provider-specific defaults)
+    # Claude and Gemini default to 4096, OpenAI defaults to 4096
+    cfg_max_tokens = llm_config.get('max_tokens', 4096)
+    llm_kwargs['max_tokens'] = cfg_max_tokens
+
     # For Claude: Maps reasoning.effort → thinking.budget_tokens
     # Claude uses Extended Thinking API with token budgets (1K-20K tokens)
     # This is Claude-specific: thinking={"type": "enabled", "budget_tokens": N}
@@ -864,16 +870,20 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         if isinstance(reasoning_config, dict):
             effort = reasoning_config.get('effort')
             if effort:
-                # Map effort levels to thinking budget_tokens for ChatAnthropic
+                # Use shared effort mapping constant for Extended Thinking configuration
                 # Format: {"type": "enabled", "budget_tokens": N}
-                effort_mapping = {
-                    'minimal': 1024,   # Quick analysis, simple tasks
-                    'low': 4096,       # Basic reasoning, standard queries
-                    'medium': 10000,   # Balanced reasoning, recommended for testing
-                    'high': 20000,     # Deep analysis, complex scenarios
-                }
-                budget = effort_mapping.get(effort.lower())
+                budget = EXTENDED_THINKING_EFFORT_MAPPING.get(effort.lower())
                 if budget:
+                    # Validate: budget_tokens must be < max_tokens (Anthropic API requirement)
+                    if budget >= cfg_max_tokens:
+                        recommended_max = int(budget / 0.5)  # 50% ratio as middle ground
+                        logging.warning(
+                            f'Extended Thinking: budget_tokens ({budget}) >= max_tokens ({cfg_max_tokens}). '
+                            f'Auto-adjusting budget to {cfg_max_tokens - 1}. '
+                            f'Recommended: Set max_tokens={recommended_max} for effort={effort}'
+                        )
+                        budget = cfg_max_tokens - 1
+
                     llm_kwargs['thinking'] = {'type': 'enabled', 'budget_tokens': budget}
                     logging.debug(f'Claude thinking enabled with budget_tokens={budget} based on effort={effort}')
 
