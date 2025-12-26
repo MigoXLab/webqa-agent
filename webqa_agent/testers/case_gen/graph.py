@@ -307,11 +307,24 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             f"(using {page_text_info.get('estimated_tokens', 0)} tokens)"
         )
 
+        # === Extract Page Links for Navigation Testing ===
+        from webqa_agent.crawler.crawl import CrawlHandler
+
+        # Extract all navigable links using CrawlHandler
+        crawl_handler = CrawlHandler(base_url=state['url'])
+        all_page_links = await crawl_handler.extract_links(page)
+
+        logging.info(f'Stage 0: Extracted {len(all_page_links)} navigable links from page')
+
+        # Build navigation mapping: correlate priority elements with target URLs
+        # This will be done after priority_elements is available (after Stage 1)
+        navigation_map = {}
+
         # === Stage 1: LLM-Driven Element Filtering ===
-        logging.info("Stage 1: LLM-driven element filtering...")
+        logging.info('Stage 1: LLM-driven element filtering...')
         filter_system = get_element_filtering_system_prompt(language)
         filter_user = get_element_filtering_user_prompt(
-            url=state["url"],
+            url=state['url'],
             business_objectives=business_objectives,
             elements=filtered_elements_for_llm,
             max_elements=50
@@ -354,6 +367,45 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             priority_elements = dict(list(all_elements.items())[:50])
             logging.info(f"Stage 1: Fallback to first {len(priority_elements)} elements")
 
+        # === Build Navigation Mapping ===
+        # Correlate priority elements with links based on href attributes or text matching
+        from urllib.parse import urljoin
+
+        for elem_id, elem_data in priority_elements.items():
+            # Check if element has href attribute (direct link)
+            attributes = elem_data.get(ElementKey.ATTRIBUTES, {})
+            if 'href' in attributes:
+                href = attributes['href']
+                # Convert relative URLs to absolute
+                if href.startswith('/'):
+                    navigation_map[elem_id] = {
+                        'text': elem_data.get(ElementKey.INNER_TEXT, ''),
+                        'target': urljoin(state['url'], href)
+                    }
+                elif href.startswith('http'):
+                    navigation_map[elem_id] = {
+                        'text': elem_data.get(ElementKey.INNER_TEXT, ''),
+                        'target': href
+                    }
+
+            # For JS-controlled navigation (e.g., onclick handlers), try text matching with links
+            # This is best-effort heuristic matching
+            else:
+                inner_text = elem_data.get(ElementKey.INNER_TEXT, '').strip()
+                if inner_text:
+                    # Try to find matching link by text content
+                    for link in all_page_links:
+                        # Simple heuristic: if link contains element text, it's likely the target
+                        if inner_text.lower() in link.lower():
+                            navigation_map[elem_id] = {
+                                'text': inner_text,
+                                'target': link,
+                                'inferred': True  # Mark as heuristic match
+                            }
+                            break
+
+        logging.info(f'Stage 0: Built navigation mapping for {len(navigation_map)} elements')
+
         # === Solution A+: Lightweight Feature Detection ===
         logging.info('Performing lightweight feature detection to guide tool selection...')
         detected_features = await detect_page_features(page)
@@ -361,7 +413,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
         # Inject concise feature hints into business objectives if features detected
         enhanced_business_objectives = business_objectives
         if detected_features:
-            feature_hint = '\n\n🔍 **Page Features**: ' + ', '.join(detected_features) + '.'
+            feature_hint = ', '.join(detected_features) + '.'
 
             # Add actionable hint only when dynamic/interactive features detected
             has_dynamic = any(kw in str(detected_features) for kw in ['SPA', 'API', 'MutationObserver', 'Lazy'])
@@ -381,6 +433,8 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             language=language,
             page_text_summary=page_text_info,
             priority_elements=priority_elements,
+            all_page_links=all_page_links,
+            navigation_map=navigation_map,
         )
 
         logging.info("Stage 2: Sending request to primary LLM...")
