@@ -106,7 +106,7 @@ class LLMAPI:
                 self.base_url = 'https://generativelanguage.googleapis.com/v1beta/openai/'
 
             # Use AsyncOpenAI client for async operations
-            self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url, timeout=60) if self.base_url else AsyncOpenAI(
+            self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url, timeout=360) if self.base_url else AsyncOpenAI(
                 api_key=self.api_key, timeout=360)
             logging.debug(
                 f'AsyncOpenAI client initialized - provider: {self.provider}, '
