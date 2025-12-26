@@ -3,9 +3,12 @@
 This module provides utilities for loading and processing configuration files.
 """
 
+import glob
 import json
 import os
 import sys
+from pathlib import Path
+from typing import Any, Dict, List, Union
 
 import yaml
 
@@ -131,3 +134,45 @@ def load_cookies(cookies_value):
     print(f'⚠️ Unexpected cookies type: {type(cookies_value).__name__}, expected list or str',
           file=sys.stderr)
     return []
+
+
+def load_yaml_files(yaml_path: Union[str, Path]) -> List[Dict[str, Any]]:
+    """Load YAML configuration(s) from file or folder.
+
+    Args:
+        yaml_path: Path to a single YAML file or a folder containing multiple YAML files
+
+    Returns:
+        List of configuration dicts, each containing 'cases' and config fields
+    """
+    path = Path(yaml_path)
+    configs = []
+
+    if path.is_file():
+        # Single file
+        with open(path, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+            if config:
+                config['_source_file'] = str(path)
+                configs.append(config)
+    elif path.is_dir():
+        # Folder - load all YAML files
+        yaml_files = sorted(glob.glob(str(path / '*.yaml')) + glob.glob(str(path / '*.yml')))
+        for yaml_file in yaml_files:
+            try:
+                with open(yaml_file, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f)
+                    if config:
+                        config['_source_file'] = yaml_file
+                        configs.append(config)
+                        print(f'Loaded config from: {yaml_file}')
+            except Exception as e:
+                print(f'Failed to load {yaml_file}: {e}')
+    else:
+        raise ValueError(f'Path does not exist: {yaml_path}')
+
+    if not configs:
+        raise ValueError(f'No valid YAML configurations found in: {yaml_path}')
+
+    print(f'Loaded {len(configs)} configuration(s) from {yaml_path}')
+    return configs

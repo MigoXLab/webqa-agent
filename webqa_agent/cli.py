@@ -14,7 +14,8 @@ from webqa_agent.executor import ParallelMode
 from webqa_agent.utils import (check_lighthouse_installation,
                                check_nuclei_installation,
                                check_playwright_browsers_async,
-                               find_config_file, load_cookies, load_yaml)
+                               find_config_file, load_cookies, load_yaml,
+                               load_yaml_files)
 
 
 def get_version():
@@ -263,12 +264,14 @@ def cmd_init(args):
 # Command: run
 # ============================================================================
 
-async def run_tests(cfg, execution_mode):
+async def run_tests(cfg, execution_mode, config_path: str = None, workers: int = 1):
     """Execute the test suite.
 
     Args:
         cfg: Configuration dictionary
         execution_mode: Execution mode ('ai' or 'case')
+        config_path: Path to config file/folder (required for case mode)
+        workers: Number of parallel workers for case mode
     """
     # Display runtime info
     is_docker = os.getenv('DOCKER_ENV') == 'true'
@@ -285,8 +288,9 @@ async def run_tests(cfg, execution_mode):
 
     # Execute based on mode
     if execution_mode == 'case':
-        print('🎯 Mode: Case Mode (YAML-defined test cases)')
-        await run_case_mode(cfg)
+        mode_info = f'parallel ({workers} workers)' if workers > 1 else 'serial'
+        print(f'🎯 Mode: Case Mode ({mode_info})')
+        await run_case_mode(config_path, workers=workers)
     else:  # ai mode
         print('🎯 Mode: AI Mode (AI-driven test generation)')
         await run_ai_mode(cfg)
@@ -391,32 +395,37 @@ async def run_ai_mode(cfg):
         sys.exit(1)
 
 
-async def run_case_mode(cfg):
-    """Execute test cases defined in YAML configuration."""
+async def run_case_mode(config_path: str, workers: int = 1):
+    """Execute test cases from file or folder."""
     from webqa_agent.executor.case_mode import CaseMode
+
+    # Load config(s)
+    is_folder = os.path.isdir(config_path)
+    if is_folder:
+        try:
+            configs = load_yaml_files(config_path)
+        except Exception as e:
+            print(f'❌ Failed to load configs: {e}', file=sys.stderr)
+            sys.exit(1)
+        total_cases = sum(len(c.get('cases', [])) for c in configs)
+        print(f'📋 Loaded {len(configs)} config(s) with {total_cases} total cases')
+    else:
+        configs = [load_yaml(config_path)]
+        cases = configs[0].get('cases', [])
+        if not cases:
+            print('⚠️ No cases defined in configuration', file=sys.stderr)
+            sys.exit(1)
+        target_url = configs[0].get('target', {}).get('url', '')
+        if target_url:
+            print(f'🎯 Target URL: {target_url}')
+        print(f'📋 Total cases: {len(cases)}')
 
     # Validate LLM config
     try:
-        llm_config = validate_and_build_llm_config(cfg)
+        llm_config = validate_and_build_llm_config(configs[0])
     except ValueError as e:
         print(f'\n{e}', file=sys.stderr)
         sys.exit(1)
-
-    # Get target URL
-    target_url = cfg.get('target', {}).get('url', '')
-    if not target_url:
-        print('❌ No target URL specified in configuration', file=sys.stderr)
-        sys.exit(1)
-
-    print(f'🎯 Target URL: {target_url}')
-
-    # Get cases
-    cases = cfg.get('cases', [])
-    if not cases:
-        print('⚠️ No cases defined in configuration', file=sys.stderr)
-        sys.exit(1)
-
-    print(f'📋 Total cases: {len(cases)}')
 
     # Check Playwright browsers
     ok = await check_playwright_browsers_async()
@@ -424,42 +433,18 @@ async def run_case_mode(cfg):
         print('\n💡 Install browsers with: playwright install chromium', file=sys.stderr)
         sys.exit(1)
 
-    # Get browser config
-    is_docker = os.getenv('DOCKER_ENV') == 'true'
-    config_headless = cfg.get('browser_config', {}).get('headless', True)
-    headless = True if is_docker else config_headless
-
-    browser_config = {
-        'viewport': cfg.get('browser_config', {}).get('viewport', {'width': 1280, 'height': 720}),
-        'headless': headless,
-        'language': cfg.get('browser_config', {}).get('language', 'en-US'),
-    }
-
-    # Get cookies if any
-    cookies_value = cfg.get('browser_config', {}).get('cookies', [])
-    cookies = load_cookies(cookies_value)
-
-    # Get ignore rules if any
-    ignore_rules = cfg.get('ignore_rules', {})
-    if ignore_rules:
-        network_count = len(ignore_rules.get('network', []))
-        console_count = len(ignore_rules.get('console', []))
-        print(f'🚫 Ignore rules: {network_count} network, {console_count} console')
-
-    # Execute cases
+    # Execute cases (unified API handles both single/multi config)
     try:
         case_mode = CaseMode()
         results, report_path, html_report_path, result_count = await case_mode.run(
-            cases=cases,
-            target_url=target_url,
+            configs=configs,  # Pass all configs - run() handles single vs multi
             llm_config=llm_config,
-            browser_config=browser_config,
-            cookies=cookies,
-            ignore_rules=ignore_rules,
-            log_cfg=cfg.get('log', {'level': 'info'}),
-            report_cfg=cfg.get('report', {'language': 'en-US'}),
+            log_config=configs[0].get('log', {'level': 'info'}),
+            report_config=configs[0].get('report', {'language': 'en-US'}),
+            workers=workers,
         )
 
+        # Print results
         if result_count:
             print('📊 Results Summary:')
             print(f"   Total: {result_count.get('total', 0)}")
@@ -470,11 +455,13 @@ async def run_case_mode(cfg):
         if html_report_path:
             print(f'\n📄 Report: {html_report_path}')
 
-        # Exit with appropriate code
-        if result_count.get('failed', 0) > 0:
+        if result_count and result_count.get('failed', 0) > 0:
             sys.exit(1)
 
-    except Exception:
+    except Exception as e:
+        print(f'\n❌ Test execution failed: {e}', file=sys.stderr)
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 
@@ -511,20 +498,27 @@ def cmd_run(args):
             # Execute AI mode
             asyncio.run(run_tests(cfg, execution_mode='ai'))
         else:
-            # Config path specified, auto-detect mode from config structure
-            print(f'📂 Using config: {config_path}')
-            cfg = load_yaml(config_path)
+            # Config path specified - check if file or folder
+            workers = getattr(args, 'workers', 1)
 
-            # Priority: cases > test_config
-            if 'cases' in cfg:
-                execution_mode = 'case'
-            elif 'test_config' in cfg:
-                execution_mode = 'ai'
+            if os.path.isdir(config_path):
+                # Folder: case mode only
+                print(f'📂 Using config folder: {config_path}')
+                asyncio.run(run_case_mode(config_path, workers=workers))
             else:
-                print('❌ Config must contain either "cases" or "test_config" field', file=sys.stderr)
-                sys.exit(1)
+                # Single file: auto-detect mode
+                print(f'📂 Using config: {config_path}')
+                cfg = load_yaml(config_path)
 
-            asyncio.run(run_tests(cfg, execution_mode=execution_mode))
+                if 'cases' in cfg:
+                    execution_mode = 'case'
+                elif 'test_config' in cfg:
+                    execution_mode = 'ai'
+                else:
+                    print('❌ Config must contain either "cases" or "test_config" field', file=sys.stderr)
+                    sys.exit(1)
+
+                asyncio.run(run_tests(cfg, execution_mode=execution_mode, config_path=config_path, workers=workers))
 
     # Scenario 2: --mode specified
     else:
@@ -540,23 +534,34 @@ def cmd_run(args):
             print(f'   Example: webqa-agent run --mode {specified_mode} -c config.yaml', file=sys.stderr)
             sys.exit(1)
 
-        print(f'📂 Using config: {config_path}')
-        cfg = load_yaml(config_path)
+        workers = getattr(args, 'workers', 1)
 
-        # Validate config structure matches specified mode
-        if specified_mode == 'ai':
-            if 'test_config' not in cfg:
-                print('❌ AI mode requires "test_config" field in configuration', file=sys.stderr)
-                print('💡 Create an AI mode config: webqa-agent init', file=sys.stderr)
+        # Check if folder (only supported for case mode)
+        if os.path.isdir(config_path):
+            if specified_mode == 'ai':
+                print('❌ AI mode does not support folder input', file=sys.stderr)
+                print('💡 Use a single config file for AI mode', file=sys.stderr)
                 sys.exit(1)
-        elif specified_mode == 'case':
-            if 'cases' not in cfg:
-                print('❌ Case mode requires "cases" field in configuration', file=sys.stderr)
-                print('💡 Create a Case mode config: webqa-agent init --mode case', file=sys.stderr)
-                sys.exit(1)
+            print(f'📂 Using config folder: {config_path}')
+            asyncio.run(run_case_mode(config_path, workers=workers))
+        else:
+            print(f'📂 Using config: {config_path}')
+            cfg = load_yaml(config_path)
 
-        # Execute specified mode
-        asyncio.run(run_tests(cfg, execution_mode=specified_mode))
+            # Validate config structure matches specified mode
+            if specified_mode == 'ai':
+                if 'test_config' not in cfg:
+                    print('❌ AI mode requires "test_config" field in configuration', file=sys.stderr)
+                    print('💡 Create an AI mode config: webqa-agent init', file=sys.stderr)
+                    sys.exit(1)
+            elif specified_mode == 'case':
+                if 'cases' not in cfg:
+                    print('❌ Case mode requires "cases" field in configuration', file=sys.stderr)
+                    print('💡 Create a Case mode config: webqa-agent init --mode case', file=sys.stderr)
+                    sys.exit(1)
+
+            # Execute specified mode
+            asyncio.run(run_tests(cfg, execution_mode=specified_mode, config_path=config_path, workers=workers))
 
 
 def cmd_ui(args):
@@ -725,7 +730,14 @@ Documentation: https://github.com/MigoXLab/webqa-agent
     run_parser.add_argument(
         '--config', '-c',
         metavar='PATH',
-        help='Config file path. Without --mode: auto-detects mode from structure.'
+        help='Config file or folder path. Folder input loads all YAML files (case mode only).'
+    )
+    run_parser.add_argument(
+        '--workers', '-w',
+        type=int,
+        default=1,
+        metavar='N',
+        help='Number of parallel workers for case mode (1=serial, >1=parallel). Default: 1'
     )
     # ui command
     ui_parser = subparsers.add_parser(

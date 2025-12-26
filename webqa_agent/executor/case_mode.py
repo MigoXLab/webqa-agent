@@ -1,7 +1,7 @@
 """Case Mode - Execute test cases defined in YAML configuration.
 
 This mode is activated when the YAML configuration contains a 'cases' field.
-It executes test cases serially with ai/aiAssert steps.
+It supports both serial and parallel execution with ai/aiAssert steps.
 """
 
 import logging
@@ -24,7 +24,7 @@ from webqa_agent.utils.log_icon import icon
 
 
 class CaseMode:
-    """Case mode - executes YAML-defined test cases serially."""
+    """Case mode - executes YAML-defined test cases (serial or parallel)."""
 
     def __init__(self):
         """Initialize case mode."""
@@ -32,67 +32,118 @@ class CaseMode:
 
     async def run(
         self,
-        cases: List[Dict[str, Any]],  # Raw YAML dicts
-        target_url: str,
-        llm_config: Dict[str, Any],
-        cookies: Optional[List[Dict]] = None,
-        browser_config: Optional[Dict[str, Any]] = None,
-        ignore_rules: Optional[Dict[str, List[Dict]]] = None,
-        log_cfg: Optional[Dict[str, Any]] = None,
-        report_cfg: Optional[Dict[str, Any]] = None,
+        configs: Optional[List[Dict[str, Any]]] = None,
+        llm_config: Dict[str, Any] = None,
+        # Common options
+        log_config: Optional[Dict[str, Any]] = None,
+        report_config: Optional[Dict[str, Any]] = None,
+        workers: int = 1,
     ) -> Tuple[Dict[str, Any], str, str, Dict[str, Any]]:
-        """Run test cases in case mode.
+        """Run test cases (supports single config or multi-config mode).
 
         Args:
-            cases: List of case configurations from YAML
-            target_url: Target URL to test
             llm_config: LLM configuration
-            browser_config: Browser configuration
-            cookies: Optional cookies for browser session
-            ignore_rules: Optional ignore rules for network and console errors
-            log_cfg: Log configuration
-            report_cfg: Report configuration
+            configs: List of config dicts (each with cases, url, cookies, etc.)
+
+            # Common:
+            log_config: Log configuration
+            report_config: Report configuration
+            workers: Number of parallel workers
 
         Returns:
             Tuple of (aggregated_results, json_report_path, html_report_path, result_count)
         """
-        # Initialize logging and display
-        if log_cfg is None:
-            log_cfg = {'level': 'info'}
-        if report_cfg is None:
-            report_cfg = {'language': 'en-US'}
+        # Initialize basic variables
+        all_cases = []
+        all_target_urls = []
+        all_ignore_rules = []
+        browser_config = DEFAULT_CONFIG.copy()
+        test_specific_config = {}
 
-        GetLog.get_log(log_level=log_cfg['level'])
-        Display.init(language=report_cfg['language'])
+        # Handle multi-config mode: merge cases with their respective configs
+        case_id_counter = 0
+        if configs:
+            for config in configs:
+                cfg_cases = config.get('cases', [])
+                source_file = config.get('_source_file', 'unknown')
+                cfg_url = config.get('url') or config.get('target', {}).get('url', '')
+                cfg_ignore_rules = config.get('ignore_rules', {})
+
+                # Collect unique URLs and ignore_rules
+                if cfg_url and cfg_url not in all_target_urls:
+                    all_target_urls.append(cfg_url)
+                if cfg_ignore_rules:
+                    all_ignore_rules.append({
+                        'source': source_file,
+                        'url': cfg_url,
+                        'ignore_rules': cfg_ignore_rules
+                    })
+
+                # Attach config info to each case
+                for case in cfg_cases:
+                    case_id_counter += 1
+                    case['_config'] = {
+                        'url': cfg_url,
+                        'cookies': config.get('cookies') or config.get('browser_config', {}).get('cookies'),
+                        'browser_config': config.get('browser') or config.get('browser_config', {}),
+                        'ignore_rules': cfg_ignore_rules,
+                        '_source_file': source_file,
+                    }
+                    case['case_id'] = f'case_{case_id_counter}'
+                    all_cases.append(case)
+
+            if not all_cases:
+                raise ValueError('No cases found in any configuration')
+
+            # Use browser config from the first config as default
+            if configs[0].get('browser_config'):
+                browser_config.update(configs[0].get('browser_config'))
+
+            # Log multi-config summary
+            logging.debug(f'Multi-config mode: {len(all_cases)} cases from {len(configs)} config(s)')
+            if all_target_urls:
+                unique_urls = list(set(all_target_urls))
+                if len(unique_urls) > 1:
+                    logging.debug(f"  Target URLs ({len(unique_urls)} unique): {', '.join(unique_urls)}")
+
+            test_specific_config = {
+                'config_count': len(configs),
+                'target_urls': all_target_urls,
+                'ignore_rules_configs': all_ignore_rules,
+            }
+        else:
+            raise ValueError('No configurations provided')
+
+        cases = all_cases
+
+        # Initialize logging and display
+        log_level = (log_config or {}).get('level', 'info')
+        report_lang = (report_config or {}).get('language', 'en-US')
+
+        GetLog.get_log(log_level=log_level)
+        Display.init(language=report_lang)
         Display.display.start()
 
-        logging.info(f"{icon['rocket']} Starting case mode execution for URL: {target_url}")
-        # Use default config if none provided
-        if not browser_config:
-            browser_config = DEFAULT_CONFIG.copy()
+        mode_str = f'parallel ({workers} workers)' if workers > 1 else 'serial'
+        logging.info(f"{icon['rocket']} Starting case mode execution ({mode_str})")
 
-        # Create test session (reuse ParallelTestSession structure)
+        # Create test session
         session_id = str(uuid.uuid4())
-        test_session = ParallelTestSession(session_id=session_id, target_url=target_url, llm_config=llm_config)
+        test_session = ParallelTestSession(session_id=session_id, llm_config=llm_config)
 
-        # Use a fresh per-task timestamp for reports
+        # Set up report directory
         report_ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S_%f')
+        report_dir = os.path.join('.', 'reports', f'test_{report_ts}')
         os.environ['WEBQA_REPORT_TIMESTAMP'] = report_ts
 
-        # Create a single TestConfiguration for the case execution
-        # This wraps all cases under one test result
         test_config = TestConfiguration(
             test_id=str(uuid.uuid4()),
-            test_type=TestType.UI_AGENT_LANGGRAPH,  # Use existing type for compatibility
+            test_type=TestType.UI_AGENT_LANGGRAPH,
             test_name='YAML Case Execution',
             enabled=True,
+            report_config=report_config or {'language': 'en-US'},
             browser_config=browser_config,
-            report_config=report_cfg,
-            test_specific_config={
-                'cookies': cookies,
-                'url': target_url,
-                'ignore_rules': ignore_rules or {},
-            },
+            test_specific_config=test_specific_config,
         )
 
         test_session.add_test_configuration(test_config)
@@ -100,64 +151,53 @@ class CaseMode:
 
         case_executor = None
         case_results = None
-        test_result = None
         result_count = {'total': 0, 'passed': 0, 'failed': 0, 'warning': 0}
         html_report_path = None
 
         try:
-            # Parse cases from YAML dicts to Case objects
+            # Parse and validate cases from YAML dicts
             try:
+                # Case model has extra='allow', so it keeps _config
                 parsed_cases = Case.from_yaml_list(cases)
-                logging.info(f'📋 Parsed {len(parsed_cases)} test cases')
-                # Set total count early for report summary
+                logging.info(f'📋 Parsed and validated {len(parsed_cases)} test cases')
                 result_count['total'] = len(parsed_cases)
             except ValidationError as e:
                 # Format friendly error message
                 error_details = []
                 for error in e.errors():
-                    # error['loc'] looks like (0, 'steps', 2, 'verify') or (0, 'name')
                     loc = error['loc']
                     msg = error['msg']
-                    
-                    # Clean up common pydantic prefixes
-                    if msg.startswith("Value error, "):
-                        msg = msg.replace("Value error, ", "")
-                    
+                    if msg.startswith('Value error, '):
+                        msg = msg.replace('Value error, ', '')
+
                     case_idx = loc[0] if len(loc) > 0 and isinstance(loc[0], int) else None
-                    case_name = "Unknown Case"
+                    case_name = 'Unknown Case'
                     if case_idx is not None and case_idx < len(cases):
                         case_name = cases[case_idx].get('name', f'Case {case_idx + 1}')
-                    
-                    if len(loc) >= 3 and loc[1] == 'steps':
-                        step_idx = loc[2]
-                        step_info = f"Step {step_idx + 1}"
-                        
-                        # Try to get field name if available
-                        field = str(loc[3]) if len(loc) > 3 else ""
-                        if field:
-                            error_details.append(f"  - [{case_name}] {step_info} '{field}': {msg}")
-                        else:
-                            error_details.append(f"  - [{case_name}] {step_info}: {msg}")
-                    elif len(loc) >= 2:
-                        field = str(loc[1])
-                        error_details.append(f"  - [{case_name}] field '{field}': {msg}")
-                    else:
-                        error_details.append(f"  - [{case_name}]: {msg}")
 
-                friendly_msg = "Case format is invalid:\n" + "\n".join(error_details)
+                    if len(loc) >= 3 and loc[1] == 'steps':
+                        step_info = f'Step {loc[2] + 1}'
+                        field = str(loc[3]) if len(loc) > 3 else ''
+                        error_details.append(f"  - [{case_name}] {step_info}{f' {field}' if field else ''}: {msg}")
+                    elif len(loc) >= 2:
+                        error_details.append(f"  - [{case_name}] field '{loc[1]}': {msg}")
+                    else:
+                        error_details.append(f'  - [{case_name}]: {msg}')
+
+                friendly_msg = 'Case format is invalid:\n' + '\n'.join(error_details)
                 logging.error(f"{icon['cross']} {friendly_msg}")
                 raise ValueError(friendly_msg) from e
 
-            # Initialize case executor
+            # Initialize case executor with explicit report_dir
             case_executor = CaseExecutor(
                 test_config=test_config,
                 llm_config=llm_config,
+                report_dir=report_dir
             )
 
             # Execute all cases
-            case_results = await case_executor.execute_cases(cases=cases)
+            case_results = await case_executor.execute_cases(cases=cases, workers=workers)
 
-            # Safety check: ensure case_results is not None
             if case_results is None:
                 logging.warning('case_executor.execute_cases returned None, treating as empty list')
                 case_results = []
@@ -168,23 +208,21 @@ class CaseMode:
             failed_cases = sum(1 for c in case_results if c.status == TestStatus.FAILED)
             warning_cases = sum(1 for c in case_results if c.status == TestStatus.WARNING)
 
-            result_count = {
+            result_count.update({
                 'total': total_cases,
                 'passed': passed_cases,
                 'failed': failed_cases,
                 'warning': warning_cases,
-            }
+            })
 
             # Determine overall status
+            overall_status = TestStatus.PASSED
+            error_message = None
             if failed_cases > 0:
                 overall_status = TestStatus.FAILED
                 error_message = f'{failed_cases} out of {total_cases} cases failed'
             elif warning_cases > 0:
                 overall_status = TestStatus.WARNING
-                error_message = None
-            else:
-                overall_status = TestStatus.PASSED
-                error_message = None
 
             # Build test result
             end_time = datetime.now()
@@ -200,29 +238,24 @@ class CaseMode:
                 error_message=error_message,
             )
 
-            test_result.duration = (end_time - test_session.start_time).total_seconds()
-
-            # Update session with result
             test_session.update_test_result(test_config.test_id, test_result)
             test_session.complete_session()
-
             logging.info(f"{icon['check']} Cases executed: {passed_cases}/{total_cases} passed")
 
         except Exception as e:
             raise e
         finally:
-            # Generate HTML report if possible (even if some cases failed or crashed)
-            if case_executor and case_executor.report_dir:
+            # Generate HTML report
+            if case_executor and report_dir:
                 try:
                     html_report_path = self._generate_html_with_jinja2(
-                        test_session, report_cfg, case_executor.report_dir, result_count
+                        test_session, report_config or {'language': 'en-US'}, report_dir, result_count
                     )
-                    if html_report_path:
-                        test_session.html_report_path = html_report_path
+                    test_session.html_report_path = html_report_path
                 except Exception as report_err:
                     logging.warning(f'Failed to generate final report: {report_err}')
 
-            # Cleanup Display (with error protection)
+            # Cleanup Display
             try:
                 await Display.display.stop()
                 Display.display.render_summary()
@@ -235,7 +268,6 @@ class CaseMode:
             test_session.html_report_path,
             result_count,
         )
-
 
     def _generate_html_with_jinja2(
         self, test_session: ParallelTestSession, report_cfg: Dict[str, Any], report_dir: str, result_count: Dict[str, Any]
@@ -310,7 +342,7 @@ class CaseMode:
         passed_count = result_count.get('passed', 0)
         warning_count = result_count.get('warning', 0)
         failed_count = result_count.get('failed', 0)
-        
+
         # Recalculate summary from actual data found on disk for accuracy (especially on crashes)
         if test_data:
             passed_count = sum(1 for c in test_data if c.get('status') == 'passed')
@@ -319,7 +351,7 @@ class CaseMode:
 
         total_count = result_count.get('total', len(test_data))
         exception_count = total_count - passed_count - warning_count - failed_count
-        total_count = total_count # Keep as is for template usage
+        total_count = total_count  # Keep as is for template usage
 
         # render template with Jinja2
         try:
@@ -448,7 +480,7 @@ class CaseMode:
                     else:
                         # string is already normal UTF-8, return directly
                         return s
-                except Exception as e:
+                except Exception:
                     # decode failed, return original string
                     return s
 
@@ -471,7 +503,7 @@ class CaseMode:
             language = report_cfg.get('language', 'en-US')
             i18n_file = static_dir / 'i18n' / f'{language}.json'
             i18n_data = {}
-            
+
             if i18n_file.exists():
                 try:
                     with open(i18n_file, 'r', encoding='utf-8') as f:
@@ -499,7 +531,7 @@ class CaseMode:
             )
 
             # save rendered HTML to file
-            report_path = os.path.join(report_dir, 'report.html')
+            report_path = os.path.join(report_dir, 'case_report.html')
             with open(report_path, 'w', encoding='utf-8') as f:
                 f.write(rendered_html)
 

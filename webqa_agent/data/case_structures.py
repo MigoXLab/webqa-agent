@@ -4,13 +4,11 @@ from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from webqa_agent.data.test_structures import TestStatus
-
 
 class ActionArgs(BaseModel):
     """Arguments for action step (file_path, timeout)."""
     model_config = ConfigDict(extra='forbid')
-    
+
     file_path: Optional[Union[str, List[str]]] = None
     timeout: Optional[int] = None
 
@@ -18,7 +16,7 @@ class ActionArgs(BaseModel):
 class VerifyArgs(BaseModel):
     """Arguments for verify step (use_context, timeout)."""
     model_config = ConfigDict(extra='forbid')
-    
+
     use_context: Optional[bool] = False
     context: Optional[bool] = None  # Alias for use_context
     timeout: Optional[int] = None
@@ -52,7 +50,7 @@ class StepAction(BaseModel):
             file_path: ./path/to/file.pdf
     """
     model_config = ConfigDict(extra='forbid')
-    
+
     description: str
     args: Optional[ActionArgs] = None
 
@@ -76,7 +74,7 @@ class StepVerify(BaseModel):
             use_context: true
     """
     model_config = ConfigDict(extra='forbid')
-    
+
     assertion: str
     args: Optional[VerifyArgs] = None
 
@@ -103,7 +101,7 @@ def _merge_step_args(step_key: str, step_value: Any, args_value: Any, content_fi
 class CaseStep(BaseModel):
     """A single step in a test case (either action or verify).
 
-              use_context: true
+    use_context: true
     """
     model_config = ConfigDict(extra='forbid')
 
@@ -137,7 +135,7 @@ class CaseStep(BaseModel):
 
 class Case(BaseModel):
     """Test case with name and steps."""
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra='allow')
 
     name: str = 'Unnamed Case'
     steps: List[CaseStep] = []

@@ -1251,7 +1251,7 @@
                         data-case="{{ case_index }}"
                         data-step="{{ loop.index0 }}">
                     <div class="step-number">
-                        {{ i18n.template.step if i18n.template else 'Step' }} {{ step.number }}
+                        {{ i18n.template.step if i18n.template else 'Step' }} {{ step.id }}
                         {% if step.status == "passed" %}
                         <span class="badge badge-success">{{ i18n.template.passed if i18n.template else 'Passed' }}</span>
                         {% elif step.status == "warning" %}

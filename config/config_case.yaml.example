@@ -31,7 +31,7 @@ cases:
       - verify: Verify the page displays the Baidu logo and search input box
       - action: The upload icon is the image icon inside the input box, next to the Baidu Search button, used to upload the file
         args:
-          file_path: ./tests/data/test.jpeg
+          file_path: ./tests/img/test.jpeg
       - action: Wait until the image is uploaded
       - verify: Verify that the input field displays an open palm/hand icon image
       - action: Type "How many fingers are in the picture?" in the search input box, then press Enter, Wait for 2 seconds

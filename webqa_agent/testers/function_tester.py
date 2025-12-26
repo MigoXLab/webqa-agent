@@ -102,7 +102,7 @@ class UITester:
         final_execution_result = {'success': False, 'message': 'No execution performed'}
         last_check_thought = None
         global_before_screenshot = None  # Will be assigned in the first iteration
-            
+
         try:
             logging.debug(f'Executing AI instruction: {test_step}')
             self.page = self.browser_session.page
@@ -121,7 +121,7 @@ class UITester:
                 file_name='global_before_screenshot',
                 context='verify'
             )
-            
+
             # Iterative planning loop for tasks that need check actions
             max_iterations = 5
             for iteration in range(max_iterations):
@@ -203,15 +203,15 @@ class UITester:
                     str(ElementKey.CENTER_X),
                     str(ElementKey.CENTER_Y)
                 ]
-                
+
                 # If we are in an iteration, add some context about what happened before
-                iterative_context = ""
+                iterative_context = ''
                 if iteration > 0 and all_execution_steps:
                     done_actions = [s.get('description', '') for s in all_execution_steps]
                     iterative_context = f"\n\n**Progress**: We have already performed these actions: {', '.join(done_actions)}."
                     if last_check_thought:
-                        iterative_context += f"\n**Last Observation**: {last_check_thought}"
-                    iterative_context += "\nNow continuing with the task."
+                        iterative_context += f'\n**Last Observation**: {last_check_thought}'
+                    iterative_context += '\nNow continuing with the task.'
 
                 user_prompt = self._prepare_prompt_action(
                     test_step + iterative_context,
@@ -222,7 +222,7 @@ class UITester:
                     is_page_agnostic=is_likely_page_agnostic
                 )
                 logging.debug(f'User prompt (iteration {iteration + 1}): {test_step + iterative_context}')
-                
+
                 # Generate plan
                 plan_json = await self._generate_plan(LLMPrompt.planner_system_prompt, user_prompt, marker_screenshot)
                 all_plans.append({
@@ -234,11 +234,11 @@ class UITester:
 
                 # Execute plan
                 execution_steps, execution_result = await self._execute_plan(plan_json=plan_json, file_path=file_path, viewport_only=viewport_only, full_page=full_page)
-                
+
                 # Aggregate steps
                 all_execution_steps.extend(execution_steps)
                 final_execution_result = execution_result
-                
+
                 # Add check LLM outputs to modelIO trace
                 for step in execution_steps:
                     if step.get('raw_output'):
@@ -246,7 +246,7 @@ class UITester:
                             'iteration': iteration + 1,
                             'check': step.get('raw_output')
                         })
-                
+
                 # Add action screenshots from this iteration to the ordered list
                 for step in execution_steps:
                     if step.get('screenshot'):
@@ -255,14 +255,14 @@ class UITester:
                 # Check if we should continue iterating
                 if execution_result.get('check_result') == 'continue':
                     last_check_thought = execution_result.get('thought')
-                    logging.info(f"Check action result is 'continue'. Iterating planning for task: {test_step}")
+                    logging.debug(f"Check action result is 'continue'. Iterating planning for task: {test_step}")
                     continue
                 else:
                     break
 
             execution_steps = all_execution_steps
             execution_result = final_execution_result
-            
+
             # Ensure the before_screenshot is the global one from the very beginning
             if global_before_screenshot:
                 execution_result['before_screenshot'] = global_before_screenshot
@@ -476,7 +476,7 @@ class UITester:
                     'last_action': self.last_action_context,
                     'test_objective': self.current_test_objective,
                 }
-                logging.debug('Using instance-stored execution context for verification')            
+                logging.debug('Using instance-stored execution context for verification')
 
             # Determine verification strategy
             verification_strategy = self._determine_verification_strategy(execution_context)
@@ -532,15 +532,15 @@ class UITester:
             # Determine mode: comparison (both available) or fallback (either missing)
             if before_screenshot and after_screenshot:
                 mode = 'comparison'
-                logging.info('Screenshot comparison mode: ENABLED (both before/after screenshots available)')
+                logging.debug('Screenshot comparison mode: ENABLED (both before/after screenshots available)')
             else:
                 mode = 'fallback'
                 if before_screenshot:
-                    logging.info('Screenshot comparison mode: FALLBACK (only before screenshot available)')
+                    logging.debug('Screenshot comparison mode: FALLBACK (only before screenshot available)')
                 elif after_screenshot:
-                    logging.info('Screenshot comparison mode: FALLBACK (only after screenshot available)')
+                    logging.debug('Screenshot comparison mode: FALLBACK (only after screenshot available)')
                 else:
-                    logging.info('Screenshot comparison mode: FALLBACK (no before/after screenshots available)')
+                    logging.debug('Screenshot comparison mode: FALLBACK (no before/after screenshots available)')
 
             # Normalize focus_region: treat empty string as None
             if focus_region is not None and not focus_region.strip():
@@ -778,8 +778,6 @@ class UITester:
             page_type: Type of page content (html, pdf, plugin, etc.)
             is_page_agnostic: Whether this is a page-agnostic browser-level operation
         """
-        import json
-
         prompt_parts = [
             f'test step: {test_step}',
             '===================='
@@ -982,7 +980,7 @@ class UITester:
                 # If it returned 'continue', we continue executing the rest of the current plan
                 # (e.g., executing a 'Sleep' that was planned after the 'Check')
                 if action.get('type') == 'Check' and check_result == 'stop':
-                    logging.info(f'Check action returned stop, finishing current plan')
+                    logging.info('Check action returned stop, finishing current plan')
                     break
 
             except Exception as e:
@@ -1066,9 +1064,10 @@ class UITester:
 
     async def _execute_plan_check(self, action: Dict[str, Any], viewport_only: bool = False, full_page: bool = True) -> Dict[str, Any]:
         """Execute check action to determine if the plan should continue.
-        
+
         The Check action asks LLM to evaluate if a completion condition is met.
-        LLM directly returns "stop" (condition met) or "continue" (condition not met).
+        LLM directly returns "stop" (condition met) or "continue" (condition
+        not met).
         """
         condition = action.get('param', {}).get('condition', '')
         if not condition:
@@ -1103,10 +1102,10 @@ class UITester:
             ]
 
             prompt = (
-                f"Condition: {condition}\n"
-                f"====================\n"
-                f"PAGE STATUS: {page_status} ({page_type})\n"
-                f"pageDescription: {curr.to_llm_json(template=check_template)}"
+                f'Condition: {condition}\n'
+                f'====================\n'
+                f'PAGE STATUS: {page_status} ({page_type})\n'
+                f'pageDescription: {curr.to_llm_json(template=check_template)}'
             )
 
             # Call LLM
@@ -1129,14 +1128,14 @@ class UITester:
             check_result = result_json.get('result', 'stop')
             thought = result_json.get('thought', 'No thought provided')
 
-            logging.info(f"Check action result: {check_result} (Thought: {thought})")
+            logging.debug(f'Check action result: {check_result} (Thought: {thought})')
 
             return {
                 'success': True,
                 'message': f'Check completed: {check_result}. {thought}',
                 'check_result': check_result,
                 'thought': thought,
-                'raw_output': result_json # 传出原始 LLM 输出
+                'raw_output': result_json
             }
 
         except Exception as e:

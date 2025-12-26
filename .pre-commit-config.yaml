@@ -75,7 +75,7 @@ repos:
     -   id: pylint
         name: pylint
         entry: pylint
-        language: system
+        language: python
         types: [python]
         require_serial: false
         args:

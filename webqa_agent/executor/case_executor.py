@@ -1,12 +1,13 @@
 """Case Executor - Execute test cases defined in YAML with ai/aiAssert steps.
 
 This module handles:
-1. Serial execution of test cases from YAML configuration
+1. Serial/Parallel execution of test cases from YAML configuration
 2. Step-by-step execution (ai actions and aiAssert validations)
 3. Result collection and screenshot capture
 4. Integration with existing UITester and browser session
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -15,10 +16,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from webqa_agent.browser import BrowserSession, BrowserSessionPool
-from webqa_agent.data import (CaseStep, StepContext, SubTestReport,
-                              SubTestResult, SubTestStep, TestConfiguration,
-                              TestStatus)
+from webqa_agent.data import (CaseStep, StepContext, SubTestResult,
+                              SubTestStep, TestConfiguration, TestStatus)
 from webqa_agent.utils import Display
+from webqa_agent.utils.get_log import test_id_var
 from webqa_agent.utils.log_icon import icon
 
 
@@ -33,88 +34,147 @@ class CaseExecutor:
     - Saving test results to JSON files
     """
 
-    def __init__(self, llm_config: Dict[str, Any], test_config: TestConfiguration):
+    def __init__(self, llm_config: Dict[str, Any], test_config: TestConfiguration, report_dir: Optional[str] = None):
         """Initialize case executor.
 
         Args:
             llm_config: LLM configuration for AI operations
             test_config: Test configuration including browser, report, and test-specific configs
+            report_dir: Optional report directory. If not provided, will use timestamp from env or current time.
         """
         self.llm_config = llm_config
         self.test_config = test_config
         self.browser_config = test_config.browser_config
         self.report_config = test_config.report_config
         self.test_specific_config = test_config.test_specific_config
-        self.report_dir: Optional[str] = None
+        self.report_dir = report_dir
 
-    # ========================================================================
-    # Public Methods
-    # ========================================================================
-
-
-    async def execute_cases(self, cases: List[Dict[str, Any]]) -> List[SubTestResult]:
-        """Execute all cases serially.
+    async def execute_cases(
+        self,
+        cases: List[Dict[str, Any]],
+        workers: int = 1,
+    ) -> List[SubTestResult]:
+        """Execute all cases using worker pool pattern (unified
+        serial/parallel).
 
         Args:
             cases: List of case configurations from YAML
-                   [{"name": "case1", "steps": [...]}, ...]
+            workers: Number of parallel workers (1 = serial, >1 = parallel)
 
         Returns:
             List of SubTestResult for each case
         """
-        results = []
         total_cases = len(cases)
+        mode_str = f'parallel ({workers} workers)' if workers > 1 else 'serial'
+        logging.info(f"{icon['rocket']} Starting {mode_str} execution: {total_cases} cases")
 
+        # Create session pool
+        session_pool = BrowserSessionPool(pool_size=workers, browser_config=self.browser_config)
+        await session_pool.initialize()
+
+        # Shared state
+        case_queue: asyncio.Queue = asyncio.Queue()
+        results: List[SubTestResult] = []
+        results_lock = asyncio.Lock()
+        completed_count = 0
+
+        # Fill queue
         for idx, case in enumerate(cases, 1):
-            case_name = case.get('name', f'Case {idx}')
-            logging.info(f"{icon['running']} Executing case {idx}/{total_cases}: {case_name}")
+            await case_queue.put((idx, case))
 
-            # Create a new session for each case
-            # TODO: use session pool once
-            session_pool = BrowserSessionPool(browser_config=self.browser_config) 
-            await session_pool.initialize()
-            # TODO: 并行
-            session = await session_pool.acquire()
+        async def worker(worker_id: int):
+            """Worker that pulls cases from queue until sentinel."""
+            nonlocal completed_count
 
-            try:
-                with Display.display(case_name):
-                    # Execute case
-                    case_result = None  # Initialize to avoid UnboundLocalError
-                    try:
+            while True:
+                item = await case_queue.get()
+                if item is None:  # Sentinel - exit
+                    break
+
+                idx, case = item
+                case_name = case.get('name', f'Case {idx}')
+                case_id = case.get('case_id', f'case_{idx}')
+
+                # Set test_id context for logging (imitating graph.py style)
+                # Including both ID and Name for maximum clarity
+                log_context = f'YAML Case Test | {case_id} | {case_name}'
+                token = test_id_var.set(log_context)
+
+                session = None
+                case_result = None
+
+                try:
+                    logging.info(f"Worker {worker_id}: Starting case '{case_name}' ({idx}/{total_cases})")
+                    session = await session_pool.acquire(timeout=120.0)
+
+                    with Display.display(case_name):  # pylint: disable=not-callable
                         case_result = await self.execute_single_case(session=session, case=case, case_index=idx)
+
+                    async with results_lock:
                         results.append(case_result)
+                        completed_count += 1
 
-                        status_icon = icon['check'] if case_result.status == TestStatus.PASSED else icon['cross']
-                        logging.info(f'{status_icon} Case {idx}/{total_cases} completed: {case_name} - {case_result.status}')
+                    status_icon = icon['check'] if case_result.status == TestStatus.PASSED else icon['cross']
+                    logging.info(f"{status_icon} Worker {worker_id}: '{case_name}' - {case_result.status} ({completed_count}/{total_cases})")
 
-                    except Exception as e:
-                        # Re-raise the exception to stop execution immediately
-                        raise e
+                except Exception as e:
+                    logging.error(f"Worker {worker_id}: Exception in '{case_name}': {e}", exc_info=True)
+                    async with results_lock:
+                        completed_count += 1
+                        results.append(SubTestResult(
+                            name=case_name,
+                            status=TestStatus.FAILED,
+                            metrics={'total_steps': 0, 'passed_steps': 0, 'failed_steps': 0},
+                            steps=[],
+                            messages={},
+                            start_time=datetime.now().isoformat(),
+                            end_time=datetime.now().isoformat(),
+                            final_summary=f'Exception: {str(e)}',
+                            report=[],
+                        ))
 
-                    finally:
-                        # Save case result to json file (only if case_result was created)
-                        if case_result is not None:
-                            self._save_case_result(case_result, case_name, idx)
+                finally:
+                    # Reset test_id context
+                    test_id_var.reset(token)
 
-                            # Memory optimization: Clear large data after saving to JSON
-                            # Keep only summary info needed for final report aggregation
-                            self._clear_case_screenshots(case_result)
+                    if case_result is not None:
+                        case_config = case.get('_config', {})
+                        self._save_case_result(case_result, case_name, idx, case_config=case_config)
+                        self._clear_case_screenshots(case_result)
 
-            finally:
-                # Close session after each case
-                if session:
-                    await session_pool.release(session)
-                await session_pool.close_all()
+                    if session:
+                        failed = case_result is None or case_result.status == TestStatus.FAILED
+                        if case_queue.qsize() == 0:
+                            await session.close()
+                        else:
+                            await session_pool.release(session, failed=failed)
 
+                    case_queue.task_done()
+
+        try:
+            # Start workers and wait for completion
+            worker_tasks = [asyncio.create_task(worker(i)) for i in range(workers)]
+            await case_queue.join()
+
+            # Stop workers
+            for _ in range(workers):
+                await case_queue.put(None)
+            await asyncio.gather(*worker_tasks, return_exceptions=True)
+
+        finally:
+            await session_pool.close_all()
+
+        # Sort by original index
+        results.sort(key=lambda r: next((i for i, c in enumerate(cases, 1) if c.get('name') == r.name), 999))
+        logging.info(f"{icon['check']} Execution completed: {len(results)}/{total_cases} cases")
         return results
-
 
     async def execute_single_case(self, session: BrowserSession, case: Dict[str, Any], case_index: int = 1) -> SubTestResult:
         """Execute a single test case.
 
         Args:
             session: Browser session
-            case: Case configuration {"name": "...", "steps": [...]}
+            case: Case configuration {"name": "...", "steps": [...], "_config": {...}}
             case_index: Index of the case (for logging)
 
         Returns:
@@ -123,8 +183,16 @@ class CaseExecutor:
         case_name = case.get('name', f'Unnamed Case {case_index}')
         start_time = datetime.now()
 
+        # Get case-specific config if available (for multi-YAML support)
+        case_config = case.get('_config', {})
+        url = case_config.get('url') or self.test_specific_config.get('url')
+        cookies = case_config.get('cookies') or self.test_specific_config.get('cookies')
+        ignore_rules = case_config.get('ignore_rules') or self.test_specific_config.get('ignore_rules', {})
+
         # Initialize tester and execute steps
-        tester = await self._initialize_tester(session, case_name)
+        tester = await self._initialize_tester(session, case_name, url=url, cookies=cookies, ignore_rules=ignore_rules)
+
+        # Execute steps
         executed_steps, case_status, error_messages, prev_step_context = await self._execute_steps(
             tester, case.get('steps', [])
         )
@@ -142,37 +210,48 @@ class CaseExecutor:
             error_messages=error_messages,
             monitoring_data=monitoring_data,
             start_time=start_time,
-            end_time=end_time
+            end_time=end_time,
+            ignore_rules=ignore_rules
         )
 
     # ========================================================================
     # Private Methods - Tester Lifecycle
     # ========================================================================
 
-    async def _initialize_tester(self, session: BrowserSession, case_name: str):
+    async def _initialize_tester(
+        self,
+        session: BrowserSession,
+        case_name: str,
+        url: Optional[str] = None,
+        cookies: Optional[List] = None,
+        ignore_rules: Optional[Dict] = None
+    ):
         """Initialize and start UI tester for case execution.
 
         Args:
             session: Browser session to use
             case_name: Name of the case (for logging)
+            url: Target URL (optional, falls back to test_specific_config)
+            cookies: Cookies (optional, falls back to test_specific_config)
+            ignore_rules: Ignore rules (optional, falls back to test_specific_config)
 
         Returns:
             Initialized UITester instance
         """
         from webqa_agent.testers.function_tester import UITester
 
-        ignore_rules = self.test_specific_config.get('ignore_rules', {})
+        _ignore_rules = ignore_rules or self.test_specific_config.get('ignore_rules', {})
         tester = UITester(
             llm_config=self.llm_config,
             browser_session=session,
-            ignore_rules=ignore_rules
+            ignore_rules=_ignore_rules
         )
         await tester.initialize()
         tester.set_current_test_name(case_name)
-        await tester.start_session(
-            url=self.test_specific_config.get('url'),
-            cookies=self.test_specific_config.get('cookies')
-        )
+
+        _url = url or self.test_specific_config.get('url')
+        _cookies = cookies or self.test_specific_config.get('cookies')
+        await tester.start_session(url=_url, cookies=_cookies)
         return tester
 
     async def _end_session(self, tester) -> Dict[str, Any]:
@@ -237,10 +316,12 @@ class CaseExecutor:
                 parsed_step = CaseStep.model_validate(step)
 
                 if parsed_step.step_type == 'action':
+                    logging.info(f'Executing step {step_idx}: {parsed_step.action}')
                     step_result, prev_step_context = await self._execute_action_step(
                         tester, parsed_step.action, step_idx
                     )
                 elif parsed_step.step_type == 'verify':
+                    logging.info(f'Executing step {step_idx}: {parsed_step.verify}')
                     step_result, prev_step_context = await self._execute_verify_step(
                         tester, parsed_step.verify, step_idx, prev_step_context
                     )
@@ -345,7 +426,7 @@ class CaseExecutor:
             assertion=verify.assertion,
             execution_context=context_info,
             viewport_only=True,
-            full_page=True
+            full_page=False
         )
 
         step_result = SubTestStep(
@@ -380,7 +461,8 @@ class CaseExecutor:
         case_name: str,
         case_status: TestStatus,
         monitoring_data: Dict[str, Any],
-        error_messages: List[str]
+        error_messages: List[str],
+        ignore_rules: Optional[Dict[str, Any]] = None
     ) -> Tuple[TestStatus, List[str], Dict[str, Any]]:
         """Check console and network errors from monitoring data.
 
@@ -394,6 +476,7 @@ class CaseExecutor:
             case_status: Current case status
             monitoring_data: Monitoring data from tester
             error_messages: List of error messages to append to
+            ignore_rules: Optional case-specific ignore rules
 
         Returns:
             Tuple of (updated_case_status, updated_error_messages, messages_data)
@@ -409,8 +492,8 @@ class CaseExecutor:
             'network_message': network_data
         }
 
-        # Get ignore rules configuration
-        ignore_rules = self.test_specific_config.get('ignore_rules', {})
+        # Get ignore rules configuration (case-specific or default)
+        ignore_rules = ignore_rules or self.test_specific_config.get('ignore_rules', {})
         has_console_ignore_rules = bool(ignore_rules.get('console', []))
         has_network_ignore_rules = bool(ignore_rules.get('network', []))
 
@@ -471,7 +554,8 @@ class CaseExecutor:
         error_messages: List[str],
         monitoring_data: Dict[str, Any],
         start_time: datetime,
-        end_time: datetime
+        end_time: datetime,
+        ignore_rules: Optional[Dict[str, Any]] = None
     ) -> SubTestResult:
         """Build final case result with monitoring check.
 
@@ -483,6 +567,7 @@ class CaseExecutor:
             monitoring_data: Monitoring data from tester
             start_time: Case start time
             end_time: Case end time
+            ignore_rules: Optional ignore rules for this specific case
 
         Returns:
             Complete SubTestResult
@@ -494,12 +579,13 @@ class CaseExecutor:
 
         final_summary = f'Executed {total_steps} steps: {passed_steps} passed, {failed_steps} failed'
 
-        # Check monitoring errors
+        # Check monitoring errors (use case-specific ignore_rules if provided)
         case_status, error_messages, messages_data = self._check_monitoring_errors(
             case_name=case_name,
             case_status=case_status,
             monitoring_data=monitoring_data,
-            error_messages=error_messages
+            error_messages=error_messages,
+            ignore_rules=ignore_rules
         )
 
         if error_messages:
@@ -521,17 +607,24 @@ class CaseExecutor:
     # Private Methods - File Operations
     # ========================================================================
 
-    def _save_case_result(self, case_result: SubTestResult, case_name: str, case_index: int) -> None:
+    def _save_case_result(
+        self,
+        case_result: SubTestResult,
+        case_name: str,
+        case_index: int,
+        case_config: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Save case result to JSON file.
 
         Args:
             case_result: The case result to save
             case_name: Name of the case (for filename sanitization)
             case_index: Index of the case (for ordering in report)
+            case_config: Optional case-specific config (for multi-YAML support)
         """
         if self.report_dir is None:
-            timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP') or os.getenv('WEBQA_TIMESTAMP')
-            self.report_dir = f'./reports/test_{timestamp}'
+            timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP') or os.getenv('WEBQA_TIMESTAMP') or datetime.now().strftime('%Y-%m-%d_%H-%M-%S_%f')
+            self.report_dir = os.path.join('.', 'reports', f'test_{timestamp}')
 
         try:
             os.makedirs(self.report_dir, exist_ok=True)
@@ -541,17 +634,26 @@ class CaseExecutor:
             safe_case_name = ''.join(c if c.isalnum() or c in ('-', '_', ' ') else '_' for c in case_name)
             case_result_path = report_dir_path / f'test_data_{case_index:03d}_{safe_case_name}.json'
 
+            # Use case-specific config if available, otherwise fall back to default
+            target_url = case_config.get('url') if case_config else self.test_specific_config.get('url', '')
+            ignore_rules = case_config.get('ignore_rules') if case_config else self.test_specific_config.get('ignore_rules', {})
+            source_file = case_config.get('_source_file') if case_config else None
+
             # Add config information for template compatibility
             case_dict = case_result.model_dump()
             case_dict['case_index'] = case_index  # Save index for ordering
             case_dict['config'] = {
-                'target_url': self.test_specific_config.get('url', ''),
-                'browser_config': self.browser_config,
+                'target_url': target_url,
+                'browser_config': case_config.get('browser_config') if case_config else self.browser_config,
                 'env': self.test_specific_config.get('env', ''),
                 'llm_model': self.llm_config.get('model', ''),
                 'filter_model': self.llm_config.get('filter_model', ''),
-                'ignore_rules': self.test_specific_config.get('ignore_rules', {})
+                'ignore_rules': ignore_rules,
             }
+
+            # Add source file info if available (for multi-config mode)
+            if source_file:
+                case_dict['config']['source_file'] = source_file
 
             # Save as list format to match template expectations
             with open(case_result_path, 'w', encoding='utf-8') as f:

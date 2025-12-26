@@ -121,7 +121,7 @@ class ResultAggregator:
         return {
             'title': self._get_text('assessment_overview'),
             'tabs': aggregated_results_list,
-            'count':{
+            'count': {
                 'total': total_sub_tests,
                 'passed': passed_sub_tests,
                 'warning': warning_sub_tests,
@@ -247,7 +247,7 @@ class ResultAggregator:
             # Determine report directory
             if report_dir is None:
                 timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP') or os.getenv('WEBQA_TIMESTAMP')
-                report_dir = f'./reports/test_{timestamp}'
+                report_dir = os.path.join('.', 'reports', f'test_{timestamp}')
             os.makedirs(report_dir, exist_ok=True)
 
             json_path = os.path.join(report_dir, 'test_results.json')
@@ -354,14 +354,16 @@ class ResultAggregator:
 
             if report_dir is None:
                 timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP') or os.getenv('WEBQA_TIMESTAMP')
-                report_dir = f'./reports/test_{timestamp}'
-            # Ensure report dir exists; if creation fails, fallback to tmp
+                report_dir = os.path.join('.', 'reports', f'test_{timestamp}')
+            # Ensure report dir exists; if creation fails, fallback to temp dir
             try:
                 os.makedirs(report_dir, exist_ok=True)
                 report_dir_path = Path(report_dir).resolve()
             except Exception as mk_err:
-                logging.warning(f"Cannot create report dir '{report_dir}': {mk_err}. Falling back to /tmp/webqa-reports.")
-                report_dir_path = Path('/tmp/webqa-reports').resolve()
+                import tempfile
+                temp_dir = os.path.join(tempfile.gettempdir(), 'webqa-reports')
+                logging.warning(f"Cannot create report dir '{report_dir}': {mk_err}. Falling back to {temp_dir}.")
+                report_dir_path = Path(temp_dir)
                 report_dir_path.mkdir(parents=True, exist_ok=True)
 
             html_path = report_dir_path / 'test_report.html'
