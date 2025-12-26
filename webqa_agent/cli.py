@@ -9,6 +9,7 @@ import sys
 import threading
 import traceback
 from pathlib import Path
+
 from webqa_agent.executor import ParallelMode
 from webqa_agent.utils import (check_lighthouse_installation,
                                check_nuclei_installation,
@@ -24,16 +25,16 @@ def get_version():
 
 def get_template_content(mode):
     """Get configuration template content from example files.
-    
+
     Args:
         mode: 'ai' or 'case'
-        
+
     Returns:
         Template content as string, or None if not found
     """
     # Try to find template in multiple locations
     current_dir = Path(__file__).parent.parent  # webqa-agent root
-    
+
     if mode == 'ai':
         template_paths = [
             current_dir / 'config' / 'config.yaml.example',
@@ -46,7 +47,7 @@ def get_template_content(mode):
         ]
     else:
         raise ValueError(f'Invalid mode: {mode}')
-    
+
     for template_path in template_paths:
         if template_path.exists():
             try:
@@ -54,7 +55,7 @@ def get_template_content(mode):
                     return f.read()
             except Exception:
                 continue
-    
+
     return None
 
 
@@ -72,7 +73,7 @@ def validate_and_build_llm_config(cfg):
     base_url = os.getenv('OPENAI_BASE_URL') or llm_cfg_raw.get('base_url', '')
     model = llm_cfg_raw.get('model', 'gpt-4o-mini')
     filter_model = llm_cfg_raw.get('filter_model', model)
-    temperature = llm_cfg_raw.get('temperature', 0.1)
+    temperature = llm_cfg_raw.get('temperature')  # No default - let provider handle it
     top_p = llm_cfg_raw.get('top_p')
     max_tokens = llm_cfg_raw.get('max_tokens')
     reasoning = llm_cfg_raw.get('reasoning')
@@ -225,8 +226,8 @@ def cmd_init(args):
     if template is None:
         print(f'❌ Template file not found for mode: {mode}', file=sys.stderr)
         print('   Expected template files:', file=sys.stderr)
-        print(f'   - config/config.yaml.example (AI mode)', file=sys.stderr)
-        print(f'   - config/config_case.yaml.example (case mode)', file=sys.stderr)
+        print('   - config/config.yaml.example (AI mode)', file=sys.stderr)
+        print('   - config/config_case.yaml.example (case mode)', file=sys.stderr)
         sys.exit(1)
 
     # Write config file
@@ -243,12 +244,12 @@ def cmd_init(args):
         print('      - llm_config.api: The LLM API provider (openai, anthropic, etc.)')
         print('      - llm_config.api_key: Your API key')
         print('      - llm_config.base_url: The base URL of the API')
-        
+
         if mode == 'ai':
             print('      - test_config: Enable/disable test types')
         else:
             print('      - cases: Define your test cases and steps')
-        
+
         print()
         print('   2. Run tests:')
         print(f'      webqa-agent run -c {output_path}')
@@ -264,7 +265,7 @@ def cmd_init(args):
 
 async def run_tests(cfg, execution_mode):
     """Execute the test suite.
-    
+
     Args:
         cfg: Configuration dictionary
         execution_mode: Execution mode ('ai' or 'case')
@@ -481,7 +482,7 @@ def cmd_run(args):
     """Run command handler."""
     specified_mode = args.mode if hasattr(args, 'mode') else None
     config_path = args.config if hasattr(args, 'config') else None
-    
+
     # Scenario 1: No --mode specified (default AI mode)
     if not specified_mode:
         if not config_path:
@@ -497,23 +498,23 @@ def cmd_run(args):
                 print('💡 Create a new configuration file:')
                 print('   webqa-agent init')
                 sys.exit(1)
-            
+
             print(f'📂 Using config: {config_path}')
             cfg = load_yaml(config_path)
-            
+
             # Validate config has test_config
             if 'test_config' not in cfg:
                 print('❌ AI mode requires "test_config" field in configuration', file=sys.stderr)
                 print('💡 Create an AI mode config: webqa-agent init', file=sys.stderr)
                 sys.exit(1)
-            
+
             # Execute AI mode
             asyncio.run(run_tests(cfg, execution_mode='ai'))
         else:
             # Config path specified, auto-detect mode from config structure
             print(f'📂 Using config: {config_path}')
             cfg = load_yaml(config_path)
-            
+
             # Priority: cases > test_config
             if 'cases' in cfg:
                 execution_mode = 'case'
@@ -522,9 +523,9 @@ def cmd_run(args):
             else:
                 print('❌ Config must contain either "cases" or "test_config" field', file=sys.stderr)
                 sys.exit(1)
-            
+
             asyncio.run(run_tests(cfg, execution_mode=execution_mode))
-    
+
     # Scenario 2: --mode specified
     else:
         # Validate mode value
@@ -532,16 +533,16 @@ def cmd_run(args):
             print(f'❌ Invalid mode: {specified_mode}')
             print('   Valid modes: ai, case')
             sys.exit(1)
-        
+
         # Must specify -c when using --mode
         if not config_path:
             print(f'❌ --mode {specified_mode} requires -c/--config to specify config file path', file=sys.stderr)
             print(f'   Example: webqa-agent run --mode {specified_mode} -c config.yaml', file=sys.stderr)
             sys.exit(1)
-        
+
         print(f'📂 Using config: {config_path}')
         cfg = load_yaml(config_path)
-        
+
         # Validate config structure matches specified mode
         if specified_mode == 'ai':
             if 'test_config' not in cfg:
@@ -553,7 +554,7 @@ def cmd_run(args):
                 print('❌ Case mode requires "cases" field in configuration', file=sys.stderr)
                 print('💡 Create a Case mode config: webqa-agent init --mode case', file=sys.stderr)
                 sys.exit(1)
-        
+
         # Execute specified mode
         asyncio.run(run_tests(cfg, execution_mode=specified_mode))
 
@@ -650,13 +651,13 @@ Examples:
   # Initialize configuration
   webqa-agent init                          Create AI mode config (default)
   webqa-agent init --mode case              Create Case mode config
-  
+
   # Run tests
   webqa-agent run                           AI mode, auto-search config.yaml
   webqa-agent run -c myconfig.yaml          Auto-detect mode from config
   webqa-agent run --mode ai -c config.yaml  AI mode with validation
   webqa-agent run --mode case -c config_case.yaml  Case mode with validation
-  
+
   # Launch web UI
   webqa-agent ui                            Start Gradio interface
   webqa-agent ui --lang zh-CN               Start with Chinese interface
@@ -664,7 +665,7 @@ Examples:
 Modes:
   - AI Mode: AI-driven test generation (function, UX, performance, security)
   - Case Mode: Execute predefined YAML test cases
-  
+
 Run behavior:
   - No --mode: Default AI mode, searches ./config.yaml or ./config/config.yaml
   - --mode specified: Requires -c flag, validates config structure

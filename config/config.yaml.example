@@ -52,13 +52,23 @@ llm_config: # LLM configuration, supports OpenAI, Anthropic Claude, and Google G
   # api_key: your_anthropic_api_key  # Or set ANTHROPIC_API_KEY environment variable
   # base_url:  # Optional, leave empty to use Anthropic default
   # temperature: 1.0  # Optional, default 1.0 for Claude (Anthropic best practice)
+  #                   # REQUIRED: Must be 1.0 when using Extended Thinking (reasoning.effort)
   # max_tokens: 8192  # Recommended for Claude (required by Anthropic API)
+  #                   # IMPORTANT: Must be > Extended Thinking budget_tokens
+  #                   # | effort  | budget | recommended max_tokens |
+  #                   # |---------|--------|------------------------|
+  #                   # | minimal |  1,024 |  2,000 - 3,000         |
+  #                   # | low     |  4,096 |  8,000 - 10,000        |
+  #                   # | medium  | 10,000 | 20,000 - 25,000        |
+  #                   # | high    | 20,000 | 40,000 - 50,000        |
 
   # Claude extended thinking configuration (optional, maps to thinking.budget_tokens)
   # reasoning:
   #   effort: medium    # minimal | low | medium | high
   #                     # Maps to: minimal=1024, low=4096, medium=10000, high=20000 tokens
   #                     # 'medium' (10000 tokens) recommended for testing scenarios
+  #                     # NOTE: Automatically enforces temperature=1.0 when enabled
+  #                     # NOTE: Requires max_tokens > budget_tokens (auto-adjusted if needed)
 
   # =========================
   # Google Gemini Configuration Example (RECOMMENDED)

@@ -34,6 +34,16 @@ except ImportError:
     AsyncAnthropic = None  # Type placeholder
 
 
+# Extended Thinking effort to budget_tokens mapping
+# Anthropic API requirements: min 1024, must be < max_tokens
+EXTENDED_THINKING_EFFORT_MAPPING = {
+    'minimal': 1024,   # Quick analysis
+    'low': 4096,       # Basic reasoning
+    'medium': 10000,   # Balanced (recommended)
+    'high': 20000,     # Deep analysis
+}
+
+
 class LLMAPI:
     def __init__(self, llm_config) -> None:
         self.llm_config = llm_config
@@ -653,10 +663,23 @@ class LLMAPI:
 
             # Handle reasoning.effort → thinking.budget_tokens mapping
             if reasoning is not None:
-                thinking_config = self._map_effort_to_thinking(reasoning, actual_model)
+                thinking_config = self._map_effort_to_thinking(
+                    reasoning,
+                    actual_model,
+                    max_tokens=create_kwargs.get('max_tokens')
+                )
                 if thinking_config:
                     create_kwargs['thinking'] = thinking_config
                     logging.debug(f'Extended thinking enabled: {thinking_config}')
+
+                    # Extended Thinking requires temperature=1 for Anthropic API
+                    if resolved_temperature != 1:
+                        logging.warning(
+                            f'Extended Thinking requires temperature=1 for Claude models. '
+                            f'Overriding configured temperature {resolved_temperature} to 1.0'
+                        )
+                        resolved_temperature = 1
+                        create_kwargs['temperature'] = resolved_temperature
 
             logging.debug(
                 'Anthropic Messages API request - model: %s, temperature: %s, max_tokens: %s, thinking: %s',
@@ -685,22 +708,41 @@ class LLMAPI:
         # Converts all exceptions to ValueError for consistent error handling across providers
         # Logs original exception message for debugging before re-raising as ValueError
         except Exception as e:
-            error_msg = f"Anthropic Messages API request failed for model '{model}': {str(e)}"
+            error_str = str(e)
+
+            # Add specific guidance for Extended Thinking errors
+            if 'budget' in error_str.lower() and 'tokens' in error_str.lower():
+                thinking_config = create_kwargs.get('thinking', {})
+                budget = thinking_config.get('budget_tokens', 'N/A')
+                max_tok = create_kwargs.get('max_tokens', 'N/A')
+
+                error_msg = (
+                    f'Anthropic API error: {error_str}\n'
+                    f'💡 Extended Thinking config: budget_tokens={budget}, max_tokens={max_tok}\n'
+                    f'   Fix: Increase max_tokens or reduce reasoning.effort in config'
+                )
+            else:
+                error_msg = f"Anthropic Messages API request failed for model '{model}': {error_str}"
+
             logging.error(error_msg)
             raise ValueError(error_msg)
 
-    def _map_effort_to_thinking(self, reasoning, model: str) -> dict:
-        """Map reasoning.effort to Anthropic thinking configuration.
+    def _map_effort_to_thinking(self, reasoning, model: str, max_tokens: int = None) -> dict:
+        """Map reasoning.effort to Anthropic thinking configuration with
+        validation.
 
-        Reasoning effort to budget_tokens mapping (based on industry best practices):
+        Reasoning effort to budget_tokens mapping (Anthropic API requirement: min 1024):
             - minimal: 1024 tokens  (quick, low-cost reasoning)
             - low: 4096 tokens      (basic analysis)
             - medium: 10000 tokens  (balanced, recommended for testing)
             - high: 20000 tokens    (deep analysis, complex scenarios)
 
+        Validation: budget_tokens must be < max_tokens (Anthropic API requirement)
+
         Args:
             reasoning: Can be dict {"effort": "medium"} or str "medium"
             model: Model name for logging
+            max_tokens: Maximum output tokens for validation
 
         Returns:
             dict: {"type": "enabled", "budget_tokens": N} or None if effort is None
@@ -721,26 +763,26 @@ class LLMAPI:
         if not effort:
             return None  # No thinking configuration
 
-        # Map effort levels to Claude Extended Thinking budget token counts
-        # Based on Anthropic's Extended Thinking recommendations:
-        # - minimal: 1024 tokens (quick analysis, simple tasks)
-        # - low: 4096 tokens (basic reasoning, standard queries)
-        # - medium: 10000 tokens (balanced reasoning, recommended for most use cases)
-        # - high: 20000 tokens (deep analysis, complex scenarios)
-        # Ref: https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking
-        effort_mapping = {
-            'minimal': 1024,
-            'low': 4096,
-            'medium': 10000,
-            'high': 20000,
-        }
-
-        budget_tokens = effort_mapping.get(effort.lower())
-        if budget_tokens:
-            return {'type': 'enabled', 'budget_tokens': budget_tokens}
-        else:
+        # Use shared effort mapping constant
+        budget_tokens = EXTENDED_THINKING_EFFORT_MAPPING.get(effort.lower())
+        if not budget_tokens:
             logging.warning(f"Unknown reasoning effort '{effort}' for model '{model}', skipping thinking configuration")
             return None
+
+        # Validate: budget_tokens must be < max_tokens (Anthropic API requirement)
+        if max_tokens and budget_tokens >= max_tokens:
+            # Calculate recommended max_tokens (budget should be 40-60% of max)
+            recommended_max = int(budget_tokens / 0.5)  # 50% ratio as middle ground
+
+            logging.warning(
+                f'Extended Thinking: budget_tokens ({budget_tokens}) >= max_tokens ({max_tokens}). '
+                f'Auto-adjusting budget to {max_tokens - 1}. '
+                f'Recommended: Set max_tokens={recommended_max} for effort={effort}'
+            )
+
+            budget_tokens = max_tokens - 1
+
+        return {'type': 'enabled', 'budget_tokens': budget_tokens}
 
     def _append_images_to_anthropic_content(self, content: list, images):
         """Append images to Anthropic Messages API content array.
