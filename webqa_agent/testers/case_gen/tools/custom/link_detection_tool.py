@@ -123,8 +123,9 @@ class DynamicLinkDetectionTool(WebQABaseTool):
                 '  - timeout: Request timeout in seconds (default: 10)'
             ),
             examples=[
-                'detect_dynamic_links(check_https=True, check_status=True, timeout=10)',
-                'detect_dynamic_links(check_https=False, check_status=True, timeout=5)'
+                '{{"action": "detect_dynamic_links", "params": {"check_https": true, "check_status": true, "timeout": 10}}}',
+                '{{"action": "detect_dynamic_links", "params": {"check_https": false, "check_status": true}}}',
+                '{{"action": "detect_dynamic_links", "params": {}}}'
             ],
             use_when=[
                 'After clicking navigation menus, dropdowns, or tabs that reveal new links',

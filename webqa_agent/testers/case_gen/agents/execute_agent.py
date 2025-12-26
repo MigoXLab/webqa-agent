@@ -1172,6 +1172,10 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     # 9. Increment & Continue (line 1615): Move to next step unless retry/abort
     # ===================================================================
 
+    # Cache custom tool names for unified format detection (outside loop for performance)
+    registry = get_registry()
+    custom_tool_names = set(registry.get_tool_names())
+
     i = 0
     while i < len(case_steps):
         step = case_steps[i]
@@ -1179,13 +1183,23 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         # Parse step type (supports core fields and custom tool type field)
         step_type = _parse_step_type(step)
 
-        # Extract instruction (supports core fields and custom tool instruction field)
-        instruction_to_execute = (
-            step.get('action') or
-            step.get('verify') or
-            step.get('ux_verify') or
-            step.get('instruction')  # Support custom tool instruction
-        )
+        # Handle unified format custom tools: {"action": "tool_name", "params": {...}}
+        # Convert params to function call instruction for agent_executor
+        action_value = step.get('action')
+        if action_value and action_value in custom_tool_names:
+            # Convert unified format to function call instruction
+            params = step.get('params', {})
+            param_str = ', '.join(f'{k}={v!r}' for k, v in params.items())
+            instruction_to_execute = f'{action_value}({param_str})'
+            logging.debug(f'Converted unified format custom tool to instruction: {instruction_to_execute}')
+        else:
+            # Standard extraction (supports core fields and custom tool instruction field)
+            instruction_to_execute = (
+                step.get('action') or
+                step.get('verify') or
+                step.get('ux_verify') or
+                step.get('instruction')  # Support custom tool instruction
+            )
 
         logging.info(f'Executing Step {i + 1}/{total_steps} ({step_type}), step instruction: {instruction_to_execute}')
 

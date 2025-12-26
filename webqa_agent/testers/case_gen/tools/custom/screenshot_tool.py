@@ -81,8 +81,9 @@ class ScreenshotTool(WebQABaseTool):
                 '  - description: Optional description for logging'
             ),
             examples=[
-                "capture_screenshot(filename='checkout_page', full_page=True)",
-                "capture_screenshot(filename='error_state', description='Captured after form validation failed')"
+                '{{"action": "capture_screenshot", "params": {"filename": "checkout_page", "full_page": true}}}',
+                '{{"action": "capture_screenshot", "params": {"filename": "error_state", "description": "Captured after form validation failed"}}}',
+                '{{"action": "capture_screenshot", "params": {"filename": "initial_state"}}}'
             ],
             use_when=[
                 'visual documentation',

@@ -118,6 +118,13 @@ class ToolRegistry:
                     self._step_type_mapping[metadata.step_type] = name
                     logger.debug(f'Registered step_type mapping: {metadata.step_type} -> {name}')
 
+                    # Auto-register custom tools to ActionTypes for planning prompts
+                    # This ensures custom tool names appear in action_types_str automatically
+                    if hasattr(metadata, 'category') and metadata.category == 'custom':
+                        from .base import ActionTypes
+                        ActionTypes.register_action(metadata.step_type)
+                        logger.debug(f'Registered custom action type: {metadata.step_type}')
+
                 # Check dependencies
                 if metadata.dependencies:
                     self._check_dependencies(metadata)

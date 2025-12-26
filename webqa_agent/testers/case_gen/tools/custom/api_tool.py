@@ -85,8 +85,9 @@ class APITestTool(WebQABaseTool):
                 '  - timeout: Request timeout in seconds'
             ),
             examples=[
-                "execute_api_test(endpoint='/api/health', method='GET', expected_status=200)",
-                "execute_api_test(endpoint='/api/users', method='POST', expected_status=201)"
+                '{{"action": "execute_api_test", "params": {"endpoint": "/api/health", "method": "GET", "expected_status": 200}}}',
+                '{{"action": "execute_api_test", "params": {"endpoint": "/api/users", "method": "POST", "expected_status": 201}}}',
+                '{{"action": "execute_api_test", "params": {"endpoint": "/api/config", "expected_status": 200}}}'
             ],
             use_when=[
                 'API health checks',

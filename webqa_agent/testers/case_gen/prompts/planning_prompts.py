@@ -25,7 +25,7 @@ def _get_custom_tools_planning_section() -> str:
     if not custom_tools:
         return ''
 
-    section = '\n### 📌 Available Custom Step Types:\n'
+    section = '## Available Custom Step Types:\n'
     section += 'In addition to standard action/verify/ux_verify steps, you can use these custom step types:\n\n'
 
     for name, metadata in custom_tools:
@@ -39,13 +39,23 @@ def _get_custom_tools_planning_section() -> str:
         if metadata.dont_use_when:
             section += f"  - ❌ **Don't use for**: {', '.join(metadata.dont_use_when)}\n"
 
-        # Add example usage
+        # Add example usage - show up to 3 examples for better few-shot learning
         if metadata.examples:
-            section += f"  - 📝 **Example step**: `{{\"type\": \"{metadata.step_type}\", \"instruction\": \"{metadata.examples[0]}\"}}`\n"
+            section += '  - 📝 **Examples**:\n'
+            for i, example in enumerate(metadata.examples[:3], 1):
+                section += f'    {i}. `{example}`\n'
 
         section += '\n'
 
-    section += '**Note**: Custom step types use `type` and `instruction` fields instead of `action`/`verify`/`ux_verify` fields.\n'
+    # Updated note to reflect unified format with action + params
+    section += (
+        '**Note**: Custom tools use `action` field with optional `params` object.\n'
+        'These tools are **automatically registered as available action types** - you can use them just like core UI actions.\n'
+        'Format: `{"action": "tool_name", "params": {"param1": value, ...}}`\n\n'
+        '**Usage Distinction**:\n'
+        '- **Custom tools** (detect_dynamic_links, execute_api_test, capture_screenshot): Testing utilities - can use technical parameters\n'
+        '- **Core UI actions** (Tap, Input, Scroll): User simulations - should use natural language from user perspective\n'
+    )
     return section
 
 
@@ -121,7 +131,7 @@ Each test case must focus on ONE specific functionality:
 - **`domain_specific_rules`**: Industry-specific validation requirements or compliance rules
 - **`test_data_requirements`**: Specification of domain-appropriate test data and setup conditions
 - **`steps`**: Detailed test execution steps with clear action/verification pairs that simulate real user behavior and scenarios
-  - `action`: User-scenario action instructions describing what a real user would do in natural language. **Only use these action types: "Tap", "Input", "Scroll", "SelectDropdown", "Clear", "Hover", "KeyboardPress", "Upload", "Drag", "GoToPage", "GoBack", "Sleep", "Mouse".**
+  - `action`: User-scenario action instructions describing what a real user would do in natural language. **Available action types (core UI actions + custom tools)**: {action_types_str}.
   - `verify`: User-expectation validation instructions describing what result a real user would expect to see
   - **FORBIDDEN FIELDS**: Do NOT output `elementRef`, `elementId`, `domId`, or any other technical identifiers in the step objects. The system handles element resolution automatically based on your semantic description.
 - **`preamble_actions`**: Optional setup steps to establish required test preconditions
@@ -129,7 +139,7 @@ Each test case must focus on ONE specific functionality:
 - **`success_criteria`**: Measurable, verifiable conditions that define test pass/fail status
 
 #### Step Decomposition Rules:
-1. **One Action Per Step**: Each step in the `steps` array must contain ONLY ONE atomic action, and the action type must be one of: {action_types_str}.
+1. **One Action Per Step**: Each step in the `steps` array must contain ONLY ONE atomic action, using one of the available action types: {action_types_str}.
 2. **Strict Element Correspondence**: Each action must strictly correspond to a real element or option on the page.
 3. **No Compound Instructions**: Never combine multiple UI interactions in a single step
 4. **Navigation Return Strategy**: When a step navigates to a new page (via link click, form submission, etc.) and subsequent steps require the original page context:
@@ -512,18 +522,15 @@ def get_test_case_planning_system_prompt(
     # Handle case where business_objectives might be a list
     business_objectives_str = business_objectives if isinstance(business_objectives, str) else str(business_objectives) if business_objectives else ''
     if business_objectives_str and business_objectives_str.strip():
-        role_and_objective = """
-## Role
+        role_and_objective = """## Role
 You are a Senior QA Testing Professional with expertise in business domain analysis, requirement engineering, and context-aware test design. Your responsibility is to deeply understand the application's business context, domain-specific patterns, and user needs to generate highly relevant and effective test cases.
 
 ## Primary Objective
 Conduct comprehensive business domain analysis and contextual understanding before generating test cases. Analyze the application's purpose, industry patterns, user workflows, and business logic to create test cases that are not only technically sound but also business-relevant and domain-appropriate.
 """
-        mode_section = f"""
-## Test Planning Mode: Context-Aware Intent-Driven Testing
+        mode_section = f"""## Test Planning Mode: Context-Aware Intent-Driven Testing
 **Business Objectives Provided**: {business_objectives_str}
 
-=== Enhanced Analysis Requirements ===
 Please follow these steps for comprehensive page analysis:
 
 ### Phase 1: Business Domain & Context Analysis
@@ -590,8 +597,7 @@ For each SINGLE functionality, provide:
 - ✅ Generate 4 separate test cases for 4 different search scenarios
 """
     else:
-        role_and_objective = """
-## Role
+        role_and_objective = """## Role
 You are a Senior QA Testing Professional with expertise in comprehensive web application analysis and domain-aware testing. Your responsibility is to conduct deep application analysis, understand business context, and design complete test suites that ensure software quality through systematic validation of all functional, business, and domain-specific requirements.
 
 ## Primary Objective
@@ -668,17 +674,12 @@ For each test case, provide:
         registry = get_registry()
         for name in registry.get_tool_names():
             metadata = registry.get_metadata(name)
-            # Filter for custom category with step_type defined
+            # Filter for custom category with step_type and examples defined
             if (metadata and hasattr(metadata, 'category') and metadata.category == 'custom'
-                    and hasattr(metadata, 'step_type') and metadata.step_type):
-                # Use tool's first example or generate a simple one
-                example_instruction = (
-                    metadata.examples[0] if metadata.examples
-                    else f'Use {metadata.step_type} for appropriate scenario'
-                )
-                custom_step_examples.append(
-                    f'{{"type": "{metadata.step_type}", "instruction": "{example_instruction}"}}'
-                )
+                    and hasattr(metadata, 'step_type') and metadata.step_type
+                    and metadata.examples):  # Only include if has examples
+                # Use first example directly (already in unified JSON format)
+                custom_step_examples.append(metadata.examples[0])
 
     # Build dynamic steps example based on available custom tools
     if custom_step_examples:
@@ -702,8 +703,8 @@ For each test case, provide:
       {{"action": "another_action_instruction"}},
       {{"ux_verify": "final_validation_instruction"}}"""
 
-        # Add explanatory note for custom step types
-        custom_steps_note = '\n**Important**: The `steps` array can contain BOTH standard step types (action/verify/ux_verify) AND custom step types (type/instruction) as demonstrated above. Use custom step types when business objectives align with their use cases.\n'
+        # Add explanatory note for custom tools (unified format)
+        custom_steps_note = '\n**Important**: The `steps` array can contain BOTH standard steps (action/verify/ux_verify) AND custom tools with `action` + `params` format as demonstrated above. Use custom tools when business objectives align with their use cases.\n'
     else:
         # No custom tools - standard format only
         steps_example = """      {{"action": "specific_action_instruction"}},
@@ -712,14 +713,19 @@ For each test case, provide:
       {{"ux_verify": "final_validation_instruction"}}"""
         custom_steps_note = ''
 
+    # Prompt structure optimized for LLM primacy effect (arxiv 2507.13949):
+    # 1. role_and_objective: Context establishment
+    # 2. mode_section: Task definition (primacy zone - LLM pays high attention)
+    # 3. custom_tools_section: Available tools (high-attention zone)
+    # 4. shared_standards: Reference material (middle - OK for reference)
     system_prompt = f"""
 {role_and_objective}
 
 {mode_section}
 
-{shared_standards}
-
 {custom_tools_section}
+
+{shared_standards}
 
 ## Output Format Requirements
 
@@ -754,6 +760,8 @@ def get_test_case_planning_user_prompt(
     state_url: str,
     page_text_summary: dict = None,
     priority_elements: dict = None,
+    all_page_links: list = None,
+    navigation_map: dict = None,
 ) -> str:
     """Generate user prompt for test case planning (Stage 2).
 
@@ -761,6 +769,8 @@ def get_test_case_planning_user_prompt(
         state_url: Target URL
         page_text_summary: Intelligent text summary from smart_truncate_page_text()
         priority_elements: AI-filtered priority elements from Stage 1
+        all_page_links: List of all navigable page links from extract_links()
+        navigation_map: Element-to-URL correlation mapping for navigation testing
 
     Returns:
         Formatted user prompt string with enhanced context
@@ -777,8 +787,7 @@ def get_test_case_planning_user_prompt(
         # Show representative sample of text content
         sample_text = text_content[:30] if len(text_content) > 30 else text_content
 
-        content_section = f"""
-## Page Content Summary (AI-Processed)
+        content_section = f"""## Page Content Summary
 - **Coverage**: {coverage} of total page text
 - **Estimated Tokens**: {estimated_tokens}
 - **Sampling Strategy**: {strategy}
@@ -798,8 +807,7 @@ def get_test_case_planning_user_prompt(
         # Show compact representation
         elements_json = json.dumps(priority_elements, ensure_ascii=False, indent=2)
 
-        elements_section = f"""
-## Priority Interactive Elements (AI-Filtered from Stage 1)
+        elements_section = f"""## Priority Interactive Elements (Filtered from Stage 1)
 **{elements_count} high-priority elements** identified through intelligent LLM analysis:
 
 ```json
@@ -814,8 +822,49 @@ def get_test_case_planning_user_prompt(
 
 **Usage Guideline**: Focus test case design on these critical elements while leveraging the full-page screenshot for context.
 """
-    user_prompt = f"""
-## Application Under Test (AUT)
+
+    # Build page links section
+    links_section = ''
+    if all_page_links:
+        # Show first 50 links (avoid overwhelming context)
+        sample_links = all_page_links[:50]
+        links_json = json.dumps(sample_links, ensure_ascii=False, indent=2)
+
+        links_section = f"""## All Page Links (For Navigation & Accessibility Testing)
+**{len(all_page_links)} navigable links** extracted from the page:
+
+```json
+{links_json}
+```
+{"... (showing first 50 of " + str(len(all_page_links)) + " total links)" if len(all_page_links) > 50 else ""}
+
+**Purpose**: Use this link list to:
+1. Plan navigation test cases (click element → verify target URL)
+2. Design link accessibility tests (HTTPS validation, status code checks)
+3. Identify alternative navigation paths for error recovery
+"""
+
+    # Build navigation mapping section
+    nav_map_section = ''
+    if navigation_map:
+        nav_map_json = json.dumps(navigation_map, ensure_ascii=False, indent=2)
+
+        nav_map_section = f"""## Navigation Element Mapping
+**{len(navigation_map)} priority elements** mapped to target URLs:
+
+```json
+{nav_map_json}
+```
+
+**Purpose**: This mapping helps you:
+1. Understand which UI elements lead to which pages
+2. Generate navigation test cases with expected URL verification
+3. Distinguish between navigation elements and non-navigation interactive elements
+
+**Note**: Elements marked with `"inferred": true` are heuristic matches based on text content. Verify during test execution.
+"""
+
+    user_prompt = f"""## Application Under Test (AUT)
 - **Target URL**: {state_url}
 - **Visual Element Reference**: The attached screenshot shows the ENTIRE webpage with numbered markers for interactive elements.
 
@@ -824,12 +873,17 @@ The screenshot captures the complete page from top to bottom, not just the visib
 
 {content_section}
 
+{links_section}
+
+{nav_map_section}
+
 {elements_section}
 
 Please design comprehensive test cases following the standards in the system prompt. Leverage:
 1. **Visual Information**: Full-page screenshot with element markers
 2. **Content Summary**: Page text and semantic structure
-3. **Priority Elements**: AI-filtered critical elements for focused testing
+3. **Link Information**: All page links + navigation mapping for URL-based testing
+4. **Priority Elements**: AI-filtered critical elements for focused testing
 
 Generate business-relevant, effective test scenarios that validate key functionality and user workflows.
 ### Example 1: Search & Data Retrieval
@@ -893,6 +947,8 @@ def get_planning_prompt(
     language: str = 'zh-CN',
     page_text_summary: dict = None,
     priority_elements: dict = None,
+    all_page_links: list = None,
+    navigation_map: dict = None,
 ) -> tuple[str, str]:
     """Generate prompts for planning (returns system and user prompt).
 
@@ -902,13 +958,15 @@ def get_planning_prompt(
         language: Language for test case naming (zh-CN or en-US)
         page_text_summary: Intelligent text summary from smart_truncate_page_text()
         priority_elements: AI-filtered priority elements from Stage 1
+        all_page_links: List of all navigable page links from extract_links()
+        navigation_map: Element-to-URL correlation mapping for navigation testing
 
     Returns:
         tuple: (system_prompt, user_prompt)
     """
     system_prompt = get_test_case_planning_system_prompt(business_objectives, language)
     user_prompt = get_test_case_planning_user_prompt(
-        state_url, page_text_summary, priority_elements
+        state_url, page_text_summary, priority_elements, all_page_links, navigation_map
     )
     return system_prompt, user_prompt
 
