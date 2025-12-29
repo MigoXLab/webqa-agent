@@ -47,13 +47,17 @@ def _get_custom_tools_planning_section() -> str:
 
         section += '\n'
 
+    # Build dynamic list of custom tool names from registered tools
+    custom_tool_names = [metadata.step_type for _, metadata in custom_tools] if custom_tools else []
+    custom_tools_list = ', '.join(custom_tool_names) if custom_tool_names else 'none currently registered'
+
     # Updated note to reflect unified format with action + params
     section += (
         '**Note**: Custom tools use `action` field with optional `params` object.\n'
         'These tools are **automatically registered as available action types** - you can use them just like core UI actions.\n'
         'Format: `{"action": "tool_name", "params": {"param1": value, ...}}`\n\n'
         '**Usage Distinction**:\n'
-        '- **Custom tools** (detect_dynamic_links, execute_api_test, capture_screenshot): Testing utilities - can use technical parameters\n'
+        f'- **Custom tools** ({custom_tools_list}): Testing utilities - can use technical parameters\n'
         '- **Core UI actions** (Tap, Input, Scroll): User simulations - should use natural language from user perspective\n'
     )
     return section
@@ -114,7 +118,7 @@ def get_shared_test_design_standards(language: str = 'zh-CN') -> str:
 ### Test Case Granularity Principle (CRITICAL)
 Each test case must focus on ONE specific functionality:
 - ✅ One navigation link = One test case
-- ✅ One search scenario = One test case  
+- ✅ One search scenario = One test case
 - ✅ One form field = One test case
 - ❌ All search scenarios = One test case (Too broad)
 
@@ -841,8 +845,7 @@ def get_test_case_planning_user_prompt(
 **Purpose**: Use this link list to:
 1. Plan navigation test cases (click element → verify target URL)
 2. Design link accessibility tests (HTTPS validation, status code checks)
-3. Identify alternative navigation paths for error recovery
-"""
+3. Identify alternative navigation paths for error recovery"""
 
     # Build navigation mapping section
     nav_map_section = ''
@@ -941,6 +944,7 @@ Generate business-relevant, effective test scenarios that validate key functiona
 
     return user_prompt
 
+
 def get_planning_prompt(
     business_objectives: str,
     state_url: str,
@@ -983,6 +987,26 @@ def get_reflection_system_prompt(language: str = 'zh-CN') -> str:
     name_language = '中文' if language == 'zh-CN' else 'English'
     shared_standards = get_shared_test_design_standards(language)
     custom_tools_section = _get_custom_tools_planning_section()
+
+    # Get available action types including custom tools for replanning guidance
+    # This ensures reflection stage can suggest custom tool steps dynamically
+    action_types_str = ActionTypes.get_prompt_string()
+
+    # Add replanning action types guidance section
+    replan_action_guidance = f"""
+
+## Available Action Types for Replanning
+
+When using the **REPLAN** strategy to create new test cases, you can use any of these action types:
+
+{action_types_str}
+
+**Replanning Guidelines**:
+- Focus on test cases that address the root cause of failures or explore untested scenarios
+- Consider using custom tools if they could provide additional verification or context
+- Maintain test case structure: clear objectives, appropriate step granularity (3-8 steps)
+- Ensure new test cases have proper verification points
+"""
 
     return f"""## Role
 You are a Senior QA Testing Professional responsible for dynamic test execution oversight with enhanced business domain awareness and contextual understanding. Your expertise includes business process analysis, domain-specific testing, user experience evaluation, and strategic decision-making based on comprehensive execution insights.
@@ -1113,6 +1137,8 @@ IF (len(completed_cases) < len(current_plan)
 {shared_standards}
 
 {custom_tools_section}
+
+{replan_action_guidance}
 
 ## Enhanced Decision Quality Standards
 - **Business Context-Aware**: All decisions must consider business domain, user needs, and industry context

@@ -20,8 +20,9 @@ Example test step:
     {"action": "Click the navigation dropdown"},
     {"action": "detect_dynamic_links", "description": "Check for new links in dropdown"}
 """
+import json
 import logging
-from typing import Any, Type
+from typing import Any, Dict, Type
 
 from pydantic import BaseModel, Field
 
@@ -100,6 +101,12 @@ class DynamicLinkDetectionTool(WebQABaseTool):
         description='UITester instance for accessing browser page and context'
     )
 
+    # Requires case_recorder for step recording
+    case_recorder: Any | None = Field(
+        default=None,
+        description='Optional CentralCaseRecorder to record detection steps'
+    )
+
     @classmethod
     def get_metadata(cls) -> WebQAToolMetadata:
         """Return tool metadata for registration and prompt generation."""
@@ -123,35 +130,77 @@ class DynamicLinkDetectionTool(WebQABaseTool):
                 '  - timeout: Request timeout in seconds (default: 10)'
             ),
             examples=[
-                '{{"action": "detect_dynamic_links", "params": {"check_https": true, "check_status": true, "timeout": 10}}}',
-                '{{"action": "detect_dynamic_links", "params": {"check_https": false, "check_status": true}}}',
-                '{{"action": "detect_dynamic_links", "params": {}}}'
+                ('{{"action": "detect_dynamic_links", "params": '
+                 '{{"check_https": true, "check_status": true, "timeout": 10}}}}'),
+                '{{"action": "detect_dynamic_links", "params": {{"check_https": false, "check_status": true}}}}',
+                '{{"action": "detect_dynamic_links", "params": {{}}}}'
             ],
             use_when=[
+                # Dynamic link discovery scenarios (SPA & interactive content)
                 'After clicking navigation menus, dropdowns, or tabs that reveal new links',
                 'After form submissions that may display new pages or confirmation screens with links',
                 'In Single Page Applications (SPAs) where links appear dynamically after routing',
                 'When testing dynamic navigation features (e.g., infinite scroll pagination with page links)',
-                'After interactions that trigger DOM updates revealing previously hidden links'
+                'After interactions that trigger DOM updates revealing previously hidden links',
+
+                # Comprehensive link quality testing (QA perspective)
+                'At the start of testing to establish baseline link inventory for the page',
+                'When conducting accessibility audits to verify all links are valid and reachable',
+                'During security testing to validate HTTPS compliance and certificate validity',
+                'When evaluating link quality (descriptive text, ARIA labels, broken links)',
+
+                # Systematic link validation scenarios
+                'After major page changes to detect broken internal links',
+                'When testing external integrations to verify third-party links are accessible',
+                'During regression testing to ensure previously working links remain functional',
+                'When validating navigation paths to confirm all routes are accessible',
+
+                # Specific use cases
+                'After authentication/login to detect member-only or role-specific links',
+                'When testing multi-step workflows to track navigation options at each step',
+                'In content-heavy pages to audit all embedded hyperlinks and resources'
             ],
             dont_use_when=[
-                'At initial page load (use WebAccessibilityTest for static link scanning)',
+                # Non-link-related actions
                 'After non-navigation actions like typing, hovering, or scrolling that do not reveal new content',
-                'On static HTML pages with no dynamic content loading',
                 'When testing non-link functionality (e.g., form validation, search results content)',
-                'After actions that navigate away from current page (links already checked on new page load)'
+                'During performance-critical operations where link validation would add unnecessary overhead',
+
+                # Redundant or inefficient scenarios
+                'Immediately after another link detection (avoid duplicate checks within same page state)',
+                'When the page has no links or only static content that was already validated',
+                'In the middle of multi-step forms before reaching confirmation/result pages with links'
             ],
             priority=45,  # Medium-high priority (between core tools 70-90 and standalone custom 30-40)
             dependencies=[]  # No external dependencies, uses built-in modules
         )
 
     @classmethod
-    def get_required_params(cls) -> dict:
+    def get_required_params(cls) -> Dict[str, str]:
         """Specify required initialization parameters.
 
-        This tool requires ui_tester_instance for browser access.
+        This tool requires:
+        - ui_tester_instance: For browser access
+        - case_recorder: For recording detection steps to test report
         """
-        return {'ui_tester_instance': 'ui_tester_instance'}
+        return {
+            'ui_tester_instance': 'ui_tester_instance',
+            'case_recorder': 'case_recorder'
+        }
+
+    @staticmethod
+    def _serialize_value(value: Any) -> Any:
+        """Convert any value to JSON-serializable form.
+
+        Args:
+            value: Any value, potentially an Exception object.
+
+        Returns:
+            String representation if value is Exception, otherwise original value.
+        """
+        if isinstance(value, Exception):
+            return str(value)
+        return value
 
     async def _arun(
         self,
@@ -205,7 +254,7 @@ class DynamicLinkDetectionTool(WebQABaseTool):
             current_links_set = set(current_links)
             new_links = current_links_set - previous_links
 
-            logging.info(f'Dynamic Link Detection: Detected {len(new_links)} new links')
+            logging.debug(f'Dynamic Link Detection: Detected {len(new_links)} new links')
 
             # Step 4: Validate new links (if requested and links exist)
             validated_links = []
@@ -220,7 +269,8 @@ class DynamicLinkDetectionTool(WebQABaseTool):
                                 link, timeout=timeout
                             )
                             link_result['https_valid'] = https_valid
-                            link_result['https_reason'] = reason
+                            # Ensure reason is always a string (it may be an Exception object)
+                            link_result['https_reason'] = self._serialize_value(reason) if reason else None
                             if expiry:
                                 link_result['https_expiry'] = expiry
                         except Exception as e:
@@ -253,6 +303,17 @@ class DynamicLinkDetectionTool(WebQABaseTool):
 
             # Step 6: Format response
             if not new_links:
+                # Record step even when no new links found
+                if self.case_recorder:
+                    self.case_recorder.add_step(
+                        description='Detect dynamic links (no new links found)',
+                        screenshots=[],
+                        model_io=f'Total links on page: {len(current_links)}. No new links since last check.',
+                        actions=[],
+                        status='passed',
+                        step_type='action',
+                    )
+
                 return self.format_success(
                     'No new links detected since last check',
                     page_state=f'Total links on page: {len(current_links)}'
@@ -271,7 +332,11 @@ class DynamicLinkDetectionTool(WebQABaseTool):
 
                 if check_status and link_data.get('status_code'):
                     status = link_data['status_code']
-                    status_symbol = '✓' if str(status).startswith('2') else '⚠' if str(status).startswith(('3', '4')) else '✗'
+                    status_symbol = (
+                        '✓' if str(status).startswith('2')
+                        else '⚠' if str(status).startswith(('3', '4'))
+                        else '✗'
+                    )
                     details += f' | {status_symbol} Status: {status}'
 
                 link_details.append(details)
@@ -280,12 +345,76 @@ class DynamicLinkDetectionTool(WebQABaseTool):
             if len(new_links) > 10:
                 summary += f'\n... and {len(new_links) - 10} more links'
 
+            # Record step when new links are detected
+            if self.case_recorder:
+                # Build detailed model_io with all validation results
+                # Ensure all data is JSON serializable using helper method
+                serializable_links = [
+                    {k: self._serialize_value(v) for k, v in link_data.items()}
+                    for link_data in validated_links[:20]
+                ]
+
+                model_io_data = {
+                    'detected_count': len(new_links),
+                    'validated_links': serializable_links,
+                    'check_https': check_https,
+                    'check_status': check_status,
+                }
+
+                try:
+                    self.case_recorder.add_step(
+                        description=f'Detect dynamic links (found {len(new_links)} new)',
+                        screenshots=[],
+                        model_io=json.dumps(model_io_data, ensure_ascii=False, indent=2),
+                        actions=[],
+                        status='passed',
+                        step_type='action',
+                    )
+                except (TypeError, ValueError) as json_err:
+                    # Fallback: record minimal info if JSON serialization still fails
+                    logging.warning(f'JSON serialization failed for link validation data: {json_err}')
+                    self.case_recorder.add_step(
+                        description=f'Detect dynamic links (found {len(new_links)} new)',
+                        screenshots=[],
+                        model_io=(f'Detected {len(new_links)} new links. '
+                                  f'Detailed validation data could not be serialized.'),
+                        actions=[],
+                        status='passed',
+                        step_type='action',
+                    )
+
             return self.format_success(
                 f'Detected {len(new_links)} new links',
                 page_state=summary
             )
 
         except Exception as e:
+            # Record failed step
+            if self.case_recorder:
+                try:
+                    self.case_recorder.add_step(
+                        description='Detect dynamic links (failed)',
+                        screenshots=[],
+                        model_io=json.dumps({
+                            'error': self._serialize_value(e),
+                            'error_type': type(e).__name__
+                        }, ensure_ascii=False),
+                        actions=[],
+                        status='failed',
+                        step_type='action',
+                    )
+                except (TypeError, ValueError) as json_err:
+                    # Fallback: use plain text if JSON serialization fails
+                    logging.warning(f'JSON serialization failed for error data: {json_err}')
+                    self.case_recorder.add_step(
+                        description='Detect dynamic links (failed)',
+                        screenshots=[],
+                        model_io=f'Error: {str(e)} (Type: {type(e).__name__})',
+                        actions=[],
+                        status='failed',
+                        step_type='action',
+                    )
+
             logging.error(f'Dynamic Link Detection: Unexpected error: {e}', exc_info=True)
             return self.format_failure(
                 f'Link detection failed: {str(e)}',

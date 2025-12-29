@@ -32,6 +32,7 @@ from webqa_agent.testers.case_gen.prompts.agent_prompts import \
     get_execute_system_prompt
 from webqa_agent.testers.case_gen.prompts.planning_prompts import \
     get_dynamic_step_generation_prompt
+from webqa_agent.testers.case_gen.tools.base import ActionTypes
 from webqa_agent.testers.case_gen.tools.element_action_tool import (
     UIAssertTool, UITool)
 from webqa_agent.testers.case_gen.tools.registry import get_registry
@@ -52,10 +53,10 @@ MIN_RECOVERY_CONFIDENCE = 0.7
 # ============================================================================
 
 def _get_tools(ui_tester_instance, llm_config, case_recorder):
-    """Get tools from registry or fallback to hardcoded list.
+    """Get tools combining core tools with registry tools.
 
-    Uses the Tool Registry for dynamic tool loading. Falls back to hardcoded
-    tool instantiation if registry fails for backward compatibility.
+    Always includes core tools (UITool, UIAssertTool, UIUXViewportTool) and
+    adds any custom tools from the registry if available.
 
     Args:
         ui_tester_instance: UITester instance for browser access
@@ -63,35 +64,42 @@ def _get_tools(ui_tester_instance, llm_config, case_recorder):
         case_recorder: CentralCaseRecorder instance
 
     Returns:
-        List of instantiated tool objects
+        List of instantiated tool objects (core tools + custom tools)
     """
+    # Always instantiate core tools to ensure consistent behavior
+    core_tools = [
+        UITool(ui_tester_instance=ui_tester_instance, case_recorder=case_recorder),
+        UIAssertTool(ui_tester_instance=ui_tester_instance, case_recorder=case_recorder),
+        UIUXViewportTool(ui_tester_instance=ui_tester_instance, llm_config=llm_config, case_recorder=case_recorder)
+    ]
+    logging.debug(f'Core tools instantiated: {[t.name for t in core_tools]}')
+
+    # Try to load custom tools from registry
+    custom_tools = []
     try:
         registry = get_registry()
         tool_names = registry.get_tool_names()
         if tool_names:
-            # Registry has tools registered
-            tools = registry.get_tools(
+            # Get all tools from registry
+            registry_tools = registry.get_tools(
                 ui_tester_instance=ui_tester_instance,
                 llm_config=llm_config,
                 case_recorder=case_recorder
             )
-            if tools:
-                logging.debug(f'Tools loaded from registry: {[t.name for t in tools]}')
-                return tools
+            if registry_tools:
+                # Filter out core tools from registry to avoid duplicates
+                # Only keep custom tools (category='custom')
+                core_tool_names = {t.name for t in core_tools}
+                custom_tools = [t for t in registry_tools if t.name not in core_tool_names]
+                if custom_tools:
+                    logging.debug(f'Custom tools loaded from registry: {[t.name for t in custom_tools]}')
     except Exception as e:
-        logging.warning(f'Registry loading failed, using fallback: {e}')
+        logging.warning(f'Registry loading failed, continuing with core tools only: {e}')
 
-    # Fallback to hardcoded (backward compatibility)
-    logging.debug('Using fallback hardcoded tool instantiation')
-    return [
-        UITool(ui_tester_instance=ui_tester_instance),
-        UIAssertTool(ui_tester_instance=ui_tester_instance),
-        UIUXViewportTool(
-            ui_tester_instance=ui_tester_instance,
-            llm_config=llm_config,
-            case_recorder=case_recorder
-        ),
-    ]
+    # Return combined list: core tools + custom tools
+    all_tools = core_tools + custom_tools
+    logging.debug(f'Total tools available: {[t.name for t in all_tools]}')
+    return all_tools
 
 
 # ============================================================================
@@ -482,6 +490,24 @@ Analyze why this step failed and determine the best recovery strategy:
 - If error indicates fundamental issues (page crashed, wrong page), choose "abort"
 - If alternative elements with similar function exist, choose "retry_modified"
 - If functionality was already tested in earlier steps, choose "skip"
+"""
+
+            # Get available action types including custom tools for recovery suggestions
+            action_types_str = ActionTypes.get_prompt_string()
+
+            failure_prompt += f"""
+
+## Available Action Types for Recovery
+
+You can suggest alternative steps using any of these action types:
+
+{action_types_str}
+
+**Recovery Considerations**:
+- Use core UI actions (Tap, Input, Scroll) for alternative interaction paths
+- Consider custom tools if they could diagnose issues or verify system state
+- Provide exactly ONE alternative step that addresses the root cause
+- Ensure the alternative step is contextually appropriate for the current page state
 
 ## Response Format (JSON only):
 
@@ -1453,7 +1479,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 # Handle other failures: Non-critical failures not caused by ELEMENT_NOT_FOUND
                 # (e.g., GoBack with no history, operation timeout, permission issues)
                 else:
-                    logging.warning(f'Step {i + 1} failed (non-ELEMENT_NOT_FOUND): {tool_output[:100]}')
+                    logging.warning(f'Step {i + 1} failed (non-ELEMENT_NOT_FOUND): {tool_output}')
 
                     # Extended LLM adaptive recovery for all failure types
                     dynamic_config = state.get('dynamic_step_generation', {'enabled': False})
