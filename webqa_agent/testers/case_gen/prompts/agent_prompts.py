@@ -1,4 +1,5 @@
 """Prompt templates for execution agent."""
+import logging
 
 from webqa_agent.testers.case_gen.tools.registry import get_registry
 
@@ -59,7 +60,6 @@ def get_custom_tools_prompt_section() -> str:
 
     except Exception as e:
         # Fail silently - custom tools are optional
-        import logging
         logging.debug(f'Failed to generate custom tools prompt section: {e}')
         return ''
 

@@ -113,7 +113,12 @@ class ToolRegistry:
                 name = metadata.name
                 self._metadata_cache[name] = metadata
 
-                # Register step_type mapping if specified
+                # Register step_type mapping for documentation and action registration
+                # This mapping serves TWO purposes:
+                # 1. Planning prompts: Provides tool documentation with step_type labels
+                # 2. Action registration: Auto-registers custom tools to ActionTypes
+                # Note: LLM tool selection is NOT restricted - entirely based on descriptions.
+                # Future enhancement: Tool masking feature is not yet implemented.
                 if metadata.step_type:
                     self._step_type_mapping[metadata.step_type] = name
                     logger.debug(f'Registered step_type mapping: {metadata.step_type} -> {name}')
