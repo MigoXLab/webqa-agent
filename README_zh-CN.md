@@ -49,7 +49,7 @@ Vibecoding, Vibe coding, 网页测试自动化, 浏览器测试工具, AI驱动�
 
 ### 📋 功能介绍
 
-**WebQA-Agent** 提供两种测试模式，满足不同场景需求：**🤖 自动探索模式**和 **📋 执行模式**。两种模式的核心能力对比如下：
+**WebQA-Agent** 提供两种测试模式，满足不同场景需求: **🤖 自动探索模式**和 **📋 执行模式**
 
 | 能力         | 🤖 **自动探索模式 (Generate模式)**                                         | 📋 **执行模式 (Run模式)**                                             |
 | :----------- | :------------------------------------------------------------------------- | :-------------------------------------------------------------------- |
@@ -164,12 +164,14 @@ test_config:
   security_test:                        # 安全扫描（需要 Nuclei）
     enabled: False
 
-llm_config:
-  model: gpt-4.1-2025-04-14             # 视觉模型配置，当前仅支持 OpenAI SDK 兼容格式
-  filter_model: gpt-4o-mini             # 轻量级模型用于元素过滤
-  api_key: your_api_key                 # 或使用 OPENAI_API_KEY 环境变量
-  base_url: https://api.openai.com/v1   # 或使用 OPENAI_BASE_URL 环境变量
-  temperature: 0.1
+llm_config:                             # LLM 配置，支持 OpenAI、Anthropic Claude、Google Gemini 以及 OpenAI 兼容格式模型（如豆包、通义千问等）
+  model: gpt-4.1-2025-04-14             # 主模型
+  filter_model: gpt-4o-mini             # 轻量级模型用于元素过滤（可选）
+  api_key: your_api_key                 # 或通过环境变量设置 (OPENAI_API_KEY)
+  base_url: https://api.openai.com/v1   # 可选，API 端点。对于 OpenAI 兼容格式模型（豆包、通义千问等），设置为对应的 API 端点
+  temperature: 0.1                      # 可选，
+  # 详细的配置示例（OpenAI、Claude、Gemini）和推理设置说明，
+  # 请参考 config/config.yaml.example
 
 browser_config:
   viewport: {"width": 1280, "height": 720}
@@ -210,8 +212,7 @@ browser_config:
   viewport: {"width": 1280, "height": 720}
   headless: False                       # Docker 环境自动设为 True
   language: en-US
-  cookies: []
-  save_screenshots: False
+  # cookies: /path/to/cookie.json
 
 ignore_rules:                           # 忽略规则配置（可选）
   network:                              # 网络请求忽略规则

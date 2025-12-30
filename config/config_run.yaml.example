@@ -16,8 +16,11 @@ llm_config:
   #   verbosity: medium  # low | medium | high (default 'medium')
 
 browser_config:
+  viewport: {"width": 1280, "height": 720}
   headless: False
   language: zh-CN
+  # cookies: /path/to/cookie.json         # Load cookie data
+  # cookies: []
 
 ignore_rules:               # Ignore rules for network and console
   network:

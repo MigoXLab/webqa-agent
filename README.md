@@ -38,8 +38,7 @@
   </a>
 </p>
 
-<p align="center">🤖 <strong>WebQA Agent</strong> is a fully automated web evaluation and testing agent with core capabilities in multi-modal web understanding, intelligent test case generation, and precise execution.
-It completes comprehensive testing and evaluation of functionality, performance, and interactive user experience. ✨</p>
+<p align="center">🤖 <strong>WebQA Agent</strong> is a fully automated web testing agent for multi-modal understanding, test generation, and end-to-end evaluation of functionality, performance, and UX. ✨</p>
 </div>
 
 <!-- Additional SEO Keywords and Context
@@ -50,14 +49,14 @@ vibecoding, vibe coding, web evaluation, autonomous exploration, web testing aut
 
 ### 📋 Feature Overview
 
-**WebQA-Agent** provides two testing modes to support different scenario: **🤖 Generate Mode** and **📋 Run Mode**. The core capabilities comparison is as follows:
+**WebQA-Agent** provides two testing modes to support different scenarios **🤖 Generate Mode** and **📋 Run Mode**.
 
 | Capability        | 🤖 **Generate Mode**                                                                           | 📋 **Run Mode**                                                                           |
 | :---------------- | :--------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------- |
-| **Core Features** | AI-driven discorvery -> dynamic generation -> precise execution                                | Execute based on instructions and expected verification                                   |
+| **Core Features** | AI-driven discovery -> Dynamic generation -> Precise execution                                 | Execute based on instructions and expected verification                                   |
 | **Use Cases**     | New feature, comprehensive quality assurance                                                   | Repeatable and regression testing scenarios                                               |
 | **User Input**    | **Minimal**: Only URL or a one-sentence business goal                                          | **Structured**: Simple natural language step descriptions                                 |
-| **Advantages**    | Reflection-based planning, adaptive to UI changes; configurable functional / performance / security / UX evaluation for comprehensive QA | Stable and predictable results; no selector maintenance; real-time Console and Network monitoring |
+| **Advantages**    | Reflection-based planning, adaptive to UI changes; Configurable functional / performance / security / UX evaluation for comprehensive QA | Stable and predictable results; No selector maintenance; Real-time Console and Network monitoring |
 
 ### 🧭 Architecture
 
@@ -165,19 +164,19 @@ test_config:
   security_test:                        # Security scanning (requires Nuclei)
     enabled: False
 
-llm_config:
-  model: gpt-4.1-2025-04-14             # Vision model configuration, currently supports OpenAI SDK compatible format only
-  filter_model: gpt-4o-mini             # Lightweight model for element filtering
-  api_key: your_api_key                 # Or use OPENAI_API_KEY env var
-  base_url: https://api.openai.com/v1   # Or use OPENAI_BASE_URL env var
-  temperature: 0.1
+llm_config:                             # LLM configuration, supports OpenAI, Anthropic Claude, Google Gemini, and OpenAI-compatible models (e.g., Doubao, Qwen)
+  model: gpt-4.1-2025-04-14             # Primary model
+  filter_model: gpt-4o-mini             # Lightweight model for element filtering (optional)
+  api_key: your_api_key                 # Or set via environment variable (OPENAI_API_KEY)
+  base_url: https://api.openai.com/v1   # Optional, API endpoint. For OpenAI-compatible models (Doubao, Qwen, etc.), set to their API endpoint
+  temperature: 0.1                      # Optional, model temperature
+  # For detailed configuration examples (OpenAI, Claude, Gemini) and reasoning settings,
+  # see config/config.yaml.example
 
 browser_config:
   viewport: {"width": 1280, "height": 720}
   headless: False                       # Auto True in Docker
   language: en-US
-  cookies: []
-  save_screenshots: False
 
 report:
   language: en-US                       # zh-CN or en-US
@@ -211,8 +210,7 @@ browser_config:
   viewport: {"width": 1280, "height": 720}
   headless: False                       # Auto True in Docker
   language: en-US
-  cookies: []
-  save_screenshots: False
+  # cookies: /path/to/cookie.json
 
 ignore_rules:                           # Ignore rules configuration (optional)
   network:                              # Network request ignore rules
