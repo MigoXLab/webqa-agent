@@ -152,8 +152,8 @@ class WebQAToolMetadata(BaseModel):
 
     This metadata is used by:
     1. ToolRegistry - for tool discovery and instantiation
-    2. _get_tool_choice() - for step_type to tool_name mapping
-    3. Prompt generation - for dynamic tool documentation
+    2. Prompt generation - for dynamic tool documentation
+    3. Execution logging - for step type identification
 
     Attributes:
         name: Tool name used in LangChain (e.g., 'execute_api_test')
@@ -175,13 +175,16 @@ class WebQAToolMetadata(BaseModel):
         description='Tool category: action, assertion, ux, custom'
     )
 
-    # Step type mapping (for tool_choice integration)
+    # Step type identifier (for planning documentation and execution logging)
     step_type: Optional[str] = Field(
         default=None,
         description=(
-            'Step type that triggers this tool. '
+            'Step type identifier used for test planning documentation and execution logging. '
             "For custom tools, use 'custom_xxx' format (e.g., 'custom_api_test'). "
-            'If None, tool is not forced by step_type and LLM can choose freely.'
+            'This identifier helps distinguish step types in planning prompts and execution logs. '
+            'Note: This does NOT restrict LLM tool selection - the LLM chooses tools freely '
+            'based on tool descriptions and context. If None, the tool appears in planning '
+            'documentation by tool name only.'
         )
     )
 

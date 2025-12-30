@@ -22,6 +22,7 @@ Example test step:
 """
 import json
 import logging
+from datetime import datetime
 from typing import Any, Dict, Type
 
 from pydantic import BaseModel, Field
@@ -239,11 +240,17 @@ class DynamicLinkDetectionTool(WebQABaseTool):
 
             logging.debug(f'Dynamic Link Detection: Found {len(current_links)} total links on page')
 
-            # Step 2: Retrieve previous links from context (handle first invocation)
+            # Step 2: Retrieve previous links from context
+            # Note: get_execution_context() returns None when there's no prior action
             previous_context = self.get_execution_context(self.ui_tester_instance)
-            previous_links = set(
-                previous_context.get('last_action', {}).get('all_links_snapshot', [])
-            )
+
+            # Handle first invocation: initialize empty set if no context exists
+            if previous_context:
+                previous_links = set(
+                    previous_context.get('last_action', {}).get('all_links_snapshot', [])
+                )
+            else:
+                previous_links = set()
 
             if not previous_links:
                 logging.debug('Dynamic Link Detection: First invocation - no previous link history')
@@ -292,12 +299,40 @@ class DynamicLinkDetectionTool(WebQABaseTool):
                     validated_links.append(link_result)
 
             # Step 5: Update context with current link snapshot for next invocation
+            # IMPORTANT: This context enables subsequent assertion steps to verify link quality
+            # Fields align with UITool pattern (element_action_tool.py:222-231) to ensure
+            # function_tester.py:_format_execution_context() can extract all required data
+
+            # Build result message for LLM and assertions
+            result_message = f'Detected {len(new_links)} new links on page'
+            if check_https or check_status:
+                passed_count = sum(
+                    1 for link in validated_links
+                    if (not check_https or link.get('https_valid') is True)
+                    and (not check_status or str(link.get('status_code', '')).startswith('2'))
+                )
+                result_message += f' (validated {len(validated_links)}: {passed_count} passed)'
+
             self.update_action_context(
                 self.ui_tester_instance,
                 {
+                    # Core fields (required by assertion tools)
+                    'description': f'Detect dynamic links (found {len(new_links)} new)',
                     'action_type': 'DynamicLinkCheck',
-                    'detected_new_links_count': len(new_links),
-                    'all_links_snapshot': list(current_links_set),  # Store for next comparison
+                    'status': 'success',  # Detection succeeded even if some links failed validation
+                    'result': {
+                        'message': result_message,  # CRITICAL: Used by LLM prompts as "Result: ..."
+                        'validated_links': validated_links,  # CRITICAL: Enables link quality assertions
+                        'total_links_on_page': len(current_links_set),
+                        'new_links_count': len(new_links),
+                        'check_https': check_https,
+                        'check_status': check_status,
+                    },
+                    'timestamp': datetime.now().isoformat(),
+
+                    # DynamicLinkCheck-specific fields (backward compatibility + state tracking)
+                    'detected_new_links_count': len(new_links),  # Keep for backward compatibility
+                    'all_links_snapshot': list(current_links_set),  # Required for next invocation comparison
                 }
             )
 
@@ -313,6 +348,30 @@ class DynamicLinkDetectionTool(WebQABaseTool):
                         status='passed',
                         step_type='action',
                     )
+
+                # Update context even when no new links (enables proper assertion context)
+                self.update_action_context(
+                    self.ui_tester_instance,
+                    {
+                        # Core fields (required by assertion tools)
+                        'description': 'Detect dynamic links (no new links found)',
+                        'action_type': 'DynamicLinkCheck',
+                        'status': 'success',  # No new links is a successful detection result
+                        'result': {
+                            'message': f'No new links detected. Total links on page: {len(current_links)}',
+                            'validated_links': [],  # Empty list (no new links to validate)
+                            'total_links_on_page': len(current_links),
+                            'new_links_count': 0,
+                            'check_https': check_https,
+                            'check_status': check_status,
+                        },
+                        'timestamp': datetime.now().isoformat(),
+
+                        # DynamicLinkCheck-specific fields (backward compatibility + state tracking)
+                        'detected_new_links_count': 0,
+                        'all_links_snapshot': list(current_links_set),
+                    }
+                )
 
                 return self.format_success(
                     'No new links detected since last check',
@@ -414,6 +473,28 @@ class DynamicLinkDetectionTool(WebQABaseTool):
                         status='failed',
                         step_type='action',
                     )
+
+            # Update context to indicate detection failure (enables proper assertion skip logic)
+            # This ensures subsequent assertion steps know about the failure and can handle it appropriately
+            self.update_action_context(
+                self.ui_tester_instance,
+                {
+                    # Core fields (required by assertion tools)
+                    'description': 'Detect dynamic links (failed)',
+                    'action_type': 'DynamicLinkCheck',
+                    'status': 'failed',  # Marks execution as failed for verification strategy determination
+                    'result': {
+                        'message': f'Link detection failed: {str(e)}',
+                        'error_details': {  # Nested structure to match function_tester.py:417 expectations
+                            'error_type': type(e).__name__,
+                        }
+                    },
+                    'timestamp': datetime.now().isoformat(),
+
+                    # DynamicLinkCheck-specific fields
+                    'all_links_snapshot': [],  # No snapshot available on failure
+                }
+            )
 
             logging.error(f'Dynamic Link Detection: Unexpected error: {e}', exc_info=True)
             return self.format_failure(

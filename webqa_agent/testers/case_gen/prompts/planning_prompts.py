@@ -7,13 +7,26 @@ from webqa_agent.testers.case_gen.tools.registry import get_registry
 
 
 def _get_custom_tools_planning_section() -> str:
-    """Generate custom tools documentation for planning prompt.
+    """Generate custom tools documentation section for planning prompt.
 
-    Returns dynamic section documenting custom tools with step_type for LLM to use
-    in test case planning. Only includes custom tools that have step_type defined.
+    Creates a dynamic documentation section listing all registered custom tools
+    with their step_type identifiers. This helps LLMs understand available
+    custom tools during test case planning.
+
+    Important distinctions:
+    - step_type: Documentation identifier/label (e.g., 'detect_dynamic_links')
+    - Tool selection: Entirely LLM-driven based on tool descriptions
+    - NO tool masking: LLM can freely choose any tool regardless of step_type
+
+    The step_type serves as a human-readable label in planning prompts like:
+        "Use these custom actions: detect_dynamic_links, custom_api_test"
 
     Returns:
-        Formatted string describing custom step types, or empty string if none exist
+        str: Formatted string describing custom step types with descriptions.
+             Empty string if no custom tools are registered.
+
+    Example output:
+        "Custom Actions:\\n  - detect_dynamic_links: Detects new links after interactions\\n"
     """
     registry = get_registry()
     custom_tools = []
@@ -674,7 +687,6 @@ For each test case, provide:
     # Dynamically collect ALL custom tool step examples from registry
     custom_step_examples = []
     if custom_tools_section:  # Only if custom tools exist
-        from webqa_agent.testers.case_gen.tools.registry import get_registry
         registry = get_registry()
         for name in registry.get_tool_names():
             metadata = registry.get_metadata(name)
