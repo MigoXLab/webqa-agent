@@ -15,6 +15,7 @@ from urllib.parse import urljoin
 
 from langgraph.graph import END, StateGraph
 
+from webqa_agent.crawler.crawl import CrawlHandler
 from webqa_agent.crawler.deep_crawler import (DeepCrawler, ElementKey,
                                               ElementMap)
 from webqa_agent.crawler.feature_detector import detect_page_features
@@ -113,8 +114,6 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
         )
 
         # === Extract Page Links for Navigation Testing ===
-        from webqa_agent.crawler.crawl import CrawlHandler
-
         # Extract all navigable links using CrawlHandler
         crawl_handler = CrawlHandler(base_url=state['url'])
         all_page_links = await crawl_handler.extract_links(page)

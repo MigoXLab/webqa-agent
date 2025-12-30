@@ -5,10 +5,12 @@ tool selection during test planning.
 """
 
 import logging
-from typing import Any, List
+from typing import List
+
+from playwright.async_api import Page
 
 
-async def detect_page_features(page: Any) -> List[str]:
+async def detect_page_features(page: Page) -> List[str]:
     """Lightweight page feature detection to guide LLM tool selection.
 
     This function performs simple page analysis without heavy computation:
