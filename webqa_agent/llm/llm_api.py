@@ -911,5 +911,5 @@ class LLMAPI:
 
     async def close(self):
         if self.client:
-            await self.client.aclose()
+            await self.client.close()
             self.client = None

@@ -237,4 +237,5 @@ tests/file
 
 #config
 config/config*.yaml
+config*.yaml
 test*.yaml

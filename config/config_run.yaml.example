@@ -4,7 +4,7 @@ target:
 llm_config:
   api: openai
   model: gpt-5-mini-2025-08-07
-  api_key: your_api_key
+  api_key: your_openai_api_key
   base_url:  https://api.example.com/v1
   # temperature: 0.1   # Optional, default 0.1
   # top_p: 0.9       # Optional, if not set, this parameter will not be passed
@@ -19,11 +19,15 @@ browser_config:
   headless: False
   language: zh-CN
 
-log:
-  level: info
-
-report:
-  language: en-US # zh-CN, en-US
+ignore_rules:               # Ignore rules for network and console
+  network:
+    - pattern: ".*\\.google-analytics\\.com.*"
+      type: "domain"
+  console:
+    - pattern: "Failed to load resource.*favicon"
+      match_type: "regex"
+    - pattern: "Warning:"
+      match_type: "contains"
 
 cases:
   - name: Baidu Image Upload
@@ -35,8 +39,14 @@ cases:
       - action: Wait until the image is uploaded
       - verify: Verify that the input field displays an open palm/hand icon image
       - action: Type "How many fingers are in the picture?" in the search input box, then press Enter, Wait for 2 seconds
-  
+
   - name: Baidu Image Check
     steps:
       - verify: Verify the page displays the Baidu logo and many Pictures display
       - action: Click on a random image to view
+
+log:
+  level: info
+
+report:
+  language: en-US # zh-CN, en-US
