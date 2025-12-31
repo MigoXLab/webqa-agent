@@ -99,19 +99,125 @@ class MyTool(WebQABaseTool):
 
 ### WebQAToolMetadata
 
+工具元数据控制工具在 LLM 提示中的显示方式及注册方式。
+
+#### 字段参考
+
+| 字段                | 类型        | 必需 | 默认值     | 说明                                            |
+| ------------------- | ----------- | ---- | ---------- | ----------------------------------------------- |
+| `name`              | str         | 是   | -          | LangChain 使用的唯一工具标识符                  |
+| `category`          | str         | 否   | `"custom"` | 工具分类：`action`、`assertion`、`ux`、`custom` |
+| `step_type`         | str         | 否   | `None`     | 用于规划文档和日志的步骤类型                    |
+| `description_short` | str         | 否   | `""`       | 显示在提示中的一行描述                          |
+| `description_long`  | str         | 否   | `""`       | 包含参数说明的详细描述                          |
+| `examples`          | List\[str\] | 否   | `[]`       | LLM 上下文的 JSON 示例                          |
+| `use_when`          | List\[str\] | 否   | `[]`       | 何时使用此工具的提示                            |
+| `dont_use_when`     | List\[str\] | 否   | `[]`       | 何时不使用此工具的提示                          |
+| `priority`          | int         | 否   | `50`       | 优先级 1-100（越高越优先）                      |
+| `dependencies`      | List\[str\] | 否   | `[]`       | 所需的 Python 包                                |
+
+#### 字段详解
+
+**`name`**（必需）
+
+- 必须在所有工具中唯一
+- 使用 snake_case 格式：`check_page_title`、`detect_dynamic_links`
+- 这是 LangChain 使用的函数名
+
+**`category`**
+
+- `action`：浏览器交互（点击、输入、滚动）
+- `assertion`：验证和断言
+- `ux`：用户体验测试
+- `custom`：用户自定义工具（默认）
+
+**`step_type`**
+
+- 用于规划文档和执行日志
+- 对于自定义工具，使用 `custom_xxx` 格式
+- 如果为 `None`，工具仅按名称显示在规划提示中
+
+**`description_short`**
+
+- 显示在 LLM 提示中的一行摘要
+- 保持在 80 字符以内
+- 示例：`"验证页面标题是否匹配正则表达式模式"`
+
+**`description_long`**
+
+- 详细描述，包含功能列表、参数说明、使用注意事项
+- 支持使用 `\n` 的多行字符串
+
+**`examples`**
+
+- 显示工具调用方式的 JSON 字符串
+- LLM 使用这些来理解正确的语法
+- 包含 2-3 个涵盖常见用例的示例
+
+**`use_when`**
+
+- 此工具适用场景的列表
+- 帮助 LLM 决定何时选择你的工具
+- 要具体：`"点击导航菜单后"`
+
+**`dont_use_when`**
+
+- 不应使用此工具的场景
+- 防止 LLM 误用
+- 示例：`"对于没有 JavaScript 的静态页面"`
+
+**`priority`**
+
+- 范围：1-100（越高越被代理优先选择）
+- 核心工具：70-90
+- 自定义工具：建议 30-60
+- 默认值：50
+
+**`dependencies`**
+
+- 工具所需的 Python 包
+- 用于依赖检查
+- 示例：`["aiohttp", "beautifulsoup4"]`
+
+#### 完整示例
+
+基于 `link_detection_tool.py`：
+
 ```python
-WebQAToolMetadata(
-    name="my_tool",
-    category="custom",  # action, assertion, ux, custom
-    step_type="my_tool",
-    description_short="简短描述",
-    description_long="详细描述和示例",
-    examples=['{"action": "my_tool", "params": {...}}'],
-    use_when=["何时使用"],
-    dont_use_when=["何时不使用"],
-    priority=55,  # 1-100 (核心工具: 70-90, 自定义: 30-60)
-    dependencies=["package1", "package2"]
-)
+@classmethod
+def get_metadata(cls) -> WebQAToolMetadata:
+    return WebQAToolMetadata(
+        name='detect_dynamic_links',
+        category='custom',
+        step_type='detect_dynamic_links',
+        description_short='检测用户交互后出现的新链接',
+        description_long=(
+            '识别并验证用户交互（如点击导航菜单或表单）后动态出现的新链接。\n\n'
+            '功能：\n'
+            '  - 跟踪链接历史以识别新链接\n'
+            '  - HTTPS 证书验证\n'
+            '  - HTTP 状态码检查\n\n'
+            '参数：\n'
+            '  - check_https：验证 HTTPS（默认：True）\n'
+            '  - check_status：检查 HTTP 状态（默认：True）\n'
+            '  - timeout：请求超时秒数（默认：10）'
+        ),
+        examples=[
+            '{"action": "detect_dynamic_links", "params": {"check_https": true}}',
+            '{"action": "detect_dynamic_links", "params": {}}',
+        ],
+        use_when=[
+            '点击导航菜单或下拉框后',
+            '在单页应用（SPA）中',
+            '测试动态内容加载时',
+        ],
+        dont_use_when=[
+            '在没有 JavaScript 的静态页面上',
+            '仅检查视觉元素时',
+        ],
+        priority=45,
+        dependencies=[],
+    )
 ```
 
 ### ResponseTags (响应标签)

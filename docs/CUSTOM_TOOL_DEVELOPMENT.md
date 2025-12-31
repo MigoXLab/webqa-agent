@@ -99,19 +99,126 @@ class MyTool(WebQABaseTool):
 
 ### WebQAToolMetadata
 
+Tool metadata controls how your tool appears in LLM prompts and how it's registered.
+
+#### Field Reference
+
+| Field               | Type        | Required | Default    | Description                                          |
+| ------------------- | ----------- | -------- | ---------- | ---------------------------------------------------- |
+| `name`              | str         | Yes      | -          | Unique tool identifier used by LangChain             |
+| `category`          | str         | No       | `"custom"` | Tool category: `action`, `assertion`, `ux`, `custom` |
+| `step_type`         | str         | No       | `None`     | Step type for planning docs and logs                 |
+| `description_short` | str         | No       | `""`       | One-line description shown in prompts                |
+| `description_long`  | str         | No       | `""`       | Detailed description with parameters                 |
+| `examples`          | List\[str\] | No       | `[]`       | JSON examples for LLM context                        |
+| `use_when`          | List\[str\] | No       | `[]`       | Hints for when to use this tool                      |
+| `dont_use_when`     | List\[str\] | No       | `[]`       | Hints for when NOT to use                            |
+| `priority`          | int         | No       | `50`       | Priority 1-100 (higher = preferred)                  |
+| `dependencies`      | List\[str\] | No       | `[]`       | Required Python packages                             |
+
+#### Field Details
+
+**`name`** (Required)
+
+- Must be unique across all tools
+- Use snake_case: `check_page_title`, `detect_dynamic_links`
+- This is the function name LangChain uses
+
+**`category`**
+
+- `action`: Browser interactions (click, input, scroll)
+- `assertion`: Verification and validation
+- `ux`: User experience testing
+- `custom`: User-defined tools (default)
+
+**`step_type`**
+
+- Used in planning documentation and execution logs
+- For custom tools, use `custom_xxx` format
+- If `None`, tool appears by name only in planning prompts
+
+**`description_short`**
+
+- One-line summary shown in LLM prompts
+- Keep under 80 characters
+- Example: `"Validates page title against regex pattern"`
+
+**`description_long`**
+
+- Detailed description with feature list, parameter explanations, usage notes
+- Supports multi-line strings with `\n`
+
+**`examples`**
+
+- JSON strings showing tool invocation
+- LLM uses these to understand correct syntax
+- Include 2-3 examples covering common use cases
+
+**`use_when`**
+
+- List of scenarios where this tool is appropriate
+- Helps LLM decide when to select your tool
+- Be specific: `"After clicking navigation menus"`
+
+**`dont_use_when`**
+
+- Scenarios where tool should NOT be used
+- Prevents misuse by LLM
+- Example: `"For static pages without JavaScript"`
+
+**`priority`**
+
+- Range: 1-100 (higher = preferred by agent)
+- Core tools: 70-90
+- Custom tools: 30-60 recommended
+- Default: 50
+
+**`dependencies`**
+
+- Python packages required by your tool
+- Used for dependency checking
+- Example: `["aiohttp", "beautifulsoup4"]`
+
+#### Complete Example
+
+Based on `link_detection_tool.py`:
+
 ```python
-WebQAToolMetadata(
-    name="my_tool",
-    category="custom",  # action, assertion, ux, custom
-    step_type="my_tool",
-    description_short="Brief description",
-    description_long="Detailed description with examples",
-    examples=['{"action": "my_tool", "params": {...}}'],
-    use_when=["When to use"],
-    dont_use_when=["When NOT to use"],
-    priority=55,  # 1-100 (core: 70-90, custom: 30-60)
-    dependencies=["package1", "package2"]
-)
+@classmethod
+def get_metadata(cls) -> WebQAToolMetadata:
+    return WebQAToolMetadata(
+        name='detect_dynamic_links',
+        category='custom',
+        step_type='detect_dynamic_links',
+        description_short='Detects new links appearing after user interactions',
+        description_long=(
+            'Identifies and validates new links that appear dynamically after '
+            'user interactions such as clicking navigation menus or forms.\n\n'
+            'Features:\n'
+            '  - Tracks link history to identify new links\n'
+            '  - HTTPS certificate validation\n'
+            '  - HTTP status code checking\n\n'
+            'Parameters:\n'
+            '  - check_https: Validate HTTPS (default: True)\n'
+            '  - check_status: Check HTTP status (default: True)\n'
+            '  - timeout: Request timeout in seconds (default: 10)'
+        ),
+        examples=[
+            '{"action": "detect_dynamic_links", "params": {"check_https": true}}',
+            '{"action": "detect_dynamic_links", "params": {}}',
+        ],
+        use_when=[
+            'After clicking navigation menus or dropdowns',
+            'In Single Page Applications (SPAs)',
+            'When testing dynamic content loading',
+        ],
+        dont_use_when=[
+            'On static pages without JavaScript',
+            'When only checking visual elements',
+        ],
+        priority=45,
+        dependencies=[],
+    )
 ```
 
 ### ResponseTags
