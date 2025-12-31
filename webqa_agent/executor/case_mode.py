@@ -531,7 +531,7 @@ class CaseMode:
             )
 
             # save rendered HTML to file
-            report_path = os.path.join(report_dir, 'case_report.html')
+            report_path = os.path.join(report_dir, 'run_report.html')
             with open(report_path, 'w', encoding='utf-8') as f:
                 f.write(rendered_html)
 

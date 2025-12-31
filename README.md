@@ -38,8 +38,7 @@
   </a>
 </p>
 
-<p align="center" itemprop="description">🤖 <strong>WebQA Agent</strong> is an autonomous web browser agent that audits performance, functionality & UX for engineers and vibe-coding creators. ✨</p>
-
+<p align="center">🤖 <strong>WebQA Agent</strong> is a fully automated web testing agent for multi-modal understanding, test generation, and end-to-end evaluation of functionality, performance, and UX. ✨</p>
 </div>
 
 <!-- Additional SEO Keywords and Context
@@ -48,18 +47,22 @@ vibecoding, vibe coding, web evaluation, autonomous exploration, web testing aut
 
 ## 🚀 Core Features
 
-### 🧭 Overview
+### 📋 Feature Overview
+
+**WebQA-Agent** provides two testing modes to support different scenarios **🤖 Generate Mode** and **📋 Run Mode**.
+
+| Capability        | 🤖 **Generate Mode**                                                                           | 📋 **Run Mode**                                                                           |
+| :---------------- | :--------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------- |
+| **Core Features** | AI-driven discovery -> Dynamic generation -> Precise execution                                 | Execute based on instructions and expected verification                                   |
+| **Use Cases**     | New feature, comprehensive quality assurance                                                   | Repeatable and regression testing scenarios                                               |
+| **User Input**    | **Minimal**: Only URL or a one-sentence business goal                                          | **Structured**: Simple natural language step descriptions                                 |
+| **Advantages**    | Reflection-based planning, adaptive to UI changes; Configurable functional / performance / security / UX evaluation for comprehensive QA | Stable and predictable results; No selector maintenance; Real-time Console and Network monitoring |
+
+### 🧭 Architecture
 
 <p>
-  <img src="docs/images/webqa.svg" alt="WebQA Agent Business Features Diagram" />
+  <img src="docs/images/webqa2.svg" alt="WebQA Agent Architecture" />
 </p>
-
-### 📋 Feature Highlights
-
-- **🤖 AI-Powered Testing**: Performs autonomous website testing with intelligent planning and reflection—explores pages, plans actions, and executes end-to-end flows without manual scripting. Features 2-stage architecture (lightweight filtering + comprehensive planning) and dynamic test generation for newly appeared UI elements.
-- **📊 Multi-Dimensional Observation**: Covers functionality, performance, user experience, and basic security; evaluates load speed, design details, and links to surface issues. Uses multi-modal analysis (screenshots + DOM structure + text content) and DOM diff detection to discover new test opportunities.
-- **🎯 Actionable Recommendations**: Runs in real browsers with smart element prioritization and automatic viewport management. Provides concrete suggestions for improvement with adaptive recovery mechanisms for robust test execution.
-- **📈 Visual Reports**: Generates detailed HTML test reports with clear, multi-dimensional views for analysis and tracking.
 
 ## 📹 Examples
 
@@ -68,81 +71,82 @@ vibecoding, vibe coding, web evaluation, autonomous exploration, web testing aut
 
 Try Demo: [🤗Hugging Face](https://huggingface.co/spaces/mmmay0722/WebQA-Agent) · [🚀ModelScope](https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary)
 
-## Quick Start
+## 🚀 Quick Start
 
 ### 🏎️ Recommended [uv](https://github.com/astral-sh/uv) (Python>=3.11):
 
 ```bash
-# 1) Create a project and install the package
+# 1) Create project and install package
 uv init my-webqa && cd my-webqa
 uv add webqa-agent
-uv sync
 
 # 2) Install browser (required)
 uv run playwright install chromium
 
-# 3) Create a config file (auto-generated template)
-uv run webqa-agent init            # creates config.yaml
+# 3) Generate Mode
+# Initialize Gen mode configuration (config.yaml)
+uv run webqa-agent init -m gen
+# Edit config.yaml: target.url, llm_config.api_key
+# Configure test_config
+# For more details, see "Usage > Generate Mode - Configuration" below
+uv run webqa-agent gen      # Run Generate Mode
 
-# 4) Edit config.yaml
-#    - target.url: your site
-#    - llm_config.api_key: your OpenAI key (or set OPENAI_API_KEY)
-#  For detailed configuration information, please refer to the "Usage > Test Configuration"
-
-# 5) Run
-uv run webqa-agent run
+# 4) Run Mode
+# Initialize Run mode configuration (config_run.yaml)
+uv run webqa-agent init -m run
+# Edit config.yaml: target.url, llm_config.api_key
+# Write natural language test cases
+# For more details, see "Usage > Run Mode - Configuration" below
+uv run webqa-agent run     # Run Run Mode
 ```
 
-### 🐳 Docker (one-liner)
+### 🔧 Generate Mode - Optional Dependencies
 
-Before starting, ensure Docker is installed. If not, please refer to the official installation guide: [Docker Installation Guide](https://docs.docker.com/get-started/get-docker/).
+Performance testing (Lighthouse): `npm install lighthouse chrome-launcher` (requires Node.js ≥18)
 
-Recommended versions: Docker >= 24.0, Docker Compose >= 2.32.
+Security testing (Nuclei):
+
+```bash
+brew install nuclei      # macOS
+nuclei -ut               # Update templates
+# Linux/Windows: https://github.com/projectdiscovery/nuclei/releases
+```
+
+### 🐳 Generate Mode - Docker One-liner Start
+
+Please ensure Docker is installed (recommended Docker >= 24.0, Docker Compose >= 2.32). Official guide: [Docker Installation](https://docs.docker.com/get-started/get-docker/)
 
 ```bash
 mkdir -p config \
   && curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/config/config.yaml.example -o config/config.yaml
 
-# Edit config.yaml
-# Set target.url, llm_config.api_key and other parameters
+# Edit config.yaml: set target.url, llm_config.api_key, etc.
 
 curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/start.sh | bash
 ```
 
-### 🛠️ From source
-
-```bash
-git clone https://github.com/MigoXLab/webqa-agent.git
-cd webqa-agent
-uv sync
-uv run playwright install chromium
-cp ./config/config.yaml.example ./config/config.yaml
-# Edit config.yaml
-# Set target.url, llm_config.api_key and other parameters
-uv run webqa-agent run -c ./config/config.yaml
-```
-
-### Optional Dependencies
-
-Performance (Lighthouse): `npm install lighthouse chrome-launcher` (Node.js ≥18)
-
-Security (Nuclei):
-
-```bash
-brew install nuclei      # macOS
-nuclei -ut               # update templates
-# Linux/Win: download from https://github.com/projectdiscovery/nuclei/releases
-```
-
 ## ⚙️ Usage
 
-### Test Configuration
+### Generate Mode - Configuration
+
+The configuration file must include the `test_config` field to define test types.
+
+- **Functional Testing (AI type)**: Validates correctness of page functionality. Optional configurations:
+  1. business_objectives: Specifies business goals to steer test focus and coverage.
+  2. dynamic_step_generation: Enables automatic generation of additional steps when new UI elements are detected during execution.
+  3. filter_model: Configures a lightweight model for pre-filtering page elements to improve planning efficiency.
+- **Functional Testing (default type)**: Does not rely on LLMs; focuses only on interaction success (clicks, navigation, etc.).
+- **User Experience Testing**: Evaluates visual quality, typography/grammar, layout rendering, and provides optimization suggestions based on best practices.
+- **Performance Testing**: Based on Lighthouse; evaluates performance, SEO, and related metrics.
+- **Security Testing**: Based on Nuclei, scans web security vulnerabilities and potential risks.
+
+For more details, please refer to [docs/modes&cli.md](docs/modes&cli.md)
 
 ```yaml
 target:
   url: https://example.com              # Website URL to test
   description: Website QA testing
-  # max_concurrent_tests: 2             # Optional, default 2
+  max_concurrent_tests: 2               # Optional, default 2
 
 test_config:
   function_test:                        # Functional testing
@@ -160,19 +164,19 @@ test_config:
   security_test:                        # Security scanning (requires Nuclei)
     enabled: False
 
-llm_config:
-  model: gpt-4.1-2025-04-14             # Vision model configuration, currently supports OpenAI SDK compatible format only
-  filter_model: gpt-4o-mini             # Lightweight model for element filtering
-  api_key: your_api_key                 # Or use OPENAI_API_KEY env var
-  base_url: https://api.openai.com/v1   # Or use OPENAI_BASE_URL env var
-  temperature: 0.1
+llm_config:                             # LLM configuration, supports OpenAI, Anthropic Claude, Google Gemini, and OpenAI-compatible models (e.g., Doubao, Qwen)
+  model: gpt-4.1-2025-04-14             # Primary model
+  filter_model: gpt-4o-mini             # Lightweight model for element filtering (optional)
+  api_key: your_api_key                 # Or set via environment variable (OPENAI_API_KEY)
+  base_url: https://api.openai.com/v1   # Optional, API endpoint. For OpenAI-compatible models (Doubao, Qwen, etc.), set to their API endpoint
+  temperature: 0.1                      # Optional, model temperature
+  # For detailed configuration examples (OpenAI, Claude, Gemini) and reasoning settings,
+  # see config/config.yaml.example
 
 browser_config:
   viewport: {"width": 1280, "height": 720}
   headless: False                       # Auto True in Docker
   language: en-US
-  cookies: []
-  save_screenshots: False
 
 report:
   language: en-US                       # zh-CN or en-US
@@ -181,75 +185,63 @@ log:
   level: info                           # debug, info, warning, error
 ```
 
-### Notes for Running Tests
+### Run Mode - Configuration
 
-- **Functional Testing (AI mode)**: Two-stage planning. Stage 1 (`filter_model`) prioritizes elements for efficient analysis; Stage 2 (primary model) generates comprehensive test cases. The agent may reflect and re-plan based on page state and coverage, so executed case count can differ from the initial request. When `dynamic_step_generation` is enabled, new UI elements (e.g., dropdowns, modals) detected via DOM diff will trigger additional generated steps.
-- **Functional Testing (default mode)**: Focuses on whether UI interactions (clicks, navigations) complete successfully.
-- **User Experience Testing**: Multi-modal analysis (screenshots + DOM structure + text) to assess visual quality, detect typos/grammar issues, and validate layout rendering. Model outputs include best-practice suggestions for optimization.
+Run Mode configuration must include the `cases` field.
 
-### 📖 CLI Reference
+- **Multi-modal Interaction**: Use `action` to describe visible text, images, or relative positions on the page. Supported browser actions include click, hover, input, clear, keyboard input, scrolling, mouse movement, file upload, drag-and-drop, and wait; page actions include navigation, back, and new tab handling.
+- **Multi-modal Verification**: Use `verify` to ensure the agent stays on track, validating visual content, URLs, paths, and combined image–element conditions.
+- **End-to-End Monitoring**: Monitoring `Console` logs and `Network` request status, and supporting configuration of `ignore_rules` to ignore known errors.
 
-#### init - Create Configuration
+For more details and test case writing specifications, please refer to [docs/modes&cli.md](docs/modes&cli.md)
 
-```bash
-# Create config.yaml in current directory
-webqa-agent init
+```yaml
+target:
+  url: https://example.com              # Target website URL
+  max_concurrent_tests: 2               # Maximum concurrent test count
 
-# Create at custom path
-webqa-agent init -o myconfig.yaml
+llm_config:                             # LLM configuration
+  api: openai
+  model: gpt-4o-mini
+  api_key: your_api_key_here
+  base_url: https://api.openai.com/v1
 
-# Overwrite existing file
-webqa-agent init --force
+browser_config:
+  viewport: {"width": 1280, "height": 720}
+  headless: False                       # Auto True in Docker
+  language: en-US
+  # cookies: /path/to/cookie.json
+
+ignore_rules:                           # Ignore rules configuration (optional)
+  network:                              # Network request ignore rules
+    - pattern: ".*\\.google-analytics\\.com.*"
+      type: "domain"
+  console:                              # Console log ignore rules
+    - pattern: "Failed to load resource.*favicon"
+      match_type: "regex"
+    - pattern: "Warning:"
+      match_type: "contains"
+
+cases:                                  # Test case list
+  - name: Image Upload                  # Test case name
+    steps:                              # Test steps
+      - action: Upload icon is the image icon in the input box, located next to the Baidu search button, used for uploading files
+        args:
+          file_path: ./tests/data/test.jpeg
+      - action: Wait for image upload
+      - verify: Verify that the input field displays an open palm/hand icon image
+      - action: Enter "How many fingers are in the image?" in the search input box, then press Enter, wait 2 seconds
 ```
-
-#### run - Execute Tests
-
-```bash
-# Auto-discover config (./config.yaml or ./config/config.yaml)
-webqa-agent run
-
-# Specify config file
-webqa-agent run -c /path/to/config.yaml
-```
-
-#### ui - Web Interface
-
-WebQA Agent provides a visual interface powered by Gradio:
-
-```bash
-# Install Gradio
-uv add "gradio>=5.44.0"
-
-# Launch Web UI (English by default)
-webqa-agent ui
-# Access at http://localhost:7860
-
-# Launch with Chinese interface
-webqa-agent ui -l zh-CN
-
-# Optional: custom host/port and no auto-open browser
-webqa-agent ui --host 0.0.0.0 --port 9000
-```
-
-### 🧠 Recommended Models
-
-| Model                             | Recommendation                                      |
-| --------------------------------- | --------------------------------------------------- |
-| **gpt-4.1-2025-04-14**            | High accuracy and reliability                       |
-| **gpt-4.1-mini-2025-04-14**       | Economical and practical                            |
-| **qwen3-vl-235b-a22b-instruct**   | Open-source model, preferred for on-premise         |
-| **doubao-seed-1-6-vision-250815** | Good web understanding, supports visual recognition |
 
 ### 📊 View Results
 
 Test reports are generated in the `reports/` directory. Open the HTML file to view detailed results.
 
-## 🗺️ Roadmap
+## 🗺️ RoadMap
 
-1. Continuous optimization of AI functional testing: Improve coverage and accuracy
-2. Functional traversal and page validation: Verify business logic correctness
-3. Interaction and visualization: Real-time reasoning process display
-4. Capability expansion: Multi-model integration and more evaluation dimensions
+1. Interaction & Visualization: Real-time display of reasoning processes
+2. Generate Mode Expansion: Integration of additional evaluation dimensions
+3. Tool Agent Context Integration: More comprehensive and precise execution
 
 ## 🙏 Acknowledgements
 
