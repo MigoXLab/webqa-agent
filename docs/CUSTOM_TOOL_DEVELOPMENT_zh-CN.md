@@ -110,11 +110,11 @@ class MyTool(WebQABaseTool):
 | `step_type`         | str         | 否   | `None`     | 用于规划文档和日志的步骤类型                    |
 | `description_short` | str         | 否   | `""`       | 显示在提示中的一行描述                          |
 | `description_long`  | str         | 否   | `""`       | 包含参数说明的详细描述                          |
-| `examples`          | List\[str\] | 否   | `[]`       | LLM 上下文的 JSON 示例                          |
-| `use_when`          | List\[str\] | 否   | `[]`       | 何时使用此工具的提示                            |
-| `dont_use_when`     | List\[str\] | 否   | `[]`       | 何时不使用此工具的提示                          |
+| `examples`          | List[str] | 否   | `[]`       | LLM 上下文的 JSON 示例                          |
+| `use_when`          | List[str] | 否   | `[]`       | 何时使用此工具的提示                            |
+| `dont_use_when`     | List[str] | 否   | `[]`       | 何时不使用此工具的提示                          |
 | `priority`          | int         | 否   | `50`       | 优先级 1-100（越高越优先）                      |
-| `dependencies`      | List\[str\] | 否   | `[]`       | 所需的 Python 包                                |
+| `dependencies`      | List[str] | 否   | `[]`       | 所需的 Python 包                                |
 
 #### 字段详解
 

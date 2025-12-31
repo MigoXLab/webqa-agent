@@ -110,11 +110,11 @@ Tool metadata controls how your tool appears in LLM prompts and how it's registe
 | `step_type`         | str         | No       | `None`     | Step type for planning docs and logs                 |
 | `description_short` | str         | No       | `""`       | One-line description shown in prompts                |
 | `description_long`  | str         | No       | `""`       | Detailed description with parameters                 |
-| `examples`          | List\[str\] | No       | `[]`       | JSON examples for LLM context                        |
-| `use_when`          | List\[str\] | No       | `[]`       | Hints for when to use this tool                      |
-| `dont_use_when`     | List\[str\] | No       | `[]`       | Hints for when NOT to use                            |
+| `examples`          | List[str] | No       | `[]`       | JSON examples for LLM context                        |
+| `use_when`          | List[str] | No       | `[]`       | Hints for when to use this tool                      |
+| `dont_use_when`     | List[str] | No       | `[]`       | Hints for when NOT to use                            |
 | `priority`          | int         | No       | `50`       | Priority 1-100 (higher = preferred)                  |
-| `dependencies`      | List\[str\] | No       | `[]`       | Required Python packages                             |
+| `dependencies`      | List[str] | No       | `[]`       | Required Python packages                             |
 
 #### Field Details
 
