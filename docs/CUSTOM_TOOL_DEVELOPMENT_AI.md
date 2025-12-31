@@ -524,7 +524,12 @@ ______________________________________________________________________
 ```python
 import aiohttp
 import jsonschema
-from typing import Dict
+from typing import Dict, Type
+from pydantic import BaseModel, Field
+
+class APIValidatorSchema(BaseModel):
+    endpoint: str = Field(description="API endpoint to validate")
+    expected_schema: Dict = Field(description="JSON schema to validate against")
 
 @register_tool
 class APIValidatorTool(WebQABaseTool):

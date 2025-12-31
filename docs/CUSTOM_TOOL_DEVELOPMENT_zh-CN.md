@@ -38,7 +38,7 @@ class HelloTool(WebQABaseTool):
         return self.format_success(f"你好，{message}！")
 ```
 
-测试: `webqa-agent run -c config.yaml`
+测试: `webqa-agent gen -c config.yaml`
 
 ## 核心组件
 
@@ -189,6 +189,7 @@ WebQAToolMetadata(
 
 ```python
 async def _arun(self, param: str) -> str:
+    from datetime import datetime
     result = await self._execute(param)
 
     self.update_action_context(
