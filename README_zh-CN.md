@@ -50,7 +50,7 @@ Vibecoding, Vibe coding, 网页测试自动化, 浏览器测试工具, AI驱动�
 - [核心特性](#-核心特性)
 - [示例演示](#-示例演示)
 - [快速开始](#-快速开始)
-- [使用说明](#-使用说明)
+- [使用说明](#使用说明)
 - [扩展 WebQA Agent 工具](#扩展-webqa-agent-工具)
 - [RoadMap](#roadmap)
 - [致谢](#致谢)
@@ -135,6 +135,8 @@ mkdir -p config \
 
 curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/start.sh | bash
 ```
+
+<a id="使用说明"></a>
 
 ## ⚙️ 使用说明
 
@@ -250,6 +252,8 @@ cases:                                  # 测试用例列表
 
 测试报告生成在 `reports/` 目录下，打开 HTML 文件即可查看详细结果。
 
+<a id="扩展-webqa-agent-工具"></a>
+
 ## 🛠️ 扩展 WebQA Agent 工具
 
 WebQA Agent 支持**自定义工具开发**，满足特定领域的测试需求。
@@ -261,11 +265,15 @@ WebQA Agent 支持**自定义工具开发**，满足特定领域的测试需求�
 
 欢迎贡献！查看[现有工具示例](webqa_agent/testers/case_gen/tools/custom/)获取参考。
 
+<a id="roadmap"></a>
+
 ## 🗺️ RoadMap
 
 1. **交互与可视化**：实时展示推理过程
 2. Gen模式能力扩展：更多评估维度集成
 3. Tool Agent上下文接入，更全面更精确的执行
+
+<a id="致谢"></a>
 
 ## 🙏 致谢
 
