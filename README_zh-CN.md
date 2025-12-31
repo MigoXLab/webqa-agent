@@ -45,6 +45,17 @@
 Vibecoding, Vibe coding, 网页测试自动化, 浏览器测试工具, AI驱动质量保障, 自动化网页测试, 网站性能分析, 功能测试自动化, 用户体验测试, 安全漏洞扫描, 浏览器测试, 网页应用测试, 自动化UI测试, 网页可访问性测试, 性能监控, 网站审计工具, 智能测试用例生成, 端到端测试, 回归测试, 兼容性测试, Vibecoding测试, 网页开发
 -->
 
+## 📑 目录
+
+- [核心特性](#-核心特性)
+- [示例演示](#-示例演示)
+- [快速开始](#-快速开始)
+- [使用说明](#使用说明)
+- [扩展 WebQA Agent 工具](#扩展-webqa-agent-工具)
+- [RoadMap](#roadmap)
+- [致谢](#致谢)
+- [开源许可证](#-开源许可证)
+
 ## 🚀 核心特性
 
 ### 📋 功能介绍
@@ -125,6 +136,8 @@ mkdir -p config \
 curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/start.sh | bash
 ```
 
+<a id="使用说明"></a>
+
 ## ⚙️ 使用说明
 
 ### Generate 模式 - 配置介绍
@@ -132,7 +145,7 @@ curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/start.sh 
 配置文件需包含 `test_config` 字段，用于定义需要执行的测试类型。
 
 - **功能测试（AI 模式）**：验证页面功能的正确性。支持可选配置：
-  1. business_objectives：指定业务目标，以指导测试重点和​​覆盖范围。
+  1. business_objectives：指定业务目标，以指导测试重点和覆盖范围。
   2. dynamic_step_generation：启用后，在执行过程中检测到新的 UI 元素时，会自动生成额外的测试步骤。
   3. filter_model：配置一个轻量级模型，用于预过滤页面元素，从而提高规划效率。
 - **功能测试（default 模式）**：不依赖大模型能力，只聚焦交互是否成功（点击、跳转等）。
@@ -239,11 +252,28 @@ cases:                                  # 测试用例列表
 
 测试报告生成在 `reports/` 目录下，打开 HTML 文件即可查看详细结果。
 
+<a id="扩展-webqa-agent-工具"></a>
+
+## 🛠️ 扩展 WebQA Agent 工具
+
+WebQA Agent 支持**自定义工具开发**，满足特定领域的测试需求。
+
+| 文档                                                        | 描述                                  |
+| ----------------------------------------------------------- | ------------------------------------- |
+| **[自定义工具开发](docs/CUSTOM_TOOL_DEVELOPMENT_zh-CN.md)** | 自定义工具开发快速参考                |
+| **[LLM 上下文文档](docs/CUSTOM_TOOL_DEVELOPMENT_AI.md)**    | AI 辅助开发的完整指南，可用于氛围编程 |
+
+欢迎贡献！查看[现有工具示例](webqa_agent/testers/case_gen/tools/custom/)获取参考。
+
+<a id="roadmap"></a>
+
 ## 🗺️ RoadMap
 
 1. **交互与可视化**：实时展示推理过程
 2. Gen模式能力扩展：更多评估维度集成
 3. Tool Agent上下文接入，更全面更精确的执行
+
+<a id="致谢"></a>
 
 ## 🙏 致谢
 
