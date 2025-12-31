@@ -89,7 +89,7 @@ test_config:
    - `MouseMove`, `MouseWheel`, `Drag`
    - `Sleep`
    - `Upload`
-   - `GoToPage`, `GoBack`, `GetNewPage`
+   - `GoToPage`, `GoBack`
 
 3. **Multi-modal Verification**: Supports visual confirmation, URL/path validation, and combined image–element verification.
 

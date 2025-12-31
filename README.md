@@ -101,6 +101,7 @@ uv run webqa-agent init -m gen
 # Configure test_config
 # For more details, see "Usage > Generate Mode - Configuration" below
 uv run webqa-agent gen      # Run Generate Mode
+uv run webqa-agent gen -c /path/to/config.yaml -w 4      # Generate Mode with specified config and 4 parallel workers
 
 # 4) Run Mode
 # Initialize Run mode configuration (config_run.yaml)
@@ -109,6 +110,7 @@ uv run webqa-agent init -m run
 # Write natural language test cases
 # For more details, see "Usage > Run Mode - Configuration" below
 uv run webqa-agent run     # Run Run Mode
+uv run webqa-agent run -c /path/to/config_run.yaml -w 4     # Run Mode with specified config and 4 parallel workers
 ```
 
 ### 🔧 Generate Mode - Optional Dependencies
@@ -153,7 +155,7 @@ The configuration file must include the `test_config` field to define test types
 - **Performance Testing**: Based on Lighthouse; evaluates performance, SEO, and related metrics.
 - **Security Testing**: Based on Nuclei, scans web security vulnerabilities and potential risks.
 
-For more details, please refer to [docs/modes&cli.md](docs/modes&cli.md)
+For more details, please refer to [docs/MODES&CLI.md](docs/MODES&CLI.md)
 
 ```yaml
 target:
@@ -202,11 +204,11 @@ log:
 
 Run Mode configuration must include the `cases` field.
 
-- **Multi-modal Interaction**: Use `action` to describe visible text, images, or relative positions on the page. Supported browser actions include click, hover, input, clear, keyboard input, scrolling, mouse movement, file upload, drag-and-drop, and wait; page actions include navigation, back, and new tab handling.
+- **Multi-modal Interaction**: Use `action` to describe visible text, images, or relative positions on the page. Supported browser actions include click, hover, input, clear, keyboard input, scrolling, mouse movement, file upload, drag-and-drop, and wait; page actions include navigation, back.
 - **Multi-modal Verification**: Use `verify` to ensure the agent stays on track, validating visual content, URLs, paths, and combined image–element conditions.
 - **End-to-End Monitoring**: Monitoring `Console` logs and `Network` request status, and supporting configuration of `ignore_rules` to ignore known errors.
 
-For more details and test case writing specifications, please refer to [docs/modes&cli.md](docs/modes&cli.md)
+For more details and test case writing specifications, please refer to [docs/MODES&CLI.md](docs/MODES&CLI.md)
 
 ```yaml
 target:

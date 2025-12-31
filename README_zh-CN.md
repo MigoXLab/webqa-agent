@@ -101,6 +101,7 @@ uv run webqa-agent init -m gen
 # 配置 test_config
 # 更多说明见下方“使用说明 > Gen 模式 - 配置介绍”
 uv run webqa-agent gen      # 运行 Gen 模式
+uv run webqa-agent gen -c /path/to/config.yaml -w 4      # 指定配置文件路径，使用 4 个并行 Worker
 
 # 4) Run 模式
 # 初始化 Run 模式配置 (config_run.yaml)
@@ -109,6 +110,7 @@ uv run webqa-agent init -m run
 # 编写自然语言用例
 # 更多说明见下方“使用说明 > Run 模式 - 配置介绍”
 uv run webqa-agent run     # 运行 Run 模式
+uv run webqa-agent run -c /path/to/config.yaml -w 4      # 指定配置文件路径，使用 4 个并行 Worker
 ```
 
 ### 🔧 Generate 模式 - 可选依赖
@@ -153,7 +155,7 @@ curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/start.sh 
 - **性能测试**：基于Lighthouse，检测页面性能、SEO等指标。
 - **安全测试**：基于Nuclei，扫描网页安全漏洞和潜在风险。
 
-更多教程，请参考 [docs/modes&cli_zh-CN.md](docs/modes&cli_zh-CN.md)
+更多教程，请参考 [docs/MODES&CLI_zh-CN.md](docs/MODES&CLI_zh-CN.md)
 
 ```yaml
 target:
@@ -204,11 +206,11 @@ log:
 
 Run 模式配置文件需包含 `cases` 字段，用于定义具体的测试用例。
 
-- **多模态 AI 交互式能力**：使用 `action` 描述页面上可见的文字、图片或相对位置。支持浏览器操作：点击、悬停、输入、清空、键盘按键、页面滚动、鼠标移动和滚轮滚动、文件上传、拖拽、等待等；以及页面操作：跳转url、页面后退、获取新tab。
+- **多模态 AI 交互式能力**：使用 `action` 描述页面上可见的文字、图片或相对位置。支持浏览器操作：点击、悬停、输入、清空、键盘按键、页面滚动、鼠标移动和滚轮滚动、文件上传、拖拽、等待等；以及页面操作：跳转url、页面后退。
 - **多模态 AI 验证能力**：使用 `verify`，确保 Agent 没“跑偏”。校验页面符合预期：视觉内容确认、URL 与路径校验、组合图片和页面元素验证等。
 - **全链路自动监控**：获取浏览器的 `Console` 日志和 `Network` 请求状态，同时支持配置 `ignore_rules` 来忽略已知的浏览器 console 和 network 错误。
 
-更多教程和测试用例编写规范，请参考 [docs/modes&cli_zh-CN.md](docs/modes&cli_zh-CN.md)
+更多教程和测试用例编写规范，请参考 [docs/MODES&CLI_zh-CN.md](docs/MODES&CLI_zh-CN.md)
 
 ```yaml
 target:

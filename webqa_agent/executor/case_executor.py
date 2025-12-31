@@ -99,7 +99,7 @@ class CaseExecutor:
 
                 # Set test_id context for logging (imitating graph.py style)
                 # Including both ID and Name for maximum clarity
-                log_context = f'YAML Case Test | {case_id} | {case_name}'
+                log_context = f'Run Case Test | {case_id} | {case_name}'
                 token = test_id_var.set(log_context)
 
                 session = None

@@ -14,7 +14,7 @@ from pydantic import ValidationError
 
 from webqa_agent.browser.config import DEFAULT_CONFIG
 from webqa_agent.data import (ParallelTestSession, TestConfiguration,
-                              TestResult, TestStatus, TestType)
+                              TestResult, TestStatus)
 from webqa_agent.data.case_structures import Case
 from webqa_agent.data.test_structures import get_category_for_test_type
 from webqa_agent.executor.case_executor import CaseExecutor
@@ -138,7 +138,7 @@ class CaseMode:
 
         test_config = TestConfiguration(
             test_id=str(uuid.uuid4()),
-            test_type=TestType.UI_AGENT_LANGGRAPH,
+            # test_type=TestType.UI_AGENT_LANGGRAPH,
             test_name='YAML Case Execution',
             enabled=True,
             report_config=report_config or {'language': 'en-US'},

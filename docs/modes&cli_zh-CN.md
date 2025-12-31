@@ -91,7 +91,7 @@ test_config:
    - `MouseMove`, `MouseWheel`, `Drag`
    - `Sleep`
    - `Upload`
-   - `GoToPage`, `GoBack`, `GetNewPage`
+   - `GoToPage`, `GoBack`
 
 3. **多模态验证能力**：支持多种验证方式，包括视觉内容确认、URL 与路径校验、组合图片和页面元素验证等
 
