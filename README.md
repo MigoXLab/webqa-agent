@@ -45,6 +45,17 @@
 vibecoding, vibe coding, web evaluation, autonomous exploration, web testing automation, browser testing tool, AI-powered QA, automated web testing, website performance analysis, functional testing automation, user experience testing, UX, security vulnerability scanning, browser testing, web application testing, quality assurance automation, automated UI testing, web accessibility testing, performance monitoring, website audit tool, vibecoding testing, web development
 -->
 
+## 📑 Table of Contents
+
+- [Core Features](#-core-features)
+- [Examples](#-examples)
+- [Quick Start](#-quick-start)
+- [Usage](#-usage)
+- [Extending WebQA Agent Tools](#-extending-webqa-agent-tools)
+- [RoadMap](#-roadmap)
+- [Acknowledgements](#-acknowledgements)
+- [License](#-license)
+
 ## 🚀 Core Features
 
 ### 📋 Feature Overview
@@ -236,6 +247,17 @@ cases:                                  # Test case list
 ### 📊 View Results
 
 Test reports are generated in the `reports/` directory. Open the HTML file to view detailed results.
+
+## 🛠️ Extending WebQA Agent Tools
+
+WebQA Agent supports **custom tool development** for domain-specific testing capabilities.
+
+| Document                                                       | Description                                                             |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| **[Custom Tool Development](docs/CUSTOM_TOOL_DEVELOPMENT.md)** | Quick reference for creating custom tools                               |
+| **[LLM Context Document](docs/CUSTOM_TOOL_DEVELOPMENT_AI.md)** | Comprehensive guide for AI-assisted development, useful for vibe coding |
+
+We welcome contributions! Check out [existing tools](webqa_agent/testers/case_gen/tools/custom/) for examples.
 
 ## 🗺️ RoadMap
 
