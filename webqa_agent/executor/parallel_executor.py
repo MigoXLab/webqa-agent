@@ -63,7 +63,6 @@ class ParallelTestExecutor:
             pool_size=self.max_concurrent_tests,
             browser_config=browser_config
         )
-        await self.session_pool.initialize()
 
         # Configure tab interception based on test type
         for test_config in test_session.test_configurations:
