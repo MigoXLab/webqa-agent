@@ -51,9 +51,9 @@ Vibecoding, Vibe coding, 网页测试自动化, 浏览器测试工具, AI驱动�
 - [示例演示](#-示例演示)
 - [快速开始](#-快速开始)
 - [使用说明](#-使用说明)
-- [扩展 WebQA Agent 工具](#-扩展-webqa-agent-工具)
-- [RoadMap](#-roadmap)
-- [致谢](#-致谢)
+- [扩展 WebQA Agent 工具](#扩展-webqa-agent-工具)
+- [RoadMap](#roadmap)
+- [致谢](#致谢)
 - [开源许可证](#-开源许可证)
 
 ## 🚀 核心特性

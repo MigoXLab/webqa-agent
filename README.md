@@ -51,9 +51,9 @@ vibecoding, vibe coding, web evaluation, autonomous exploration, web testing aut
 - [Examples](#-examples)
 - [Quick Start](#-quick-start)
 - [Usage](#-usage)
-- [Extending WebQA Agent Tools](#-extending-webqa-agent-tools)
-- [RoadMap](#-roadmap)
-- [Acknowledgements](#-acknowledgements)
+- [Extending WebQA Agent Tools](#extending-webqa-agent-tools)
+- [RoadMap](#roadmap)
+- [Acknowledgements](#acknowledgements)
 - [License](#-license)
 
 ## 🚀 Core Features
