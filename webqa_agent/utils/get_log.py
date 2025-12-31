@@ -103,9 +103,9 @@ class GetLog:
             eh.name = 'error'
             eh.setLevel(LEVEL['warning'])
 
-            fmt = '%(asctime)s - %(levelname)s - %(message)s'
+            fmt = '%(asctime)s - %(levelname)s - [%(test_id)s] %(message)s'
             if log_level == 'debug':
-                fmt = '%(asctime)s %(levelname)s [%(name)s] [%(filename)s (%(funcName)s:%(lineno)d)] - %(message)s'
+                fmt = '%(asctime)s %(levelname)s [%(test_id)s] [%(name)s] [%(filename)s (%(funcName)s:%(lineno)d)] - %(message)s'
             fm = logging.Formatter(fmt)
             console_fm = ColoredFormatter(fmt)
 
