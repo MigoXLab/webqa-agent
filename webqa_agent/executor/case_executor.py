@@ -68,9 +68,8 @@ class CaseExecutor:
         mode_str = f'parallel ({workers} workers)' if workers > 1 else 'serial'
         logging.info(f"{icon['rocket']} Starting {mode_str} execution: {total_cases} cases")
 
-        # Create session pool
+        # Create session pool (auto-initialized)
         session_pool = BrowserSessionPool(pool_size=workers, browser_config=self.browser_config)
-        await session_pool.initialize()
 
         # Shared state
         case_queue: asyncio.Queue = asyncio.Queue()
@@ -95,6 +94,9 @@ class CaseExecutor:
                 case_name = case.get('name', f'Case {idx}')
                 case_id = case.get('case_id', f'case_{idx}')
 
+                # Extract browser config for this case
+                browser_cfg = case.get('_config', {}).get('browser_config', self.browser_config)
+
                 # Set test_id context for logging (imitating graph.py style)
                 # Including both ID and Name for maximum clarity
                 log_context = f'YAML Case Test | {case_id} | {case_name}'
@@ -105,7 +107,7 @@ class CaseExecutor:
 
                 try:
                     logging.info(f"Worker {worker_id}: Starting case '{case_name}' ({idx}/{total_cases})")
-                    session = await session_pool.acquire(timeout=120.0)
+                    session = await session_pool.acquire(browser_config=browser_cfg, timeout=120.0)
 
                     with Display.display(case_name):  # pylint: disable=not-callable
                         case_result = await self.execute_single_case(session=session, case=case, case_index=idx)
