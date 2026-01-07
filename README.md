@@ -168,10 +168,6 @@ test_config:
     enabled: True
     type: ai                            # 'default' or 'ai'
     business_objectives: Test search functionality, generate 3 test cases
-    dynamic_step_generation:
-      enabled: True                     # Enable dynamic step generation
-      max_dynamic_steps: 10
-      min_elements_threshold: 1
   ux_test:                              # User experience testing
     enabled: True
   performance_test:                     # Performance analysis (requires Lighthouse)

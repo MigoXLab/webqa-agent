@@ -43,8 +43,8 @@ def get_template_content(mode):
 
     # Try to find template in multiple locations
     package_dir = Path(__file__).parent  # webqa_agent package directory
-    project_root = package_dir.parent    # project root directory
-    
+    project_root = package_dir.parent  # project root directory
+
     template_paths = [
         # Check config package (for installed version)
         project_root / 'config' / template_filename,
@@ -161,7 +161,11 @@ def build_test_configurations(cfg, cookies=None):
                 'test_specific_config': {
                     'cookies': cookies,
                     'business_objectives': business_objectives,
-                    'dynamic_step_generation': tconf['function_test'].get('dynamic_step_generation', {}),
+                    'dynamic_step_generation': tconf['function_test'].get('dynamic_step_generation', {
+                        'enabled': True,
+                        'max_dynamic_steps': 8,
+                        'min_elements_threshold': 2
+                    }),
                 },
             })
         else:

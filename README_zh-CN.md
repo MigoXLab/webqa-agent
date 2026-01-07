@@ -168,10 +168,6 @@ test_config:
     enabled: True
     type: ai                            # 'default' 或 'ai'
     business_objectives: 测试搜索功能，生成3个测试用例
-    dynamic_step_generation:
-      enabled: True                     # 启用动态步骤生成
-      max_dynamic_steps: 10
-      min_elements_threshold: 1
   ux_test:                              # 用户体验测试
     enabled: True
   performance_test:                     # 性能分析（需要 Lighthouse）

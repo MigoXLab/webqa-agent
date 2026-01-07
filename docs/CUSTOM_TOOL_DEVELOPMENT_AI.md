@@ -215,7 +215,7 @@ class {{TOOL_NAME_PASCAL}}Tool(WebQABaseTool):
             description_short="{{ONE_LINE_DESCRIPTION}}",
             description_long="{{DETAILED_DESCRIPTION}}",
             examples=[
-                '{"action": "{{TOOL_NAME_SNAKE}}", "params": {"{{PARAM_NAME}}": "value"}}',
+                '{{"action": "{{TOOL_NAME_SNAKE}}", "params": {{"{{PARAM_NAME}}": "value"}}}}',
             ],
             use_when=[
                 "{{SCENARIO_1}}",
@@ -472,7 +472,7 @@ ______________________________________________________________________
        business_objectives: "Test functionality using my_tool"
        dynamic_step_generation:
          enabled: true
-         max_dynamic_steps: 10
+         max_dynamic_steps: 8
    ```
 
    Run: `webqa-agent run -c config.yaml`
@@ -655,7 +655,7 @@ class FormAutoFillTool(WebQABaseTool):
             step_type="auto_fill_form",
             description_short="Auto-fills form fields from structured data",
             examples=[
-                '{"action": "auto_fill_form", "params": {"form_data": {"username": "test", "email": "test@example.com"}}}'
+                '{{"action": "auto_fill_form", "params": {{"form_data": {{"username": "test", "email": "test@example.com"}}}}}}'
             ],
             use_when=["Testing registration forms", "Filling multi-field forms", "E2E testing with form submissions"],
             priority=60,
@@ -748,7 +748,7 @@ class DBQueryValidatorTool(WebQABaseTool):
             step_type="validate_db_query",
             description_short="Validates database queries and results",
             examples=[
-                '{"action": "validate_db_query", "params": {"query": "SELECT * FROM users WHERE active=true", "expected_row_count": 5}}'
+                '{{"action": "validate_db_query", "params": {{"query": "SELECT * FROM users WHERE active=true", "expected_row_count": 5}}}}'
             ],
             use_when=[
                 "Verifying data persistence after form submission",
@@ -852,8 +852,8 @@ ______________________________________________________________________
 
 ```python
 examples=[
-    '{"action": "check_page_title", "params": {"expected_title": "Dashboard"}}',
-    '{"action": "check_page_title", "params": {"expected_title": "Product.*", "case_sensitive": true}}'
+    '{{"action": "check_page_title", "params": {{"expected_title": "Dashboard"}}}}',
+    '{{"action": "check_page_title", "params": {{"expected_title": "Product.*", "case_sensitive": true}}}}'
 ]
 ```
 
