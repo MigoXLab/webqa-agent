@@ -22,6 +22,22 @@ Usage:
         llm_config=config,
         case_recorder=recorder
     )
+
+Dependency Management:
+    Tools can declare dependencies via WebQAToolMetadata.dependencies.
+    If any dependency is missing, the tool will NOT be registered.
+
+    Example:
+        @register_tool
+        class MyTool(WebQABaseTool):
+            @classmethod
+            def get_metadata(cls):
+                return WebQAToolMetadata(
+                    name="my_tool",
+                    dependencies=["aiohttp", "beautifulsoup4"]
+                )
+
+    Check logs for pip install instructions if dependencies are missing.
 """
 import importlib.util
 import logging
@@ -98,6 +114,10 @@ class ToolRegistry:
 
         Raises:
             TypeError: If tool_class doesn't inherit from BaseTool
+
+        Note:
+            Tools with missing dependencies will not be registered.
+            Check logs for dependency installation instructions.
         """
         _lazy_import_base()
 
@@ -111,17 +131,25 @@ class ToolRegistry:
             try:
                 metadata = tool_class.get_metadata()
                 name = metadata.name
+
+                # CRITICAL: Check dependencies BEFORE any state mutations
+                if metadata.dependencies:
+                    if not self._check_dependencies(metadata):
+                        logger.info(
+                            f"Tool '{name}' not registered - missing dependencies "
+                            f'(see warning above)'
+                        )
+                        return  # Early exit - no state has been modified
+
+                # Safe to mutate state now - dependencies are satisfied
                 self._metadata_cache[name] = metadata
 
-                # Register step_type mapping for documentation and action registration
-                # This mapping serves TWO purposes:
-                # 1. Planning prompts: Provides tool documentation with step_type labels
-                # 2. Action registration: Auto-registers custom tools to ActionTypes
-                # Note: LLM tool selection is NOT restricted - entirely based on descriptions.
-                # Future enhancement: Tool masking feature is not yet implemented.
+                # Register step_type mapping for planning prompts
                 if metadata.step_type:
                     self._step_type_mapping[metadata.step_type] = name
-                    logger.debug(f'Registered step_type mapping: {metadata.step_type} -> {name}')
+                    logger.debug(
+                        f'Registered step_type mapping: {metadata.step_type} -> {name}'
+                    )
 
                     # Auto-register custom tools to ActionTypes for planning prompts
                     # This ensures custom tool names appear in action_types_str automatically
@@ -129,10 +157,6 @@ class ToolRegistry:
                         from .base import ActionTypes
                         ActionTypes.register_action(metadata.step_type)
                         logger.debug(f'Registered custom action type: {metadata.step_type}')
-
-                # Check dependencies
-                if metadata.dependencies:
-                    self._check_dependencies(metadata)
 
             except Exception as e:
                 logger.warning(f'Failed to get metadata from {tool_class.__name__}: {e}')
@@ -145,23 +169,39 @@ class ToolRegistry:
         logger.debug(f'Registered tool: {name}')
 
     def _check_dependencies(self, metadata: Any) -> bool:
-        """Check if tool dependencies are installed.
+        """Validate that all declared tool dependencies are installed.
 
         Args:
-            metadata: WebQAToolMetadata instance
+            metadata: WebQAToolMetadata instance with dependencies list
 
         Returns:
-            True if all dependencies are installed, False otherwise
+            True if all dependencies satisfied, False otherwise
+
+        Example:
+            If tool declares dependencies=['aiohttp'] but aiohttp not installed:
+            WARNING: Tool 'api_tool' missing 'aiohttp'. Install: pip install aiohttp
         """
-        all_installed = True
+        missing_deps = []
+
         for dep in metadata.dependencies:
-            if importlib.util.find_spec(dep) is None:
-                logger.warning(
-                    f"Tool '{metadata.name}' requires '{dep}' but it's not installed. "
-                    f'Install with: pip install {dep}'
-                )
-                all_installed = False
-        return all_installed
+            try:
+                spec = importlib.util.find_spec(dep)
+                if spec is None:
+                    missing_deps.append(dep)
+            except (ModuleNotFoundError, ImportError, ValueError) as e:
+                # Treat import exceptions as missing dependency
+                logger.debug(f"Dependency check for '{dep}' raised: {e}")
+                missing_deps.append(dep)
+
+        if missing_deps:
+            # Simple, actionable message
+            logger.warning(
+                f"Tool '{metadata.name}' missing {', '.join(repr(d) for d in missing_deps)}. "
+                f"Install: pip install {' '.join(missing_deps)}"
+            )
+            return False
+
+        return True
 
     def register_all(self, tool_classes: List[Type]) -> None:
         """Register multiple tool classes.

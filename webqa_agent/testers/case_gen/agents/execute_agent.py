@@ -103,6 +103,40 @@ def _get_tools(ui_tester_instance, llm_config, case_recorder):
 
 
 # ============================================================================
+# Dynamic Step Generation Configuration Helper
+# ============================================================================
+
+def _get_dynamic_config(state: dict) -> dict:
+    """Extract and merge dynamic step generation config from state with
+    defaults.
+
+    Centralized config extraction ensures all code paths use identical defaults.
+    Always returns a complete configuration dictionary with all keys present.
+
+    Default values (8, 2) provide balanced approach:
+    - max_dynamic_steps=8: Covers 90% of UI changes (modals, dropdowns, forms)
+      while preventing verbose generation
+    - min_elements_threshold=2: Filters single-element noise (spinners, tooltips)
+      while catching meaningful changes
+
+    Args:
+        state: Graph state containing dynamic_step_generation config
+
+    Returns:
+        A complete configuration dictionary with all keys present.
+        User-provided values override defaults.
+    """
+    defaults = {
+        'enabled': True,
+        'max_dynamic_steps': 8,
+        'min_elements_threshold': 2
+    }
+    user_config = state.get('dynamic_step_generation', {})
+    # Merge defaults with user config. User values override defaults.
+    return {**defaults, **user_config}
+
+
+# ============================================================================
 # Step Type Parsing Helper
 # ============================================================================
 
@@ -401,7 +435,7 @@ async def generate_dynamic_steps_with_llm(
         last_action: str = '',
         test_objective: str = '',
         executed_steps: int = 0,
-        max_steps: int = 5,
+        max_steps: int = 8,
         llm: any = None,
         current_case: dict = None,
         screenshot: str = None,
@@ -1397,9 +1431,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 # Priority 1: Try recovery for ELEMENT_NOT_FOUND (recoverable critical error)
                 if is_element_not_found:
                     # Get dynamic config to check if adaptive recovery is enabled
-                    dynamic_config = state.get('dynamic_step_generation', {'enabled': False})
+                    dynamic_config = _get_dynamic_config(state)
 
-                    if dynamic_config.get('enabled', False):
+                    if dynamic_config['enabled']:
                         # Adaptive recovery enabled
                         retry_key = f'step_{i}'
                         retry_count = step_retry_tracker.get(retry_key, 0)
@@ -1482,9 +1516,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     logging.warning(f'Step {i + 1} failed (non-ELEMENT_NOT_FOUND): {tool_output}')
 
                     # Extended LLM adaptive recovery for all failure types
-                    dynamic_config = state.get('dynamic_step_generation', {'enabled': False})
+                    dynamic_config = _get_dynamic_config(state)
 
-                    if dynamic_config.get('enabled', False):
+                    if dynamic_config['enabled']:
                         # Add retry tracking to prevent infinite loops (consistent with ELEMENT_NOT_FOUND branch)
                         retry_key = f'step_{i}_non_element'
                         retry_count = step_retry_tracker.get(retry_key, 0)
@@ -1598,17 +1632,15 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             logging.debug(f"Step {i + 1} completed {'successfully' if (i + 1) not in failed_steps else 'with issues'}.")
 
             # --- Dynamic Step Generation ---
+            # Triggers when new DOM elements (≥ threshold) appear after actions
+            # Defaults: enabled=True, max_steps=8, threshold=2
             if step_type == 'Action':
                 # Get dynamic step generation config from state
-                dynamic_config = state.get('dynamic_step_generation', {
-                    'enabled': False,
-                    'max_dynamic_steps': 5,
-                    'min_elements_threshold': 2
-                })
+                dynamic_config = _get_dynamic_config(state)
 
-                dynamic_enabled = dynamic_config.get('enabled', False)
-                max_dynamic_steps = dynamic_config.get('max_dynamic_steps', 5)
-                min_elements_threshold = dynamic_config.get('min_elements_threshold', 2)
+                dynamic_enabled = dynamic_config['enabled']
+                max_dynamic_steps = dynamic_config['max_dynamic_steps']
+                min_elements_threshold = dynamic_config['min_elements_threshold']
 
                 if dynamic_enabled:
                     # Extract DOM diff from tool output (safely access intermediate_steps)

@@ -22,9 +22,63 @@ This mode is suitable for exploratory testing and comprehensive quality evaluati
 3. Adaptive test plan reflection:
    Test plans are reflected and re-generated at the planning level based on execution results and coverage feedback.
 
-4. Dynamic Adjustment of Test Steps:
-   Page functionality is dynamically discovered and test steps are adjusted during execution.
-   When dynamic_step_generation is enabled, newly detected UI elements (e.g., dropdowns, modals) identified through DOM diff will trigger the generation of additional test steps.
+4. **Dynamic Step Generation:**
+
+   Automatically generates additional test steps when new UI elements appear during execution, significantly improving test coverage without manual intervention.
+
+   **How It Works:**
+
+   1. After each action, the system performs DOM diff analysis to detect new elements
+   2. When ≥ `min_elements_threshold` new elements appear, triggers LLM-based step generation
+   3. LLM analyzes new elements and generates up to `max_dynamic_steps` relevant test steps
+   4. Steps are inserted or replace remaining steps based on test plan coherence
+
+   **Configuration:**
+
+   ```yaml
+   test_config:
+     function_test:
+       type: "ai"
+       dynamic_step_generation:
+         enabled: true                 # Master switch (default: true)
+         max_dynamic_steps: 8          # Max steps per generation (default: 8, range: 3-15)
+         min_elements_threshold: 2     # Min new elements to trigger (default: 2, range: 1-5)
+   ```
+
+   **Parameter Guide:**
+
+   | Parameter                | Default | Purpose                        | Tuning Guidance                                                                             |
+   | ------------------------ | ------- | ------------------------------ | ------------------------------------------------------------------------------------------- |
+   | `enabled`                | `true`  | Enable/disable feature         | Disable for simple static pages or strict time limits                                       |
+   | `max_dynamic_steps`      | `8`     | Upper limit on generated steps | Increase to 10-12 for complex flows (e-commerce, dashboards), decrease to 5 for simple UIs  |
+   | `min_elements_threshold` | `2`     | Sensitivity control            | Use 1 for maximum coverage (triggers more often), use 3+ for performance-critical scenarios |
+
+   **Real-World Scenarios:**
+
+   - **Dropdown Selection:** User clicks dropdown → 6 option elements appear → Generates 3-4 steps to test each option
+   - **Modal Forms:** User clicks "Settings" → Modal with 5 form fields appears → Generates 5-7 steps to fill and validate fields
+   - **Loading Spinner (Filtered):** User clicks "Load" → Single spinner element appears → Skipped (below threshold=2)
+
+   **Performance Impact:**
+
+   - Each generation adds 5-15 seconds to test execution
+   - Typical test with 3 generations: +15-45 seconds total
+   - Token usage: ~4500-5500 tokens per generation
+
+   **When to Adjust:**
+
+   | Scenario                    | Recommended Settings    | Rationale                                |
+   | --------------------------- | ----------------------- | ---------------------------------------- |
+   | E-commerce product browsing | `max: 10, threshold: 2` | Complex category/filter interactions     |
+   | SaaS admin dashboard        | `max: 12, threshold: 1` | Frequent nested menus, critical features |
+   | Content/blog site           | `max: 5, threshold: 3`  | Static content, reduce noise             |
+   | High-speed smoke tests      | `max: 5, threshold: 4`  | Prioritize speed over coverage           |
+   | Mobile app testing          | `max: 7, threshold: 2`  | Compact UI, modal-heavy                  |
+
+   **Strategies:**
+
+   - **Insert:** Adds dynamic steps after current step (preserves test plan structure)
+   - **Replace:** Replaces remaining steps with dynamic steps (used when new elements provide alternative path to test objective)
 
 ### Configuration Structure
 
@@ -43,8 +97,8 @@ test_config:
     business_objectives: Test search functionality, generate 3 test cases
     dynamic_step_generation:
       enabled: True                     # Enable dynamic step generation
-      max_dynamic_steps: 10
-      min_elements_threshold: 1
+      max_dynamic_steps: 8              # Generate up to 8 steps per discovery
+      min_elements_threshold: 2         # Require at least 2 new elements to trigger
   ux_test:                              # User experience testing
     enabled: True
   performance_test:                     # Performance analysis (requires Lighthouse)

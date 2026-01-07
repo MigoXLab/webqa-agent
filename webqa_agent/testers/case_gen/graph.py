@@ -401,8 +401,8 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                         'test_case': case,
                         'completed_cases': state.get('completed_cases', []),
                         'dynamic_step_generation': state.get('dynamic_step_generation', {
-                            'enabled': False,
-                            'max_dynamic_steps': 0,
+                            'enabled': True,
+                            'max_dynamic_steps': 8,
                             'min_elements_threshold': 2
                         })
                     }

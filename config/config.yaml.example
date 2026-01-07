@@ -14,9 +14,9 @@ test_config: # Test configuration
     type: ai  # default or ai
     business_objectives: Generate 5 test cases, exclude login cases   # Optional. If empty, AI will automatically explore and generate test cases. If specified, AI will focus on testing the specified business objectives.
     dynamic_step_generation:
-      enabled: True  # Optional, default: False (this example enables it as recommended)
-      max_dynamic_steps: 10  # Optional, default: 5 (this example increases the limit)
-      min_elements_threshold: 1  # Optional, default: 2 (this example uses 1 for higher sensitivity)
+      enabled: True  # Optional, default: True - Master switch for dynamic generation
+      max_dynamic_steps: 8  # Optional, default: 8 - Max steps per UI change (range: 3-15)
+      min_elements_threshold: 2  # Optional, default: 2 - Min new elements to trigger (1=sensitive, 3+=selective)
   ux_test:
     enabled: False
   performance_test:

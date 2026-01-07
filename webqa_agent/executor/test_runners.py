@@ -57,8 +57,8 @@ class UIAgentLangGraphRunner(BaseTestRunner):
 
                 # Extract dynamic step generation configuration
                 dynamic_step_config = test_config.test_specific_config.get('dynamic_step_generation', {
-                    'enabled': False,
-                    'max_dynamic_steps': 5,
+                    'enabled': True,
+                    'max_dynamic_steps': 8,
                     'min_elements_threshold': 2
                 })
 
