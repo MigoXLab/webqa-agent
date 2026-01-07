@@ -107,10 +107,11 @@ def _get_tools(ui_tester_instance, llm_config, case_recorder):
 # ============================================================================
 
 def _get_dynamic_config(state: dict) -> dict:
-    """Extract dynamic step generation config from state with consistent
+    """Extract and merge dynamic step generation config from state with
     defaults.
 
     Centralized config extraction ensures all code paths use identical defaults.
+    Always returns a complete configuration dictionary with all keys present.
 
     Default values (8, 2) provide balanced approach:
     - max_dynamic_steps=8: Covers 90% of UI changes (modals, dropdowns, forms)
@@ -122,13 +123,17 @@ def _get_dynamic_config(state: dict) -> dict:
         state: Graph state containing dynamic_step_generation config
 
     Returns:
-        Dict with enabled, max_dynamic_steps, min_elements_threshold
+        A complete configuration dictionary with all keys present.
+        User-provided values override defaults.
     """
-    return state.get('dynamic_step_generation', {
+    defaults = {
         'enabled': True,
         'max_dynamic_steps': 8,
         'min_elements_threshold': 2
-    })
+    }
+    user_config = state.get('dynamic_step_generation', {})
+    # Merge defaults with user config. User values override defaults.
+    return {**defaults, **user_config}
 
 
 # ============================================================================
@@ -1428,7 +1433,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     # Get dynamic config to check if adaptive recovery is enabled
                     dynamic_config = _get_dynamic_config(state)
 
-                    if dynamic_config.get('enabled', True):
+                    if dynamic_config['enabled']:
                         # Adaptive recovery enabled
                         retry_key = f'step_{i}'
                         retry_count = step_retry_tracker.get(retry_key, 0)
@@ -1513,7 +1518,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     # Extended LLM adaptive recovery for all failure types
                     dynamic_config = _get_dynamic_config(state)
 
-                    if dynamic_config.get('enabled', True):
+                    if dynamic_config['enabled']:
                         # Add retry tracking to prevent infinite loops (consistent with ELEMENT_NOT_FOUND branch)
                         retry_key = f'step_{i}_non_element'
                         retry_count = step_retry_tracker.get(retry_key, 0)
@@ -1633,9 +1638,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 # Get dynamic step generation config from state
                 dynamic_config = _get_dynamic_config(state)
 
-                dynamic_enabled = dynamic_config.get('enabled', True)
-                max_dynamic_steps = dynamic_config.get('max_dynamic_steps', 8)
-                min_elements_threshold = dynamic_config.get('min_elements_threshold', 2)
+                dynamic_enabled = dynamic_config['enabled']
+                max_dynamic_steps = dynamic_config['max_dynamic_steps']
+                min_elements_threshold = dynamic_config['min_elements_threshold']
 
                 if dynamic_enabled:
                     # Extract DOM diff from tool output (safely access intermediate_steps)
