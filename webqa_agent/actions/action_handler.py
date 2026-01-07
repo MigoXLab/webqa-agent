@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from playwright.async_api import Page, Frame
+from playwright.async_api import Frame, Page
 
 # ===== Action Context Infrastructure for Error Propagation =====
 
@@ -115,13 +115,13 @@ class ActionHandler:
 
     def _get_frame_for_element(self, element: dict) -> Page | Frame:
         """Get the correct frame context for an element.
-        
+
         If the element has a frame_url, find the matching frame.
         Otherwise, return the main page.
-        
+
         Args:
             element: Element dict that may contain 'frame_url' field
-            
+
         Returns:
             Frame or Page object to use for locating the element
         """
@@ -129,20 +129,20 @@ class ActionHandler:
         if not frame_url:
             # Element is in main frame
             return self.page
-        
+
         # Find the frame with matching URL
         try:
             for frame in self.page.frames:
                 if frame.url == frame_url:
                     logging.debug(f'Found matching frame for element: {frame_url}')
                     return frame
-            
+
             # Fallback: try partial URL match (some frames may have slightly different URLs)
             for frame in self.page.frames:
                 if frame_url in frame.url or frame.url in frame_url:
                     logging.debug(f'Found partial matching frame for element: {frame.url} (expected: {frame_url})')
                     return frame
-            
+
             logging.warning(f'Could not find frame with URL {frame_url}, falling back to main page')
             return self.page
         except Exception as e:
@@ -349,7 +349,7 @@ class ActionHandler:
         # Get element selectors and frame context
         selector = element.get('selector')
         xpath = element.get('xpath')
-        
+
         # Get the correct frame for locator-based operations
         frame = self._get_frame_for_element(element)
 
@@ -752,8 +752,7 @@ class ActionHandler:
         # Get element selectors and frame context
         selector = element.get('selector')
         xpath = element.get('xpath')
-        frame_url = element.get('frame_url')
-        
+
         # Get the correct frame for locator-based operations
         frame = self._get_frame_for_element(element)
 
@@ -930,11 +929,30 @@ class ActionHandler:
         action_context_var.set(ctx)
         ctx.element_info = {'element_id': str(id), 'action': 'click'}
 
-        # Inject comprehensive tab interception script (multi-layer defense)
-        # This ensures all new tab attempts are redirected to current tab
+        # Enhanced tab interception with coordination
+        # This layer provides:
+        #   1. History recording for GoBack action (unique feature)
+        #   2. Form/area/base target handling (comprehensive)
+        #   3. Periodic enforcement (anti-tamper)
+        #   4. Fallback protection if session.py not present
+        # Coordination:
+        #   - Checks session.py flags to avoid redundancy
+        #   - Only creates observers/overrides if not already present
+        #   - Uses single-instance timer with auto-cleanup (no memory leak)
         js = """
         (function() {
-            // Layer 1: Remove/modify target attributes from ALL elements
+            // Detect if session.py has initialized
+            const hasSessionInit = window.__webqa_session_init_active === true;
+
+            if (hasSessionInit) {
+                console.log('[WebQA Click] Session layer active, enhancement mode');
+            } else {
+                console.log('[WebQA Click] Session layer not detected, full protection mode');
+            }
+
+            // ========================================
+            // Layer 1: Target Attribute Enforcement
+            // ========================================
             function enforceCurrentTabNavigation() {
                 // Links: set to _self instead of removing (more reliable)
                 document.querySelectorAll('a[target]').forEach(el =>
@@ -953,7 +971,9 @@ class ActionHandler:
                 if (baseTag) baseTag.setAttribute('target', '_self');
             }
 
-            // Layer 1.5: Backup history creation for link clicks
+            // ========================================
+            // Layer 1.5: Click Event Listener (History)
+            // ========================================
             if (!window.__webqa_link_click_intercepted) {
                 document.addEventListener('click', function(e) {
                     let target = e.target;
@@ -966,39 +986,56 @@ class ActionHandler:
                     const href = target.href;
                     if (!href || href.startsWith('javascript:') || href.startsWith('#') || href === window.location.href) return;
 
+                    // Add history entry (unique feature)
                     try {
                         window.history.pushState({webqa_back: window.location.href}, '', window.location.href);
-                    } catch (err) {}
+                    } catch (err) {
+                        console.debug('[WebQA] History push failed:', err);
+                    }
                 }, true);
                 window.__webqa_link_click_intercepted = true;
             }
 
-            // Layer 2: Override window.open() to redirect to current tab with history preservation
+            // ========================================
+            // Layer 2: window.open() Enhancement
+            // ========================================
+            // Only create if session.py hasn't handled it
             if (!window.__webqa_window_open_intercepted) {
                 const originalWindowOpen = window.open;
                 window.open = function(url, target, features) {
+                    console.log('[WebQA Click] Intercepted window.open:', url);
                     if (url) {
+                        // Add history entry
                         try {
-                            window.history.pushState({webqa_back: window.location.href}, '', window.location.href);
-                        } catch (e) {}
+                            window.history.pushState(
+                                {webqa_back: window.location.href},
+                                '',
+                                window.location.href
+                            );
+                        } catch (e) {
+                            console.debug('[WebQA] History push failed:', e);
+                        }
                         window.location.href = url;
                     }
-                    return window;
+                    return null;  // Consistent with session.py
                 };
                 window.__webqa_window_open_intercepted = true;
             }
 
-            // Layer 3: MutationObserver to catch dynamically added elements
+            // ========================================
+            // Layer 3: MutationObserver
+            // ========================================
+            // Only create if session.py hasn't created it
             if (!window.__webqa_mutation_observer_active) {
                 const observer = new MutationObserver((mutations) => {
                     mutations.forEach(mutation => {
                         mutation.addedNodes.forEach(node => {
                             if (node.nodeType === 1) {  // Element node
-                                // Check if added node has target attribute
+                                // Check the node itself
                                 if (node.hasAttribute && node.hasAttribute('target')) {
                                     node.setAttribute('target', '_self');
                                 }
-                                // Check descendants for target attributes
+                                // Check descendants
                                 if (node.querySelectorAll) {
                                     node.querySelectorAll('[target]').forEach(el =>
                                         el.setAttribute('target', '_self')
@@ -1016,14 +1053,46 @@ class ActionHandler:
                 window.__webqa_mutation_observer_active = true;
             }
 
-            // Layer 4: Initial enforcement on current page state
+            // ========================================
+            // Layer 4: Initial Enforcement
+            // ========================================
             enforceCurrentTabNavigation();
 
-            // Layer 5: Periodic re-enforcement for delayed/async content (every 1 second)
-            if (!window.__webqa_periodic_check_active) {
-                setInterval(enforceCurrentTabNavigation, 1000);
-                window.__webqa_periodic_check_active = true;
+            // ========================================
+            // Layer 5: Periodic Check (Fixed Memory Leak)
+            // ========================================
+            if (!window.__webqa_tab_enforcement) {
+                window.__webqa_tab_enforcement = {
+                    timerId: null,
+                    start: function() {
+                        // Clear old timer if exists
+                        if (this.timerId !== null) {
+                            clearInterval(this.timerId);
+                        }
+
+                        // Create new timer
+                        this.timerId = setInterval(() => {
+                            enforceCurrentTabNavigation();
+                        }, 1000);
+                    },
+                    stop: function() {
+                        if (this.timerId !== null) {
+                            clearInterval(this.timerId);
+                            this.timerId = null;
+                        }
+                    }
+                };
+
+                // Cleanup on page unload
+                window.addEventListener('beforeunload', () => {
+                    if (window.__webqa_tab_enforcement) {
+                        window.__webqa_tab_enforcement.stop();
+                    }
+                });
             }
+
+            // Start timer (will auto-cleanup old ones)
+            window.__webqa_tab_enforcement.start();
         })();
         """
         await page.evaluate(js)
@@ -1805,26 +1874,26 @@ class ActionHandler:
                 element = self.page_element_buffer.get(str(id))
                 if element:
                     try:
-                        logging.info(f"Trying expect_file_chooser method for element: {element}")
-                        
+                        logging.info(f'Trying expect_file_chooser method for element: {element}')
+
                         # Use expect_file_chooser to listen for file chooser
                         async with self.page.expect_file_chooser() as fc_info:
                             # Click element to trigger file chooser
                             await self.page.mouse.click(element['center_x'], element['center_y'])
-                        
+
                         # Get file chooser and set files
                         file_chooser = await fc_info.value
                         await file_chooser.set_files(valid_file_paths)
-                        
-                        logging.info(f"Successfully uploaded files using expect_file_chooser: {valid_file_paths}")
+
+                        logging.info(f'Successfully uploaded files using expect_file_chooser: {valid_file_paths}')
                         await asyncio.sleep(1)
                         return True
-                    
+
                     except Exception as e:
                         logging.warning(f"expect_file_chooser method failed: {str(e)}, falling back to input[type='file'] method")
                 else:
                     logging.warning(f"Element with id {id} not found in buffer, falling back to input[type='file'] method")
-            
+
             # Fallback: find all file input elements
             # Take the extension of the first file for accept check
             file_extension = os.path.splitext(valid_file_paths[0])[1].lower() if valid_file_paths else ''
@@ -1834,15 +1903,15 @@ class ActionHandler:
                     .map(input => {
                         const accept = input.getAttribute('accept') || '';
                         let selector = `input[type=\"file\"]`;
-                        
+
                         if (input.name) {
                             selector += `[name=\"${input.name}\"]`;
                         }
-                        
+
                         if (accept) {
                             selector += `[accept=\"${accept}\"]`;
                         }
-                        
+
                         return {
                             selector: selector,
                             accept: accept,
@@ -1850,7 +1919,7 @@ class ActionHandler:
                         };
                     });
             }""", file_extension)
-            
+
             if not file_inputs:
                 logging.error('No file input elements found')
                 ctx.set_error(
