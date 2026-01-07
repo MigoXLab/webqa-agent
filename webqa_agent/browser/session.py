@@ -3,6 +3,7 @@ import json
 import logging
 import uuid
 from typing import Any, Dict, List, Optional, Union
+from urllib.parse import urlparse
 
 from playwright.async_api import (Browser, BrowserContext, Page,
                                   async_playwright)
@@ -21,6 +22,16 @@ class _SessionToken:
 
 
 _POOL_TOKEN = _SessionToken()
+
+# Ad/popup URL patterns to filter during tab interception
+_AD_PATTERNS = [
+    'doubleclick.net',
+    'googlesyndication.com',
+    'googleadservices.com',
+    'adservice',
+    'popup',
+    'banner',
+]
 
 
 class _BrowserSession:
@@ -375,23 +386,13 @@ class _BrowserSession:
             return False
 
         # Filter out common ad/popup patterns
-        ad_patterns = [
-            'doubleclick.net',
-            'googlesyndication.com',
-            'googleadservices.com',
-            'adservice',
-            'popup',
-            'banner',
-        ]
-
-        for pattern in ad_patterns:
+        for pattern in _AD_PATTERNS:
             if pattern in url.lower():
                 return False
 
         # Same origin = likely legitimate navigation
         current_url = self._page.url
         if current_url:
-            from urllib.parse import urlparse
             current_origin = f'{urlparse(current_url).scheme}://{urlparse(current_url).netloc}'
             new_origin = f'{urlparse(url).scheme}://{urlparse(url).netloc}'
             if current_origin == new_origin:
@@ -403,13 +404,6 @@ class _BrowserSession:
     def _check_state(self):
         if self._is_closed or not self._page:
             raise RuntimeError('Session not initialized or closed')
-
-    async def _close_unexpected_page(self, page: Page):
-        try:
-            await page.close()
-            logging.warning(f'Closed unexpected page: {page.url}')
-        except Exception as e:
-            logging.debug(f'Failed to close unexpected page: {e}')
 
 
 class BrowserSessionPool:
