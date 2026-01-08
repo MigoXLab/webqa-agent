@@ -49,38 +49,38 @@ cases:
       - action: Click on a random image to view
 
   # Example: Fixture-like state management (pytest-style)
-  # Define fixtures by setting non-empty context_id:
+  # Define fixtures by setting non-empty snapshot:
   #
-  # 1. Define fixtures (context_id non-empty):
+  # 1. Define fixtures (snapshot non-empty):
   # - name: Setup Admin Login
-  #   context_id: "admin_user"  # Non-empty = auto-save after execution
+  #   snapshot: "admin_user"  # Non-empty = auto-save after execution
   #   steps:
   #     - action: Enter username 'admin'
   #     - action: Enter password 'admin123'
   #     - action: Click login button
   #
   # - name: Setup Normal User Login
-  #   context_id: "normal_user"  # Another fixture
+  #   snapshot: "normal_user"  # Another fixture
   #   steps:
   #     - action: Enter username 'user'
   #     - action: Enter password 'user123'
   #     - action: Click login button
   #
-  # 2. Use fixtures (use_context):
+  # 2. Use fixtures (use_snapshot):
   # - name: Test Admin Dashboard
-  #   use_context: "admin_user"  # Load admin_user fixture
+  #   use_snapshot: "admin_user"  # Load admin_user fixture
   #   steps:
   #     - action: Navigate to admin dashboard
   #     - verify: Verify admin permissions
   #
   # - name: Test User Profile
-  #   use_context: "normal_user"  # Load normal_user fixture
+  #   use_snapshot: "normal_user"  # Load normal_user fixture
   #   steps:
   #     - action: View profile page
   #     - verify: Verify user information
   #
   # - name: Test Public Page
-  #   # No use_context = independent test (no pre-loaded state)
+  #   # No use_snapshot = independent test (no pre-loaded state)
   #   steps:
   #     - action: Visit public homepage
   #     - verify: Verify page loads correctly
