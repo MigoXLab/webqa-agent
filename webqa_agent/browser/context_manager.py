@@ -37,53 +37,53 @@ class PersistentContextManager:
 
     @staticmethod
     def get_storage_path(
-        context_id: str,
+        snapshot_id: str,
         base_dir: str = 'webqa_agent/browser/browser_context'
     ) -> Path:
         """Calculate storage_state JSON file path.
 
         Args:
-            context_id: Unique identifier for the context
+            snapshot_id: Unique identifier for the snapshot
             base_dir: Base directory for storage (default: webqa_agent/browser/browser_context)
 
         Returns:
-            Path object: {base_dir}/{context_id}.json
+            Path object: {base_dir}/{snapshot_id}.json
 
         Raises:
-            ValueError: If context_id contains invalid characters (path traversal attempt)
+            ValueError: If snapshot_id contains invalid characters (path traversal attempt)
         """
         # Security: Prevent path traversal attacks
-        if not context_id or '/' in context_id or '\\' in context_id or '..' in context_id:
+        if not snapshot_id or '/' in snapshot_id or '\\' in snapshot_id or '..' in snapshot_id:
             raise ValueError(
-                f"Invalid context_id: '{context_id}'. "
+                f"Invalid snapshot_id: '{snapshot_id}'. "
                 "Must not contain path separators or '..' for security."
             )
 
         # Convert to Path object (no directory creation side effect)
         base_path = Path(base_dir)
-        storage_path = base_path / f'{context_id}.json'
+        storage_path = base_path / f'{snapshot_id}.json'
         return storage_path
 
     @staticmethod
     async def get_storage_state_path(
-        context_id: str,
+        snapshot_id: str,
         base_dir: str = 'webqa_agent/browser/browser_context'
     ) -> Optional[str]:
         """Get storage_state file path if it exists and is valid.
 
         Args:
-            context_id: Unique identifier for the context
+            snapshot_id: Unique identifier for the snapshot
             base_dir: Base directory for storage
 
         Returns:
             str: File path if exists and valid, None otherwise
         """
         try:
-            storage_path = PersistentContextManager.get_storage_path(context_id, base_dir)
+            storage_path = PersistentContextManager.get_storage_path(snapshot_id, base_dir)
 
             # Check if file exists
             if not storage_path.exists():
-                logging.debug(f"[PersistentContext] No saved state found for context_id: {context_id}")
+                logging.debug(f"[PersistentContext] No saved state found for snapshot_id: {snapshot_id}")
                 return None
 
             # Validate JSON format
@@ -92,35 +92,35 @@ class PersistentContextManager:
                     json.load(f)  # Validate JSON
             except json.JSONDecodeError as e:
                 logging.warning(
-                    f"[PersistentContext] Corrupted storage_state file for {context_id}: {e}. "
+                    f"[PersistentContext] Corrupted storage_state file for {snapshot_id}: {e}. "
                     "Will create new context."
                 )
                 return None
 
-            logging.info(f"[PersistentContext] Found saved state for context_id: {context_id}")
+            logging.info(f"[PersistentContext] Found saved state for snapshot_id: {snapshot_id}")
             return str(storage_path)
 
         except Exception as e:
-            logging.error(f"[PersistentContext] Failed to get storage_state path for {context_id}: {e}")
+            logging.error(f"[PersistentContext] Failed to get storage_state path for {snapshot_id}: {e}")
             return None
 
     @staticmethod
     async def save_storage_state(
         context: BrowserContext,
-        context_id: str,
+        snapshot_id: str,
         base_dir: str = 'webqa_agent/browser/browser_context'
     ) -> None:
         """Save context storage_state to file with atomic write and file locking.
 
         Args:
             context: Playwright BrowserContext to save
-            context_id: Unique identifier for the context
+            snapshot_id: Unique identifier for the snapshot
             base_dir: Base directory for storage
 
         Raises:
             Exception: If save operation fails
         """
-        storage_path = PersistentContextManager.get_storage_path(context_id, base_dir)
+        storage_path = PersistentContextManager.get_storage_path(snapshot_id, base_dir)
         tmp_path = storage_path.with_suffix('.json.tmp')
 
         try:
@@ -145,7 +145,7 @@ class PersistentContextManager:
 
                 except filelock.Timeout:
                     logging.warning(
-                        f"[PersistentContext] Lock timeout while saving {context_id}. "
+                        f"[PersistentContext] Lock timeout while saving {snapshot_id}. "
                         "Proceeding without lock."
                     )
                     # Fallback: rename without lock
@@ -154,10 +154,10 @@ class PersistentContextManager:
                 # No filelock available: direct rename (not fully atomic in concurrent scenarios)
                 tmp_path.replace(storage_path)
 
-            logging.info(f"[PersistentContext] Saved storage_state for context_id: {context_id}")
+            logging.info(f"[PersistentContext] Saved storage_state for snapshot_id: {snapshot_id}")
 
         except Exception as e:
-            logging.error(f"[PersistentContext] Failed to save storage_state for {context_id}: {e}")
+            logging.error(f"[PersistentContext] Failed to save storage_state for {snapshot_id}: {e}")
             try:
                 if tmp_path.exists():
                     tmp_path.unlink()  # Cleanup temporary file on failure
@@ -167,29 +167,29 @@ class PersistentContextManager:
 
     @staticmethod
     def delete_storage_state(
-        context_id: str,
+        snapshot_id: str,
         base_dir: str = 'webqa_agent/browser/browser_context'
     ) -> bool:
-        """Delete storage_state file for specified context_id.
+        """Delete storage_state file for specified snapshot_id.
 
         Args:
-            context_id: Unique identifier for the context
+            snapshot_id: Unique identifier for the snapshot
             base_dir: Base directory for storage
 
         Returns:
             bool: True if deleted successfully, False if file not found or error
         """
         try:
-            storage_path = PersistentContextManager.get_storage_path(context_id, base_dir)
+            storage_path = PersistentContextManager.get_storage_path(snapshot_id, base_dir)
 
             if storage_path.exists():
                 storage_path.unlink()
-                logging.info(f"[PersistentContext] Cleaned up context_id: {context_id}")
+                logging.info(f"[PersistentContext] Cleaned up snapshot_id: {snapshot_id}")
                 return True
             else:
-                logging.debug(f"[PersistentContext] No file to cleanup for context_id: {context_id}")
+                logging.debug(f"[PersistentContext] No file to cleanup for snapshot_id: {snapshot_id}")
                 return False
 
         except Exception as e:
-            logging.error(f"[PersistentContext] Failed to cleanup context_id {context_id}: {e}")
+            logging.error(f"[PersistentContext] Failed to cleanup snapshot_id {snapshot_id}: {e}")
             return False

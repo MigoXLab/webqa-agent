@@ -57,6 +57,10 @@ class CaseExecutor:
         """Execute all cases using worker pool pattern (unified
         serial/parallel).
 
+        Execution flow:
+        1. Cases with non-empty snapshot run serially first and auto-save browser state
+        2. Remaining cases run concurrently after pre-setup-cases complete
+
         Args:
             cases: List of case configurations from YAML
             workers: Number of parallel workers (1 = serial, >1 = parallel)
@@ -68,11 +72,25 @@ class CaseExecutor:
         mode_str = f'parallel ({workers} workers)' if workers > 1 else 'serial'
         logging.info(f"{icon['rocket']} Starting {mode_str} execution: {total_cases} cases")
 
+        # Phase 1: Separate cases by snapshot
+        fixture_cases = [
+            (idx, case) for idx, case in enumerate(cases, 1)
+            if case.get('snapshot')  # Non-empty snapshot = fixture case
+        ]
+        normal_cases = [
+            (idx, case) for idx, case in enumerate(cases, 1)
+            if not case.get('snapshot')  # No snapshot = normal case
+        ]
+
+        if fixture_cases:
+            logging.info(f"{icon['lock']} Found {len(fixture_cases)} fixture cases (will run serially first)")
+        if normal_cases:
+            logging.info(f"{icon['rocket']} Found {len(normal_cases)} normal cases (will run concurrently after)")
+
         # Create session pool (auto-initialized)
         session_pool = BrowserSessionPool(pool_size=workers, browser_config=self.browser_config)
 
         # Shared state
-        case_queue: asyncio.Queue = asyncio.Queue()
         results: List[SubTestResult] = []
         results_lock = asyncio.Lock()
         completed_count = 0
@@ -102,19 +120,19 @@ class CaseExecutor:
                 status_icon = icon['check'] if case_result.status == TestStatus.PASSED else icon['cross']
                 logging.info(f"{status_icon} Fixture case '{case_name}' - {case_result.status} ({completed_count}/{total_cases})")
 
-                # Auto-save context after execution (using PersistentContextManager directly)
-                context_id = case.get('context_id')
-                if context_id:
+                # Auto-save snapshot after execution (using PersistentContextManager directly)
+                snapshot_id = case.get('snapshot')
+                if snapshot_id:
                     try:
                         from webqa_agent.browser.context_manager import PersistentContextManager
                         await PersistentContextManager.save_storage_state(
                             session.context,
-                            context_id,
+                            snapshot_id,
                             base_dir='webqa_agent/browser/browser_context'
                         )
-                        logging.info(f"{icon['check']} Saved persistent context to '{context_id}' for '{case_name}'")
+                        logging.info(f"{icon['check']} Saved persistent snapshot to '{snapshot_id}' for '{case_name}'")
                     except Exception as e:
-                        logging.warning(f"Failed to save context for '{case_name}': {e}")
+                        logging.warning(f"Failed to save snapshot for '{case_name}': {e}")
 
             except Exception as e:
                 logging.error(f"Exception in fixture case '{case_name}': {e}", exc_info=True)
@@ -268,6 +286,10 @@ class CaseExecutor:
         # Initialize tester and execute steps
         tester = await self._initialize_tester(session, case_name, url=url, cookies=cookies, ignore_rules=ignore_rules)
 
+        # Load fixture state AFTER navigation (cookies + localStorage + sessionStorage)
+        if case.get('use_snapshot'):
+            await self._load_fixture_state(session, case, case_config)
+
         # Execute steps
         executed_steps, case_status, error_messages, prev_step_context = await self._execute_steps(
             tester, case.get('steps', [])
@@ -293,6 +315,72 @@ class CaseExecutor:
     # ========================================================================
     # Private Methods - Tester Lifecycle
     # ========================================================================
+
+    async def _load_fixture_state(
+        self,
+        session: BrowserSession,
+        case: Dict[str, Any],
+        case_config: Dict[str, Any]
+    ) -> None:
+        """Load fixture state (cookies + localStorage + sessionStorage) after page navigation.
+
+        Args:
+            session: Browser session
+            case: Case configuration with use_snapshot field
+            case_config: Case-specific configuration
+        """
+        snapshot_name = case.get('use_snapshot')
+        if not snapshot_name:
+            return
+
+        try:
+            from webqa_agent.browser.context_manager import PersistentContextManager
+            base_dir = 'webqa_agent/browser/browser_context'  # default base_dir
+            storage_path = await PersistentContextManager.get_storage_state_path(snapshot_name, base_dir)
+            if not storage_path:
+                logging.warning(f"Snapshot '{snapshot_name}' not found, case will run without pre-loaded state")
+                return
+            # load storage_state JSON, including cookies and origins
+            with open(storage_path, 'r', encoding='utf-8') as f:
+                storage_state = json.load(f)
+
+            page = session.page
+            current_url = page.url
+
+            # load cookies
+            if 'cookies' in storage_state and storage_state['cookies']:
+                await session.context.add_cookies(storage_state['cookies'])
+                logging.info(f"Loaded {len(storage_state['cookies'])} cookies from snapshot '{snapshot_name}'")
+
+            # load localStorage and sessionStorage
+            if 'origins' in storage_state:
+                for origin_data in storage_state['origins']:
+                    origin = origin_data.get('origin')
+                    if not origin or not current_url.startswith(origin):
+                        continue
+
+                    # Inject localStorage
+                    if 'localStorage' in origin_data:
+                        for item in origin_data['localStorage']:
+                            await page.evaluate(
+                                f"window.localStorage.setItem({json.dumps(item['name'])}, {json.dumps(item['value'])})"
+                            )
+                        logging.debug(f"Injected {len(origin_data['localStorage'])} localStorage items")
+
+                    # Inject sessionStorage
+                    if 'sessionStorage' in origin_data:
+                        for item in origin_data['sessionStorage']:
+                            await page.evaluate(
+                                f"window.sessionStorage.setItem({json.dumps(item['name'])}, {json.dumps(item['value'])})"
+                            )
+                        logging.debug(f"Injected {len(origin_data['sessionStorage'])} sessionStorage items")
+
+            # Reload page to apply storage
+            await page.reload(wait_until='domcontentloaded')
+            logging.info(f"Reloaded page to apply snapshot '{snapshot_name}' state")
+
+        except Exception as e:
+            logging.warning(f"Failed to load snapshot '{snapshot_name}': {e}")
 
     async def _initialize_tester(
         self,
