@@ -73,7 +73,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             page_type = getattr(crawl_result, 'page_type', 'unknown')
             logging.warning(f'Initial page type ({page_type}) is unsupported, cannot generate test cases')
             return {'test_cases': []}
-        screenshot = await ui_tester._actions.b64_page_screenshot(
+        screenshot, _ = await ui_tester._actions.b64_page_screenshot(
             full_page=True,
             file_name='plan_full_page',
             context='agent'
@@ -290,7 +290,10 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
 
             try:
                 timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP')
-                report_dir = f'./reports/test_{timestamp}'
+                report_dir = state.get('report_config').get('report_dir')
+                if not report_dir:
+                    timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP')
+                    report_dir = os.path.join('reports', f'test_{timestamp}')
                 os.makedirs(report_dir, exist_ok=True)
                 cases_path = os.path.join(report_dir, 'cases.json')
                 with open(cases_path, 'w', encoding='utf-8') as f:
@@ -369,6 +372,12 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
             # 设置日志上下文（case_id + case_name 组合，方便 grep 和识别）
             log_context = f'AI Function Test | {case_id}'
             token = test_id_var.set(log_context)
+
+            # Set screenshot prefix to avoid filename collisions in parallel execution
+            from webqa_agent.actions.action_handler import \
+                screenshot_prefix_var
+            prefix_token = screenshot_prefix_var.set(case_id)
+
             try:
                 logging.info(f"Worker {worker_id}: Starting case '{case_name}'" + (' [REPLANNED]' if is_replanned else ''))
 
@@ -481,7 +490,11 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                                     # 保存更新后的 cases.json
                                     try:
                                         timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP')
-                                        report_dir = f'./reports/test_{timestamp}'
+                                        # report_dir = os.path.join('reports', f'test_{timestamp}')
+                                        report_dir = state.get('report_config').get('report_dir')
+                                        if not report_dir:
+                                            timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP')
+                                            report_dir = os.path.join('reports', f'test_{timestamp}')
                                         os.makedirs(report_dir, exist_ok=True)
                                         cases_path = os.path.join(report_dir, 'cases.json')
                                         with open(cases_path, 'w', encoding='utf-8') as f:
@@ -524,6 +537,8 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
             finally:
                 # 重置日志上下文
                 test_id_var.reset(token)
+                screenshot_prefix_var.reset(prefix_token)
+
                 # Release or close session based on remaining work
                 if s:
                     # Check if there are more cases waiting in the queue
@@ -580,7 +595,7 @@ async def _do_reflection(ui_tester: UITester, state: dict, case_name: str) -> di
             str(ElementKey.ATTRIBUTES), str(ElementKey.CENTER_X), str(ElementKey.CENTER_Y)
         ]
         page_content_summary = curr.clean_dict(reflect_template)
-        screenshot = await ui_tester._actions.b64_page_screenshot(
+        screenshot, _ = await ui_tester._actions.b64_page_screenshot(
             full_page=True, file_name=f'reflection_{case_name}', context='agent'
         )
         await dp.remove_marker()

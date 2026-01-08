@@ -114,7 +114,6 @@ class UIUXViewportTool(BaseTool):
             screenshot = None
             img_bytes = await page.screenshot(full_page=True)
             screenshot = f"data:image/png;base64,{base64.b64encode(img_bytes).decode('utf-8')}"
-
             try:
                 parsed_structure = json.loads(viewport_structure)
             except Exception:

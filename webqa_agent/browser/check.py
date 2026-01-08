@@ -195,8 +195,8 @@ class NetworkCheck:
                 else:
                     try:
                         if any(
-                            bin_type in content_type.lower()
-                            for bin_type in [
+                            asset_type in content_type.lower()
+                            for asset_type in [
                                 'image/',
                                 'audio/',
                                 'video/',
@@ -204,15 +204,23 @@ class NetworkCheck:
                                 'application/octet-stream',
                                 'font/',
                                 'application/x-font',
+                                'application/javascript',
+                                'application/x-javascript',
+                                'text/javascript',
+                                'text/css',
                             ]
                         ):
-                            response_data['body'] = f'<{content_type} binary data>'
+                            response_data['body'] = f'<{content_type} asset omitted>'
                             response_data['size'] = len(await response.body())
 
                         elif 'application/json' in content_type:
                             try:
-                                body = await response.json()
-                                response_data['body'] = body
+                                body_bytes = await response.body()
+                                if len(body_bytes) > 100000:
+                                    response_data['body'] = f'<JSON data truncated: {len(body_bytes)} bytes>'
+                                    response_data['size'] = len(body_bytes)
+                                else:
+                                    response_data['body'] = json.loads(body_bytes)
                             except Exception as e:
                                 response_data['error'] = f'JSON parse error: {str(e)}'
 
@@ -220,14 +228,17 @@ class NetworkCheck:
                             text_type in content_type.lower()
                             for text_type in [
                                 'text/',
-                                'application/javascript',
                                 'application/xml',
                                 'application/x-www-form-urlencoded',
                             ]
                         ):
                             try:
                                 text_body = await response.text()
-                                response_data['body'] = text_body
+                                if len(text_body) > 50000:
+                                    response_data['body'] = text_body[:50000] + '\n... [truncated]'
+                                    response_data['size'] = len(text_body)
+                                else:
+                                    response_data['body'] = text_body
                             except Exception as e:
                                 response_data['error'] = f'Text decode error: {str(e)}'
 

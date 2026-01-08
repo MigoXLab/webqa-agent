@@ -110,7 +110,7 @@ class UITool(BaseTool):
         screenshot = None
         if include_screenshot:
             logging.debug('Capturing post-action screenshot')
-            screenshot = await self.ui_tester_instance._actions.b64_page_screenshot(
+            screenshot, _ = await self.ui_tester_instance._actions.b64_page_screenshot(
                 full_page=not viewport_only,
                 file_name='ui_error_check',
                 context='error'
@@ -237,6 +237,7 @@ class UITool(BaseTool):
                 # execution_steps is a dict with structure: {"actions": [...], "screenshots": [...], "status": "...", ...}
                 # Extract screenshots and actions from the dict
                 screenshots = execution_steps.get('screenshots', [])
+                screenshots_paths = execution_steps.get('screenshots_paths', [])
                 actions = execution_steps.get('actions', [])
                 step_status = execution_steps.get('status', 'passed')
                 model_io = execution_steps.get('modelIO', '')
@@ -245,6 +246,7 @@ class UITool(BaseTool):
                 recorder.add_step(
                     description=instruction,
                     screenshots=screenshots,
+                    screenshots_paths=screenshots_paths,
                     model_io=model_io,
                     actions=actions,
                     status=step_status,
@@ -527,6 +529,7 @@ class UIAssertTool(BaseTool):
                 # execution_steps is a dict with structure: {"actions": [...], "screenshots": [...], "status": "...", ...}
                 # Extract screenshots and actions from the dict
                 screenshots = execution_steps.get('screenshots', [])
+                screenshots_paths = execution_steps.get('screenshots_paths', [])
                 actions = execution_steps.get('actions', [])
                 step_status = execution_steps.get('status', 'passed')
                 model_io = execution_steps.get('modelIO', '')
@@ -535,6 +538,7 @@ class UIAssertTool(BaseTool):
                 recorder.add_step(
                     description=f'Verify: {assertion}',
                     screenshots=screenshots,
+                    screenshots_paths=screenshots_paths,
                     model_io=model_io,
                     actions=actions,
                     status=step_status,

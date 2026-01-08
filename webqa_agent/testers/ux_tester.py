@@ -363,7 +363,15 @@ class PageContentTest:
                 # if screenshot index (0-based), append corresponding screenshot and create step
                 screenshot_idx = issue.get('screenshotid')
                 if isinstance(screenshot_idx, int) and 0 <= screenshot_idx < len(browser_screenshot):
-                    screenshot_data = browser_screenshot[screenshot_idx]
+                    screenshot_item = browser_screenshot[screenshot_idx]
+
+                    # Extract base64 and path from new format or legacy string format
+                    if isinstance(screenshot_item, dict):
+                        screenshot_data = screenshot_item.get('base64')
+                        screenshot_path = screenshot_item.get('path')
+                    else:
+                        screenshot_data = screenshot_item
+                        screenshot_path = None
 
                     def _annotate_b64_image(image_b64: str, rect: List[int]) -> str:
                         if not (_PIL_AVAILABLE and isinstance(image_b64, str) and image_b64.startswith('data:image')):
@@ -387,29 +395,28 @@ class PageContentTest:
                         except Exception:
                             return image_b64
 
-                    annotated_b64 = None
                     screenshots = []
-                    if isinstance(screenshot_data, str):
-                        # Always include annotated (if possible) and original in order
-                        if coords is not None:
-                            annotated_b64 = _annotate_b64_image(screenshot_data, coords)
-                            screenshots.append(SubTestScreenshot(type='base64', data=annotated_b64))
-                            screenshots.append(SubTestScreenshot(type='base64', data=screenshot_data))
-                        else:
-                            # No coordinates -> include original only
-                            screenshots.append(SubTestScreenshot(type='base64', data=screenshot_data))
-                    elif isinstance(screenshot_data, dict):
-                        data_str = screenshot_data.get('data')
-                        if isinstance(data_str, str):
-                            if coords is not None:
-                                annotated_b64 = _annotate_b64_image(data_str, coords)
-                                screenshots.append(SubTestScreenshot(type='base64', data=annotated_b64))
-                                screenshots.append(SubTestScreenshot(type='base64', data=data_str))
-                            else:
-                                screenshots.append(SubTestScreenshot(type='base64', data=data_str))
-                        else:
-                            # Unable to annotate; include original dict
-                            screenshots.append(SubTestScreenshot(**screenshot_data))
+                    # 1. Annotated image (always base64 if it exists)
+                    if coords is not None and screenshot_data and isinstance(screenshot_data, str):
+                        annotated_b64 = _annotate_b64_image(screenshot_data, coords)
+                        if annotated_b64:
+                            screenshots.append(SubTestScreenshot(type='base64', data=annotated_b64, label='Annotated'))
+
+                    # 2. Original image (path)
+                    if screenshot_path and isinstance(screenshot_path, str):
+                        screenshots.append(SubTestScreenshot(type='path', data=screenshot_path, label='Original'))
+
+                    # 3. Original image (base64) - only if no path exists to keep JSON small,
+                    # or if specifically in base64 mode.
+                    if not screenshot_path and screenshot_data:
+                        if isinstance(screenshot_data, str) and screenshot_data.startswith('data:image'):
+                            screenshots.append(SubTestScreenshot(type='base64', data=screenshot_data, label='Original'))
+                        elif isinstance(screenshot_data, dict) and screenshot_data.get('data'):
+                            # Handle case where screenshot_data is already a dict
+                            screenshots.append(SubTestScreenshot(
+                                type=screenshot_data.get('type', 'base64'),
+                                data=screenshot_data['data']
+                            ))
 
                     # step status: all discovered issues are warnings
                     step_status = TestStatus.WARNING
@@ -729,9 +736,20 @@ class PageContentTest:
 
     async def _get_llm_response(self, prompt: str, page_img: bool, browser_screenshot=None):
         if page_img and browser_screenshot:
+            # Extract base64 data for LLM if it's a list of dicts from ScrollHandler
+            llm_images = []
+            if isinstance(browser_screenshot, list):
+                for item in browser_screenshot:
+                    if isinstance(item, dict) and 'base64' in item:
+                        llm_images.append(item['base64'])
+                    else:
+                        llm_images.append(item)
+            else:
+                llm_images = browser_screenshot
+
             return await self.llm.get_llm_response(
                 LLMPrompt.page_default_prompt,
                 prompt,
-                images=browser_screenshot,
+                images=llm_images,
             )
         return await self.llm.get_llm_response(LLMPrompt.page_default_prompt, prompt)

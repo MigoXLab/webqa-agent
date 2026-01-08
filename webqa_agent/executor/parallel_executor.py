@@ -188,6 +188,10 @@ class ParallelTestExecutor:
         # Set test-level context for logging. This will be overridden by case-level context where applicable.
         token = test_id_var.set(test_config.test_name)
 
+        # Set screenshot prefix to avoid collisions. LangGraph workers will override this with case_id.
+        from webqa_agent.actions.action_handler import screenshot_prefix_var
+        prefix_token = screenshot_prefix_var.set(test_config.test_id or test_config.test_name)
+
         async with semaphore:
             test_context = test_session.test_contexts[test_config.test_id]
             test_context.start_execution()
@@ -201,7 +205,7 @@ class ParallelTestExecutor:
                 if test_config.test_type == TestType.UI_AGENT_LANGGRAPH:
                     # LangGraph tests manage sessions internally via session pool
                     session = None
-                    test_context.session_id = "langgraph_pool_mode"
+                    test_context.session_id = 'langgraph_pool_mode'
 
                 elif test_config.test_type in [
                     TestType.UX_TEST,
@@ -303,8 +307,9 @@ class ParallelTestExecutor:
                 # Release browser session back to pool
                 if session is not None:
                     await self.session_pool.release(session, failed=browser_failed)
-                # Reset test_id context
+                # Reset context variables
                 test_id_var.reset(token)
+                screenshot_prefix_var.reset(prefix_token)
 
     def _resolve_test_dependencies(self, tests: List[TestConfiguration]) -> List[List[TestConfiguration]]:
         """Resolve test dependencies and return execution batches.
@@ -377,16 +382,16 @@ class ParallelTestExecutor:
         test_session.aggregated_results = aggregated_results
 
         # Generate JSON & HTML reports
-        report_path = await self.result_aggregator.generate_json_report(test_session)
-        test_session.report_path = report_path
+        json_path = await self.result_aggregator.generate_json_report(test_session)
+        # test_session.report_path = report_path
 
-        report_dir = os.path.dirname(report_path)
+        report_dir = os.path.dirname(json_path)
         html_path = self.result_aggregator.generate_html_report_fully_inlined(
             test_session, report_dir=report_dir
         )
         test_session.html_report_path = html_path
 
-        logging.debug(f'Report generated: {report_path}')
+        logging.debug(f'Report generated: {json_path}')
         logging.debug(f'HTML report generated: {html_path}')
 
         # Mark session as completed if not already done

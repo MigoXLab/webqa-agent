@@ -133,8 +133,34 @@ class CaseMode:
 
         # Set up report directory
         report_ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S_%f')
-        report_dir = os.path.join('.', 'reports', f'test_{report_ts}')
         os.environ['WEBQA_REPORT_TIMESTAMP'] = report_ts
+
+        # Initialize screenshot directory for this test session
+        from webqa_agent.actions.action_handler import ActionHandler
+
+        # Clear any existing session state to ensure isolation
+        ActionHandler.clear_screenshot_session()
+
+        report_dir = report_config.get('report_dir') if report_config else None
+        # Handle null, None, empty string, or missing value
+        if not report_dir or (isinstance(report_dir, str) and report_dir.strip() == ''):
+            # Use default reports/{timestamp}/ directory
+            report_dir = f'reports/test_{report_ts}'
+
+        # Update report_config with the resolved report_dir for consistency
+        if report_config is not None:
+            report_config['report_dir'] = report_dir
+        else:
+            report_config = {'report_dir': report_dir, 'language': 'en-US'}
+
+        test_session.report_path = report_dir
+
+        # Configure screenshot saving behavior
+        save_screenshots = report_config.get('save_screenshots', False)
+        ActionHandler.set_screenshot_config(save_screenshots=save_screenshots)
+
+        ActionHandler.init_screenshot_session(custom_report_dir=report_dir)
+        logging.info(f'📸 Screenshot directory initialized for report: {report_dir}')
 
         test_config = TestConfiguration(
             test_id=str(uuid.uuid4()),
@@ -307,6 +333,47 @@ class CaseMode:
                             test_data.extend(file_data)
                 except Exception as e:
                     logging.warning(f'Failed to read test data file: {data_file}, error: {str(e)}')
+
+            # Load monitoring data files and merge with corresponding case data
+            monitoring_files = sorted(glob.glob(os.path.join(report_dir, '*_monitor.json')))
+            monitoring_data_by_sub_test_id = {}
+            for monitoring_file in monitoring_files:
+                try:
+                    with open(monitoring_file, 'r', encoding='utf-8') as f:
+                        monitoring_data = json.load(f)
+                        monitoring_content = monitoring_data.get('monitoring_data', {})
+                        sub_test_id = monitoring_data.get('sub_test_id')
+                        if sub_test_id:
+                            monitoring_data_by_sub_test_id[sub_test_id] = monitoring_content
+                except Exception as e:
+                    logging.warning(f'Failed to read monitoring data file: {monitoring_file}, error: {str(e)}')
+
+            # Merge monitoring data into corresponding case data
+            for case in test_data:
+                case_sub_test_id = case.get('sub_test_id')
+                raw_monitoring = None
+
+                # Match by sub_test_id
+                if case_sub_test_id and case_sub_test_id in monitoring_data_by_sub_test_id:
+                    raw_monitoring = monitoring_data_by_sub_test_id[case_sub_test_id]
+
+                if raw_monitoring:
+                    # Rebuild messages field from monitoring data for template compatibility
+                    # Convert monitoring data to template-expected format
+                    console_errors = raw_monitoring.get('console', [])
+                    network_data = raw_monitoring.get('network', {
+                        'responses': [],
+                        'failed_requests': []
+                    })
+                    case['messages'] = {
+                        'console_error_message': console_errors,
+                        'network_message': network_data
+                    }
+                    logging.debug(f'Merged monitoring data for case {case_sub_test_id}: {case.get("name", "unknown")}')
+                else:
+                    # If no monitoring data, ensure messages is an empty dict
+                    if 'messages' not in case or not case.get('messages'):
+                        case['messages'] = {}
         except Exception as e:
             logging.error(f'Failed to merge test data: {str(e)}')
             return None

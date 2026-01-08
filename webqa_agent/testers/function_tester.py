@@ -99,6 +99,7 @@ class UITester:
         all_execution_steps = []
         all_plans = []  # Collect all planning iterations for modelIO
         all_ordered_screenshots = []  # Collect all screenshots in chronological order
+        all_ordered_screenshots_paths = []  # Collect all screenshots paths in chronological order
         final_execution_result = {'success': False, 'message': 'No execution performed'}
         last_check_thought = None
         global_before_screenshot = None  # Will be assigned in the first iteration
@@ -116,7 +117,7 @@ class UITester:
             # await dp_pre.remove_marker()
 
             # Take global before screenshot (not included in action step screenshots)
-            global_before_screenshot = await self._actions.b64_page_screenshot(
+            global_before_screenshot, global_before_screenshot_path = await self._actions.b64_page_screenshot(
                 full_page=full_page,
                 file_name='global_before_screenshot',
                 context='verify'
@@ -161,6 +162,7 @@ class UITester:
                             'description': f'action: {test_step}',
                             'actions': all_execution_steps,
                             'screenshots': [],
+                            'screenshots_paths': [],
                             'modelIO': '',
                             'status': 'failed',
                             'error': error_msg,
@@ -184,12 +186,13 @@ class UITester:
                 await self._actions.update_element_buffer(prev.raw_dict())
 
                 # Take screenshot
-                marker_screenshot = await self._actions.b64_page_screenshot(
+                marker_screenshot, marker_screenshot_path = await self._actions.b64_page_screenshot(
                     full_page=full_page,
                     file_name=f'action_planning_marker_iter_{iteration}',
                     context='test'
                 )
                 all_ordered_screenshots.append(marker_screenshot)
+                all_ordered_screenshots_paths.append(marker_screenshot_path)
 
                 # Remove marker
                 await dp.remove_marker()
@@ -251,6 +254,7 @@ class UITester:
                 for step in execution_steps:
                     if step.get('screenshot'):
                         all_ordered_screenshots.append(step.get('screenshot'))
+                        all_ordered_screenshots_paths.append(step.get('screenshot_path'))
 
                 # Check if we should continue iterating
                 if execution_result.get('check_result') == 'continue':
@@ -266,6 +270,7 @@ class UITester:
             # Ensure the before_screenshot is the global one from the very beginning
             if global_before_screenshot:
                 execution_result['before_screenshot'] = global_before_screenshot
+                execution_result['before_screenshot_path'] = global_before_screenshot_path
 
             end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
@@ -280,6 +285,7 @@ class UITester:
 
             # Aggregate screenshots: include only valid (non-None) images in the correct chronological order
             screenshots_list = [{'type': 'base64', 'data': ss} for ss in all_ordered_screenshots if ss]
+            screenshots_paths_list = [{'type': 'path', 'data': path} for path in all_ordered_screenshots_paths if path]
 
             # Build structure for case step format
             status_str = 'passed' if execution_result.get('success') else 'failed'
@@ -288,6 +294,7 @@ class UITester:
                 'description': f'action: {test_step}',
                 'actions': execution_steps,  # All actions aggregated together
                 'screenshots': screenshots_list,  # All screenshots aggregated together
+                'screenshots_paths': screenshots_paths_list,  # All screenshots paths aggregated together
                 'modelIO': json.dumps(all_plans, indent=2, ensure_ascii=False) if all_plans else '',
                 'status': status_str,
                 'start_time': start_time,
@@ -323,15 +330,18 @@ class UITester:
 
             # Safely get possibly undefined variables
             safe_all_ordered_screenshots = locals().get('all_ordered_screenshots', [])
+            safe_all_ordered_screenshots_paths = locals().get('all_ordered_screenshots_paths', [])
             safe_plan_json = locals().get('plan_json', {})
 
             # Build error case execution step dictionary structure
             error_screenshots = [{'type': 'base64', 'data': ss} for ss in safe_all_ordered_screenshots if ss]
+            error_screenshots_paths = [{'type': 'path', 'data': path} for path in safe_all_ordered_screenshots_paths if path]
 
             error_execution_steps = {
                 'description': f'action: {test_step}',
                 'actions': locals().get('all_execution_steps', []),
                 'screenshots': error_screenshots,
+                'screenshots_paths': error_screenshots_paths,
                 'modelIO': '',  # No valid model interaction output
                 'status': 'failed',
                 'error': str(e),
@@ -500,6 +510,7 @@ class UITester:
                     'description': f'verify: {assertion}',
                     'actions': [],
                     'screenshots': [],
+                    'screenshots_paths': [],
                     'modelIO': json.dumps(skip_result, ensure_ascii=False),
                     'status': 'failed',
                     'start_time': start_time,
@@ -515,11 +526,15 @@ class UITester:
             # Extract before/after screenshots from execution_context
             before_screenshot = None
             after_screenshot = None
+            before_screenshot_path = None
+            after_screenshot_path = None
 
             if execution_context and execution_context.get('last_action'):
                 result = execution_context['last_action'].get('result', {})
                 before_screenshot = result.get('before_screenshot')
                 after_screenshot = result.get('after_screenshot')
+                before_screenshot_path = result.get('before_screenshot_path')
+                after_screenshot_path = result.get('after_screenshot_path')
 
             # Validate screenshots if present
             if before_screenshot and not isinstance(before_screenshot, str):
@@ -609,10 +624,17 @@ class UITester:
                     user_prompt = user_prompt + region_guidance
 
                 # Store screenshots for step data
-                verification_screenshots = [
-                    {'type': 'base64', 'data': before_screenshot, 'label': 'Before Action'},
-                    {'type': 'base64', 'data': after_screenshot, 'label': 'After Action'}
-                ]
+                verification_screenshots = []
+                if before_screenshot:
+                    verification_screenshots.append({'type': 'base64', 'data': before_screenshot, 'label': 'Before Action'})
+                if after_screenshot:
+                    verification_screenshots.append({'type': 'base64', 'data': after_screenshot, 'label': 'After Action'})
+
+                verification_screenshots_paths = []
+                if before_screenshot_path:
+                    verification_screenshots_paths.append({'type': 'path', 'data': before_screenshot_path, 'label': 'Before Action'})
+                if after_screenshot_path:
+                    verification_screenshots_paths.append({'type': 'path', 'data': after_screenshot_path, 'label': 'After Action'})
 
             else:
                 # ====================================================================
@@ -629,7 +651,7 @@ class UITester:
                 await dp.crawl(highlight=False, filter_text=True, viewport_only=viewport_only)
 
                 # Capture new screenshot
-                screenshot = await self._actions.b64_page_screenshot(
+                screenshot, screenshot_path = await self._actions.b64_page_screenshot(
                     full_page=full_page,
                     file_name='verification_clean',
                     context='test'
@@ -666,7 +688,7 @@ class UITester:
 
                 # Store screenshot for step data
                 verification_screenshots = [{'type': 'base64', 'data': screenshot}] if screenshot else []
-
+                verification_screenshots_paths = [{'type': 'path', 'data': screenshot_path}] if screenshot_path else []
             # ========================================================================
             # LLM CALL (unified for both modes)
             # ========================================================================
@@ -715,6 +737,7 @@ class UITester:
                 'description': f'verify: {assertion}',
                 'actions': verify_action_list,
                 'screenshots': verification_screenshots,  # Use mode-specific screenshots
+                'screenshots_paths': verification_screenshots_paths,  # Use mode-specific screenshots paths
                 'modelIO': result if isinstance(result, str) else json.dumps(result, ensure_ascii=False),
                 'status': status_str,
                 'start_time': start_time,
@@ -732,13 +755,14 @@ class UITester:
 
             # Try to get basic page information even if it fails
             try:
-                basic_screenshot = await self._actions.b64_page_screenshot(
+                basic_screenshot, basic_screenshot_path = await self._actions.b64_page_screenshot(
                     full_page=full_page,
                     file_name='assertion_failed',
                     context='error'
                 )
             except:
                 basic_screenshot = None
+                basic_screenshot_path = None
 
             end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
@@ -746,6 +770,7 @@ class UITester:
                 'description': f'verify: {assertion}',
                 'actions': [],
                 'screenshots': [{'type': 'base64', 'data': basic_screenshot}] if basic_screenshot else [],
+                'screenshots_paths': [{'type': 'path', 'data': basic_screenshot_path}] if basic_screenshot_path else [],
                 'modelIO': '',
                 'status': 'failed',
                 'error': str(e),
@@ -892,7 +917,7 @@ class UITester:
         action_count = len(plan_json.get('actions', []))
 
         # Capture initial screenshot BEFORE any actions (plan-level before state)
-        initial_screenshot = await self._actions.b64_page_screenshot(
+        initial_screenshot, initial_screenshot_path = await self._actions.b64_page_screenshot(
             full_page=full_page,
             file_name='plan_initial_screenshot',
             context='verify'
@@ -934,8 +959,9 @@ class UITester:
                 # Optimization: If Check action already returned a screenshot with markers, use it
                 if action.get('type') == 'Check' and execution_result.get('screenshot'):
                     post_action_ss = execution_result.get('screenshot')
+                    post_action_path = execution_result.get('screenshot_path')
                 else:
-                    post_action_ss = await self._actions.b64_page_screenshot(
+                    post_action_ss, post_action_path = await self._actions.b64_page_screenshot(
                         file_name=f'action_{action_desc}_{index}',
                         context='test'
                     )
@@ -945,6 +971,7 @@ class UITester:
                     'success': success,
                     'message': message,
                     'screenshot': post_action_ss,
+                    'screenshot_path': post_action_path,
                     'index': index,
                 }
                 if check_result:
@@ -958,7 +985,7 @@ class UITester:
                 if not success:
                     logging.error(f'Action {index} failed: {message}')
                     # Capture final screenshot even on failure
-                    final_screenshot = await self._actions.b64_page_screenshot(
+                    final_screenshot, final_screenshot_path = await self._actions.b64_page_screenshot(
                         full_page=full_page,
                         file_name='plan_final_screenshot_failed',
                         context='verify'
@@ -970,7 +997,9 @@ class UITester:
                         after_action_url, after_action_title = '', ''
                     # Add plan-level screenshots and context to failure result
                     action_result['before_screenshot'] = initial_screenshot
+                    action_result['before_screenshot_path'] = initial_screenshot_path
                     action_result['after_screenshot'] = final_screenshot
+                    action_result['after_screenshot_path'] = final_screenshot_path
                     action_result['after_action_url'] = after_action_url
                     action_result['after_action_title'] = after_action_title
                     action_result['after_action_page_structure'] = ''  # 失败场景可为空
@@ -988,13 +1017,14 @@ class UITester:
                 logging.error(error_msg)
                 # Capture final screenshot even on exception
                 try:
-                    final_screenshot = await self._actions.b64_page_screenshot(
+                    final_screenshot, final_screenshot_path = await self._actions.b64_page_screenshot(
                         full_page=full_page,
                         file_name='plan_final_screenshot_exception',
                         context='verify'
                     )
                 except:
                     final_screenshot = None
+                    final_screenshot_path = None
 
                 # Capture page context at exception time (for time-consistent verification)
                 try:
@@ -1008,6 +1038,7 @@ class UITester:
                     'screenshot': None,
                     'before_screenshot': initial_screenshot,
                     'after_screenshot': final_screenshot,
+                    'after_screenshot_path': final_screenshot_path,
                     'after_action_url': after_action_url,
                     'after_action_title': after_action_title,
                     'after_action_page_structure': ''  # 异常场景可为空
@@ -1019,8 +1050,9 @@ class UITester:
         # Optimization: Reuse the screenshot from the last executed action if possible
         if execute_results and execute_results[-1].get('screenshot'):
             final_screenshot = execute_results[-1].get('screenshot')
+            final_screenshot_path = execute_results[-1].get('screenshot_path')
         else:
-            final_screenshot = await self._actions.b64_page_screenshot(
+            final_screenshot, final_screenshot_path = await self._actions.b64_page_screenshot(
                 full_page=full_page,
                 file_name='plan_final_screenshot',
                 context='verify'
@@ -1037,7 +1069,7 @@ class UITester:
             after_action_url, after_action_title = '', ''
             after_action_page_structure = ''
 
-        post_action_ss = await self._actions.b64_page_screenshot(
+        post_action_ss, _ = await self._actions.b64_page_screenshot(
             file_name='final_success',
             context='test'
         )
@@ -1048,6 +1080,7 @@ class UITester:
             'screenshot': post_action_ss,
             'before_screenshot': initial_screenshot,
             'after_screenshot': final_screenshot,
+            'after_screenshot_path': final_screenshot_path,
             'after_action_url': after_action_url,
             'after_action_title': after_action_title,
             'after_action_page_structure': after_action_page_structure,
@@ -1083,7 +1116,7 @@ class UITester:
             page_type = getattr(curr, 'page_type', 'html')
 
             # Take screenshot with markers
-            marker_screenshot = await self._actions.b64_page_screenshot(
+            marker_screenshot, _ = await self._actions.b64_page_screenshot(
                 full_page=full_page,
                 file_name='check_action_marker',
                 context='test'
