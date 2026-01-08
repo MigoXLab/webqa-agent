@@ -23,5 +23,4 @@ icon = {
     'sleep': '💤',
     'lightbulb': '💡',
     'hourglass': '⏳',
-    'repeat': '🔁',
 }

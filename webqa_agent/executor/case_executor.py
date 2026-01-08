@@ -77,8 +77,82 @@ class CaseExecutor:
         results_lock = asyncio.Lock()
         completed_count = 0
 
-        # Fill queue
-        for idx, case in enumerate(cases, 1):
+        # Phase 2: Execute fixture cases serially
+        for idx, case in fixture_cases:
+            case_name = case.get('name', f'Case {idx}')
+            case_id = case.get('case_id', f'case_{idx}')
+            browser_cfg = case.get('_config', {}).get('browser_config', self.browser_config)
+            # Set test_id context for logging
+            log_context = f'Run Case Test | {case_id} | {case_name}'
+            token = test_id_var.set(log_context)
+            session = None
+            case_result = None
+
+            try:
+                logging.info(f"{icon['lock']} Starting fixture case: '{case_name}' ({completed_count + 1}/{total_cases})")
+                session = await session_pool.acquire(browser_config=browser_cfg, timeout=120.0)
+
+                with Display.display(case_name):  # pylint: disable=not-callable
+                    case_result = await self.execute_single_case(session=session, case=case, case_index=idx)
+
+                async with results_lock:
+                    results.append(case_result)
+                    completed_count += 1
+
+                status_icon = icon['check'] if case_result.status == TestStatus.PASSED else icon['cross']
+                logging.info(f"{status_icon} Fixture case '{case_name}' - {case_result.status} ({completed_count}/{total_cases})")
+
+                # Auto-save context after execution (using PersistentContextManager directly)
+                context_id = case.get('context_id')
+                if context_id:
+                    try:
+                        from webqa_agent.browser.context_manager import PersistentContextManager
+                        await PersistentContextManager.save_storage_state(
+                            session.context,
+                            context_id,
+                            base_dir='webqa_agent/browser/browser_context'
+                        )
+                        logging.info(f"{icon['check']} Saved persistent context to '{context_id}' for '{case_name}'")
+                    except Exception as e:
+                        logging.warning(f"Failed to save context for '{case_name}': {e}")
+
+            except Exception as e:
+                logging.error(f"Exception in fixture case '{case_name}': {e}", exc_info=True)
+                async with results_lock:
+                    completed_count += 1
+                    results.append(SubTestResult(
+                        name=case_name,
+                        status=TestStatus.FAILED,
+                        metrics={'total_steps': 0, 'passed_steps': 0, 'failed_steps': 0},
+                        steps=[],
+                        messages={},
+                        start_time=datetime.now().isoformat(),
+                        end_time=datetime.now().isoformat(),
+                        final_summary=f'Exception: {str(e)}',
+                        report=[],
+                    ))
+
+            finally:
+                # Reset test_id context
+                test_id_var.reset(token)
+                if case_result is not None:
+                    case_config = case.get('_config', {})
+                    self._save_case_result(case_result, case_name, idx, case_config=case_config)
+                    self._clear_case_screenshots(case_result)
+                if session:
+                    failed = case_result is None or case_result.status == TestStatus.FAILED
+                    await session_pool.release(session, failed=failed)
+
+        # Phase 3: Execute normal cases concurrently
+        if not normal_cases:
+            logging.info(f"{icon['check']} All fixture cases completed. No normal cases to execute.")
+            await session_pool.close_all()
+            return results
+        logging.info(f"{icon['rocket']} Starting concurrent execution of {len(normal_cases)} normal cases")
+
+        # Fill queue with normal cases
+        case_queue: asyncio.Queue = asyncio.Queue()  # Queue for normal cases
+        for idx, case in normal_cases:
             await case_queue.put((idx, case))
 
         async def worker(worker_id: int):
