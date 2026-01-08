@@ -103,10 +103,12 @@ browser_config:
   headless: False  # Docker environment will automatically override to True
   language: zh-CN
   cookies: []
-  save_screenshots: False  # Whether to save screenshots to local disk (default: False)
 
 report:
   language: en-US # zh-CN, en-US
+  save_screenshots: False  # Whether to enable screenshots. If True, screenshots are saved as local files. If False, screenshots are stored as base64 in the test data.
+  report_dir: null  # null=use default 'reports/{timestamp}/', or custom path like './my_reports/'
+
 
 log:
   level: info

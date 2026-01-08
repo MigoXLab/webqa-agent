@@ -294,15 +294,6 @@ async def run_tests(cfg, execution_mode, config_path: str = None, workers: int =
     is_docker = os.getenv('DOCKER_ENV') == 'true'
     print(f"🏃 Runtime: {'Docker container' if is_docker else 'Local environment'}")
 
-    # Configure screenshot saving
-    from webqa_agent.actions.action_handler import ActionHandler
-    save_screenshots = cfg.get('browser_config', {}).get('save_screenshots', False)
-    ActionHandler.set_screenshot_config(save_screenshots=save_screenshots)
-    if not save_screenshots:
-        print('📸 Screenshot saving: disabled (screenshots will be captured but not saved to disk)')
-    else:
-        print('📸 Screenshot saving: enabled')
-
     # Execute based on mode
     if execution_mode == 'run':
         await execute_run_mode(config_path, workers=workers)

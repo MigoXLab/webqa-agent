@@ -43,9 +43,14 @@ class ParallelMode:
             Tuple of (aggregated_results, report_path)
         """
         try:
+            # Use default config if none provided
+            if not log_cfg:
+                log_cfg = {'level': 'info'}
+            if not report_cfg:
+                report_cfg = {'language': 'en-US'}
 
-            GetLog.get_log(log_level=log_cfg['level'])
-            Display.init(language=report_cfg['language'])
+            GetLog.get_log(log_level=log_cfg.get('level', 'info'))
+            Display.init(language=report_cfg.get('language', 'en-US'))
             Display.display.start()
 
             logging.info(f"{icon['rocket']} Starting tests for URL: {url}, parallel mode {self.max_concurrent_tests}")
@@ -61,6 +66,29 @@ class ParallelMode:
             report_ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S_%f')
             os.environ['WEBQA_REPORT_TIMESTAMP'] = report_ts
 
+            # Initialize screenshot directory for this test session
+            from webqa_agent.actions.action_handler import ActionHandler
+
+            # Clear any existing session state to ensure isolation
+            ActionHandler.clear_screenshot_session()
+
+            # Use report_cfg to determine report directory, update it if missing
+            custom_report_dir = report_cfg.get('report_dir')
+            # Handle null, None, empty string, or missing value
+            if not custom_report_dir or (isinstance(custom_report_dir, str) and custom_report_dir.strip() == ''):
+                # Use default reports/test_{timestamp}/ directory
+                custom_report_dir = f'reports/test_{report_ts}'
+                report_cfg['report_dir'] = custom_report_dir
+
+            test_session.report_path = custom_report_dir
+
+            # Configure screenshot saving behavior
+            save_screenshots = report_cfg.get('save_screenshots', False)
+            ActionHandler.set_screenshot_config(save_screenshots=save_screenshots)
+
+            ActionHandler.init_screenshot_session(custom_report_dir=custom_report_dir)
+            logging.info(f'📸 Screenshot directory initialized for report: {custom_report_dir}')
+
             # Configure tests based on input or legacy test objects
             if test_configurations:
                 self._configure_tests_from_config(test_session, test_configurations, browser_config, report_cfg)
@@ -73,7 +101,6 @@ class ParallelMode:
 
             await Display.display.stop()
             Display.display.render_summary()
-            # Return results in format compatible with existing code
             return (
                 completed_session.aggregated_results,
                 completed_session.report_path,
@@ -105,7 +132,7 @@ class ParallelMode:
             test_config = TestConfiguration(
                 test_id=str(uuid.uuid4()),
                 test_type=test_type,
-                test_name=get_default_test_name(test_type, report_cfg['language']),
+                test_name=get_default_test_name(test_type, report_cfg.get('language', 'zh-CN')),
                 enabled=config.get('enabled', True),
                 browser_config=browser_config,
                 report_config=report_cfg,

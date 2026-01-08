@@ -4,6 +4,7 @@ import datetime
 import json
 import logging
 import os
+import random
 import re
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -15,6 +16,7 @@ from playwright.async_api import Frame, Page
 # ===== Action Context Infrastructure for Error Propagation =====
 
 action_context_var: ContextVar[Optional['ActionContext']] = ContextVar('action_context', default=None)
+screenshot_prefix_var: ContextVar[str] = ContextVar('screenshot_prefix', default='')
 
 
 @dataclass
@@ -69,35 +71,68 @@ class ActionHandler:
     # Session management for screenshot organization
     _screenshot_session_dir: Optional[Path] = None
     _screenshot_session_timestamp: Optional[str] = None
-    _save_screenshots: bool = False  # Default: not save screenshots to disk
+    _save_screenshots_locally: bool = False  # Whether to save screenshots as files
 
     @classmethod
-    def set_screenshot_config(cls, save_screenshots: bool = False):
-        """Set global screenshot saving behavior.
+    def clear_screenshot_session(cls):
+        """Clear the current screenshot session state.
+
+        This should be called at the start of a new test session to ensure
+        isolation from previous runs in the same process.
+        """
+        cls._screenshot_session_dir = None
+        cls._screenshot_session_timestamp = None
+        logging.debug('Screenshot session state cleared')
+
+    @classmethod
+    def set_screenshot_config(cls, save_screenshots: bool):
+        """Set whether to save screenshots locally.
 
         Args:
-            save_screenshots: Whether to save screenshots to local disk (default: False)
+            save_screenshots: If True, screenshots are saved as files.
+                            If False, only base64 data is kept.
         """
-        cls._save_screenshots = save_screenshots
-        logging.debug(f'Screenshot saving config set to: {save_screenshots}')
+        cls._save_screenshots_locally = save_screenshots
+        logging.info(f'Screenshot configuration updated: save_locally={save_screenshots}')
 
     @classmethod
-    def init_screenshot_session(cls) -> Path:
+    def init_screenshot_session(cls, custom_report_dir: Optional[str] = None) -> Path:
         """Initialize screenshot session directory for this test run.
 
-        Creates a timestamped directory under webqa_agent/crawler/screenshots/
-        for organizing all screenshots from a single test session.
+        Creates a screenshot directory under the report directory. All screenshots
+        from the test session will be organized in this directory.
+
+        Args:
+            custom_report_dir: Custom report directory from config.
+                              If None, uses default 'reports/{timestamp}/'
 
         Returns:
-            Path: The session directory path
+            Path: The screenshot directory path
+
+        Examples:
+            >>> # Default directory
+            >>> ActionHandler.init_screenshot_session()
+            PosixPath('reports/20260105_155547/screenshots')
+
+            >>> # Custom directory
+            >>> ActionHandler.init_screenshot_session('./my_reports')
+            PosixPath('my_reports/screenshots')
         """
-        if cls._screenshot_session_dir is None:
-            timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-            base_dir = Path(__file__).parent.parent / 'crawler' / 'screenshots'
-            cls._screenshot_session_dir = base_dir / timestamp
+        if cls._save_screenshots_locally and cls._screenshot_session_dir is None:
+            timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP') or datetime.now().strftime('%Y-%m-%d_%H-%M-%S_%f')
             cls._screenshot_session_timestamp = timestamp
+
+            if custom_report_dir:
+                # User-defined directory: {custom_report_dir}/screenshots/
+                report_base = Path(custom_report_dir)
+            else:
+                # Default directory: reports/test_{timestamp}/
+                report_base = Path('reports') / f'test_{timestamp}'
+
+            cls._screenshot_session_dir = report_base / 'screenshots'
             cls._screenshot_session_dir.mkdir(parents=True, exist_ok=True)
-            logging.info(f'Initialized screenshot session directory: {cls._screenshot_session_dir}')
+            logging.info(f'Initialized screenshot directory: {cls._screenshot_session_dir}')
+
         return cls._screenshot_session_dir
 
     def __init__(self):
@@ -1651,9 +1686,8 @@ class ActionHandler:
         full_page: bool = False,
         file_name: Optional[str] = None,
         context: str = 'default'
-    ) -> Optional[str]:
-        """Get page screenshot (Base64 encoded) and optionally save to local
-        file.
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Get page screenshot as base64 and save to local file.
 
         Args:
             full_page: whether to capture the whole page
@@ -1661,35 +1695,49 @@ class ActionHandler:
             context: test context category (e.g., 'test', 'agent', 'scroll', 'error')
 
         Returns:
-            str: screenshot base64 encoded, or None if screenshot fails
+            tuple[Optional[str], Optional[str]]: (base64_data, file_path)
+            - base64_data: For LLM requests (data:image/png;base64,...)
+            - file_path: Relative path to saved screenshot file, or None if not saved
 
         Note:
-            The screenshot is always returned as base64 for HTML reports and LLM analysis.
-            Local file saving is controlled by the _save_screenshots class variable.
+            Screenshots are saved to local disk if _save_screenshots_locally is True.
+            The base64 data is always returned for LLM analysis and fallback rendering.
         """
         try:
             # Get current active page (dynamically resolves to latest page)
             current_page = self._get_current_page()
             timeout = 90000 if full_page else 60000  # 90s for full page, 60s for viewport
 
-            # Prepare file path only if saving is enabled
             file_path_str = None
-            if self._save_screenshots:
-                # Initialize session directory if needed
+            relative_path = None
+
+            # Only prepare file path and session if local saving is enabled
+            if self._save_screenshots_locally:
                 session_dir = self.init_screenshot_session()
 
                 # Generate timestamp and filename
-                timestamp = datetime.datetime.now().strftime('%H%M%S')
+                # Use high-precision timestamp and random suffix to avoid collisions in parallel execution
+                now = datetime.datetime.now()
+                timestamp = now.strftime('%H%M%S')
+                random_suffix = ''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=4))
 
-                # Build filename: {timestamp}_{context}_{file_name}.png
+                # Get prefix from context variable (set by workers to distinguish cases/tests)
+                prefix = screenshot_prefix_var.get()
+                prefix_part = f'{prefix}_' if prefix else ''
+
                 if file_name:
-                    filename = f'{timestamp}_{context}_{file_name}.png'
+                    filename = f'{prefix_part}{timestamp}_{random_suffix}_{context}_{file_name}.png'
                 else:
-                    filename = f'{timestamp}_{context}_screenshot.png'
+                    filename = f'{prefix_part}{timestamp}_{random_suffix}_{context}_screenshot.png'
 
-                file_path_str = str(session_dir / filename)
+                file_path = session_dir / filename
+                file_path_str = str(file_path)
 
-            # Capture screenshot (with or without file saving based on config)
+                # Return path relative to the report root for HTML rendering
+                # Screenshots are stored in report_dir/screenshots/ and report is in report_dir/run_report.html
+                relative_path = os.path.join(session_dir.name, filename)
+
+            # Capture screenshot (always returns bytes)
             screenshot_bytes = await self.take_screenshot(
                 current_page,
                 full_page=full_page,
@@ -1697,20 +1745,20 @@ class ActionHandler:
                 timeout=timeout
             )
 
-            # Convert to Base64 for HTML reports
+            # Convert to Base64 for LLM requests
             screenshot_base64 = base64.b64encode(screenshot_bytes).decode('utf-8')
             base64_data = f'data:image/png;base64,{screenshot_base64}'
 
-            if self._save_screenshots and file_path_str:
-                logging.debug(f'Screenshot saved to {file_path_str}')
+            if self._save_screenshots_locally:
+                logging.debug(f'Screenshot saved: {file_path_str}, relative_path: {relative_path}')
             else:
-                logging.debug('Screenshot captured (not saved to disk)')
+                logging.debug('Screenshot captured as base64 only (local saving disabled)')
 
-            return base64_data
+            return base64_data, relative_path
 
         except Exception as e:
             logging.warning(f'Failed to capture screenshot: {e}')
-            return None
+            return None, None
 
     async def take_screenshot(
         self,
@@ -1719,21 +1767,20 @@ class ActionHandler:
         file_path: str | None = None,
         timeout: float = 120000,
     ) -> bytes:
-        """Get page screenshot (binary)
+        """Get page screenshot (binary) and save to disk.
 
         Args:
             page: page object
             full_page: whether to capture the whole page
-            file_path: screenshot save path (only used when save_screenshots=True)
+            file_path: screenshot save path (required)
             timeout: timeout (milliseconds)
 
         Returns:
             bytes: screenshot binary data
 
         Note:
-            If save_screenshots is False, the screenshot will not be saved to disk
-            regardless of the file_path parameter. The method always returns the
-            screenshot bytes for in-memory use (e.g., Base64 encoding).
+            Screenshots are always saved to the file_path if provided.
+            The method always returns the screenshot bytes for base64 encoding.
         """
         try:
             # Shortened and more lenient load state check
@@ -1743,7 +1790,7 @@ class ActionHandler:
             except Exception as e:
                 logging.debug(f'Load state check: {e}; proceeding with screenshot')
 
-            logging.debug(f'Taking screenshot (full_page={full_page}, save={self._save_screenshots}, timeout={timeout}ms)')
+            logging.debug(f'Taking screenshot (full_page={full_page}, timeout={timeout}ms)')
 
             # Prepare screenshot options with Playwright best practices
             screenshot_options = {
@@ -1753,12 +1800,10 @@ class ActionHandler:
                 'caret': 'hide',  # Hide text input cursor for cleaner screenshots
             }
 
-            # Only save to disk if _save_screenshots is True and file_path is provided
-            if self._save_screenshots and file_path:
+            # Save to disk if file_path is provided
+            if file_path:
                 screenshot_options['path'] = file_path
                 logging.debug(f'Screenshot will be saved to: {file_path}')
-            elif not self._save_screenshots:
-                logging.debug('Screenshot saving disabled, returning bytes only')
 
             # Capture screenshot with optimized options
             screenshot: bytes = await page.screenshot(**screenshot_options)

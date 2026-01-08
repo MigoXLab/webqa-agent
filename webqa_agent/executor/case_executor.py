@@ -17,7 +17,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from webqa_agent.browser import BrowserSession, BrowserSessionPool
 from webqa_agent.data import (CaseStep, StepContext, SubTestResult,
-                              SubTestStep, TestConfiguration, TestStatus)
+                              SubTestScreenshot, SubTestStep,
+                              TestConfiguration, TestStatus)
 from webqa_agent.utils import Display
 from webqa_agent.utils.get_log import test_id_var
 from webqa_agent.utils.log_icon import icon
@@ -191,8 +192,13 @@ class CaseExecutor:
 
                 # Set test_id context for logging (imitating graph.py style)
                 # Including both ID and Name for maximum clarity
-                log_context = f'Run Case Test | {case_id} | {case_name}'
+                log_context = f'{case_id} | {case_name}'
                 token = test_id_var.set(log_context)
+
+                # Set screenshot prefix to avoid filename collisions in parallel execution
+                from webqa_agent.actions.action_handler import \
+                    screenshot_prefix_var
+                prefix_token = screenshot_prefix_var.set(case_id)
 
                 session = None
                 case_result = None
@@ -228,8 +234,9 @@ class CaseExecutor:
                         ))
 
                 finally:
-                    # Reset test_id context
+                    # Reset context variables
                     test_id_var.reset(token)
+                    screenshot_prefix_var.reset(prefix_token)
 
                     if case_result is not None:
                         case_config = case.get('_config', {})
@@ -301,8 +308,10 @@ class CaseExecutor:
 
         # Build final result
         end_time = datetime.now()
+        case_id = case.get('case_id', f'case_{case_index}')
         return self._build_case_result(
             case_name=case_name,
+            case_id=case_id,
             case_status=case_status,
             executed_steps=executed_steps,
             error_messages=error_messages,
@@ -538,10 +547,15 @@ class CaseExecutor:
             full_page=True
         )
 
+        if execution_steps_dict.get('screenshots_paths'):
+            final_screenshots = execution_steps_dict.get('screenshots_paths')
+        else:
+            final_screenshots = execution_steps_dict.get('screenshots')
+
         step_result = SubTestStep(
             id=step_idx,
             description=f'action: {action.description}',
-            screenshots=execution_steps_dict.get('screenshots', []),
+            screenshots=final_screenshots,
             modelIO=str(execution_steps_dict.get('modelIO', {})),
             actions=execution_steps_dict.get('actions', []),
             status=execution_steps_dict.get('status', TestStatus.PASSED),
@@ -600,10 +614,15 @@ class CaseExecutor:
             full_page=False
         )
 
+        if verification_step.get('screenshots_paths'):
+            final_screenshots = verification_step.get('screenshots_paths')
+        else:
+            final_screenshots = verification_step.get('screenshots')
+
         step_result = SubTestStep(
             id=step_idx,
             description=f'verify: {verify.assertion}',
-            screenshots=verification_step.get('screenshots', []),
+            screenshots=final_screenshots,
             modelIO=str(verification_step.get('modelIO', {})),
             actions=verification_step.get('actions', []),
             status=verification_step.get('status', TestStatus.PASSED),
@@ -720,6 +739,7 @@ class CaseExecutor:
     def _build_case_result(
         self,
         case_name: str,
+        case_id: str,
         case_status: TestStatus,
         executed_steps: List[SubTestStep],
         error_messages: List[str],
@@ -732,6 +752,7 @@ class CaseExecutor:
 
         Args:
             case_name: Name of the case
+            case_id: ID of the case (e.g., case_1, case_2)
             case_status: Current case status
             executed_steps: List of executed steps
             error_messages: List of error messages
@@ -762,7 +783,8 @@ class CaseExecutor:
         if error_messages:
             final_summary += f". Errors: {'; '.join(error_messages)}"
 
-        return SubTestResult(
+        result = SubTestResult(
+            sub_test_id=case_id,
             name=case_name,
             status=case_status,
             metrics={'total_steps': total_steps, 'passed_steps': passed_steps, 'failed_steps': failed_steps},
@@ -773,6 +795,12 @@ class CaseExecutor:
             final_summary=final_summary,
             report=[],
         )
+
+        # Store raw monitoring data as a temporary attribute for later saving
+        # This allows us to save it separately without modifying the data model
+        setattr(result, '_raw_monitoring_data', monitoring_data)
+
+        return result
 
     # ========================================================================
     # Private Methods - File Operations
@@ -813,6 +841,11 @@ class CaseExecutor:
             # Add config information for template compatibility
             case_dict = case_result.model_dump()
             case_dict['case_index'] = case_index  # Save index for ordering
+
+            # Remove monitoring data from messages to reduce file size
+            # Monitoring data is saved separately in *_monitor.json file
+            case_dict['messages'] = {}
+
             case_dict['config'] = {
                 'target_url': target_url,
                 'browser_config': case_config.get('browser_config') if case_config else self.browser_config,
@@ -830,6 +863,25 @@ class CaseExecutor:
             with open(case_result_path, 'w', encoding='utf-8') as f:
                 json.dump([case_dict], f, indent=2, ensure_ascii=False, default=str)
             logging.debug(f'Case result saved to: {case_result_path}')
+
+            # Save monitoring data separately to a corresponding JSON file
+            raw_monitoring_data = getattr(case_result, '_raw_monitoring_data', None)
+            if raw_monitoring_data is not None:
+                try:
+                    monitoring_data_path = report_dir_path / f'test_data_{case_index:03d}_{safe_case_name}_monitor.json'
+                    sub_test_id = case_result.sub_test_id or f'case_{case_index}'
+                    monitoring_dict = {
+                        'sub_test_id': sub_test_id,
+                        'name': case_name,
+                        'corresponding_file': f'test_data_{case_index:03d}_{safe_case_name}.json',
+                        'monitoring_data': raw_monitoring_data,
+                        'timestamp': datetime.now().isoformat()
+                    }
+                    with open(monitoring_data_path, 'w', encoding='utf-8') as f:
+                        json.dump(monitoring_dict, f, indent=2, ensure_ascii=False, default=str)
+                    logging.debug(f'Monitoring data saved to: {monitoring_data_path}')
+                except Exception as e:
+                    logging.warning(f'Failed to save monitoring data for case "{case_name}": {e}')
         except Exception as mk_err:
             logging.warning(f"Cannot save case result to '{self.report_dir}': {mk_err}")
 
@@ -838,20 +890,27 @@ class CaseExecutor:
 
         This significantly reduces memory usage when executing many cases,
         as screenshot data is no longer needed in memory after being saved.
+        However, if the screenshots are base64 strings and we're not saving
+        them as files, we MUST keep them in memory for the final report.
 
         Args:
             case_result: Case result to clear screenshots from
         """
         try:
-            # Clear screenshots from each step
+            # Clear screenshots from each step ONLY if they are file paths
+            # Base64 screenshots must be preserved for the final aggregated report
             for step in case_result.steps:
                 if step.screenshots:
-                    step.screenshots = []  # Clear screenshot data
+                    # If any screenshot in the step is a path, it's safe to clear
+                    # because the path is already stored in the JSON.
+                    # If they are base64, clearing them will make the final report empty.
+                    if any(s.type == 'path' for s in step.screenshots):
+                        step.screenshots = []
 
                 # Also clear modelIO if it's very large (can contain duplicate data)
                 if step.modelIO and len(step.modelIO) > 10000:
                     step.modelIO = '[cleared after save]'
 
-            logging.debug(f'Cleared screenshot data for case: {case_result.name}')
+            logging.debug(f'Cleared screenshot paths for case: {case_result.name}')
         except Exception as e:
             logging.warning(f'Failed to clear screenshots: {e}')

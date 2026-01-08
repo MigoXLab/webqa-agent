@@ -1278,7 +1278,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         page = ui_tester_instance.browser_session.page
         dp = DeepCrawler(page)
         await dp.crawl(highlight=True, viewport_only=True)
-        screenshot = await ui_tester_instance._actions.b64_page_screenshot(
+        screenshot, _ = await ui_tester_instance._actions.b64_page_screenshot(
             file_name=f'step_{i + 1}_vision',
             context='agent'
         )
@@ -1454,7 +1454,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
                             # Get current page screenshot for LLM analysis
                             try:
-                                recovery_screenshot = await ui_tester_instance._actions.b64_page_screenshot(
+                                recovery_screenshot, _ = await ui_tester_instance._actions.b64_page_screenshot(
                                     file_name=f'step_{i + 1}_recovery_attempt_{retry_count + 1}',
                                     context='error'
                                 )
@@ -1539,7 +1539,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 # Prepare context for LLM recovery (use correct variable: ui_tester_instance)
                                 screenshot_b64 = None
                                 try:
-                                    screenshot_b64 = await ui_tester_instance._actions.b64_page_screenshot(
+                                    screenshot_b64, _ = await ui_tester_instance._actions.b64_page_screenshot(
                                         file_name=f'recovery_step_{i + 1}',
                                         context='adaptive_recovery'
                                     )
@@ -1653,7 +1653,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         try:
                             # Capture screenshot for visual context after successful step execution
                             logging.debug('Capturing screenshot for dynamic step generation context')
-                            screenshot = await ui_tester_instance._actions.b64_page_screenshot()
+                            screenshot, _ = await ui_tester_instance._actions.b64_page_screenshot()
 
                             # Enhance objective with generation context for smarter LLM decision-making
                             enhanced_objective = case.get('objective', '')

@@ -36,7 +36,7 @@ class CentralCaseRecorder:
         self.current_case_steps = []
         self.step_counter = 0
 
-    def add_step(self, *, description: str, screenshots: list | None = None, model_io: str | dict | None = None,
+    def add_step(self, *, description: str, screenshots: list | None = None, screenshots_paths: list | None = None, model_io: str | dict | None = None,
                  actions: list | None = None, status: str = 'passed', step_type: str = 'action',
                  end_time: str | None = None):
         """Add a step to the current case recording.
@@ -44,6 +44,7 @@ class CentralCaseRecorder:
         Args:
             description: Step description
             screenshots: List of SubTestScreenshot objects or dicts with {"type": "base64", "data": "..."}
+            screenshots_paths: List of dicts with {"type": "path", "data": "..."}
             model_io: Model input/output, can be string or dict (will be converted to JSON string)
             actions: List of actions
             status: Step status ("passed", "failed", "warning")
@@ -62,14 +63,27 @@ class CentralCaseRecorder:
 
         # Normalize screenshots to dict format for storage
         normalized_screenshots = []
-        for scr in screenshots:
-            if isinstance(scr, SubTestScreenshot):
-                normalized_screenshots.append({'type': scr.type, 'data': scr.data})
-            elif isinstance(scr, dict) and 'type' in scr and 'data' in scr:
-                normalized_screenshots.append(scr)
-            else:
-                # Skip invalid screenshot formats
-                continue
+        normalized_screenshots_paths = []
+
+        # Process paths if provided
+        if screenshots_paths:
+            for scr in screenshots_paths:
+                if isinstance(scr, dict) and 'type' in scr and isinstance(scr.get('data'), str):
+                    normalized_screenshots_paths.append(scr)
+                else:
+                    # Skip invalid screenshot formats
+                    continue
+
+        # Process base64 screenshots if provided
+        if screenshots:
+            for scr in screenshots:
+                if isinstance(scr, SubTestScreenshot):
+                    normalized_screenshots.append({'type': scr.type, 'data': scr.data, 'label': scr.label})
+                elif isinstance(scr, dict) and 'type' in scr and 'data' in scr:
+                    normalized_screenshots.append(scr)
+                else:
+                    # Skip invalid screenshot formats
+                    continue
 
         # Ensure modelIO is a string (align with runner format)
         if isinstance(model_io, str):
@@ -86,6 +100,7 @@ class CentralCaseRecorder:
             'type': step_type,
             'description': description or '',
             'screenshots': normalized_screenshots,
+            'screenshots_paths': normalized_screenshots_paths,
             'modelIO': model_io_str,
             'actions': actions,
             'status': status,
@@ -122,9 +137,34 @@ class CentralCaseRecorder:
         for s in self.current_case_steps:
             # Convert screenshots
             screenshots_models: List[SubTestScreenshot] = []
-            for scr in s.get('screenshots', []) or []:
-                if isinstance(scr, dict) and scr.get('type') == 'base64' and isinstance(scr.get('data'), str):
-                    screenshots_models.append(SubTestScreenshot(type='base64', data=scr['data']))
+
+            paths = s.get('screenshots_paths', []) or []
+            base64s = s.get('screenshots', []) or []
+
+            # Use paths if available, otherwise base64 for each index
+            max_len = max(len(paths), len(base64s))
+            for i in range(max_len):
+                added = False
+                # Try to use path first
+                if i < len(paths):
+                    scr = paths[i]
+                    if isinstance(scr, dict) and 'type' in scr and isinstance(scr.get('data'), str) and scr.get('data'):
+                        screenshots_models.append(SubTestScreenshot(
+                            type=scr['type'],
+                            data=scr['data'],
+                            label=scr.get('label')
+                        ))
+                        added = True
+
+                # If no valid path, try base64
+                if not added and i < len(base64s):
+                    scr = base64s[i]
+                    if isinstance(scr, dict) and isinstance(scr.get('data'), str) and scr.get('data'):
+                        screenshots_models.append(SubTestScreenshot(
+                            type=scr.get('type', 'base64'),
+                            data=scr['data'],
+                            label=scr.get('label')
+                        ))
 
             # Map status
             status_str = (s.get('status') or '').lower()
@@ -159,8 +199,8 @@ class CentralCaseRecorder:
             reports.append(SubTestReport(title='Summary', issues=self.current_case_data.get('final_summary', '')))
 
         # Extract case_id from case_info if available
-        case_info = self.current_case_data.get("case_info", {}) if self.current_case_data else {}
-        case_id = case_info.get("case_id", "") if isinstance(case_info, dict) else ""
+        case_info = self.current_case_data.get('case_info', {}) if self.current_case_data else {}
+        case_id = case_info.get('case_id', '') if isinstance(case_info, dict) else ''
 
         return SubTestResult(
             sub_test_id=case_id,

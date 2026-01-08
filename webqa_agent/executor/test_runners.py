@@ -86,6 +86,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                     # Infrastructure
                     'session_pool': session_pool,
                     'llm_config': llm_config,
+                    'report_config': test_config.report_config,
                 }
 
                 graph_config = {'recursion_limit': 100}
@@ -131,9 +132,24 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                         for step_data in case_steps_raw:
                             # 转换截图数据
                             screenshots = []
-                            for scr in step_data.get('screenshots', []):
-                                if isinstance(scr, dict) and scr.get('type') == 'base64':
-                                    screenshots.append(SubTestScreenshot(type='base64', data=scr.get('data', '')))
+                            # 优先检查路径形式的截图
+                            if step_data.get('screenshots_paths'):
+                                for scr in step_data.get('screenshots_paths', []):
+                                    if isinstance(scr, dict) and 'type' in scr and 'data' in scr:
+                                        screenshots.append(SubTestScreenshot(
+                                            type=scr['type'],
+                                            data=scr['data'],
+                                            label=scr.get('label')
+                                        ))
+                            else:
+                                # 回退到 base64 形式的截图
+                                for scr in step_data.get('screenshots', []):
+                                    if isinstance(scr, dict) and 'type' in scr and 'data' in scr:
+                                        screenshots.append(SubTestScreenshot(
+                                            type=scr['type'],
+                                            data=scr['data'],
+                                            label=scr.get('label')
+                                        ))
 
                             # 转换状态
                             step_status_str = step_data.get('status', 'passed').lower()

@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import time
 
 from playwright.async_api import Page
 
@@ -121,13 +120,16 @@ class ScrollHandler:
             if capture_screenshots:
                 processed_filename = f'{page_identifier}_global_viewport_{screenshot_counter}'
 
-                screenshot_base64 = await self._action_handler.b64_page_screenshot(
+                screenshot_base64, screenshot_path = await self._action_handler.b64_page_screenshot(
                     file_name=processed_filename,
                     context='scroll'
                 )
 
                 if screenshot_base64:
-                    screenshot_image_list.append(screenshot_base64)
+                    screenshot_image_list.append({
+                        'base64': screenshot_base64,
+                        'path': screenshot_path
+                    })
 
         scroll_count = 0
         await capture_viewport(scroll_count)
@@ -167,13 +169,16 @@ class ScrollHandler:
             if capture_screenshots:
                 processed_filename = f'{page_identifier}_container_viewport_{screenshot_counter}'
 
-                screenshot_base64 = await self._action_handler.b64_page_screenshot(
+                screenshot_base64, screenshot_path = await self._action_handler.b64_page_screenshot(
                     file_name=processed_filename,
                     context='scroll'
                 )
 
                 if screenshot_base64:
-                    screenshot_image_list.append(screenshot_base64)
+                    screenshot_image_list.append({
+                        'base64': screenshot_base64,
+                        'path': screenshot_path
+                    })
 
         try:
             container_exists = await self.page.evaluate(
@@ -298,12 +303,15 @@ class ScrollHandler:
         if not scroll:
             logging.debug('Scrolling disabled, exiting after initial capture.')
             processed_filename = f'{page_identifier}_initial'
-            screenshot_base64 = await self._action_handler.b64_page_screenshot(
+            screenshot_base64, screenshot_path = await self._action_handler.b64_page_screenshot(
                 file_name=processed_filename,
                 context='scroll'
             )
             if screenshot_base64:
-                screenshot_image_list.append(screenshot_base64)
+                screenshot_image_list.append({
+                    'base64': screenshot_base64,
+                    'path': screenshot_path
+                })
             return screenshot_image_list
 
         try:
@@ -354,22 +362,28 @@ class ScrollHandler:
                 else:
                     logging.debug('No scrollable containers found, taking single screenshot')
                     processed_filename = f'{page_identifier}_no_scroll'
-                    screenshot_base64 = await self._action_handler.b64_page_screenshot(
+                    screenshot_base64, screenshot_path = await self._action_handler.b64_page_screenshot(
                         file_name=processed_filename,
                         context='scroll'
                     )
                     if screenshot_base64:
-                        screenshot_image_list.append(screenshot_base64)
+                        screenshot_image_list.append({
+                            'base64': screenshot_base64,
+                            'path': screenshot_path
+                        })
 
         except Exception as e:
             logging.error(f'Error in smart scroll: {e}')
             # if error, at least take one screenshot
             processed_filename = f'{page_identifier}_error_fallback'
-            screenshot_base64 = await self._action_handler.b64_page_screenshot(
+            screenshot_base64, screenshot_path = await self._action_handler.b64_page_screenshot(
                 file_name=processed_filename,
                 context='error'
             )
             if screenshot_base64:
-                screenshot_image_list.append(screenshot_base64)
+                screenshot_image_list.append({
+                    'base64': screenshot_base64,
+                    'path': screenshot_path
+                })
 
         return screenshot_image_list

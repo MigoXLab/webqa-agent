@@ -226,18 +226,38 @@ class PageButtonTest:
 
                             screenshots = []
                             click_result = await click_handler.click_and_screenshot(page, element, highlight_id)
+
+                            # Handle screenshot after click
+                            if click_result.get('screenshot_after_path'):
+                                screenshots.append(SubTestScreenshot(type='path', data=click_result['screenshot_after_path'], label='After Click'))
+
                             if click_result.get('screenshot_after'):
                                 scr = click_result['screenshot_after']
-                                if isinstance(scr, str):
-                                    screenshots.append(SubTestScreenshot(type='base64', data=scr))
-                                elif isinstance(scr, dict):
-                                    screenshots.append(SubTestScreenshot(**scr))
+                                if not click_result.get('screenshot_after_path'):
+                                    if isinstance(scr, str) and scr.startswith('data:image'):
+                                        screenshots.append(SubTestScreenshot(type='base64', data=scr, label='After Click'))
+                                    elif isinstance(scr, dict) and scr.get('data'):
+                                        screenshots.append(SubTestScreenshot(
+                                            type=scr.get('type', 'base64'),
+                                            data=scr['data'],
+                                            label=scr.get('label', 'After Click')
+                                        ))
+
+                            # Handle new page screenshot
+                            if click_result.get('new_page_screenshot_path'):
+                                screenshots.append(SubTestScreenshot(type='path', data=click_result['new_page_screenshot_path'], label='New Page'))
+
                             if click_result.get('new_page_screenshot'):
                                 scr = click_result['new_page_screenshot']
-                                if isinstance(scr, str):
-                                    screenshots.append(SubTestScreenshot(type='base64', data=scr))
-                                elif isinstance(scr, dict):
-                                    screenshots.append(SubTestScreenshot(**scr))
+                                if not click_result.get('new_page_screenshot_path'):
+                                    if isinstance(scr, str) and scr.startswith('data:image'):
+                                        screenshots.append(SubTestScreenshot(type='base64', data=scr, label='New Page'))
+                                    elif isinstance(scr, dict) and scr.get('data'):
+                                        screenshots.append(SubTestScreenshot(
+                                            type=scr.get('type', 'base64'),
+                                            data=scr['data'],
+                                            label=scr.get('label', 'New Page')
+                                        ))
 
                             business_success = click_result['success']
                             step = SubTestStep(

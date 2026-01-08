@@ -155,7 +155,8 @@ class TestExecutionContext(BaseModel):
 
 class SubTestScreenshot(BaseModel):
     type: str
-    data: str  # base64 encoded image data
+    data: str  # base64 encoded image data or relative path
+    label: Optional[str] = None
 
 
 class SubTestAction(BaseModel):
@@ -185,7 +186,7 @@ class SubTestResult(BaseModel):
     TODO: Update type of `messages`
     """
 
-    sub_test_id: Optional[str] = ""  # 对应 case 的 case_id
+    sub_test_id: Optional[str] = ''  # 对应 case 的 case_id
     name: str
     status: Optional[TestStatus] = TestStatus.PENDING
     metrics: Optional[Dict[str, Any]] = {}

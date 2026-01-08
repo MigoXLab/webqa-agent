@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -23,6 +24,7 @@ class ResultAggregator:
             'zh-CN': i18n.get_lang_data('zh-CN').get('aggregator', {}),
             'en-US': i18n.get_lang_data('en-US').get('aggregator', {}),
         }
+        self.report_dir = report_config.get('report_dir', None)
 
     def _get_text(self, key: str) -> str:
         """Get localized text for the given key."""
@@ -246,8 +248,13 @@ class ResultAggregator:
         try:
             # Determine report directory
             if report_dir is None:
-                timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP') or os.getenv('WEBQA_TIMESTAMP')
-                report_dir = os.path.join('.', 'reports', f'test_{timestamp}')
+                # Priority: 1. test_session.report_path 2. self.report_dir 3. fallback env-based
+                report_dir = test_session.report_path or self.report_dir
+
+            if not report_dir:
+                timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP') or os.getenv('WEBQA_TIMESTAMP') or datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+                report_dir = os.path.join('reports', f'test_{timestamp}')
+
             os.makedirs(report_dir, exist_ok=True)
 
             json_path = os.path.join(report_dir, 'test_results.json')
@@ -353,8 +360,13 @@ class ResultAggregator:
                 )
 
             if report_dir is None:
-                timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP') or os.getenv('WEBQA_TIMESTAMP')
-                report_dir = os.path.join('.', 'reports', f'test_{timestamp}')
+                # Priority: 1. test_session.report_path 2. self.report_dir 3. fallback env-based
+                report_dir = test_session.report_path or self.report_dir
+
+            if not report_dir:
+                timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP') or os.getenv('WEBQA_TIMESTAMP') or datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+                report_dir = os.path.join('reports', f'test_{timestamp}')
+
             # Ensure report dir exists; if creation fails, fallback to temp dir
             try:
                 os.makedirs(report_dir, exist_ok=True)

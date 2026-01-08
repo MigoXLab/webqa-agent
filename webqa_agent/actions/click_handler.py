@@ -88,7 +88,9 @@ class ClickHandler:
             'response_errors': [],
             'screenshot_before': None,
             'screenshot_after': None,
+            'screenshot_after_path': None,
             'new_page_screenshot': None,
+            'new_page_screenshot_path': None,
             'click_method': None,
             'click_coordinates': None,
             'has_new_page': False,
@@ -122,11 +124,12 @@ class ClickHandler:
 
                     new_page_action_handler = ActionHandler()
                     new_page_action_handler.page = new_page
-                    screenshot_b64 = await new_page_action_handler.b64_page_screenshot(
+                    screenshot_b64, screenshot_path = await new_page_action_handler.b64_page_screenshot(
                         file_name=f'element_{element_index}_new_page',
                         context='test'
                     )
                     click_result['new_page_screenshot'] = screenshot_b64
+                    click_result['new_page_screenshot_path'] = screenshot_path
                     logging.debug('New page screenshot saved')
 
                 except Exception as e:
@@ -135,11 +138,12 @@ class ClickHandler:
 
                 await page.wait_for_load_state('networkidle', timeout=30000)
             else:
-                screenshot_b64 = await action_handler.b64_page_screenshot(
+                screenshot_b64, screenshot_path = await action_handler.b64_page_screenshot(
                     file_name=f'element_{element_index}_after_click',
                     context='test'
                 )
                 click_result['screenshot_after'] = screenshot_b64
+                click_result['screenshot_after_path'] = screenshot_path
                 logging.debug('After click screenshot saved')
 
         else:
