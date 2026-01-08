@@ -134,11 +134,20 @@ class CaseStep(BaseModel):
 
 
 class Case(BaseModel):
-    """Test case with name and steps."""
+    """Test case with fixture support.
+
+    Fields:
+        name: Test case name
+        steps: List of action/verify steps
+        context_id: If non-empty, this case is a fixture and will auto-save after execution
+        use_context: Context ID to load before running this case
+    """
     model_config = ConfigDict(extra='allow')
 
     name: str = 'Unnamed Case'
     steps: List[CaseStep] = []
+    context_id: Optional[str] = None    # Non-empty = auto-save fixture
+    use_context: Optional[str] = None   # Load specific fixture
 
     @classmethod
     def from_yaml_list(cls, cases_list: List[Dict[str, Any]]) -> List['Case']:
