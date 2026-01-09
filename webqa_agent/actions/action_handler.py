@@ -1718,7 +1718,7 @@ class ActionHandler:
                 # Generate timestamp and filename
                 # Use high-precision timestamp and random suffix to avoid collisions in parallel execution
                 now = datetime.datetime.now()
-                timestamp = now.strftime('%H%M%S')
+                timestamp = now.strftime('%H%M%S_%f')
                 random_suffix = ''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=4))
 
                 # Get prefix from context variable (set by workers to distinguish cases/tests)

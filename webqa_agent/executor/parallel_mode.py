@@ -2,8 +2,9 @@ import logging
 import os
 import uuid
 from datetime import datetime
-from typing import Any, Coroutine, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
+from webqa_agent.actions.action_handler import ActionHandler
 from webqa_agent.browser.config import DEFAULT_CONFIG
 from webqa_agent.data import (ParallelTestSession, TestConfiguration, TestType,
                               get_default_test_name)
@@ -67,8 +68,6 @@ class ParallelMode:
             os.environ['WEBQA_REPORT_TIMESTAMP'] = report_ts
 
             # Initialize screenshot directory for this test session
-            from webqa_agent.actions.action_handler import ActionHandler
-
             # Clear any existing session state to ensure isolation
             ActionHandler.clear_screenshot_session()
 
@@ -77,7 +76,7 @@ class ParallelMode:
             # Handle null, None, empty string, or missing value
             if not custom_report_dir or (isinstance(custom_report_dir, str) and custom_report_dir.strip() == ''):
                 # Use default reports/test_{timestamp}/ directory
-                custom_report_dir = f'reports/test_{report_ts}'
+                custom_report_dir = os.path.join('reports', f'test_{report_ts}')
                 report_cfg['report_dir'] = custom_report_dir
 
             test_session.report_path = custom_report_dir
@@ -97,7 +96,6 @@ class ParallelMode:
             completed_session = await self.executor.execute_parallel_tests(test_session)
 
             result = completed_session.aggregated_results.get('count', {})
-
 
             await Display.display.stop()
             Display.display.render_summary()
