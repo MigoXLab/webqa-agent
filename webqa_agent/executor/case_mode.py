@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import ValidationError
 
+from webqa_agent.actions.action_handler import ActionHandler
 from webqa_agent.browser.config import DEFAULT_CONFIG
 from webqa_agent.data import (ParallelTestSession, TestConfiguration,
                               TestResult, TestStatus)
@@ -136,8 +137,6 @@ class CaseMode:
         os.environ['WEBQA_REPORT_TIMESTAMP'] = report_ts
 
         # Initialize screenshot directory for this test session
-        from webqa_agent.actions.action_handler import ActionHandler
-
         # Clear any existing session state to ensure isolation
         ActionHandler.clear_screenshot_session()
 
@@ -145,7 +144,7 @@ class CaseMode:
         # Handle null, None, empty string, or missing value
         if not report_dir or (isinstance(report_dir, str) and report_dir.strip() == ''):
             # Use default reports/{timestamp}/ directory
-            report_dir = f'reports/test_{report_ts}'
+            report_dir = os.path.join('reports', f'test_{report_ts}')
 
         # Update report_config with the resolved report_dir for consistency
         if report_config is not None:

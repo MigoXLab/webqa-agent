@@ -15,10 +15,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from webqa_agent.actions.action_handler import screenshot_prefix_var
 from webqa_agent.browser import BrowserSession, BrowserSessionPool
 from webqa_agent.data import (CaseStep, StepContext, SubTestResult,
-                              SubTestScreenshot, SubTestStep,
-                              TestConfiguration, TestStatus)
+                              SubTestStep, TestConfiguration, TestStatus)
 from webqa_agent.utils import Display
 from webqa_agent.utils.get_log import test_id_var
 from webqa_agent.utils.log_icon import icon
@@ -196,8 +196,6 @@ class CaseExecutor:
                 token = test_id_var.set(log_context)
 
                 # Set screenshot prefix to avoid filename collisions in parallel execution
-                from webqa_agent.actions.action_handler import \
-                    screenshot_prefix_var
                 prefix_token = screenshot_prefix_var.set(case_id)
 
                 session = None
@@ -208,7 +206,7 @@ class CaseExecutor:
                     session = await session_pool.acquire(browser_config=browser_cfg, timeout=120.0)
 
                     with Display.display(case_name):  # pylint: disable=not-callable
-                        case_result = await self.execute_single_case(session=session, case=case, case_index=idx)
+                        case_result, raw_monitoring_data = await self.execute_single_case(session=session, case=case, case_index=idx)
 
                     async with results_lock:
                         results.append(case_result)
@@ -232,6 +230,8 @@ class CaseExecutor:
                             final_summary=f'Exception: {str(e)}',
                             report=[],
                         ))
+                    case_result = None
+                    raw_monitoring_data = None
 
                 finally:
                     # Reset context variables
@@ -240,7 +240,7 @@ class CaseExecutor:
 
                     if case_result is not None:
                         case_config = case.get('_config', {})
-                        self._save_case_result(case_result, case_name, idx, case_config=case_config)
+                        self._save_case_result(case_result, case_name, idx, raw_monitoring_data=raw_monitoring_data, case_config=case_config)
                         self._clear_case_screenshots(case_result)
 
                     if session:
@@ -309,7 +309,7 @@ class CaseExecutor:
         # Build final result
         end_time = datetime.now()
         case_id = case.get('case_id', f'case_{case_index}')
-        return self._build_case_result(
+        case_result, raw_monitoring_data = self._build_case_result(
             case_name=case_name,
             case_id=case_id,
             case_status=case_status,
@@ -320,6 +320,7 @@ class CaseExecutor:
             end_time=end_time,
             ignore_rules=ignore_rules
         )
+        return case_result, raw_monitoring_data
 
     # ========================================================================
     # Private Methods - Tester Lifecycle
@@ -747,7 +748,7 @@ class CaseExecutor:
         start_time: datetime,
         end_time: datetime,
         ignore_rules: Optional[Dict[str, Any]] = None
-    ) -> SubTestResult:
+    ) -> Tuple[SubTestResult, Dict[str, Any]]:
         """Build final case result with monitoring check.
 
         Args:
@@ -762,7 +763,7 @@ class CaseExecutor:
             ignore_rules: Optional ignore rules for this specific case
 
         Returns:
-            Complete SubTestResult
+            Tuple of (SubTestResult, raw_monitoring_data)
         """
         # Build case summary
         total_steps = len(executed_steps)
@@ -796,11 +797,8 @@ class CaseExecutor:
             report=[],
         )
 
-        # Store raw monitoring data as a temporary attribute for later saving
-        # This allows us to save it separately without modifying the data model
-        setattr(result, '_raw_monitoring_data', monitoring_data)
-
-        return result
+        # Return result and raw monitoring data separately for explicit data flow
+        return result, monitoring_data
 
     # ========================================================================
     # Private Methods - File Operations
@@ -811,6 +809,7 @@ class CaseExecutor:
         case_result: SubTestResult,
         case_name: str,
         case_index: int,
+        raw_monitoring_data: Optional[Dict[str, Any]] = None,
         case_config: Optional[Dict[str, Any]] = None
     ) -> None:
         """Save case result to JSON file.
@@ -819,6 +818,7 @@ class CaseExecutor:
             case_result: The case result to save
             case_name: Name of the case (for filename sanitization)
             case_index: Index of the case (for ordering in report)
+            raw_monitoring_data: Raw monitoring data to save separately
             case_config: Optional case-specific config (for multi-YAML support)
         """
         if self.report_dir is None:
@@ -865,7 +865,6 @@ class CaseExecutor:
             logging.debug(f'Case result saved to: {case_result_path}')
 
             # Save monitoring data separately to a corresponding JSON file
-            raw_monitoring_data = getattr(case_result, '_raw_monitoring_data', None)
             if raw_monitoring_data is not None:
                 try:
                     monitoring_data_path = report_dir_path / f'test_data_{case_index:03d}_{safe_case_name}_monitor.json'
