@@ -128,7 +128,7 @@ class CaseExecutor:
                         await PersistentContextManager.save_storage_state(
                             session.context,
                             snapshot_id,
-                            base_dir='webqa_agent/browser/browser_context'
+                            base_dir=self._get_snapshot_dir()
                         )
                         logging.info(f"{icon['check']} Saved persistent snapshot to '{snapshot_id}' for '{case_name}'")
                     except Exception as e:
@@ -316,6 +316,14 @@ class CaseExecutor:
     # Private Methods - Tester Lifecycle
     # ========================================================================
 
+    def _get_snapshot_dir(self) -> str:
+        """Get snapshot base directory within report directory.
+
+        Returns:
+            str: Snapshot base directory path ({report_dir}/snapshots/)
+        """
+        return os.path.join(self.report_dir, 'snapshots')
+
     async def _load_fixture_state(
         self,
         session: BrowserSession,
@@ -335,8 +343,7 @@ class CaseExecutor:
 
         try:
             from webqa_agent.browser.context_manager import PersistentContextManager
-            base_dir = 'webqa_agent/browser/browser_context'  # default base_dir
-            storage_path = await PersistentContextManager.get_storage_state_path(snapshot_name, base_dir)
+            storage_path = await PersistentContextManager.get_storage_state_path(snapshot_name, self._get_snapshot_dir())
             if not storage_path:
                 logging.warning(f"Snapshot '{snapshot_name}' not found, case will run without pre-loaded state")
                 return
