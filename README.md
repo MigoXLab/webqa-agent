@@ -79,6 +79,11 @@ vibecoding, vibe coding, web evaluation, autonomous exploration, web testing aut
 
 - **🤖 Conversational UI**: [Autonomously plans goals and interacts across a dynamic chat interface](https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/%E6%99%BA%E8%83%BDCase%E7%94%9F%E6%88%90.mp4)
 - **🎨 Creative Page**: [Explores page structure, identifies elements](https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/vibecoding.mp4)
+- **🖼️ Testing Baidu Image Generation**:
+
+<p align="center">
+  <img src="docs/images/baidu-image.gif" alt="Baidu Image Generation Test Demo" width="600" />
+</p>
 
 Try Demo: [🤗Hugging Face](https://huggingface.co/spaces/mmmay0722/WebQA-Agent) · [🚀ModelScope](https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary)
 
