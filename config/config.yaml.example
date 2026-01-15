@@ -107,7 +107,6 @@ browser_config:
 report:
   language: en-US # zh-CN, en-US
   save_screenshots: False  # Whether to enable screenshots. If True, screenshots are saved as local files. If False, screenshots are stored as base64 in the test data.
-  report_dir: null  # null=use default 'reports/{timestamp}/', or custom path like './my_reports/'
 
 
 log:

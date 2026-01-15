@@ -28,6 +28,7 @@ from webqa_agent.testers.function_tester import UITester
 from webqa_agent.utils import Display
 from webqa_agent.utils.get_log import test_id_var
 from webqa_agent.utils.log_icon import icon
+from webqa_agent.utils.reporting_utils import save_test_result_json
 
 _completed_case_count = 0  # 全局已完成 case 计数
 
@@ -355,6 +356,7 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
 
     # Worker 函数：持续从队列拉取 case 并执行
     async def worker(worker_id: int):
+        global _completed_case_count
         nonlocal replan_count, all_test_cases  # 声明需要修改外部变量  # noqa: F824
 
         while True:
@@ -508,15 +510,44 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                                         f'max replan count ({max_replan_count}) reached, skipping'
                                     )
 
-                    # 收集结果
+                    # 保存 case 结果
+                    try:
+                        report_dir = state.get('report_config', {}).get('report_dir')
+                        if not report_dir:
+                            timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP')
+                            report_dir = os.path.join('reports', f'test_{timestamp}')
+
+                        # 从 case_id 提取索引
+                        try:
+                            case_idx = int(case_id.split('_')[1])
+                        except (IndexError, ValueError):
+                            case_idx = _completed_case_count + 1
+
+                        if recorded_case:
+                            if isinstance(recorded_case, dict):
+                                recorded_case['sub_test_id'] = case_id
+
+                            save_test_result_json(
+                                test_result=recorded_case,
+                                report_dir=report_dir,
+                                index=case_idx,
+                                name=case_name,
+                                category='function',
+                                mode='gen',
+                                sub_test_id=case_id,
+                                llm_config=state.get('llm_config'),
+                                browser_config=state.get('browser_config', {}),
+                                target_url=state.get('url', '')
+                            )
+                    except Exception as save_err:
+                        logging.error(f'Failed to save individual case file for {case_name}: {save_err}')
+
                     async with results_lock:
                         if case_result:
                             completed_cases.append(case_result)
                         if recorded_case:
                             recorded_cases.append(recorded_case)
 
-                        # 更新进度
-                        global _completed_case_count
                         _completed_case_count += 1
                         total = len(all_test_cases)
                         pending = case_queue.qsize()

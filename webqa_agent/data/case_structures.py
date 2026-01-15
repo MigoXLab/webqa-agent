@@ -112,9 +112,26 @@ class CaseStep(BaseModel):
     @model_validator(mode='before')
     @classmethod
     def parse_yaml_format(cls, data: Any) -> Dict[str, Any]:
-        """Parse YAML step with flat format support (args as sibling)."""
+        """Parse YAML step with flat format support (args as sibling).
+
+        Also handles re-validation of already-parsed steps (e.g. from
+        model_dump).
+        """
         if not isinstance(data, dict):
             raise ValueError(f'Step must be a dict, got {type(data)}')
+
+        # If already in internal format (e.g. from model_dump), validate and return
+        if 'step_type' in data:
+            step_type = data.get('step_type')
+            # Validate step_type value
+            if step_type not in ('action', 'verify'):
+                raise ValueError(f'Invalid step_type: {step_type}. Must be "action" or "verify"')
+            # Ensure corresponding field exists
+            if step_type == 'action' and 'action' not in data:
+                raise ValueError('step_type is "action" but "action" field is missing')
+            if step_type == 'verify' and 'verify' not in data:
+                raise ValueError('step_type is "verify" but "verify" field is missing')
+            return data
 
         # Determine step type
         step_key = 'action' if 'action' in data else 'verify' if 'verify' in data else None
@@ -145,9 +162,26 @@ class Case(BaseModel):
     model_config = ConfigDict(extra='allow')
 
     name: str = 'Unnamed Case'
+    # Preserve original display name; keep a sanitized copy only for filenames
+    safe_name: Optional[str] = None
     steps: List[CaseStep] = []
     snapshot: Optional[str] = None    # Non-empty = auto-save fixture
     use_snapshot: Optional[str] = None   # Load specific fixture
+
+    @model_validator(mode='after')
+    def sanitize_name(self) -> 'Case':
+        """Sanitize name by replacing non-alphanumeric characters with
+        underscores.
+
+        Only use the sanitized value for filenames; keep the original name for
+        display to avoid surprising users. Uses shared sanitization logic from
+        utils.reporting_utils.
+        """
+        if self.name:
+            # Import here to avoid circular dependency
+            from webqa_agent.utils.reporting_utils import sanitize_case_name
+            self.safe_name = sanitize_case_name(self.name)
+        return self
 
     @classmethod
     def from_yaml_list(cls, cases_list: List[Dict[str, Any]]) -> List['Case']:

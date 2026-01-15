@@ -131,6 +131,22 @@ class NetworkCheck:
 
         return request_callback
 
+    def _sanitize_content(self, data):
+        """Recursively remove large code blocks (```...```) and sanitize
+        data."""
+        if isinstance(data, str):
+            # Regex to match markdown code blocks (```any_lang ... ```)
+            # We replace them with a placeholder to save space
+            code_block_pattern = r'```[\s\S]*?```'
+            if re.search(code_block_pattern, data):
+                data = re.sub(code_block_pattern, '<Code block omitted>', data)
+            return data
+        elif isinstance(data, list):
+            return [self._sanitize_content(item) for item in data]
+        elif isinstance(data, dict):
+            return {k: self._sanitize_content(v) for k, v in data.items()}
+        return data
+
     def _handle_response(self):
         async def response_callback(response):
             response_url = response.url
@@ -216,11 +232,14 @@ class NetworkCheck:
                         elif 'application/json' in content_type:
                             try:
                                 body_bytes = await response.body()
-                                if len(body_bytes) > 100000:
+                                # Reduce threshold from 100KB to 20KB
+                                if len(body_bytes) > 20000:
                                     response_data['body'] = f'<JSON data truncated: {len(body_bytes)} bytes>'
                                     response_data['size'] = len(body_bytes)
                                 else:
-                                    response_data['body'] = json.loads(body_bytes)
+                                    parsed_json = json.loads(body_bytes)
+                                    # Clean deep nested code blocks in JSON
+                                    response_data['body'] = self._sanitize_content(parsed_json)
                             except Exception as e:
                                 response_data['error'] = f'JSON parse error: {str(e)}'
 
@@ -234,11 +253,17 @@ class NetworkCheck:
                         ):
                             try:
                                 text_body = await response.text()
-                                if len(text_body) > 50000:
-                                    response_data['body'] = text_body[:50000] + '\n... [truncated]'
+                                if '<script' in text_body.lower():
+                                    response_data['body'] = '<HTML with script tags omitted>'
                                     response_data['size'] = len(text_body)
                                 else:
-                                    response_data['body'] = text_body
+                                    # Clean code blocks and apply stricter truncation (10KB)
+                                    sanitized_text = self._sanitize_content(text_body)
+                                    if len(sanitized_text) > 10000:
+                                        response_data['body'] = sanitized_text[:10000] + '\n... [truncated]'
+                                        response_data['size'] = len(text_body)
+                                    else:
+                                        response_data['body'] = sanitized_text
                             except Exception as e:
                                 response_data['error'] = f'Text decode error: {str(e)}'
 
