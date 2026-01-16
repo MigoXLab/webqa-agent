@@ -440,7 +440,7 @@ class BasicTestRunner(BaseTestRunner):
                 if len(clickable_elements) > 50:
                     from itertools import islice
                     clickable_elements = dict(islice(clickable_elements.items(), 50))
-                    logging.warning(f'Clickable elements number is too large, only keep the first 50')
+                    logging.warning('Clickable elements number is too large, only keep the first 50')
 
                 button_test = PageButtonTest(report_config=test_config.report_config)
                 button_test_result = await button_test.run(
@@ -453,7 +453,6 @@ class BasicTestRunner(BaseTestRunner):
                 # WebAccessibilityTest
                 accessibility_test = WebAccessibilityTest(report_config=test_config.report_config)
                 accessibility_result = await accessibility_test.run(target_url, links)
-
 
                 # Combine test results into a list
                 result.sub_tests = [button_test_result, accessibility_result]

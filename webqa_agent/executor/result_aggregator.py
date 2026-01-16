@@ -225,7 +225,6 @@ class ResultAggregator:
 
         return aggregated, final_path
 
-
     def _get_static_dir(self) -> Path:
         """Resolve the static assets directory in a robust way.
 
@@ -270,6 +269,30 @@ class ResultAggregator:
             logging.warning(f'Failed to read JS file: {e}')
         return ''
 
+    @staticmethod
+    def _serialize_data_for_inline(data: Any) -> str:
+        """Safely serialize data for inline <script> usage.
+
+        Escapes sequences that would prematurely terminate the script tag (e.g.
+        </script>) and control characters that are invalid in JS string
+        literals.
+        """
+        try:
+            raw = json.dumps(data, ensure_ascii=False, default=str)
+        except Exception as e:
+            logging.warning(f'Failed to serialize report data to JSON: {e}')
+            raw = '{}'
+
+        # Protect against closing the script tag or breaking JS parsing
+        safe = (
+            raw
+            .replace('</', '<\\/')           # Prevent </script> from ending the tag
+            .replace('\u2028', '\\u2028')    # Line separator
+            .replace('\u2029', '\\u2029')    # Paragraph separator
+            .replace('<!--', '<\\!--')       # Prevent HTML comment start
+        )
+        return safe
+
     def generate_html_report_fully_inlined(self, test_session, report_dir: str | None = None, aggregated_data: Dict[str, Any] = None) -> str:
         """Generate a fully inlined HTML report for the test session."""
         import json
@@ -306,9 +329,8 @@ class ResultAggregator:
 
             if data is None:
                 data = test_session.to_dict()
-            datajs_content = (
-                'window.testResultData = ' + json.dumps(data, ensure_ascii=False, default=str) + ';'
-            )
+            safe_data_json = self._serialize_data_for_inline(data)
+            datajs_content = f'window.testResultData = {safe_data_json};'
 
             if template_found:
                 css_content = self._read_css_content()

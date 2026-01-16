@@ -12,7 +12,6 @@ import json
 import logging
 import os
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from webqa_agent.actions.action_handler import screenshot_prefix_var
@@ -108,6 +107,7 @@ class CaseExecutor:
             token = test_id_var.set(log_context)
             session = None
             case_result = None
+            raw_monitoring_data = None
 
             try:
                 logging.info(f"{icon['lock']} Starting fixture case: '{case_name}' ({completed_count + 1}/{total_cases})")
@@ -204,6 +204,7 @@ class CaseExecutor:
 
                 session = None
                 case_result = None
+                raw_monitoring_data = None
 
                 try:
                     logging.info(f"Worker {worker_id}: Starting case '{case_name}' ({idx}/{total_cases})")
@@ -805,7 +806,7 @@ class CaseExecutor:
                 'total_actions': total_actions
             },
             steps=executed_steps,
-            messages={}, # messages_data is not used for now
+            messages={},  # messages_data is not used for now
             start_time=start_time.isoformat(),
             end_time=end_time.isoformat(),
             final_summary=final_summary,
