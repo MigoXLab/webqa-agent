@@ -55,7 +55,7 @@ class PageTextTest:
     async def run(self, page: Page) -> SubTestResult:
         """Runs a test to check the text content of a web page and identifies
         any issues based on predefined user cases."""
-        result = SubTestResult(name=self._get_text('text_check_name'))
+        result = SubTestResult(name=self._get_text('text_check_name'), sub_test_id='ux_1')
         logging.info(f"{icon['running']} Running Sub Test: {result.name}")
 
         with Display.display(self._get_text('ux_test_display') + result.name):
@@ -216,7 +216,7 @@ class PageContentTest:
             List of SubTestResult containing layout test and image test results
         """
         # 创建两个独立的测试结果
-        layout_result = SubTestResult(name=self._get_text('layout_check_name'))
+        layout_result = SubTestResult(name=self._get_text('layout_check_name'), sub_test_id='ux_2')
         # image_result = SubTestResult(name=_['element_check_name'])
 
         logging.info(f"{icon['running']} Running Sub Tests: {layout_result.name}")
@@ -443,7 +443,7 @@ class PageContentTest:
             issues_text = self._get_text('no_issues_found')
             logging.debug('LLM returned no content, treating as PASSED')
 
-        result.report.append(SubTestReport(title=self._get_text('report_title'), issues=issues_text))
+        result.report.append(SubTestReport(title=self._get_text('report_title_content'), issues=issues_text))
         # aggregate overall status: any WARNING -> WARNING; else PASSED
         if case_status == TestStatus.WARNING and overall_status != TestStatus.WARNING:
             overall_status = TestStatus.WARNING
@@ -542,8 +542,8 @@ class PageContentTest:
                 # Handle regular elements without layout signals
                 regular_elements = [e for e in key_elements if not e.get('signals')]
 
-                # relevant_elements = (elements_with_signals[:15] + regular_elements[:5])[:20]
-                relevant_elements = elements_with_signals + regular_elements
+                # Limit the number of elements sent to LLM to prevent prompt bloat and 400 errors
+                relevant_elements = (elements_with_signals[:25] + regular_elements[:10])[:35]
 
                 structured_info += '\nKey Elements:'
                 for elem in relevant_elements:

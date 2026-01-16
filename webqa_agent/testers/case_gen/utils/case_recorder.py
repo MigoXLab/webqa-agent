@@ -75,7 +75,10 @@ class CentralCaseRecorder:
                     continue
 
         # Process base64 screenshots if provided
-        if screenshots:
+        # If paths are provided, we use them as the primary screenshots record to save space
+        if normalized_screenshots_paths:
+            normalized_screenshots = normalized_screenshots_paths
+        elif screenshots:
             for scr in screenshots:
                 if isinstance(scr, SubTestScreenshot):
                     normalized_screenshots.append({'type': scr.type, 'data': scr.data, 'label': scr.label})
@@ -100,7 +103,6 @@ class CentralCaseRecorder:
             'type': step_type,
             'description': description or '',
             'screenshots': normalized_screenshots,
-            'screenshots_paths': normalized_screenshots_paths,
             'modelIO': model_io_str,
             'actions': actions,
             'status': status,
@@ -110,15 +112,48 @@ class CentralCaseRecorder:
         self.current_case_steps.append(step_entry)
         self.current_case_data['steps'].append(step_entry)
 
+    def _build_metrics(self) -> Dict[str, int]:
+        """Build metrics from recorded steps to keep JSON and aggregation
+        aligned."""
+        total_steps = len(self.current_case_steps)
+        passed = failed = warning = 0
+        total_actions = 0
+        for s in self.current_case_steps:
+            status = (s.get('status') or '').lower()
+            if status in ['failed', 'error', 'failure']:
+                failed += 1
+            elif status in ['warning', 'warn']:
+                warning += 1
+            else:
+                passed += 1
+            actions = s.get('actions', [])
+            if isinstance(actions, list):
+                total_actions += len(actions)
+        return {
+            'total_steps': total_steps,
+            'passed_steps': passed,
+            'failed_steps': failed,
+            'warning_steps': warning,
+            'total_actions': total_actions,
+        }
+
     def finish_case(self, final_status: str = 'completed', final_summary: str | None = None):
         if not self.current_case_data:
             return
+
+        # Append summary to report list if provided (avoid overwriting existing reports)
+        if final_summary:
+            self.current_case_data['report'].append({
+                'title': 'Summary',
+                'issues': final_summary
+            })
+
         self.current_case_data.update(
             {
                 'end_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'status': final_status,
                 'final_summary': final_summary or '',
-                'total_steps': len(self.current_case_steps),
+                'metrics': self._build_metrics()
             }
         )
 
@@ -134,37 +169,26 @@ class CentralCaseRecorder:
     def to_subtest_result(self, name: str, language: str = 'zh-CN') -> SubTestResult:
         """Convert recorded case to SubTestResult for report compatibility."""
         steps_models: List[SubTestStep] = []
+        metrics = self._build_metrics()
         for s in self.current_case_steps:
             # Convert screenshots
             screenshots_models: List[SubTestScreenshot] = []
 
-            paths = s.get('screenshots_paths', []) or []
-            base64s = s.get('screenshots', []) or []
+            # Get combined screenshots (could be paths or base64)
+            all_screenshots = s.get('screenshots', []) or []
+            # Also check screenshots_paths for backward compatibility with older recorded files
+            legacy_paths = s.get('screenshots_paths', []) or []
 
-            # Use paths if available, otherwise base64 for each index
-            max_len = max(len(paths), len(base64s))
-            for i in range(max_len):
-                added = False
-                # Try to use path first
-                if i < len(paths):
-                    scr = paths[i]
-                    if isinstance(scr, dict) and 'type' in scr and isinstance(scr.get('data'), str) and scr.get('data'):
-                        screenshots_models.append(SubTestScreenshot(
-                            type=scr['type'],
-                            data=scr['data'],
-                            label=scr.get('label')
-                        ))
-                        added = True
+            # Combine them for processing, prioritizing screenshots field
+            scrs_to_process = all_screenshots if all_screenshots else legacy_paths
 
-                # If no valid path, try base64
-                if not added and i < len(base64s):
-                    scr = base64s[i]
-                    if isinstance(scr, dict) and isinstance(scr.get('data'), str) and scr.get('data'):
-                        screenshots_models.append(SubTestScreenshot(
-                            type=scr.get('type', 'base64'),
-                            data=scr['data'],
-                            label=scr.get('label')
-                        ))
+            for scr in scrs_to_process:
+                if isinstance(scr, dict) and isinstance(scr.get('data'), str) and scr.get('data'):
+                    screenshots_models.append(SubTestScreenshot(
+                        type=scr.get('type', 'base64'),
+                        data=scr['data'],
+                        label=scr.get('label')
+                    ))
 
             # Map status
             status_str = (s.get('status') or '').lower()
@@ -206,6 +230,7 @@ class CentralCaseRecorder:
             sub_test_id=case_id,
             name=name,
             status=final_status,
+            metrics=metrics,
             steps=steps_models,
             report=reports,
             final_summary=self.current_case_data.get('final_summary', '') if self.current_case_data else '',

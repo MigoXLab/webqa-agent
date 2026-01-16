@@ -12,7 +12,6 @@ import json
 import logging
 import os
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from webqa_agent.actions.action_handler import screenshot_prefix_var
@@ -22,6 +21,8 @@ from webqa_agent.data import (CaseStep, StepContext, SubTestResult,
 from webqa_agent.utils import Display
 from webqa_agent.utils.get_log import test_id_var
 from webqa_agent.utils.log_icon import icon
+from webqa_agent.utils.reporting_utils import (save_monitor_data_json,
+                                               save_test_result_json)
 
 
 class CaseExecutor:
@@ -102,17 +103,18 @@ class CaseExecutor:
             case_id = case.get('case_id', f'case_{idx}')
             browser_cfg = case.get('_config', {}).get('browser_config', self.browser_config)
             # Set test_id context for logging
-            log_context = f'Run Case Test | {case_id} | {case_name}'
+            log_context = f'{case_id} | {case_name}'
             token = test_id_var.set(log_context)
             session = None
             case_result = None
+            raw_monitoring_data = None
 
             try:
                 logging.info(f"{icon['lock']} Starting fixture case: '{case_name}' ({completed_count + 1}/{total_cases})")
                 session = await session_pool.acquire(browser_config=browser_cfg, timeout=120.0)
 
                 with Display.display(case_name):  # pylint: disable=not-callable
-                    case_result = await self.execute_single_case(session=session, case=case, case_index=idx)
+                    case_result, raw_monitoring_data = await self.execute_single_case(session=session, case=case, case_index=idx)
 
                 async with results_lock:
                     results.append(case_result)
@@ -125,7 +127,8 @@ class CaseExecutor:
                 snapshot_id = case.get('snapshot')
                 if snapshot_id:
                     try:
-                        from webqa_agent.browser.context_manager import PersistentContextManager
+                        from webqa_agent.browser.context_manager import \
+                            PersistentContextManager
                         await PersistentContextManager.save_storage_state(
                             session.context,
                             snapshot_id,
@@ -140,6 +143,7 @@ class CaseExecutor:
                 async with results_lock:
                     completed_count += 1
                     results.append(SubTestResult(
+                        sub_test_id=case_id,
                         name=case_name,
                         status=TestStatus.FAILED,
                         metrics={'total_steps': 0, 'passed_steps': 0, 'failed_steps': 0},
@@ -156,7 +160,7 @@ class CaseExecutor:
                 test_id_var.reset(token)
                 if case_result is not None:
                     case_config = case.get('_config', {})
-                    self._save_case_result(case_result, case_name, idx, case_config=case_config)
+                    self._save_case_result(case_result, case_name, idx, raw_monitoring_data=raw_monitoring_data, case_config=case_config)
                     self._clear_case_screenshots(case_result)
                 if session:
                     failed = case_result is None or case_result.status == TestStatus.FAILED
@@ -200,6 +204,7 @@ class CaseExecutor:
 
                 session = None
                 case_result = None
+                raw_monitoring_data = None
 
                 try:
                     logging.info(f"Worker {worker_id}: Starting case '{case_name}' ({idx}/{total_cases})")
@@ -220,6 +225,7 @@ class CaseExecutor:
                     async with results_lock:
                         completed_count += 1
                         results.append(SubTestResult(
+                            sub_test_id=case_id,
                             name=case_name,
                             status=TestStatus.FAILED,
                             metrics={'total_steps': 0, 'passed_steps': 0, 'failed_steps': 0},
@@ -245,10 +251,7 @@ class CaseExecutor:
 
                     if session:
                         failed = case_result is None or case_result.status == TestStatus.FAILED
-                        if case_queue.qsize() == 0:
-                            await session.close()
-                        else:
-                            await session_pool.release(session, failed=failed)
+                        await session_pool.release(session, failed=failed)
 
                     case_queue.task_done()
 
@@ -266,11 +269,11 @@ class CaseExecutor:
             await session_pool.close_all()
 
         # Sort by original index
-        results.sort(key=lambda r: next((i for i, c in enumerate(cases, 1) if c.get('name') == r.name), 999))
+        results.sort(key=lambda r: next((i for i, c in enumerate(cases, 1) if c.get('case_id') == r.sub_test_id), 999))
         logging.info(f"{icon['check']} Execution completed: {len(results)}/{total_cases} cases")
         return results
 
-    async def execute_single_case(self, session: BrowserSession, case: Dict[str, Any], case_index: int = 1) -> SubTestResult:
+    async def execute_single_case(self, session: BrowserSession, case: Dict[str, Any], case_index: int = 1) -> Tuple[SubTestResult, Dict[str, Any]]:
         """Execute a single test case.
 
         Args:
@@ -340,7 +343,8 @@ class CaseExecutor:
         case: Dict[str, Any],
         case_config: Dict[str, Any]
     ) -> None:
-        """Load fixture state (cookies + localStorage + sessionStorage) after page navigation.
+        """Load fixture state (cookies + localStorage + sessionStorage) after
+        page navigation.
 
         Args:
             session: Browser session
@@ -352,7 +356,8 @@ class CaseExecutor:
             return
 
         try:
-            from webqa_agent.browser.context_manager import PersistentContextManager
+            from webqa_agent.browser.context_manager import \
+                PersistentContextManager
             storage_path = await PersistentContextManager.get_storage_state_path(snapshot_name, self._get_snapshot_dir())
             if not storage_path:
                 logging.warning(f"Snapshot '{snapshot_name}' not found, case will run without pre-loaded state")
@@ -545,7 +550,7 @@ class CaseExecutor:
             test_step=action.description,
             file_path=file_path,
             viewport_only=True,
-            full_page=True
+            full_page=False
         )
 
         if execution_steps_dict.get('screenshots_paths'):
@@ -769,6 +774,12 @@ class CaseExecutor:
         total_steps = len(executed_steps)
         passed_steps = sum(1 for s in executed_steps if s.status == TestStatus.PASSED)
         failed_steps = sum(1 for s in executed_steps if s.status == TestStatus.FAILED)
+        total_actions = sum(len(getattr(s, 'actions', []) or []) for s in executed_steps)
+        network_data = monitoring_data.get('network', {
+            'responses': [],
+            'failed_requests': []
+        })
+        api_request_count = len(network_data.get('responses', [])) + len(network_data.get('failed_requests', []))
 
         final_summary = f'Executed {total_steps} steps: {passed_steps} passed, {failed_steps} failed'
 
@@ -788,14 +799,21 @@ class CaseExecutor:
             sub_test_id=case_id,
             name=case_name,
             status=case_status,
-            metrics={'total_steps': total_steps, 'passed_steps': passed_steps, 'failed_steps': failed_steps},
+            metrics={
+                'total_steps': total_steps,
+                'passed_steps': passed_steps,
+                'failed_steps': failed_steps,
+                'total_actions': total_actions
+            },
             steps=executed_steps,
-            messages=messages_data,
+            messages={},  # messages_data is not used for now
             start_time=start_time.isoformat(),
             end_time=end_time.isoformat(),
             final_summary=final_summary,
             report=[],
         )
+        if api_request_count > 0:
+            result.metrics['api_request_count'] = api_request_count
 
         # Return result and raw monitoring data separately for explicit data flow
         return result, monitoring_data
@@ -826,61 +844,33 @@ class CaseExecutor:
             self.report_dir = os.path.join('.', 'reports', f'test_{timestamp}')
 
         try:
-            os.makedirs(self.report_dir, exist_ok=True)
-            report_dir_path = Path(self.report_dir).resolve()
-
-            # Sanitize case name for filename with index prefix for ordering
-            safe_case_name = ''.join(c if c.isalnum() or c in ('-', '_', ' ') else '_' for c in case_name)
-            case_result_path = report_dir_path / f'test_data_{case_index:03d}_{safe_case_name}.json'
-
             # Use case-specific config if available, otherwise fall back to default
             target_url = case_config.get('url') if case_config else self.test_specific_config.get('url', '')
-            ignore_rules = case_config.get('ignore_rules') if case_config else self.test_specific_config.get('ignore_rules', {})
-            source_file = case_config.get('_source_file') if case_config else None
 
-            # Add config information for template compatibility
-            case_dict = case_result.model_dump()
-            case_dict['case_index'] = case_index  # Save index for ordering
+            # Call common saving method
+            save_test_result_json(
+                test_result=case_result,
+                report_dir=self.report_dir,
+                index=case_index,
+                name=case_name,
+                category='function',
+                mode='run',
+                llm_config=self.llm_config,
+                browser_config=case_config.get('browser_config') if case_config else self.browser_config,
+                target_url=target_url
+            )
 
-            # Remove monitoring data from messages to reduce file size
-            # Monitoring data is saved separately in *_monitor.json file
-            case_dict['messages'] = {}
-
-            case_dict['config'] = {
-                'target_url': target_url,
-                'browser_config': case_config.get('browser_config') if case_config else self.browser_config,
-                'env': self.test_specific_config.get('env', ''),
-                'llm_model': self.llm_config.get('model', ''),
-                'filter_model': self.llm_config.get('filter_model', ''),
-                'ignore_rules': ignore_rules,
-            }
-
-            # Add source file info if available (for multi-config mode)
-            if source_file:
-                case_dict['config']['source_file'] = source_file
-
-            # Save as list format to match template expectations
-            with open(case_result_path, 'w', encoding='utf-8') as f:
-                json.dump([case_dict], f, indent=2, ensure_ascii=False, default=str)
-            logging.debug(f'Case result saved to: {case_result_path}')
-
-            # Save monitoring data separately to a corresponding JSON file
+            # Save monitoring data separately using unified method
             if raw_monitoring_data is not None:
-                try:
-                    monitoring_data_path = report_dir_path / f'test_data_{case_index:03d}_{safe_case_name}_monitor.json'
-                    sub_test_id = case_result.sub_test_id or f'case_{case_index}'
-                    monitoring_dict = {
-                        'sub_test_id': sub_test_id,
-                        'name': case_name,
-                        'corresponding_file': f'test_data_{case_index:03d}_{safe_case_name}.json',
-                        'monitoring_data': raw_monitoring_data,
-                        'timestamp': datetime.now().isoformat()
-                    }
-                    with open(monitoring_data_path, 'w', encoding='utf-8') as f:
-                        json.dump(monitoring_dict, f, indent=2, ensure_ascii=False, default=str)
-                    logging.debug(f'Monitoring data saved to: {monitoring_data_path}')
-                except Exception as e:
-                    logging.warning(f'Failed to save monitoring data for case "{case_name}": {e}')
+                save_monitor_data_json(
+                    monitoring_data=raw_monitoring_data,
+                    report_dir=self.report_dir,
+                    index=case_index,
+                    name=case_name,
+                    sub_test_id=case_result.sub_test_id or f'case_{case_index}',
+                    category='function',
+                    mode='run'
+                )
         except Exception as mk_err:
             logging.warning(f"Cannot save case result to '{self.report_dir}': {mk_err}")
 
@@ -896,20 +886,16 @@ class CaseExecutor:
             case_result: Case result to clear screenshots from
         """
         try:
-            # Clear screenshots from each step ONLY if they are file paths
-            # Base64 screenshots must be preserved for the final aggregated report
-            for step in case_result.steps:
-                if step.screenshots:
-                    # If any screenshot in the step is a path, it's safe to clear
-                    # because the path is already stored in the JSON.
-                    # If they are base64, clearing them will make the final report empty.
-                    if any(s.type == 'path' for s in step.screenshots):
-                        step.screenshots = []
+            # We don't clear screenshots here anymore because the final HTML report
+            # generation depends on these being present in memory (in test_session).
+            # If memory becomes an issue for very large test suites, we should
+            # implement a lazy-loading mechanism or read from JSON during report generation.
 
-                # Also clear modelIO if it's very large (can contain duplicate data)
-                if step.modelIO and len(step.modelIO) > 10000:
+            # For now, we only clear very large modelIO strings to save some memory
+            for step in case_result.steps:
+                if step.modelIO and len(step.modelIO) > 20000:
                     step.modelIO = '[cleared after save]'
 
-            logging.debug(f'Cleared screenshot paths for case: {case_result.name}')
+            logging.debug(f'Cleaned up large data for case: {case_result.name}')
         except Exception as e:
-            logging.warning(f'Failed to clear screenshots: {e}')
+            logging.warning(f'Failed to clear large data: {e}')

@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 from typing import Dict, List, Optional
 
 # Session ID constants - for tests that don't need browser sessions
@@ -54,6 +53,12 @@ class ParallelTestExecutor:
         logging.debug(f'Starting parallel test execution for session: {test_session.session_id}')
         test_session.start_session()
 
+        # Initialize result aggregator early
+        report_config = None
+        if test_session.test_configurations:
+            report_config = test_session.test_configurations[0].report_config
+        self.result_aggregator = ResultAggregator(report_config)
+
         # Initialize browser session pool
         browser_config = (
             test_session.test_configurations[0].browser_config
@@ -101,11 +106,6 @@ class ParallelTestExecutor:
 
         # Resolve dependencies and create execution order
         execution_batches = self._resolve_test_dependencies(enabled_tests)
-        # Get report_config from the first test configuration if available
-        report_config = None
-        if test_session.test_configurations:
-            report_config = test_session.test_configurations[0].report_config
-        self.result_aggregator = ResultAggregator(report_config)
 
         for batch_idx, test_batch in enumerate(execution_batches):
             logging.debug(f'Executing batch {batch_idx + 1}/{len(execution_batches)} with {len(test_batch)} tests')
@@ -367,32 +367,14 @@ class ParallelTestExecutor:
         return None
 
     async def _finalize_session(self, test_session: ParallelTestSession):
-        """Close sessions, aggregate results, and generate reports for the
-        given session.
+        """Close sessions and finalize session state.
 
-        This helper consolidates cleanup and report generation logic to avoid
-        duplication across normal completion, cancellation, and error paths.
+        Consolidated cleanup logic to avoid duplication across normal
+        completion, cancellation, and error paths.
         """
         # Ensure all browser sessions are closed
         if self.session_pool:
             await self.session_pool.close_all()
-
-        # Aggregate results
-        aggregated_results = await self.result_aggregator.aggregate_results(test_session)
-        test_session.aggregated_results = aggregated_results
-
-        # Generate JSON & HTML reports
-        json_path = await self.result_aggregator.generate_json_report(test_session)
-        # test_session.report_path = report_path
-
-        report_dir = os.path.dirname(json_path)
-        html_path = self.result_aggregator.generate_html_report_fully_inlined(
-            test_session, report_dir=report_dir
-        )
-        test_session.html_report_path = html_path
-
-        logging.debug(f'Report generated: {json_path}')
-        logging.debug(f'HTML report generated: {html_path}')
 
         # Mark session as completed if not already done
         if test_session.end_time is None:

@@ -1,12 +1,14 @@
 import json
 import logging
 import os
+import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from webqa_agent.data import ParallelTestSession, TestStatus
+from webqa_agent.data import TestResult
 from webqa_agent.llm.llm_api import LLMAPI
+from webqa_agent.llm.prompt import LLMPrompt
 from webqa_agent.utils import i18n
 
 
@@ -25,254 +27,203 @@ class ResultAggregator:
             'en-US': i18n.get_lang_data('en-US').get('aggregator', {}),
         }
         self.report_dir = report_config.get('report_dir', None)
+        self.tmp_subdir = 'tmp'
 
     def _get_text(self, key: str) -> str:
         """Get localized text for the given key."""
         return self.localized_strings.get(self.language, {}).get(key, key)
 
-    async def aggregate_results(self, test_session: ParallelTestSession) -> Dict[str, Any]:
-        """Aggregate all test results into a comprehensive summary.
+    @staticmethod
+    def compute_counts_from_tests(test_results: List[TestResult]) -> Dict[str, int]:
+        """Single source of truth for counting sub-test statuses."""
+        total = passed = failed = warning = 0
+        for result in test_results or []:
+            sub_tests = result.sub_tests if getattr(result, 'sub_tests', None) else [result]
+            for sub in sub_tests:
+                total += 1
+                status = getattr(sub, 'status', None)
+                if hasattr(status, 'value'):
+                    status = status.value
+                status_str = str(status).lower()
+                if status_str == 'passed':
+                    passed += 1
+                elif status_str == 'warning':
+                    warning += 1
+                elif status_str == 'failed':
+                    failed += 1
+        return {'total': total, 'passed': passed, 'failed': failed, 'warning': warning}
 
-        Args:
-            test_session: Session containing all test results
+    async def generate_llm_summary(
+        self,
+        test_results: List[TestResult],
+        llm_config: Dict[str, Any],
+        report_lang: Optional[str] = None
+    ) -> str:
+        """Generate a summary using LLM based on test results."""
+        if not test_results or not llm_config:
+            return ''
+
+        if report_lang is None:
+            report_lang = self.language
+
+        # Extract report information from all sub_tests
+        reports_info = []
+        for result in test_results:
+            sub_tests = result.sub_tests if hasattr(result, 'sub_tests') else result.get('sub_tests', [])
+            if sub_tests:
+                for sub in sub_tests:
+                    report = sub.report if hasattr(sub, 'report') else sub.get('report', [])
+                    name = sub.name if hasattr(sub, 'name') else sub.get('name', 'Unknown')
+                    if report:
+                        report_text = ''
+                        for r in report:
+                            title = r.title if hasattr(r, 'title') else r.get('title', '')
+                            issues = r.issues if hasattr(r, 'issues') else r.get('issues', '')
+                            report_text += f'Title: {title}\nIssues: {issues}\n'
+                        if report_text:
+                            reports_info.append(f'Case: {name}\n{report_text}')
+
+        if not reports_info:
+            return ''
+
+        # Combine all reports into a single input string
+        combined_reports = '\n---\n'.join(reports_info)
+
+        # Prepare LLM call
+        try:
+            llm = LLMAPI(llm_config)
+            system_prompt = LLMPrompt.summary_prompt_zh if report_lang == 'zh-CN' else LLMPrompt.summary_prompt_en
+
+            summary = await llm.get_llm_response(system_prompt, combined_reports)
+            return summary
+        except Exception as e:
+            logging.warning(f'Failed to generate LLM summary: {e}')
+            return ''
+
+    def aggregate_report_json(self, mode: str, report_dir: str, tmp_subdir: Optional[str] = None) -> Tuple[Dict[str, Any], str]:
+        """Read all JSON files in report directory (including tmp subdir) and
+        aggregate them into a single dict and write to test_results.json.
 
         Returns:
-            Aggregated results dictionary
+            Tuple[Dict[str, Any], str]: (aggregated_data, json_path)
         """
-        logging.debug(f'Aggregating results for session: {test_session.session_id}')
-        issues = []
-        error_message = await self._get_error_message(test_session)
-        # Generate issue list (LLM powered when possible)
-        llm_issues = await self._generate_llm_issues(test_session)
 
-        issues.extend(error_message)
-        issues.extend(llm_issues)
-        logging.info(f'Aggregated {len(test_session.test_results)} test results, found {len(issues)} issues')
-        for test_id, result in test_session.test_results.items():
-            sub_tests_count = len(result.sub_tests or [])
-            logging.debug(f'Test {test_id} has {sub_tests_count} sub_tests')
-            if result.sub_tests:
-                for i, sub_test in enumerate(result.sub_tests):
-                    logging.debug(f'Sub-test {i}: status={sub_test.status}')
+        aggregated = {mode: {}}
+        final_path = ''
+        if not report_dir or not os.path.exists(report_dir):
+            return aggregated, final_path
 
-        total_sub_tests = sum(len(r.sub_tests or []) for r in test_session.test_results.values())
-        passed_sub_tests = sum(
-            1
-            for r in test_session.test_results.values()
-            for sub in (r.sub_tests or [])
-            if sub.status == TestStatus.PASSED
-        )
-        warning_sub_tests = sum(
-            1
-            for r in test_session.test_results.values()
-            for sub in (r.sub_tests or [])
-            if sub.status == TestStatus.WARNING
-        )
-        failed_sub_tests = sum(
-            1
-            for r in test_session.test_results.values()
-            for sub in (r.sub_tests or [])
-            if sub.status == TestStatus.FAILED
-        )
-        critical_sub_tests = total_sub_tests - passed_sub_tests  # 未通过即视为关键问题
+        import re
 
-        logging.debug(f'Debug: total_sub_tests={total_sub_tests}, passed_sub_tests={passed_sub_tests}, warning_sub_tests={warning_sub_tests}, failed_sub_tests={failed_sub_tests}, critical_sub_tests={critical_sub_tests}')
+        def natural_sort_key(s):
+            return [int(text) if text.isdigit() else text.lower() for text in re.split(r'([0-9]+)', s)]
 
-        # Build content for executive summary tab
-        executive_content = {
-            'executiveSummary': '',
-            'statistics': [
-                {'label': self._get_text('assessment_categories'), 'value': str(total_sub_tests), 'colorClass': 'var(--warning-color)'},
-                {'label': self._get_text('passed_count'), 'value': str(passed_sub_tests), 'colorClass': 'var(--success-color)'},
-                {'label': self._get_text('warning_count'), 'value': str(warning_sub_tests), 'colorClass': 'var(--warning-color)'},
-                {'label': self._get_text('failed_count'), 'value': str(failed_sub_tests), 'colorClass': 'var(--failure-color)'},
-            ]
-        }
+        report_path = Path(report_dir)
+        tmp_dir = report_path / (tmp_subdir or self.tmp_subdir)
 
-        aggregated_results_list = [
-            {'id': 'subtab-summary-advice', 'title': self._get_text('summary_and_advice'), 'content': executive_content},
-            {
-                'id': 'subtab-issue-tracker',
-                'title': self._get_text('issue_list'),
-                'content': {
-                    'title': self._get_text('issue_tracker_list'),
-                    'note': self._get_text('issue_list_note'),
-                    'issues': issues,
-                },
-            },
-        ]
+        # Collect JSON files from tmp first, then root (avoid duplicates)
+        json_files = []
+        seen_names = set()
 
-        # Store additional raw analysis for LLM etc.
-        raw_analysis = {
-            'session_summary': test_session.get_summary_stats(),
-        }
+        def _add_files_from_dir(directory: Path):
+            if not directory.exists():
+                return
+            files = list(directory.glob('*.json'))
+            files.sort(key=lambda p: natural_sort_key(p.name))
+            for f in files:
+                if f.name in seen_names:
+                    continue
+                seen_names.add(f.name)
+                json_files.append(f)
 
-        def dict_to_text(d, indent=0):
-            lines = []
-            for k, v in d.items():
-                if isinstance(v, dict):
-                    lines.append(' ' * indent + f'{k}:')
-                    lines.append(dict_to_text(v, indent + 2))
-                else:
-                    lines.append(' ' * indent + f'{k}: {v}')
-            return '\n'.join(lines)
+        _add_files_from_dir(tmp_dir)
+        _add_files_from_dir(report_path)
 
-        executive_content['executiveSummary'] = f"{dict_to_text(raw_analysis['session_summary'])}"
-
-        # Also expose simple counters at the top-level for easy consumption
-        return {
-            'title': self._get_text('assessment_overview'),
-            'tabs': aggregated_results_list,
-            'count': {
-                'total': total_sub_tests,
-                'passed': passed_sub_tests,
-                'warning': warning_sub_tests,
-                'failed': failed_sub_tests,
-            }
-        }
-
-    async def _generate_llm_issues(self, test_session: ParallelTestSession) -> List[Dict[str, Any]]:
-        """Use LLM to summarise issues for each sub-test.
-
-        Fallback to heuristic if LLM unavailable.
-        """
-        llm_config = test_session.llm_config or {}
-        use_llm = bool(llm_config)
-        critical_issues: List[Dict[str, Any]] = []
-
-        # Prepare LLM client if configured
-        llm: Optional[LLMAPI] = None
-        if use_llm:
-            try:
-                llm = LLMAPI(llm_config)
-                await llm.initialize()
-            except Exception as e:
-                logging.error(f'Failed to initialise LLM, falling back to heuristic issue extraction: {e}')
-                use_llm = False
-
-        # Iterate over all tests and their sub-tests
-        for test_result in test_session.test_results.values():
-            for sub in test_result.sub_tests or []:
-                try:
-                    # Determine severity strictly based on sub-test status
-                    if sub.status == TestStatus.PASSED:
-                        continue  # No issue for passed sub-tests
-                    if sub.status == TestStatus.WARNING:
-                        severity_level = 'low'
-                    elif sub.status == TestStatus.FAILED:
-                        severity_level = 'high'
-                    else:
-                        severity_level = 'medium'
-
-                    issue_entry = {
-                        'issue_name': self._get_text('test_failed_prefix') + test_result.test_name,
-                        'issue_type': test_result.test_type.value,
-                        'sub_test_name': sub.name,
-                        'severity': severity_level,
-                    }
-                    if use_llm and llm:
-                        prompt_content = {
-                            'name': sub.name,
-                            'status': sub.status,
-                            'report': sub.report,
-                            'metrics': sub.metrics,
-                            'final_summary': sub.final_summary,
-                        }
-                        prompt = (
-                            f"{self._get_text('llm_prompt_main')}\n\n"
-                            f"{self._get_text('llm_prompt_test_info')}{json.dumps(prompt_content, ensure_ascii=False, default=str)}"
-                        )
-                        logging.debug(f'LLM Issue Prompt: {prompt}')
-                        llm_response_raw = await llm.get_llm_response('', prompt)
-                        llm_response = llm._clean_response(llm_response_raw)
-                        logging.debug(f'LLM Issue Response: {llm_response}')
-                        try:
-                            parsed = json.loads(llm_response)
-                            issue_count = parsed.get('issue_count', parsed.get('count', 1))
-                            if issue_count == 0:
-                                continue
-                            issue_text = parsed.get('issues', '').strip()
-                            if not issue_text:
-                                continue
-                            llm_severity = parsed.get('severity', severity_level)
-                            issue_entry['severity'] = llm_severity
-                            issue_entry['issues'] = issue_text
-                            issue_entry['issue_count'] = issue_count
-                        except Exception as parse_err:
-                            logging.error(f'Failed to parse LLM JSON: {parse_err}; raw: {llm_response}')
-                            continue  # skip if cannot parse
-                    else:
-                        # Heuristic fallback – use final_summary to detect issue presence
-                        summary_text = (sub.final_summary or '').strip()
-                        if not summary_text:
-                            continue
-                        lowered = summary_text.lower()
-                        if any(k in lowered for k in ['error', 'fail', '严重', '错误', '崩溃', '无法']):
-                            issue_entry['severity'] = 'high'
-                        elif any(k in lowered for k in ['warning', '警告', '建议', '优化', '改进']):
-                            issue_entry['severity'] = 'low'
-                        else:
-                            issue_entry['severity'] = 'medium'
-                        issue_entry['issues'] = summary_text
-                        issue_entry['issue_count'] = 1
-                    # add populated entry
-                    critical_issues.append(issue_entry)
-                except Exception as e:
-                    logging.error(f'Error while generating issue summary for sub-test {sub.name}: {e}')
-                    continue  # skip problematic sub-test
-        # Close LLM client if needed
-        if use_llm and llm:
-            try:
-                await llm.close()
-            except Exception as e:
-                logging.warning(f'Failed to close LLM client: {e}')
-        return critical_issues
-
-    async def _get_error_message(self, test_session: ParallelTestSession) -> str:
-        """Get error message from test session."""
-        error_message = []
-        for test_result in test_session.test_results.values():
-            if test_result.status != TestStatus.PASSED:
-                # Only append if error_message is not empty
-                if test_result.error_message:
-                    error_message.append({
-                        'issue_name': self._get_text('execution_error_prefix') + test_result.test_name,
-                        'issue_type': test_result.test_type.value,
-                        'severity': 'high',
-                        'issues': test_result.error_message
-                    })
-        return error_message
-
-    async def generate_json_report(self, test_session: ParallelTestSession, report_dir: str | None = None) -> str:
-        """Generate comprehensive JSON report."""
-        try:
-            # Determine report directory
-            if report_dir is None:
-                # Priority: 1. test_session.report_path 2. self.report_dir 3. fallback env-based
-                report_dir = test_session.report_path or self.report_dir
-
-            if not report_dir:
-                timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP') or os.getenv('WEBQA_TIMESTAMP') or datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-                report_dir = os.path.join('reports', f'test_{timestamp}')
-
-            os.makedirs(report_dir, exist_ok=True)
-
-            json_path = os.path.join(report_dir, 'test_results.json')
-            with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(test_session.to_dict(), f, indent=2, ensure_ascii=False, default=str)
-
-            absolute_path = os.path.abspath(json_path)
-            if os.getenv('DOCKER_ENV'):
-                host_path = absolute_path.replace('/app/reports', './reports')
-                logging.debug(f'JSON report generated: {host_path}')
-                return host_path
+        for file_path in json_files:
+            filename = os.path.basename(file_path)
+            # Skip test_results.json to avoid self-inclusion
+            if filename == 'test_results.json':
+                continue
+            if filename == 'cases.json':
+                continue
+            if filename == 'index.json':
+                key = 'index'
+            elif filename.endswith('_data.json'):
+                key = filename[:-10]  # remove _data.json
+            elif filename.endswith('_monitor.json'):
+                key = filename[:-5]   # remove .json
             else:
-                logging.debug(f'JSON report generated: {absolute_path}')
-                return absolute_path
+                key = os.path.splitext(filename)[0]
 
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    aggregated[mode][key] = json.load(f)
+            except Exception as e:
+                logging.warning(f'Failed to read {file_path}: {e}')
+
+        # Backfill aggregated_results list if index exists but has empty result list
+        try:
+            index_data = aggregated[mode].get('index')
+            if index_data and isinstance(index_data, dict):
+                agg_res = index_data.get('aggregated_results', {}) or {}
+                results_key = 'gen_result' if mode == 'gen' else 'run_result'
+                needs_backfill = not agg_res.get(results_key)
+
+                if needs_backfill:
+                    backfilled = []
+                    for key, value in aggregated[mode].items():
+                        # Skip non-case entries and monitor artifacts to avoid duplicates
+                        if key in ('index', 'cases', 'test_results'):
+                            continue
+                        if isinstance(key, str) and key.endswith('_monitor'):
+                            continue
+                        if not isinstance(value, dict):
+                            continue
+                        display_name = value.get('display_name') or value.get('name') or key
+                        safe_name = value.get('safe_name') or value.get('name') or key
+                        backfilled.append({
+                            'name': safe_name,
+                            'display_name': display_name,
+                            'safe_name': safe_name,
+                            'status': str(value.get('status') or '').lower(),
+                            'sub_test_id': value.get('sub_test_id') or key
+                        })
+
+                    if backfilled:
+                        agg_res[results_key] = backfilled
+                        # Recompute counters by status for UI accuracy
+                        count = {
+                            'total': len(backfilled),
+                            'passed': sum(1 for item in backfilled if item.get('status') == 'passed'),
+                            'warning': sum(1 for item in backfilled if item.get('status') == 'warning'),
+                            'failed': sum(1 for item in backfilled if item.get('status') == 'failed'),
+                        }
+                        agg_res['count'] = count
+                        index_data['aggregated_results'] = agg_res
+                        index_data['count'] = count
+                        aggregated[mode]['index'] = index_data
+        except Exception as backfill_err:
+            logging.warning(f'Failed to backfill aggregated results: {backfill_err}')
+
+        # Write the aggregated results to test_results.json
+        output_path = os.path.join(report_dir, 'test_results.json')
+        try:
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(aggregated, f, indent=2, ensure_ascii=False, default=str)
+
+            # Docker path adaptation
+            absolute_path = os.path.abspath(output_path)
+            if os.getenv('DOCKER_ENV'):
+                final_path = absolute_path.replace('/app/reports', './reports')
+            else:
+                final_path = absolute_path
+
+            logging.info(f'Aggregated report saved to {final_path}')
         except Exception as e:
-            logging.error(f'Failed to generate JSON report: {e}')
-            return ''
+            logging.warning(f'Failed to save aggregated report to {output_path}: {e}')
+            final_path = os.path.abspath(output_path)
+
+        return aggregated, final_path
 
     def _get_static_dir(self) -> Path:
         """Resolve the static assets directory in a robust way.
@@ -318,7 +269,31 @@ class ResultAggregator:
             logging.warning(f'Failed to read JS file: {e}')
         return ''
 
-    def generate_html_report_fully_inlined(self, test_session, report_dir: str | None = None) -> str:
+    @staticmethod
+    def _serialize_data_for_inline(data: Any) -> str:
+        """Safely serialize data for inline <script> usage.
+
+        Escapes sequences that would prematurely terminate the script tag (e.g.
+        </script>) and control characters that are invalid in JS string
+        literals.
+        """
+        try:
+            raw = json.dumps(data, ensure_ascii=False, default=str)
+        except Exception as e:
+            logging.warning(f'Failed to serialize report data to JSON: {e}')
+            raw = '{}'
+
+        # Protect against closing the script tag or breaking JS parsing
+        safe = (
+            raw
+            .replace('</', '<\\/')           # Prevent </script> from ending the tag
+            .replace('\u2028', '\\u2028')    # Line separator
+            .replace('\u2029', '\\u2029')    # Paragraph separator
+            .replace('<!--', '<\\!--')       # Prevent HTML comment start
+        )
+        return safe
+
+    def generate_html_report_fully_inlined(self, test_session, report_dir: str | None = None, aggregated_data: Dict[str, Any] = None) -> str:
         """Generate a fully inlined HTML report for the test session."""
         import json
         import re
@@ -334,34 +309,50 @@ class ResultAggregator:
                     f'Report template not found at {template_file}. Falling back to minimal inline template.'
                 )
 
-            datajs_content = (
-                'window.testResultData = ' + json.dumps(test_session.to_dict(), ensure_ascii=False, default=str) + ';'
-            )
+            # Resolve report directory early for file-based fallback
+            if report_dir is None:
+                # Priority: 1. test_session.report_path 2. self.report_dir 3. fallback env-based
+                report_dir = test_session.report_path or self.report_dir
+
+            # Prefer provided aggregated_data; otherwise read from test_results.json; finally fallback to session
+            data = aggregated_data
+            if data is None:
+                try:
+                    resolved_dir = Path(report_dir) if report_dir else None
+                    if resolved_dir:
+                        test_results_path = resolved_dir / 'test_results.json'
+                        if test_results_path.exists():
+                            with open(test_results_path, 'r', encoding='utf-8') as f:
+                                data = json.load(f)
+                except Exception as read_err:
+                    logging.warning(f'Failed to load test_results.json for HTML generation: {read_err}')
+
+            if data is None:
+                data = test_session.to_dict()
+            safe_data_json = self._serialize_data_for_inline(data)
+            datajs_content = f'window.testResultData = {safe_data_json};'
 
             if template_found:
                 css_content = self._read_css_content()
                 js_content = self._read_js_content()
 
                 html_out = html_template
+                # Use flexible regex to match tags regardless of attribute order or extra whitespace
                 html_out = re.sub(
-                    r'<link\s+rel="stylesheet"\s+href="/assets/style.css"\s*>',
+                    r'<link[^>]*href=["\']?/assets/style\.css["\']?[^>]*>',
                     lambda m: f'<style>\n{css_content}\n</style>',
                     html_out,
                 )
                 html_out = re.sub(
-                    r'<script\s+src="/data.js"\s*>\s*</script>',
+                    r'<script[^>]*src=["\']?/data\.js["\']?[^>]*>\s*</script>',
                     lambda m: f'<script>\n{datajs_content}\n</script>',
                     html_out,
                 )
                 html_out = re.sub(
-                    r'<script\s+type="module"\s+crossorigin\s+src="/assets/index.js"\s*>\s*</script>',
+                    r'<script[^>]*src=["\']?/assets/index\.js["\']?[^>]*>\s*</script>',
                     lambda m: f'<script type="module">\n{js_content}\n</script>',
                     html_out,
                 )
-
-            if report_dir is None:
-                # Priority: 1. test_session.report_path 2. self.report_dir 3. fallback env-based
-                report_dir = test_session.report_path or self.report_dir
 
             if not report_dir:
                 timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP') or os.getenv('WEBQA_TIMESTAMP') or datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
@@ -392,3 +383,13 @@ class ResultAggregator:
         except Exception as e:
             logging.error(f'Failed to generate fully inlined HTML report: {e}')
             return ''
+
+    def cleanup_tmp_dir(self, report_dir: str, tmp_subdir: Optional[str] = None) -> None:
+        """Remove temporary sub-test artifacts after aggregation."""
+        try:
+            tmp_path = Path(report_dir) / (tmp_subdir or self.tmp_subdir)
+            if tmp_path.exists():
+                shutil.rmtree(tmp_path)
+                logging.debug(f'Cleaned tmp artifacts at: {tmp_path}')
+        except Exception as e:
+            logging.warning(f'Failed to clean tmp dir: {e}')

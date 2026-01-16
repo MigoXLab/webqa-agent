@@ -1,6 +1,5 @@
 import json
 import re
-from datetime import datetime
 from typing import Dict, List, Optional
 
 from playwright.async_api import Page
@@ -83,10 +82,12 @@ class IgnoreRuleMatcher:
 
 
 class NetworkCheck:
+    MAX_BODY_BYTES = 5 * 1024  # 5KB limit for stored bodies
+
     def __init__(self, page: Page, ignore_rules: Optional[List[Dict]] = None):
         self.page = page
         self.ignore_rules = ignore_rules or []
-        self.network_messages = {'failed_requests': [], 'responses': [], 'requests': [], 'ignored_requests': []}
+        self.network_messages = {'failed_requests': [], 'responses': [], 'requests': []}
         self._response_callback = self._handle_response()
         self._request_callback = self._handle_request()
         self._requestfinished_callback = self._handle_request_finished()
@@ -119,17 +120,65 @@ class NetworkCheck:
             request_data = {
                 'url': request.url,
                 'method': request.method,
-                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'),
-                'has_response': False,
+                'payload': self._truncate_payload(request_payload),
                 'completed': False,
                 'failed': False,
-                'is_sse': False,
-                'sse_messages': [],  # list for storing SSE messages
-                'payload': request_payload,  # Save request payload
             }
             self.network_messages['requests'].append(request_data)
 
         return request_callback
+
+    def _sanitize_content(self, data):
+        """Recursively remove large code blocks (```...```) and sanitize
+        data."""
+        if isinstance(data, str):
+            # Regex to match markdown code blocks (```any_lang ... ```)
+            # We replace them with a placeholder to save space
+            code_block_pattern = r'```[\s\S]*?```'
+            if re.search(code_block_pattern, data):
+                data = re.sub(code_block_pattern, '<Code block omitted>', data)
+            return data
+        elif isinstance(data, list):
+            return [self._sanitize_content(item) for item in data]
+        elif isinstance(data, dict):
+            return {k: self._sanitize_content(v) for k, v in data.items()}
+        return data
+
+    def _truncate_payload(self, payload):
+        """Trim request payload to keep monitoring data lightweight."""
+        if payload is None:
+            return None
+        try:
+            if isinstance(payload, (dict, list)):
+                text = json.dumps(payload, ensure_ascii=False)[: self.MAX_BODY_BYTES]
+                if len(text) >= self.MAX_BODY_BYTES:
+                    text += '... [payload truncated]'
+                return text
+            text = str(payload)
+            if len(text) > self.MAX_BODY_BYTES:
+                return text[: self.MAX_BODY_BYTES] + '... [payload truncated]'
+            return text
+        except Exception:
+            return '<payload truncated>'
+
+    def _truncate_body(self, body_bytes: bytes, content_type: str) -> str:
+        """Trim response body to 5KB and sanitize."""
+        if not body_bytes:
+            return ''
+
+        max_len = self.MAX_BODY_BYTES
+        size = len(body_bytes)
+        slice_bytes = body_bytes[:max_len]
+
+        try:
+            text = slice_bytes.decode('utf-8', errors='replace')
+        except Exception:
+            text = str(slice_bytes)
+
+        text = self._sanitize_content(text)
+        if size > max_len:
+            text += f'\n... [body truncated to {max_len} bytes from {size}]'
+        return text
 
     def _handle_response(self):
         async def response_callback(response):
@@ -137,20 +186,12 @@ class NetworkCheck:
 
             # Check if this URL should be ignored
             if IgnoreRuleMatcher.should_ignore_network(response_url, self.ignore_rules):
-                # Track ignored requests for debugging
-                self.network_messages['ignored_requests'].append({
-                    'url': response_url,
-                    'status': response.status,
-                    'method': response.request.method,
-                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'),
-                })
                 return
 
             try:
                 current_request = None
                 for request in self.network_messages['requests']:
                     if request['url'] == response_url:
-                        request['has_response'] = True
                         current_request = request
                         break
 
@@ -166,16 +207,12 @@ class NetworkCheck:
                     content_type = ''
                     headers = {}
 
-                # Create response data structure
                 response_data = {
                     'url': response_url,
                     'status': response.status,
                     'method': response.request.method,
                     'content_type': content_type,
-                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'),
-                    'headers': headers,  # 保存响应头信息
-                    'sse_messages': [],
-                    'payload': current_request.get('payload'),  # 保存请求 payload
+                    'payload': current_request.get('payload'),
                 }
 
                 if response.status >= 400:
@@ -183,71 +220,32 @@ class NetworkCheck:
                     self.network_messages['responses'].append(response_data)
                     return
 
-                if 'text/event-stream' in content_type:
-                    current_request['is_sse'] = True
-                    response_data['is_sse'] = True
-
-                    try:
-                        response_data['sse_pending'] = True
-                    except Exception as e:
-                        response_data['error'] = str(e)
-
-                else:
-                    try:
-                        if any(
-                            asset_type in content_type.lower()
-                            for asset_type in [
-                                'image/',
-                                'audio/',
-                                'video/',
-                                'application/pdf',
-                                'application/octet-stream',
-                                'font/',
-                                'application/x-font',
-                                'application/javascript',
-                                'application/x-javascript',
-                                'text/javascript',
-                                'text/css',
-                            ]
-                        ):
-                            response_data['body'] = f'<{content_type} asset omitted>'
-                            response_data['size'] = len(await response.body())
-
-                        elif 'application/json' in content_type:
-                            try:
-                                body_bytes = await response.body()
-                                if len(body_bytes) > 100000:
-                                    response_data['body'] = f'<JSON data truncated: {len(body_bytes)} bytes>'
-                                    response_data['size'] = len(body_bytes)
-                                else:
-                                    response_data['body'] = json.loads(body_bytes)
-                            except Exception as e:
-                                response_data['error'] = f'JSON parse error: {str(e)}'
-
-                        elif any(
-                            text_type in content_type.lower()
-                            for text_type in [
-                                'text/',
-                                'application/xml',
-                                'application/x-www-form-urlencoded',
-                            ]
-                        ):
-                            try:
-                                text_body = await response.text()
-                                if len(text_body) > 50000:
-                                    response_data['body'] = text_body[:50000] + '\n... [truncated]'
-                                    response_data['size'] = len(text_body)
-                                else:
-                                    response_data['body'] = text_body
-                            except Exception as e:
-                                response_data['error'] = f'Text decode error: {str(e)}'
-
-                        else:
-                            response_data['body'] = f'<{content_type} data>'
-                            response_data['size'] = len(await response.body())
-
-                    except Exception as e:
-                        response_data['error'] = str(e)
+                try:
+                    ct_lower = content_type.lower()
+                    if 'text/event-stream' in ct_lower:
+                        response_data['body'] = '<event-stream omitted>'
+                    elif any(
+                        asset_type in ct_lower
+                        for asset_type in [
+                            'image/',
+                            'audio/',
+                            'video/',
+                            'application/pdf',
+                            'application/octet-stream',
+                            'font/',
+                            'application/x-font',
+                            'application/javascript',
+                            'application/x-javascript',
+                            'text/javascript',
+                            'text/css',
+                        ]
+                    ):
+                        response_data['body'] = f'<{content_type} asset omitted>'
+                    else:
+                        body_bytes = await response.body()
+                        response_data['body'] = self._truncate_body(body_bytes, content_type)
+                except Exception as e:
+                    response_data['error'] = str(e)
 
                 self.network_messages['responses'].append(response_data)
 
@@ -303,54 +301,6 @@ class NetworkCheck:
                 for req in self.network_messages['requests']:
                     if req['url'] == request.url:
                         req['completed'] = True
-
-                        if req.get('is_sse'):
-                            try:
-                                body = await response.body()
-                                text = body.decode('utf-8', errors='replace')
-
-                                # handle SSE messages
-                                messages = []
-
-                                # process SSE data by line
-                                for line in text.split('\n'):
-                                    if not line:
-                                        continue
-
-                                    if not line.startswith('data:'):
-                                        continue
-
-                                    # extract data content
-                                    sse_data = line[5:].strip()  # remove 'data:' prefix
-                                    if not sse_data:
-                                        continue
-
-                                    try:
-                                        # parse JSON data
-                                        json_data = json.loads(sse_data)
-                                        messages.append(
-                                            {
-                                                'data': json_data,
-                                            }
-                                        )
-                                    except json.JSONDecodeError:
-                                        # if not JSON, store original text
-                                        messages.append(
-                                            {
-                                                'data': sse_data,
-                                            }
-                                        )
-
-                                req['sse_messages'] = messages
-
-                                for resp in self.network_messages['responses']:
-                                    if resp['url'] == request.url:
-                                        resp['sse_messages'] = messages
-                                        resp['sse_completed'] = True
-                                        break
-
-                            except Exception:
-                                pass
                         break
 
             except Exception:

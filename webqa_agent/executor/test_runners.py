@@ -5,17 +5,19 @@ import time
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from webqa_agent.browser import BrowserSession
 from webqa_agent.data import TestConfiguration, TestResult, TestStatus
 from webqa_agent.data.test_structures import (SubTestReport, SubTestResult,
+                                              SubTestScreenshot, SubTestStep,
                                               get_category_for_test_type)
 from webqa_agent.testers import (LighthouseMetricsTest, PageButtonTest,
                                  PageContentTest, PageTextTest,
                                  WebAccessibilityTest)
 from webqa_agent.utils import Display, i18n
 from webqa_agent.utils.log_icon import icon
+from webqa_agent.utils.reporting_utils import save_test_result_json
 
 
 class BaseTestRunner(ABC):
@@ -86,6 +88,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                     # Infrastructure
                     'session_pool': session_pool,
                     'llm_config': llm_config,
+                    'browser_config': test_config.browser_config,
                     'report_config': test_config.report_config,
                 }
 
@@ -114,44 +117,48 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                 if recorded_cases_from_graph:
                     logging.debug(f'Processing {len(recorded_cases_from_graph)} cases from recorded_cases')
 
-                    # 将recorded_cases转换为TestResult.SubTestResult
+                    # 将recorded_cases转换为TestResult.SubTestResult，保留步骤信息但去除 base64
                     for i, recorded_case in enumerate(recorded_cases_from_graph):
                         case_name = recorded_case.get('name', f"Unnamed test case - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                        case_steps_raw = recorded_case.get('steps', [])
+                        case_steps_raw = recorded_case.get('steps', []) or []
+                        step_count = len(case_steps_raw)
 
                         # 验证case数据完整性
-                        logging.debug(f"Processing case {i + 1}: '{case_name}' with {len(case_steps_raw)} steps")
-                        if not case_steps_raw:
+                        logging.debug(f"Processing case {i + 1}: '{case_name}' with {step_count} steps")
+                        if step_count == 0:
                             logging.warning(f"Case '{case_name}' has no steps data")
 
-                        # 转换步骤数据为SubTestStep格式
-                        from webqa_agent.data.test_structures import (
-                            SubTestReport, SubTestScreenshot, SubTestStep)
+                        # 还原步骤，但移除体积大的 base64 内容，保留路径/文字
+                        case_steps: List[SubTestStep] = []
 
-                        case_steps = []
+                        def _to_screenshot(scr: Any) -> Optional[SubTestScreenshot]:
+                            if isinstance(scr, str):
+                                return SubTestScreenshot(type='path', data=scr, label=None)
+                            if not isinstance(scr, dict):
+                                return None
+                            data = scr.get('data') or scr.get('path') or scr.get('oss_url') or ''
+                            if isinstance(data, str) and data.startswith('data:image'):
+                                # 丢弃 base64，优先保留路径或 URL
+                                data = scr.get('path') or scr.get('oss_url') or ''
+                            return SubTestScreenshot(
+                                type=scr.get('type', 'path'),
+                                data=data,
+                                label=scr.get('label')
+                            )
+
                         for step_data in case_steps_raw:
-                            # 转换截图数据
                             screenshots = []
-                            # 优先检查路径形式的截图
                             if step_data.get('screenshots_paths'):
                                 for scr in step_data.get('screenshots_paths', []):
-                                    if isinstance(scr, dict) and 'type' in scr and 'data' in scr:
-                                        screenshots.append(SubTestScreenshot(
-                                            type=scr['type'],
-                                            data=scr['data'],
-                                            label=scr.get('label')
-                                        ))
+                                    sc = _to_screenshot(scr)
+                                    if sc:
+                                        screenshots.append(sc)
                             else:
-                                # 回退到 base64 形式的截图
                                 for scr in step_data.get('screenshots', []):
-                                    if isinstance(scr, dict) and 'type' in scr and 'data' in scr:
-                                        screenshots.append(SubTestScreenshot(
-                                            type=scr['type'],
-                                            data=scr['data'],
-                                            label=scr.get('label')
-                                        ))
+                                    sc = _to_screenshot(scr)
+                                    if sc:
+                                        screenshots.append(sc)
 
-                            # 转换状态
                             step_status_str = step_data.get('status', 'passed').lower()
                             step_status = TestStatus.PASSED
                             if step_status_str in ['failed', 'error', 'failure']:
@@ -190,12 +197,22 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                         if recorded_case.get('final_summary'):
                             reports.append(SubTestReport(title='Summary', issues=recorded_case.get('final_summary', '')))
 
+                        # Prefer recorded per-case metrics so downstream summary (index.json)
+                        # can count functional items by total_steps instead of just case count.
+                        case_metrics = recorded_case.get('metrics') or {}
+                        if not case_metrics:
+                            # Backfill from steps length for older records
+                            case_metrics = {'total_steps': len(case_steps)}
+                        else:
+                            # Ensure total_steps aligns with cleaned steps length if absent
+                            case_metrics.setdefault('total_steps', len(case_steps))
+
                         sub_tests.append(
                             SubTestResult(
                                 sub_test_id=recorded_case.get('case_info', {}).get('case_id', ''),
                                 name=case_name,
                                 status=status_enum,
-                                metrics={},
+                                metrics=case_metrics,
                                 steps=case_steps,
                                 messages={},  # recorded_cases不包含messages数据，设为空字典
                                 start_time=recorded_case.get('start_time'),
@@ -211,7 +228,7 @@ class UIAgentLangGraphRunner(BaseTestRunner):
                     total_cases = len(recorded_cases_from_graph)
                     passed_cases = sum(1 for case in recorded_cases_from_graph if case.get('status', '').lower() in ['passed', 'completed'])
                     failed_cases = total_cases - passed_cases
-                    total_steps = sum(len(case.get('steps', [])) for case in recorded_cases_from_graph)
+                    total_steps = sum((case.get('metrics', {}) or {}).get('total_steps', len(case.get('steps', []))) for case in recorded_cases_from_graph)
                     success_rate = (passed_cases / total_cases * 100) if total_cases > 0 else 0
 
                     result.add_metric('test_case_count', total_cases)
@@ -297,6 +314,23 @@ class UXTestRunner(BaseTestRunner):
                     if errors:
                         result.error_message = '; '.join(errors)
 
+                # Save individual sub-tests
+                report_dir = test_config.report_config.get('report_dir')
+                if report_dir:
+                    for i, sub in enumerate(result.sub_tests, 1):
+                        save_test_result_json(
+                            test_result=sub,
+                            report_dir=report_dir,
+                            index=i,
+                            name=sub.name,
+                            category=result.category.value,
+                            mode='gen',
+                            sub_test_id=sub.sub_test_id,
+                            llm_config=llm_config,
+                            browser_config=test_config.browser_config,
+                            target_url=target_url
+                        )
+
                 logging.info(f"{icon['check']} Test completed: {test_config.test_name}")
 
             except Exception as e:
@@ -345,6 +379,23 @@ class LighthouseTestRunner(BaseTestRunner):
 
                 result.sub_tests = [lighthouse_results]
                 result.status = lighthouse_results.status
+
+                # Save individual sub-tests
+                report_dir = test_config.report_config.get('report_dir')
+                if report_dir:
+                    save_test_result_json(
+                        test_result=lighthouse_results,
+                        report_dir=report_dir,
+                        index=1,
+                        name=lighthouse_results.name,
+                        category=result.category.value,
+                        mode='gen',
+                        sub_test_id=lighthouse_results.sub_test_id,
+                        llm_config=llm_config,
+                        browser_config=test_config.browser_config,
+                        target_url=target_url
+                    )
+
                 logging.info(f"{icon['check']} Test completed: {test_config.test_name}")
 
             except Exception as e:
@@ -389,7 +440,7 @@ class BasicTestRunner(BaseTestRunner):
                 if len(clickable_elements) > 50:
                     from itertools import islice
                     clickable_elements = dict(islice(clickable_elements.items(), 50))
-                    logging.warning(f'Clickable elements number is too large, only keep the first 50')
+                    logging.warning('Clickable elements number is too large, only keep the first 50')
 
                 button_test = PageButtonTest(report_config=test_config.report_config)
                 button_test_result = await button_test.run(
@@ -402,7 +453,6 @@ class BasicTestRunner(BaseTestRunner):
                 # WebAccessibilityTest
                 accessibility_test = WebAccessibilityTest(report_config=test_config.report_config)
                 accessibility_result = await accessibility_test.run(target_url, links)
-
 
                 # Combine test results into a list
                 result.sub_tests = [button_test_result, accessibility_result]
@@ -423,6 +473,23 @@ class BasicTestRunner(BaseTestRunner):
 
                     if errors:
                         result.error_message = '; '.join(errors)
+
+                # Save individual sub-tests
+                report_dir = test_config.report_config.get('report_dir')
+                if report_dir:
+                    for i, sub in enumerate(result.sub_tests, 1):
+                        save_test_result_json(
+                            test_result=sub,
+                            report_dir=report_dir,
+                            index=i,
+                            name=sub.name,
+                            category=result.category.value,
+                            mode='gen',
+                            sub_test_id=sub.sub_test_id,
+                            llm_config=llm_config,
+                            browser_config=test_config.browser_config,
+                            target_url=target_url
+                        )
 
                 logging.info(f"{icon['check']} Test completed: {test_config.test_name}")
 
@@ -564,7 +631,7 @@ class SecurityTestRunner(BaseTestRunner):
             'config': self._get_text('config_scan'),
             'default-login': self._get_text('default_login_scan'),
             'ssl': self._get_text('ssl_scan'),
-            'dns': self._get_text('dns_scan'),
+            # 'dns': self._get_text('dns_scan'),
             'subdomain-takeover': self._get_text('subdomain_takeover_scan'),
             'tech': self._get_text('tech_scan'),
             'panel': self._get_text('panel_scan'),
@@ -574,7 +641,7 @@ class SecurityTestRunner(BaseTestRunner):
         """Get protocol scans with localized descriptions."""
         return {
             'http': self._get_text('http_protocol'),
-            'dns': self._get_text('dns_protocol'),
+            # 'dns': self._get_text('dns_protocol'),
             'tcp': self._get_text('tcp_protocol'),
             'ssl': self._get_text('ssl_protocol'),
         }
@@ -656,6 +723,7 @@ class SecurityTestRunner(BaseTestRunner):
                     sub_tests.append(
                         SubTestResult(
                             name=self._get_text('severity_level_scan').format(severity=severity.upper()),
+                            sub_test_id='security',
                             status=TestStatus.PASSED,
                             metrics={'findings_count': count},
                             report=[SubTestReport(
@@ -733,6 +801,23 @@ class SecurityTestRunner(BaseTestRunner):
 
                     result.sub_tests = sub_tests
                 result.status = TestStatus.PASSED
+
+                # Save individual sub-tests
+                report_dir = test_config.report_config.get('report_dir')
+                if report_dir:
+                    for i, sub in enumerate(result.sub_tests, 1):
+                        save_test_result_json(
+                            test_result=sub,
+                            report_dir=report_dir,
+                            index=i,
+                            name=sub.name,
+                            category=result.category.value,
+                            mode='gen',
+                            sub_test_id=sub.sub_test_id,
+                            llm_config=llm_config,
+                            browser_config=test_config.browser_config,
+                            target_url=target_url
+                        )
 
                 # 添加总体指标
                 total_findings = len(findings)

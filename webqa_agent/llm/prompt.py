@@ -8,7 +8,7 @@
 
 
 class LLMPrompt:
-    
+
     planner_system_prompt = """
     ## Role
     You are a versatile professional in software UI automation. Your outstanding contributions will impact the user experience of billions of users.
@@ -514,7 +514,7 @@ class LLMPrompt:
         }
         ```
         Note: If Check returns \"continue\", the system will automatically re-plan and execute more actions.
-        
+
         ### Example 9: If the page shows “xxx" button, click it.
         Actually, the button is not in the screenshot, should plan check action
         ```json
@@ -1374,6 +1374,68 @@ class LLMPrompt:
       "result": "continue" | "stop",
       "thought": "Brief explanation of what you observed and why you made this decision"
     }
+    """
+
+    summary_prompt_zh = """
+    ## Role
+    你是一位资深的 AI 测试专家。你的任务是分析多个 AI 测试用例的报告，并提供一份专业、简洁的总结。
+
+    ## Input Data
+    你将收到一系列测试用例报告。每个报告包含：
+    - Title: 测试用例名称。
+    - Issues: 发现的问题或观察到的现象。
+
+    ## Requirements
+    1.  **总体评估**: 总结系统的整体健康状况。
+    2.  **主要发现**: 突出最重要的发现（问题或成功之处）。
+    3.  **质量评分**: 根据测试发现，给出一个 0-100 的质量评分。
+    4.  **格式**: 使用 Markdown 格式。
+    5.  **语言**: 必须使用中文。
+
+    ## Example Output (Markdown)
+    ## 总体评估
+
+    系统功能运行正常，核心功能测试全部通过。部分功能有问题例如：XXX功能存在问题。
+    性能方面存在优化空间，建议关注页面加载速度和资源优化。
+
+    **整体质量评分：85/100**
+
+    ## 主要发现
+
+    - 功能测试全部通过，核心业务逻辑运行正常
+    - 功能测试中发现部分功能有问题，例如：XXX功能存在问题。
+    - 用户体验发现交互延迟，建议优化响应速度
+    """
+
+    summary_prompt_en = """
+    ## Role
+    You are a senior AI testing expert. Your task is to analyze reports from multiple AI test cases and provide a professional, concise summary.
+
+    ## Input Data
+    You will receive a collection of test case reports. Each report contains:
+    - Title: The name of the test case.
+    - Issues: Found problems or observations.
+
+    ## Requirements
+    1.  **Overall Assessment**: Summarize the overall health of the system.
+    2.  **Key Findings**: Highlight the most important findings (issues or successes).
+    3.  **Quality Score**: Provide a quality score out of 100 based on the findings.
+    4.  **Format**: Use Markdown format.
+    5.  **Language**: Must use English.
+
+    ## Example Output (Markdown)
+    ## Overall Assessment
+
+    The system functionality is working normally, and all core function tests passed. Some functional issues were found, please check the failed items.
+    There is room for optimization in performance; it is recommended to focus on page loading speed and resource optimization.
+
+    **Overall Quality Score: 85/100**
+
+    ## Key Findings
+
+    - All functional tests passed, and core business logic is operating normally.
+    - Some functional issues were found, please check the failed items.
+    - User experience identified interaction delays; it is recommended to optimize response speed.
     """
 
     page_default_prompt = """

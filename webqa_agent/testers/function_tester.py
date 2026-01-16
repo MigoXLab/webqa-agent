@@ -253,8 +253,12 @@ class UITester:
                 # Add action screenshots from this iteration to the ordered list
                 for step in execution_steps:
                     if step.get('screenshot'):
+                        # Collect to top-level list
                         all_ordered_screenshots.append(step.get('screenshot'))
                         all_ordered_screenshots_paths.append(step.get('screenshot_path'))
+                        # Remove from individual action dict so it doesn't end up in "actions" list
+                        step.pop('screenshot', None)
+                        step.pop('screenshot_path', None)
 
                 # Check if we should continue iterating
                 if execution_result.get('check_result') == 'continue':
@@ -1262,165 +1266,6 @@ class UITester:
         """Set the current test case name (stub for compatibility with
         LangGraph workflow)."""
         self.current_test_name = name
-
-    # def start_case(self, case_name: str, case_data: Optional[Dict[str, Any]] = None):
-    #     """Start a new test case (deprecated in LangGraph case execution).
-
-    #     Note: LangGraph execution now records steps via CentralCaseRecorder. This legacy
-    #     storage remains for backward compatibility with non-LangGraph paths.
-    #     """
-    #     # Set current_test_name to ensure compatibility
-    #     self.current_test_name = case_name
-
-    #     # If there is existing case data, finish it first
-    #     if self.current_case_data:
-    #         logging.warning(
-    #             f"Starting new case '{case_name}' while previous case '{self.current_case_data.get('name')}' is still active. Finishing previous case."
-    #         )
-    #         self.finish_case("interrupted", "Case was interrupted by new case start")
-
-    #     # Calculate case index (1-based)
-    #     case_index = len(self.all_cases_data) + 1
-    #     formatted_case_name = f"{case_index}: {case_name}"
-
-    #     self.current_case_data = {
-    #         "name": formatted_case_name,
-    #         "original_name": case_name,
-    #         "case_index": case_index,
-    #         "start_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    #         "case_info": case_data or {},
-    #         "steps": [],
-    #         "status": "running",
-    #         "report": [],
-    #     }
-    #     self.current_case_steps = []
-    #     self.step_counter = 0
-    #     logging.debug(f"Started tracking case: {formatted_case_name} (step counter reset)")
-
-    #     # # Initialize/Reset central recorder as primary store as well
-    #     # try:
-    #     #     self.central_case_recorder = CentralCaseRecorder()
-    #     #     self.central_case_recorder.start_case(case_name, case_data=case_data or {})
-    #     # except Exception:
-    #     #     pass
-
-    # def add_step_data(self, step_data: Dict[str, Any], step_type: str = "action"):
-    #     """Add step data to current case."""
-    #     # Process actions data, remove screenshots
-    #     original_actions = step_data.get("actions", [])
-    #     cleaned_actions = []
-
-    #     for action in original_actions:
-    #         # Copy action data, but remove screenshot field
-    #         cleaned_action = {}
-    #         for key, value in action.items():
-    #             if key != "screenshot":  # Remove screenshot field
-    #                 cleaned_action[key] = value
-    #         cleaned_actions.append(cleaned_action)
-
-    #     # Prepare formatted step (for both legacy and central recorder)
-    #     self.step_counter += 1
-
-    #     formatted_step = {
-    #         "id": self.step_counter,
-    #         "number": self.step_counter,
-    #         "description": step_data.get("description", ""),
-    #         "screenshots": step_data.get("screenshots", []),
-    #         "modelIO": (
-    #             step_data.get("modelIO", "")
-    #             if isinstance(step_data.get("modelIO", ""), str)
-    #             else json.dumps(step_data.get("modelIO", ""), ensure_ascii=False)
-    #         ),
-    #         "actions": cleaned_actions,  # Use cleaned actions
-    #         "status": step_data.get("status", "passed"),
-    #         "end_time": step_data.get("end_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-    #     }
-
-    #     # If there is error information, add to step
-    #     if "error" in step_data:
-    #         formatted_step["error"] = step_data["error"]
-
-    #     # Record to legacy storage if available (for backward compatibility)
-    #     if self.current_case_data:
-    #         self.current_case_steps.append(formatted_step)
-    #         self.current_case_data["steps"].append(formatted_step)
-    #         logging.debug(f"Added step {formatted_step['id']} to legacy case storage: {self.current_test_name}")
-    #     else:
-    #         logging.debug(f"No active legacy case storage, skipping legacy recording")
-
-    #     # ALWAYS record to central recorder if available (primary recording mechanism)
-    #     if self.central_case_recorder:
-    #         try:
-    #             self.central_case_recorder.add_step(
-    #                 description=formatted_step["description"],
-    #                 screenshots=formatted_step["screenshots"],
-    #                 model_io=formatted_step["modelIO"],
-    #                 actions=formatted_step["actions"],
-    #                 status=formatted_step["status"],
-    #                 step_type=step_type,
-    #                 end_time=formatted_step["end_time"],
-    #             )
-    #             logging.debug(f"✅ Step recorded to CentralCaseRecorder (type={step_type}): {formatted_step['description'][:50]}...")
-    #         except Exception as e:
-    #             logging.error(f"❌ Failed to record step to CentralCaseRecorder: {e}")
-    #     else:
-    #         logging.warning("⚠️ No CentralCaseRecorder available, step not recorded to central storage")
-
-    # def finish_case(self, final_status: str = "completed", final_summary: Optional[str] = None):
-    #     """Finish current case and save data."""
-    #     if not self.current_case_data:
-    #         logging.warning("No active case to finish")
-    #         return
-
-    #     case_name = self.current_case_data.get("name", "Unknown")
-    #     original_name = self.current_case_data.get("original_name", case_name)
-    #     steps_count = len(self.current_case_steps)
-
-    #     # Get monitoring data
-    #     # monitoring_data = self.get_monitoring_results()
-
-    #     self.current_case_data.update(
-    #         {
-    #             "end_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    #             "status": final_status,
-    #             "final_summary": final_summary or "",
-    #             "total_steps": steps_count,
-    #         }
-    #     )
-
-    #     # # Sync to central recorder if available
-    #     # try:
-    #     #     if self.central_case_recorder:
-    #     #         self.central_case_recorder.finish_case(final_status=final_status, final_summary=final_summary or "")
-    #     # except Exception:
-    #     #     pass
-
-    #     # # Update monitoring data
-    #     # if monitoring_data:
-    #     #     if "network" in monitoring_data:
-    #     #         self.current_case_data["messages"]["network"] = monitoring_data["network"]
-    #     #         logging.debug(f"Added network monitoring data for case '{case_name}'")
-    #     #     if "console" in monitoring_data:
-    #     #         self.current_case_data["messages"]["console"] = monitoring_data["console"]
-    #     #         logging.debug(f"Added console monitoring data for case '{case_name}'")
-
-    #     # Verify steps data
-    #     stored_steps = self.current_case_data.get("steps", [])
-    #     if len(stored_steps) != steps_count:
-    #         logging.error(
-    #             f"Steps count mismatch for case '{case_name}': stored={len(stored_steps)}, tracked={steps_count}"
-    #         )
-
-    #     # Save to all cases data
-    #     self.all_cases_data.append(self.current_case_data.copy())
-    #     logging.debug(
-    #         f"Finished case: '{case_name}' with status: {final_status}, {steps_count} steps, total cases: {len(self.all_cases_data)}"
-    #     )
-
-    #     # Clean up current case data
-    #     self.current_case_data = None
-    #     self.current_case_steps = []
-    #     self.step_counter = 0
 
     async def get_current_page(self):
         return self.browser_session.page

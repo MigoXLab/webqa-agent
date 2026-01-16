@@ -29,7 +29,7 @@ class WebAccessibilityTest:
 
     async def run(self, url: str, sub_links: list) -> SubTestResult:
         logging.debug(f'Starting combined HTTPS and status check for {url}')
-        result = SubTestResult(name=self._get_text('accessibility_check'))
+        result = SubTestResult(name=self._get_text('accessibility_check'), sub_test_id=f'basic_1')
 
         with Display.display(self._get_text('basic_test_display') + result.name):
             try:
@@ -198,7 +198,7 @@ class PageButtonTest:
             SubTestResult containing test results and click screenshots
         """
 
-        result = SubTestResult(name=self._get_text('clickable_element_check'))
+        result = SubTestResult(name=self._get_text('clickable_element_check'), sub_test_id=f'basic_2')
         logging.info(f"{icon['running']} Running Sub Test: {result.name}")
         sub_test_results = []
         with Display.display(self._get_text('basic_test_display') + result.name):

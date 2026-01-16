@@ -27,6 +27,7 @@ class MainGraphState(TypedDict):
     session_pool: Any                    # BrowserSessionPool instance
     llm_config: Optional[dict]           # LLM config for creating UITester
     report_config: Optional[dict]        # Report config
+    browser_config: Optional[dict]       # Browser config
 
     # Output
     final_report: Optional[dict]

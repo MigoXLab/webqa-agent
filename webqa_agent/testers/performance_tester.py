@@ -30,7 +30,7 @@ class LighthouseMetricsTest:
             browser_config: Config of browser
         """
         test_name = f"Lighthouse_{browser_config['viewport']['width']}x{browser_config['viewport']['height']}"
-        result = SubTestResult(name=test_name)
+        result = SubTestResult(name=test_name, sub_test_id='performance')
 
         try:
             # Check if Node.js is available

@@ -9,9 +9,11 @@ from webqa_agent.browser.config import DEFAULT_CONFIG
 from webqa_agent.data import (ParallelTestSession, TestConfiguration, TestType,
                               get_default_test_name)
 from webqa_agent.executor import ParallelTestExecutor
+from webqa_agent.executor.result_aggregator import ResultAggregator
 from webqa_agent.utils import Display
 from webqa_agent.utils.get_log import GetLog
 from webqa_agent.utils.log_icon import icon
+from webqa_agent.utils.reporting_utils import save_index_json
 
 
 class ParallelMode:
@@ -29,7 +31,7 @@ class ParallelMode:
         test_configurations: Optional[List[Dict[str, Any]]] = None,
         log_cfg: Optional[Dict[str, Any]] = None,
         report_cfg: Optional[Dict[str, Any]] = None
-    ) -> Tuple[Dict[str, Any], str]:
+    ) -> Tuple[Dict[str, Any], str, str, Dict[str, Any]]:
         """Run tests in parallel mode with configurable test types.
 
         Args:
@@ -43,6 +45,13 @@ class ParallelMode:
         Returns:
             Tuple of (aggregated_results, report_path)
         """
+        test_session: Optional[ParallelTestSession] = None
+        completed_session: Optional[ParallelTestSession] = None
+        aggregated_data = None
+        html_path = None
+        run_error: Exception | None = None
+        result = {'total': 0, 'passed': 0, 'failed': 0, 'warning': 0}
+        custom_report_dir: Optional[str] = None
         try:
             # Use default config if none provided
             if not log_cfg:
@@ -88,6 +97,21 @@ class ParallelMode:
             ActionHandler.init_screenshot_session(custom_report_dir=custom_report_dir)
             logging.info(f'📸 Screenshot directory initialized for report: {custom_report_dir}')
 
+            # Initialize index.json at start
+            initial_result_count = {'total': 0, 'passed': 0, 'failed': 0, 'warning': 0}
+            if test_configurations:
+                initial_result_count['total'] = len(test_configurations)
+
+            save_index_json(
+                test_session=test_session,
+                report_dir=custom_report_dir,
+                result_count=initial_result_count,
+                llm_config=llm_config,
+                browser_config=browser_config,
+                report_lang=report_cfg.get('language', 'zh-CN'),
+                mode='gen'
+            )
+
             # Configure tests based on input or legacy test objects
             if test_configurations:
                 self._configure_tests_from_config(test_session, test_configurations, browser_config, report_cfg)
@@ -95,20 +119,86 @@ class ParallelMode:
             # Execute tests in parallel
             completed_session = await self.executor.execute_parallel_tests(test_session)
 
-            result = completed_session.aggregated_results.get('count', {})
+            # Calculate result statistics (count by sub-tests for gen mode) using shared aggregator logic
+            test_results = list(completed_session.test_results.values())
+            result = ResultAggregator.compute_counts_from_tests(test_results)
 
-            await Display.display.stop()
-            Display.display.render_summary()
-            return (
-                completed_session.aggregated_results,
-                completed_session.report_path,
-                completed_session.html_report_path,
-                result,
+            # Generate LLM summary if in gen mode
+            report_lang = report_cfg.get('language', 'en-US')
+
+            llm_summary = ''
+            if hasattr(self.executor, 'result_aggregator'):
+                llm_summary = await self.executor.result_aggregator.generate_llm_summary(
+                    test_results=test_results,
+                    llm_config=llm_config,
+                    report_lang=report_lang
+                )
+            completed_session.llm_summary = llm_summary
+
+            # Final update of index.json
+            save_index_json(
+                test_session=completed_session,
+                report_dir=custom_report_dir,
+                result_count=result,
+                test_results=test_results,
+                llm_config=llm_config,
+                browser_config=browser_config,
+                report_lang=report_lang,
+                mode='gen'
             )
 
-        except Exception as e:
+        except BaseException as e:  # Capture KeyboardInterrupt/CancelledError as well
             logging.error(f'Error in parallel mode: {e}')
-            raise
+            run_error = e
+        finally:
+            try:
+                # Prefer aggregator created during execution; fall back to a new one
+                aggregator = getattr(self.executor, 'result_aggregator', ResultAggregator(report_cfg))
+                if custom_report_dir:
+                    if aggregated_data is None:
+                        aggregated_data, _ = aggregator.aggregate_report_json('gen', custom_report_dir)
+
+                    if completed_session is None:
+                        completed_session = test_session
+                    if completed_session is None:
+                        completed_session = ParallelTestSession(session_id=str(uuid.uuid4()), target_url=url, llm_config=llm_config)
+
+                    if html_path is None:
+                        html_path = aggregator.generate_html_report_fully_inlined(
+                            completed_session, report_dir=custom_report_dir, aggregated_data=aggregated_data
+                        )
+                        completed_session.html_report_path = html_path
+
+                    if completed_session and test_session is None:
+                        test_session = completed_session
+
+                    # Cleanup tmp only when run succeeded and we aggregated data
+                    has_results = bool(aggregated_data and any(k != 'index' for k in aggregated_data.get('gen', {})))
+                    if run_error is None and has_results:
+                        aggregator.cleanup_tmp_dir(custom_report_dir)
+            except Exception as agg_err:
+                logging.warning(f'Failed to aggregate/generate report: {agg_err}')
+
+            # Cleanup Display
+            try:
+                await Display.display.stop()
+                Display.display.render_summary()
+            except Exception as display_err:
+                logging.warning(f'Failed to stop display: {display_err}')
+
+        if run_error:
+            raise run_error
+
+        if test_session is None:
+            test_session = ParallelTestSession(session_id=str(uuid.uuid4()), target_url=url, llm_config=llm_config)
+            test_session.report_path = custom_report_dir or ''
+
+        return (
+            test_session.aggregated_results,
+            test_session.report_path,
+            test_session.html_report_path,
+            result,
+        )
 
     def _configure_tests_from_config(
         self,

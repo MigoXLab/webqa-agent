@@ -4,6 +4,7 @@ This mode is activated when the YAML configuration contains a 'cases' field.
 It supports both serial and parallel execution with ai/aiAssert steps.
 """
 
+
 import logging
 import os
 import uuid
@@ -19,9 +20,11 @@ from webqa_agent.data import (ParallelTestSession, TestConfiguration,
 from webqa_agent.data.case_structures import Case
 from webqa_agent.data.test_structures import get_category_for_test_type
 from webqa_agent.executor.case_executor import CaseExecutor
+from webqa_agent.executor.result_aggregator import ResultAggregator
 from webqa_agent.utils import Display
 from webqa_agent.utils.get_log import GetLog
 from webqa_agent.utils.log_icon import icon
+from webqa_agent.utils.reporting_utils import save_index_json
 
 
 class CaseMode:
@@ -131,6 +134,8 @@ class CaseMode:
         # Create test session
         session_id = str(uuid.uuid4())
         test_session = ParallelTestSession(session_id=session_id, llm_config=llm_config)
+        if all_target_urls:
+            test_session.target_url = all_target_urls[0]
 
         # Set up report directory
         report_ts = datetime.now().strftime('%Y-%m-%d_%H-%M-%S_%f')
@@ -140,17 +145,17 @@ class CaseMode:
         # Clear any existing session state to ensure isolation
         ActionHandler.clear_screenshot_session()
 
+        # Get report_dir or use default
         report_dir = report_config.get('report_dir') if report_config else None
-        # Handle null, None, empty string, or missing value
-        if not report_dir or (isinstance(report_dir, str) and report_dir.strip() == ''):
+        if not report_dir or (isinstance(report_dir, str) and not report_dir.strip()):
             # Use default reports/{timestamp}/ directory
             report_dir = os.path.join('reports', f'test_{report_ts}')
 
-        # Update report_config with the resolved report_dir for consistency
-        if report_config is not None:
-            report_config['report_dir'] = report_dir
-        else:
-            report_config = {'report_dir': report_dir, 'language': 'en-US'}
+        # Ensure report_config exists and contains resolved report_dir
+        if report_config is None:
+            report_config = {}
+        report_config.setdefault('language', 'en-US')
+        report_config['report_dir'] = report_dir
 
         test_session.report_path = report_dir
 
@@ -174,18 +179,42 @@ class CaseMode:
         test_session.add_test_configuration(test_config)
         test_session.start_session()
 
+        # Initialize index.json at start
+        initial_result_count = {'total': len(cases), 'passed': 0, 'failed': 0, 'warning': 0}
+        save_index_json(
+            test_session=test_session,
+            report_dir=report_dir,
+            result_count=initial_result_count,
+            llm_config=llm_config,
+            browser_config=browser_config,
+            report_lang=report_lang,
+            mode='run'
+        )
+
         case_executor = None
         case_results = None
         result_count = {'total': 0, 'passed': 0, 'failed': 0, 'warning': 0}
         html_report_path = None
+        aggregated_data = None
+        result_aggregator = ResultAggregator(report_config)
+        run_error: Optional[Exception] = None
 
         try:
             # Parse and validate cases from YAML dicts
             try:
                 # Case model has extra='allow', so it keeps _config
+                # Sanitization of name happens here in Case model
                 parsed_cases = Case.from_yaml_list(cases)
                 logging.info(f'📋 Parsed and validated {len(parsed_cases)} test cases')
                 result_count['total'] = len(parsed_cases)
+
+                # Keep original display names; safe_name is stored separately on the model
+                # Ensure indices match (Case.from_yaml_list should maintain order)
+                if len(parsed_cases) != len(cases):
+                    raise ValueError(f'Parsed cases count ({len(parsed_cases)}) does not match input count ({len(cases)})')
+
+                for i, parsed_case in enumerate(parsed_cases):
+                    cases[i]['safe_name'] = parsed_case.safe_name
             except ValidationError as e:
                 # Format friendly error message
                 error_details = []
@@ -227,65 +256,83 @@ class CaseMode:
                 logging.warning('case_executor.execute_cases returned None, treating as empty list')
                 case_results = []
 
-            # Calculate result statistics
-            total_cases = len(case_results)
-            passed_cases = sum(1 for c in case_results if c.status == TestStatus.PASSED)
-            failed_cases = sum(1 for c in case_results if c.status == TestStatus.FAILED)
-            warning_cases = sum(1 for c in case_results if c.status == TestStatus.WARNING)
-
-            result_count.update({
-                'total': total_cases,
-                'passed': passed_cases,
-                'failed': failed_cases,
-                'warning': warning_cases,
-            })
-
-            # Determine overall status
-            overall_status = TestStatus.PASSED
-            error_message = None
-            if failed_cases > 0:
-                overall_status = TestStatus.FAILED
-                error_message = f'{failed_cases} out of {total_cases} cases failed'
-            elif warning_cases > 0:
-                overall_status = TestStatus.WARNING
-
-            # Build test result
+            # Build test result first
             end_time = datetime.now()
             test_result = TestResult(
                 test_id=test_config.test_id,
                 test_type=test_config.test_type,
                 test_name=test_config.test_name,
-                status=overall_status,
+                status=TestStatus.PASSED,  # Will be updated based on sub_tests
                 category=get_category_for_test_type(test_config.test_type),
                 start_time=test_session.start_time,
                 end_time=end_time,
                 sub_tests=case_results,
-                error_message=error_message,
+                error_message=None,
             )
+
+            # Calculate result statistics and determine overall status
+            result_count = ResultAggregator.compute_counts_from_tests([test_result])
+            total_cases = result_count.get('total', 0)
+            passed_cases = result_count.get('passed', 0)
+            failed_cases = result_count.get('failed', 0)
+            warning_cases = result_count.get('warning', 0)
+
+            # Update status based on results
+            if failed_cases > 0:
+                test_result.status = TestStatus.FAILED
+                test_result.error_message = f'{failed_cases} out of {total_cases} cases failed'
+            elif warning_cases > 0:
+                test_result.status = TestStatus.WARNING
 
             test_session.update_test_result(test_config.test_id, test_result)
             test_session.complete_session()
+
+            # Update index.json after completion
+            save_index_json(
+                test_session=test_session,
+                report_dir=report_dir,
+                result_count=result_count,
+                test_results=[test_result], # Wrap in list for save_index_json compatibility
+                llm_config=llm_config,
+                browser_config=browser_config,
+                report_lang=report_lang,
+                mode='run'
+            )
+
             logging.info(f"{icon['check']} Cases executed: {passed_cases}/{total_cases} passed")
 
-        except Exception as e:
-            raise e
+        except BaseException as e:  # Capture KeyboardInterrupt/CancelledError as well
+            run_error = e
         finally:
-            # Generate HTML report
-            if case_executor and report_dir:
-                try:
-                    html_report_path = self._generate_html_with_jinja2(
-                        test_session, report_config or {'language': 'en-US'}, report_dir, result_count
+            # Aggregate and generate report even if execution was interrupted
+            try:
+                if aggregated_data is None:
+                    aggregated_data, _ = result_aggregator.aggregate_report_json('run', report_dir)
+
+                if html_report_path is None:
+                    html_report_path = result_aggregator.generate_html_report_fully_inlined(
+                        test_session, report_dir=report_dir, aggregated_data=aggregated_data
                     )
                     test_session.html_report_path = html_report_path
-                except Exception as report_err:
-                    logging.warning(f'Failed to generate final report: {report_err}')
+                    logging.info(f"{icon['check']} HTML report generated: {html_report_path}")
+
+                # Cleanup tmp only when run succeeded and we actually aggregated results
+                # Note: We exclude 'index' key because it's metadata, not actual test results
+                has_results = bool(aggregated_data and any(k != 'index' for k in aggregated_data.get('run', {})))
+                if run_error is None and has_results:
+                    result_aggregator.cleanup_tmp_dir(report_dir)
+            except Exception as agg_err:
+                logging.warning(f'Failed to aggregate/generate report in {report_dir}: {agg_err}', exc_info=True)
 
             # Cleanup Display
             try:
                 await Display.display.stop()
                 Display.display.render_summary()
             except Exception as display_err:
-                logging.warning(f'Failed to stop display: {display_err}')
+                logging.warning(f'Failed to stop display: {display_err}', exc_info=True)
+
+        if run_error:
+            raise run_error
 
         return (
             test_session.aggregated_results,
@@ -293,321 +340,3 @@ class CaseMode:
             test_session.html_report_path,
             result_count,
         )
-
-    def _generate_html_with_jinja2(
-        self, test_session: ParallelTestSession, report_cfg: Dict[str, Any], report_dir: str, result_count: Dict[str, Any]
-    ) -> str:
-        """Generate HTML test report with Jinja2 template, merge all test case
-        data.
-
-        Args:
-            test_session: ParallelTestSession object
-            report_cfg: report configuration
-            report_dir: report directory
-            result_count: result count
-
-        Returns:
-            str: report path
-        """
-        # read all test data files
-        test_data = []
-        test_data_files = []
-        try:
-            import glob
-            import json
-
-            # Find all test_data_*.json files in report_dir and sort by filename (which includes index)
-            test_data_files = sorted(glob.glob(os.path.join(report_dir, 'test_data_*.json')))
-
-            if not test_data_files:
-                logging.warning(f'No test data files found in {report_dir}')
-                return None
-
-            # read and merge all test data
-            for data_file in test_data_files:
-                try:
-                    with open(data_file, 'r', encoding='utf-8') as f:
-                        file_data = json.load(f)
-                        if isinstance(file_data, list):
-                            test_data.extend(file_data)
-                except Exception as e:
-                    logging.warning(f'Failed to read test data file: {data_file}, error: {str(e)}')
-
-            # Load monitoring data files and merge with corresponding case data
-            monitoring_files = sorted(glob.glob(os.path.join(report_dir, '*_monitor.json')))
-            monitoring_data_by_sub_test_id = {}
-            for monitoring_file in monitoring_files:
-                try:
-                    with open(monitoring_file, 'r', encoding='utf-8') as f:
-                        monitoring_data = json.load(f)
-                        monitoring_content = monitoring_data.get('monitoring_data', {})
-                        sub_test_id = monitoring_data.get('sub_test_id')
-                        if sub_test_id:
-                            monitoring_data_by_sub_test_id[sub_test_id] = monitoring_content
-                except Exception as e:
-                    logging.warning(f'Failed to read monitoring data file: {monitoring_file}, error: {str(e)}')
-
-            # Merge monitoring data into corresponding case data
-            for case in test_data:
-                case_sub_test_id = case.get('sub_test_id')
-                raw_monitoring = None
-
-                # Match by sub_test_id
-                if case_sub_test_id and case_sub_test_id in monitoring_data_by_sub_test_id:
-                    raw_monitoring = monitoring_data_by_sub_test_id[case_sub_test_id]
-
-                if raw_monitoring:
-                    # Rebuild messages field from monitoring data for template compatibility
-                    # Convert monitoring data to template-expected format
-                    console_errors = raw_monitoring.get('console', [])
-                    network_data = raw_monitoring.get('network', {
-                        'responses': [],
-                        'failed_requests': []
-                    })
-                    case['messages'] = {
-                        'console_error_message': console_errors,
-                        'network_message': network_data
-                    }
-                    logging.debug(f'Merged monitoring data for case {case_sub_test_id}: {case.get("name", "unknown")}')
-                else:
-                    # If no monitoring data, ensure messages is an empty dict
-                    if 'messages' not in case or not case.get('messages'):
-                        case['messages'] = {}
-        except Exception as e:
-            logging.error(f'Failed to merge test data: {str(e)}')
-            return None
-
-        # Check if we have test data
-        if not test_data:
-            logging.error('No test data found after merging')
-            return None
-
-        # Sort test_data by case_index to ensure correct order
-        test_data.sort(key=lambda x: x.get('case_index', 999))
-
-        logging.debug(f'Loaded {len(test_data)} test cases from {len(test_data_files)} files')
-
-        # Extract case summary information
-        case_summaries = []
-        for i, case in enumerate(test_data):
-            case_summaries.append({
-                'index': i + 1,
-                'name': case.get('name', f'Case {i+1}'),
-                'status': case.get('status', 'unknown')
-            })
-
-        # # prepare template data - if OSS is enabled, remove base64 data to reduce HTML file size
-        # if cls.enable_oss_screenshots:
-        #     for case in test_data:
-        #         for step in case.get('steps', []):
-        #             for screenshot in step.get('screenshots', []):
-        #                 # 如果有 OSS URL，移除 base64 数据
-        #                 if screenshot.get('oss_url'):
-        #                     screenshot.pop('base64', None)
-
-        passed_count = result_count.get('passed', 0)
-        warning_count = result_count.get('warning', 0)
-        failed_count = result_count.get('failed', 0)
-
-        # Recalculate summary from actual data found on disk for accuracy (especially on crashes)
-        if test_data:
-            passed_count = sum(1 for c in test_data if c.get('status') == 'passed')
-            warning_count = sum(1 for c in test_data if c.get('status') == 'warning')
-            failed_count = sum(1 for c in test_data if c.get('status') == 'failed')
-
-        total_count = result_count.get('total', len(test_data))
-        exception_count = total_count - passed_count - warning_count - failed_count
-        total_count = total_count  # Keep as is for template usage
-
-        # render template with Jinja2
-        try:
-            from jinja2 import BaseLoader, Environment, select_autoescape
-
-            # create a custom filter to parse JSON string
-            def from_json(value):
-                if not value:
-                    return {}
-                try:
-                    return json.loads(value)
-                except:
-                    return {'error': 'Invalid JSON'}
-
-            # process image data, support base64, OSS URL and path
-            def process_image(img_data):
-                if not img_data:
-                    return ''
-
-                # if new format (dict format)
-                if isinstance(img_data, dict):
-                    # use OSS URL (if exists)
-                    if img_data.get('oss_url'):
-                        return img_data.get('oss_url')
-                    # otherwise use data field (maybe base64 or path)
-                    elif img_data.get('data'):
-                        data = img_data.get('data', '')
-                        # if base64 format, return directly
-                        if isinstance(data, str) and data.startswith('data:image'):
-                            return data
-                        # otherwise treat as path
-                        return data.replace('\\', '/')
-                    # finally try base64 field
-                    elif img_data.get('base64'):
-                        return img_data.get('base64')
-                    else:
-                        return ''
-
-                # compatible with old format (string)
-                if isinstance(img_data, str):
-                    if img_data.startswith('data:image') or img_data.startswith('http'):
-                        return img_data
-                    return img_data.replace('\\', '/')
-
-                return ''
-
-            # set Jinja2 environment
-            env = Environment(
-                loader=BaseLoader(),
-                autoescape=select_autoescape(['html', 'xml'])
-            )
-
-            # Custom safe tojson filter that handles Undefined and missing attributes
-            def safe_tojson(value, indent=None):
-                """Safe JSON serialization that handles Undefined objects and
-                None values."""
-                import json
-
-                from jinja2 import Undefined
-
-                # Handle Undefined or None
-                if value is None or isinstance(value, Undefined):
-                    return 'null'
-
-                try:
-                    if indent:
-                        return json.dumps(value, indent=indent, ensure_ascii=False, default=str)
-                    else:
-                        return json.dumps(value, ensure_ascii=False, default=str)
-                except (TypeError, ValueError) as e:
-                    logging.warning(f'Failed to serialize to JSON: {e}, value type: {type(value)}')
-                    return 'null'
-
-            # Custom filter to render modelIO - simple version without markdown
-            def render_modelio(value):
-                """Render modelIO as formatted JSON or plain text."""
-                if not value:
-                    return ''
-
-                # Try to parse as JSON first
-                try:
-                    if isinstance(value, str):
-                        parsed = json.loads(value)
-                        # Format as pretty JSON and wrap in code block
-                        formatted = json.dumps(parsed, indent=2, ensure_ascii=False)
-                        # HTML escape for safety
-                        import html
-                        formatted = html.escape(formatted)
-                        return f'<pre><code class="language-json">{formatted}</code></pre>'
-                except (json.JSONDecodeError, TypeError):
-                    pass
-
-                # If not JSON, display as plain text in pre tag
-                import html
-                if isinstance(value, str):
-                    escaped = html.escape(value)
-                    return f'<pre>{escaped}</pre>'
-                else:
-                    escaped = html.escape(str(value))
-                    return f'<pre>{escaped}</pre>'
-
-            # 添加自定义过滤器
-            env.filters['from_json'] = from_json
-            env.filters['process_image'] = process_image
-            env.filters['tojson'] = safe_tojson  # Override built-in tojson with safe version
-            env.filters['render_modelio'] = render_modelio  # Render modelIO as formatted JSON or plain text
-
-            def decode_unicode(s):
-                """Decode Unicode escape sequence, while preserving existing
-                Chinese characters."""
-                if not isinstance(s, str):
-                    return s
-                try:
-                    # check if contains Unicode escape sequence (like \u4e2d \u6587)
-                    import re
-                    if re.search(r'\\u[0-9a-fA-F]{4}', s):
-                        # only decode when contains Unicode escape sequence
-                        # use raw_unicode_escape encoding and then decode
-                        decoded = s.encode('utf-8').decode('unicode_escape')
-                        # handle possible surrogate pairs
-                        try:
-                            decoded = decoded.encode('utf-16', 'surrogatepass').decode('utf-16', 'replace')
-                        except:
-                            pass
-                        return decoded
-                    else:
-                        # string is already normal UTF-8, return directly
-                        return s
-                except Exception:
-                    # decode failed, return original string
-                    return s
-
-            env.filters['decode_unicode'] = decode_unicode
-
-            # Get template path - use static/template.html
-            from pathlib import Path
-            executor_dir = Path(__file__).resolve().parent
-            static_dir = executor_dir.parent / 'static'
-            template_path = static_dir / 'template.html'
-
-            if not template_path.exists():
-                logging.error(f'Template not found at {template_path}')
-                return None
-
-            logging.debug(f'Loading template from: {template_path}')
-            template_string = template_path.read_text(encoding='utf-8')
-
-            # Load i18n resources
-            language = report_cfg.get('language', 'en-US')
-            i18n_file = static_dir / 'i18n' / f'{language}.json'
-            i18n_data = {}
-
-            if i18n_file.exists():
-                try:
-                    with open(i18n_file, 'r', encoding='utf-8') as f:
-                        i18n_data = json.load(f)
-                    logging.debug(f'Loaded i18n file: {i18n_file}')
-                except Exception as e:
-                    logging.warning(f'Failed to load i18n file {i18n_file}: {e}')
-            else:
-                logging.warning(f'i18n file not found: {i18n_file}, using default language')
-
-            # get template
-            template = env.from_string(template_string)
-
-            # render template
-            rendered_html = template.render(
-                test_cases=test_data,
-                case_summaries=case_summaries,
-                passed_count=passed_count,
-                warning_count=warning_count,
-                failed_count=failed_count,
-                exception_count=exception_count,
-                total_count=total_count,
-                language=language,
-                i18n=i18n_data
-            )
-
-            # save rendered HTML to file
-            report_path = os.path.join(report_dir, 'run_report.html')
-            with open(report_path, 'w', encoding='utf-8') as f:
-                f.write(rendered_html)
-
-            # Convert to absolute path
-            absolute_report_path = os.path.abspath(report_path)
-            logging.info(f"{icon['check']} HTML report generated: {absolute_report_path}")
-            return absolute_report_path
-
-        except Exception as e:
-            logging.error(f"{icon['cross']} Failed to generate HTML report: {str(e)}")
-            import traceback
-            logging.debug(traceback.format_exc())
-            return None
