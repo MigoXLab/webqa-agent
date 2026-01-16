@@ -8,7 +8,7 @@ import random
 import re
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional, Union
 
 from playwright.async_api import Frame, Page
@@ -1733,9 +1733,8 @@ class ActionHandler:
                 file_path = session_dir / filename
                 file_path_str = str(file_path)
 
-                # Return path relative to the report root for HTML rendering
-                # Screenshots are stored in report_dir/screenshots/ and report is in report_dir/run_report.html
-                relative_path = os.path.join(session_dir.name, filename)
+                # Use POSIX separators to keep HTML assets valid on Windows/macOS/Linux.
+                relative_path = str(PurePosixPath(session_dir.name) / filename)
 
             # Capture screenshot (always returns bytes)
             screenshot_bytes = await self.take_screenshot(

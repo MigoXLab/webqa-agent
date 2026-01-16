@@ -203,7 +203,13 @@ class ResultAggregator:
                         index_data['count'] = count
                         aggregated[mode]['index'] = index_data
         except Exception as backfill_err:
-            logging.warning(f'Failed to backfill aggregated results: {backfill_err}')
+                logging.warning(f'Failed to backfill aggregated results: {backfill_err}')
+
+        # Normalize any file-system paths to POSIX style so HTML works cross-platform
+        try:
+            aggregated = self._normalize_paths_for_web(aggregated)
+        except Exception as norm_err:
+            logging.warning(f'Failed to normalize paths for web: {norm_err}')
 
         # Write the aggregated results to test_results.json
         output_path = os.path.join(report_dir, 'test_results.json')
@@ -293,6 +299,29 @@ class ResultAggregator:
         )
         return safe
 
+    @staticmethod
+    def _normalize_paths_for_web(data: Any) -> Any:
+        """Convert screenshot paths to web-friendly separators.
+
+        Windows paths use backslashes, which break relative asset loading in
+        the generated HTML. This recursively walks the data structure and
+        rewrites strings that look like screenshot paths to POSIX style.
+        """
+
+        def _normalize(value: Any) -> Any:
+            if isinstance(value, dict):
+                normalized = {k: _normalize(v) for k, v in value.items()}
+                if normalized.get('type') == 'path' and isinstance(normalized.get('data'), str):
+                    normalized['data'] = normalized['data'].replace('\\', '/')
+                return normalized
+            if isinstance(value, list):
+                return [_normalize(item) for item in value]
+            if isinstance(value, str) and 'screenshots' in value:
+                return value.replace('\\', '/')
+            return value
+
+        return _normalize(data)
+
     def generate_html_report_fully_inlined(self, test_session, report_dir: str | None = None, aggregated_data: Dict[str, Any] = None) -> str:
         """Generate a fully inlined HTML report for the test session."""
         import json
@@ -329,6 +358,10 @@ class ResultAggregator:
 
             if data is None:
                 data = test_session.to_dict()
+
+            # Ensure any Windows-style paths are safe for browser consumption
+            data = self._normalize_paths_for_web(data)
+
             safe_data_json = self._serialize_data_for_inline(data)
             datajs_content = f'window.testResultData = {safe_data_json};'
 

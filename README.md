@@ -105,8 +105,10 @@ uv run webqa-agent init -m gen
 # Edit config.yaml: target.url, llm_config.api_key
 # Configure test_config
 # For more details, see "Usage > Generate Mode - Configuration" below
-uv run webqa-agent gen      # Run Generate Mode
-uv run webqa-agent gen -c /path/to/config.yaml -w 4      # Generate Mode with specified config and 4 parallel workers
+# Run Generate Mode
+uv run webqa-agent gen
+# Generate Mode with specified config and 4 parallel workers
+uv run webqa-agent gen -c /path/to/config.yaml -w 4
 
 # 4) Run Mode
 # Initialize Run mode configuration (config_run.yaml)
@@ -114,8 +116,10 @@ uv run webqa-agent init -m run
 # Edit config.yaml: target.url, llm_config.api_key
 # Write natural language test cases
 # For more details, see "Usage > Run Mode - Configuration" below
-uv run webqa-agent run     # Run Run Mode
-uv run webqa-agent run -c /path/to/config_run.yaml -w 4     # Run Mode with specified config and 4 parallel workers
+# Run Run Mode
+uv run webqa-agent run
+# Run Mode with specified config and 4 parallel workers
+uv run webqa-agent run -c /path/to/config_run.yaml -w 4
 ```
 
 ### 🔧 Generate Mode - Optional Dependencies
@@ -166,7 +170,6 @@ For more details, please refer to [docs/MODES&CLI.md](docs/MODES&CLI.md)
 target:
   url: https://example.com              # Website URL to test
   description: Website QA testing
-  max_concurrent_tests: 2               # Optional, default 2
 
 test_config:
   function_test:                        # Functional testing
@@ -185,20 +188,13 @@ llm_config:                             # LLM configuration, supports OpenAI, An
   filter_model: gpt-4o-mini             # Lightweight model for element filtering (optional)
   api_key: your_api_key                 # Or set via environment variable (OPENAI_API_KEY)
   base_url: https://api.openai.com/v1   # Optional, API endpoint. For OpenAI-compatible models (Doubao, Qwen, etc.), set to their API endpoint
-  temperature: 0.1                      # Optional, model temperature
-  # For detailed configuration examples (OpenAI, Claude, Gemini) and reasoning settings,
-  # see config/config.yaml.example
 
 browser_config:
-  viewport: {"width": 1280, "height": 720}
   headless: False                       # Auto True in Docker
   language: en-US
 
 report:
   language: en-US                       # zh-CN or en-US
-
-log:
-  level: info                           # debug, info, warning, error
 ```
 
 ### Run Mode - Configuration
@@ -214,7 +210,6 @@ For more details and test case writing specifications, please refer to [docs/MOD
 ```yaml
 target:
   url: https://example.com              # Target website URL
-  max_concurrent_tests: 2               # Maximum concurrent test count
 
 llm_config:                             # LLM configuration
   api: openai
