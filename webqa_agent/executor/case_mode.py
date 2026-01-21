@@ -242,34 +242,15 @@ class CaseMode:
                 logging.error(f"{icon['cross']} {friendly_msg}")
                 raise ValueError(friendly_msg) from e
 
-            case_results = []
-            case_executor = None
+            # Execute all cases with shared session pool (cross-config session reuse/eviction)
+            # Each case carries its own _config for browser settings
+            case_executor = CaseExecutor(
+                test_config=test_config,
+                llm_config=llm_config,
+                report_dir=report_dir,
+            )
 
-            # Split cases by originating config in order to isolate browser sessions between groups
-            case_groups = []
-            start_idx = 0
-            for config in configs:
-                cfg_cases = config.get('cases', [])
-                if not cfg_cases:
-                    continue
-                end_idx = start_idx + len(cfg_cases)
-                case_groups.append(cases[start_idx:end_idx])
-                start_idx = end_idx
-
-            for group_index, group_cases in enumerate(case_groups, start=1):
-                logging.info(f'Executing config #{group_index} ({len(group_cases)} case(s)) with isolated sessions')
-                case_executor = CaseExecutor(
-                    test_config=test_config,
-                    llm_config=llm_config,
-                    report_dir=report_dir,
-                )
-
-                group_results = await case_executor.execute_cases(cases=group_cases, workers=workers)
-                if group_results:
-                    case_results.extend(group_results)
-                else:
-                    logging.warning(f'No results returned for config #{group_index}')
-
+            case_results = await case_executor.execute_cases(cases=cases, workers=workers)
             if case_results is None:
                 logging.warning('case_executor.execute_cases returned None, treating as empty list')
                 case_results = []

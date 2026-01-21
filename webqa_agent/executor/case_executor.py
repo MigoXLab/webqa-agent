@@ -177,14 +177,21 @@ class CaseExecutor:
         case_queue: asyncio.Queue = asyncio.Queue()  # Queue for normal cases
         for idx, case in normal_cases:
             await case_queue.put((idx, case))
+        # Add sentinels early so idle workers can exit immediately
+        for _ in range(workers):
+            await case_queue.put(None)
 
         async def worker(worker_id: int):
             """Worker that pulls cases from queue until sentinel."""
             nonlocal completed_count
 
+            session = None
+            current_config_key = None
+
             while True:
                 item = await case_queue.get()
                 if item is None:  # Sentinel - exit
+                    case_queue.task_done()
                     break
 
                 idx, case = item
@@ -193,6 +200,7 @@ class CaseExecutor:
 
                 # Extract browser config for this case
                 browser_cfg = case.get('_config', {}).get('browser_config', self.browser_config)
+                new_config_key = session_pool._make_config_key(browser_cfg)
 
                 # Set test_id context for logging (imitating graph.py style)
                 # Including both ID and Name for maximum clarity
@@ -202,13 +210,16 @@ class CaseExecutor:
                 # Set screenshot prefix to avoid filename collisions in parallel execution
                 prefix_token = screenshot_prefix_var.set(case_id)
 
-                session = None
                 case_result = None
                 raw_monitoring_data = None
 
                 try:
                     logging.info(f"Worker {worker_id}: Starting case '{case_name}' ({idx}/{total_cases})")
-                    session = await session_pool.acquire(browser_config=browser_cfg, timeout=120.0)
+                    if session is None or new_config_key != current_config_key:
+                        if session:
+                            await session_pool.release(session, keep_alive=False)
+                        session = await session_pool.acquire(browser_config=browser_cfg, timeout=120.0)
+                        current_config_key = new_config_key
 
                     with Display.display(case_name):  # pylint: disable=not-callable
                         case_result, raw_monitoring_data = await self.execute_single_case(session=session, case=case, case_index=idx)
@@ -238,6 +249,10 @@ class CaseExecutor:
                         ))
                     case_result = None
                     raw_monitoring_data = None
+                    if session:
+                        await session_pool.release(session, failed=True, keep_alive=False)
+                        session = None
+                        current_config_key = None
 
                 finally:
                     # Reset context variables
@@ -249,20 +264,20 @@ class CaseExecutor:
                         self._save_case_result(case_result, case_name, idx, raw_monitoring_data=raw_monitoring_data, case_config=case_config)
                         self._clear_case_screenshots(case_result)
 
-                    if session:
-                        failed = case_result is None or case_result.status == TestStatus.FAILED
-                        await session_pool.release(session, failed=failed)
+                    # Release session on failure (cleanup handled in execute_single_case)
+                    if session and case_result is not None and case_result.status == TestStatus.FAILED:
+                        await session_pool.release(session, failed=True, keep_alive=False)
+                        session = None
+                        current_config_key = None
 
                     case_queue.task_done()
+            if session:
+                await session_pool.release(session, keep_alive=False)
 
         try:
             # Start workers and wait for completion
             worker_tasks = [asyncio.create_task(worker(i)) for i in range(workers)]
             await case_queue.join()
-
-            # Stop workers
-            for _ in range(workers):
-                await case_queue.put(None)
             await asyncio.gather(*worker_tasks, return_exceptions=True)
 
         finally:
@@ -287,13 +302,17 @@ class CaseExecutor:
         case_name = case.get('name', f'Unnamed Case {case_index}')
         start_time = datetime.now()
 
+        # Clean session state for case isolation (clear cookies/storage from previous case)
+        # This runs before navigate_to which will inject new cookies if configured
+        await session.clean_state()
+
         # Get case-specific config if available (for multi-YAML support)
         case_config = case.get('_config', {})
         url = case_config.get('url') or self.test_specific_config.get('url')
         cookies = case_config.get('cookies') or self.test_specific_config.get('cookies')
         ignore_rules = case_config.get('ignore_rules') or self.test_specific_config.get('ignore_rules', {})
 
-        # Initialize tester and execute steps
+        # Initialize tester and execute steps (navigate_to could inject cookies)
         tester = await self._initialize_tester(session, case_name, url=url, cookies=cookies, ignore_rules=ignore_rules)
 
         # Load fixture state AFTER navigation (cookies + localStorage + sessionStorage)
