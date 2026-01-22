@@ -1325,11 +1325,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             logging.debug(f'Step {i + 1} - Calling Agent to execute {step_type}...')
             start_time = datetime.datetime.now()
 
-            logging.debug(f'[DEBUG] Step {i + 1} - Before agent_executor.ainvoke()')
             result = await agent_executor.ainvoke(
                 {'messages': pruned_messages},
             )
-            logging.debug(f'[DEBUG] Step {i + 1} - After agent_executor.ainvoke(), result keys: {result.keys() if isinstance(result, dict) else type(result)}')
 
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()

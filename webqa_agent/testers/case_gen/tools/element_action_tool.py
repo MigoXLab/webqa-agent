@@ -210,9 +210,7 @@ class UITool(BaseTool):
             logging.debug(f'Executing UI action: {instruction}')
             start_time = datetime.datetime.now()
 
-            logging.debug(f'[DEBUG] Before ui_tester.action() call')
             execution_steps, result = await self.ui_tester_instance.action(instruction)
-            logging.debug(f'[DEBUG] After ui_tester.action() call, result success: {result.get("success")}')
 
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()
@@ -394,9 +392,7 @@ class UITool(BaseTool):
                     logging.warning(f"Action failed: {result.get('message', 'No details')}")
                 return f'[FAILURE] {error_message}'
 
-            logging.debug('[DEBUG] Action execution successful, retrieving page context')
             page_structure, screenshot = await self.get_full_page_context(include_screenshot=True)
-            logging.debug(f'[DEBUG] Got page context, page_structure length: {len(page_structure)}, has screenshot: {screenshot is not None}')
 
             if not isinstance(result, dict):
                 error_msg = f'Action did not return a dictionary. Got: {type(result)}'
