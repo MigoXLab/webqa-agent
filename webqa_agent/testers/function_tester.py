@@ -322,8 +322,8 @@ class UITester:
             })
 
             # Clean up markers before returning to ensure clean state for next step
-            await dp.remove_marker()
-
+            if curr.page_status != 'UNSUPPORTED_PAGE':
+                await dp.remove_marker()
             return execution_steps_dict, execution_result
 
         except Exception as e:
