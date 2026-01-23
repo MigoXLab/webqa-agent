@@ -431,6 +431,17 @@ async def execute_run_mode(config_path: str, workers: int = None):
             print(f'🎯 Target URL: {target_url}')
         print(f'📋 Total cases: {len(cases)}')
 
+    # Pre-process cookies for all configs (load from file path if needed)
+    for cfg in configs:
+        raw_cookies = cfg.get('cookies') or cfg.get('browser_config', {}).get('cookies')
+        if raw_cookies:
+            loaded_cookies = load_cookies(raw_cookies)
+            # Update both possible locations to ensure consistency
+            if 'cookies' in cfg:
+                cfg['cookies'] = loaded_cookies
+            if cfg.get('browser_config', {}).get('cookies'):
+                cfg['browser_config']['cookies'] = loaded_cookies
+
     # Resolve workers: CLI > config > default (2)
     w = workers if workers is not None else configs[0].get('target', {}).get('max_concurrent_tests', 2)
     try:
