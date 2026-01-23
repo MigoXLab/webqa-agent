@@ -450,7 +450,8 @@ class CaseExecutor:
         tester = UITester(
             llm_config=self.llm_config,
             browser_session=session,
-            ignore_rules=_ignore_rules
+            ignore_rules=_ignore_rules,
+            execution_mode='run'  # RUN mode: trust user-specified operations in YAML
         )
         await tester.initialize()
         tester.set_current_test_name(case_name)
