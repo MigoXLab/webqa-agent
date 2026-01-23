@@ -6,8 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from webqa_agent.data import (ParallelTestSession, TestResult, TestStatus,
-                              TestType)
+from webqa_agent.data import ParallelTestSession, TestResult
 
 
 def sanitize_case_name(name: str, keep_chars: str = '-_') -> str:
@@ -52,6 +51,7 @@ def _resolve_output_dir(report_dir: str, storage_subdir: Optional[str] = 'tmp') 
     target_dir.mkdir(parents=True, exist_ok=True)
     return str(target_dir)
 
+
 def save_index_json(
     test_session: ParallelTestSession,
     report_dir: str,
@@ -85,6 +85,8 @@ def save_index_json(
     security_scene_total = 0
     performance_total = 0
     api_request_total = 0
+    console_error_total = 0
+    network_error_total = 0
     results_list: List[Dict[str, Any]] = []
 
     # Collect result summaries and counters
@@ -125,6 +127,10 @@ def save_index_json(
                 api_request_total += api_count
                 if isinstance(metrics, dict):
                     metrics.setdefault('api_request_count', api_count)
+
+                # Console/API error counts for summary display
+                console_error_total += _get_metric_value(metrics, 'console_error_count', 0)
+                network_error_total += _get_metric_value(metrics, 'network_error_count', 0)
 
                 raw_name = _get_attr(sub, 'name')
                 display_name = raw_name
@@ -193,6 +199,17 @@ def save_index_json(
             'item': f'已检查{api_request_total}个接口请求' if report_lang == 'zh-CN' else f'Checked {api_request_total} API requests'
         })
 
+    # Console/API error summary (only when any error exists)
+    if console_error_total > 0 or network_error_total > 0:
+        if report_lang == 'zh-CN':
+            error_item = f'Console报错{console_error_total}个，接口报错{network_error_total}个'
+        else:
+            error_item = f'Console errors: {console_error_total}, API errors: {network_error_total}'
+        test_items.append({
+            'name': '控制台/接口报错' if report_lang == 'zh-CN' else 'Console/API Errors',
+            'item': error_item
+        })
+
     total_items = result_count.get('total', 0)
     has_function_item = any(item.get('name') == cat_map['function'] for item in test_items)
     if not has_function_item and total_items > 0 and mode == 'gen':
@@ -239,6 +256,7 @@ def save_index_json(
     except Exception as e:
         logging.warning(f'Failed to generate index.json: {e}')
 
+
 def get_result_filename(index: int, name: str, category: str, mode: str = 'gen', is_monitor: bool = False, sub_test_id: str = '') -> str:
     """Generate result filename based on sub_test_id and sanitized name.
 
@@ -269,8 +287,9 @@ def get_result_filename(index: int, name: str, category: str, mode: str = 'gen',
 
     return f'{sub_test_id}_{safe_name}{suffix}.json'
 
+
 def save_test_result_json(
-    test_result: Any, # Can be TestResult or SubTestResult
+    test_result: Any,  # Can be TestResult or SubTestResult
     report_dir: str,
     index: int,
     name: str,
@@ -321,10 +340,7 @@ def save_test_result_json(
         metrics = result_dict.get('metrics') or {}
         if not isinstance(metrics, dict):
             metrics = {}
-        steps_list = result_dict.get('steps', [])
-        step_count = len(steps_list) if isinstance(steps_list, list) else 0
-
-        # Interface/API request count
+    # Interface/API request count
         # Only compute/store api_request_count for run mode
         if mode != 'gen':
             api_request_count = metrics.get('api_request_count')
@@ -357,6 +373,7 @@ def save_test_result_json(
     except Exception as e:
         logging.warning(f'Failed to save result JSON for {name}: {e}')
         return ''
+
 
 def save_monitor_data_json(
     monitoring_data: Dict[str, Any],
