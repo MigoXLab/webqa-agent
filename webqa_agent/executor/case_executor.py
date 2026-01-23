@@ -283,8 +283,9 @@ class CaseExecutor:
         finally:
             await session_pool.close_all()
 
-        # Sort by original index
-        results.sort(key=lambda r: next((i for i, c in enumerate(cases, 1) if c.get('case_id') == r.sub_test_id), 999))
+        # Sort by original index (O(n) using lookup dict)
+        case_order = {c.get('case_id'): i for i, c in enumerate(cases, 1)}
+        results.sort(key=lambda r: case_order.get(r.sub_test_id, 999))
         logging.info(f"{icon['check']} Execution completed: {len(results)}/{total_cases} cases")
         return results
 
@@ -517,33 +518,29 @@ class CaseExecutor:
         prev_step_context: Optional[StepContext] = None
 
         for step_idx, step in enumerate(steps, 1):
-            try:
-                parsed_step = CaseStep.model_validate(step)
+            parsed_step = CaseStep.model_validate(step)
 
-                if parsed_step.step_type == 'action':
-                    logging.info(f'Executing step {step_idx}: {parsed_step.action}')
-                    step_result, prev_step_context = await self._execute_action_step(
-                        tester, parsed_step.action, step_idx
-                    )
-                elif parsed_step.step_type == 'verify':
-                    logging.info(f'Executing step {step_idx}: {parsed_step.verify}')
-                    step_result, prev_step_context = await self._execute_verify_step(
-                        tester, parsed_step.verify, step_idx, prev_step_context
-                    )
-                else:
-                    raise ValueError(f'Unsupported step type: {parsed_step.step_type}')
+            if parsed_step.step_type == 'action':
+                logging.info(f'Executing step {step_idx}: {parsed_step.action}')
+                step_result, prev_step_context = await self._execute_action_step(
+                    tester, parsed_step.action, step_idx
+                )
+            elif parsed_step.step_type == 'verify':
+                logging.info(f'Executing step {step_idx}: {parsed_step.verify}')
+                step_result, prev_step_context = await self._execute_verify_step(
+                    tester, parsed_step.verify, step_idx, prev_step_context
+                )
+            else:
+                raise ValueError(f'Unsupported step type: {parsed_step.step_type}')
 
-                executed_steps.append(step_result)
+            executed_steps.append(step_result)
 
-                # Update case status
-                if step_result.status == TestStatus.FAILED:
-                    case_status = TestStatus.FAILED
-                    error_messages.append(f'Step {step_idx} failed: {step_result.errors}')
-                elif step_result.status == TestStatus.WARNING and case_status == TestStatus.PASSED:
-                    case_status = TestStatus.WARNING
-
-            except Exception as e:
-                raise e
+            # Update case status
+            if step_result.status == TestStatus.FAILED:
+                case_status = TestStatus.FAILED
+                error_messages.append(f'Step {step_idx} failed: {step_result.errors}')
+            elif step_result.status == TestStatus.WARNING and case_status == TestStatus.PASSED:
+                case_status = TestStatus.WARNING
 
         return executed_steps, case_status, error_messages, prev_step_context
 
@@ -678,13 +675,13 @@ class CaseExecutor:
         monitoring_data: Dict[str, Any],
         error_messages: List[str],
         ignore_rules: Optional[Dict[str, Any]] = None
-    ) -> Tuple[TestStatus, List[str], Dict[str, Any]]:
+    ) -> Tuple[TestStatus, List[str], Dict[str, Any], Dict[str, int]]:
         """Check console and network errors from monitoring data.
 
         Logic:
-        - If case already FAILED from steps, don't override
-        - If no ignore rules configured, any error causes FAILED
-        - If ignore rules configured, only unignored errors cause FAILED
+        - Case status is primarily based on step execution
+        - Console/network errors downgrade PASSED to WARNING
+        - FAILED from steps is not overridden
 
         Args:
             case_name: Name of the case (for logging)
@@ -694,7 +691,7 @@ class CaseExecutor:
             ignore_rules: Optional case-specific ignore rules
 
         Returns:
-            Tuple of (updated_case_status, updated_error_messages, messages_data)
+            Tuple of (updated_case_status, updated_error_messages, messages_data, error_counts)
         """
         # Convert monitoring data to template-expected format
         console_errors = monitoring_data.get('console', [])
@@ -712,54 +709,51 @@ class CaseExecutor:
         has_console_ignore_rules = bool(ignore_rules.get('console', []))
         has_network_ignore_rules = bool(ignore_rules.get('network', []))
 
-        # Only check errors if case status is currently PASSED (don't override step failures)
-        if case_status != TestStatus.PASSED:
-            return case_status, error_messages, messages_data
+        failed_requests = network_data.get('failed_requests', [])
+        error_responses = [r for r in network_data.get('responses', []) if r.get('status', 0) >= 400]
+        network_error_count = len(failed_requests) + len(error_responses)
+        error_counts = {
+            'console_error_count': len(console_errors),
+            'network_error_count': network_error_count
+        }
+
+        # Do not override step failures; still record counts for reporting
+        if case_status == TestStatus.FAILED:
+            return case_status, error_messages, messages_data, error_counts
 
         # ========== 1. Check Console Errors ==========
         # Note: ConsoleCheck has already filtered out ignored errors
         # So console_errors only contains unignored errors
         if console_errors:
+            if case_status == TestStatus.PASSED:
+                case_status = TestStatus.WARNING
             if not has_console_ignore_rules:
-                # No ignore rules configured, any console error causes failure
-                case_status = TestStatus.FAILED
                 error_messages.append(f'Console errors detected: {len(console_errors)} error(s)')
-                logging.warning(f'{case_name} detected {len(console_errors)} console errors - marking case as FAILED')
+                logging.warning(f'{case_name} detected {len(console_errors)} console errors - marking case as WARNING')
             else:
-                # Ignore rules configured, but these errors were not filtered
-                # They don't match any ignore rules, so they should cause failure
-                case_status = TestStatus.FAILED
                 error_messages.append(f'Unignored console errors detected: {len(console_errors)} error(s)')
-                logging.warning(f'{case_name} detected {len(console_errors)} unignored console errors - marking case as FAILED')
+                logging.warning(f'{case_name} detected {len(console_errors)} unignored console errors - marking case as WARNING')
 
         # ========== 2. Check Network Errors ==========
         # Note: NetworkCheck has already filtered out ignored requests
         # So failed_requests and error responses only contain unignored errors
-        failed_requests = network_data.get('failed_requests', [])
-        error_responses = [r for r in network_data.get('responses', []) if r.get('status', 0) >= 400]
-
-        network_error_count = len(failed_requests) + len(error_responses)
-
         if network_error_count > 0:
+            if case_status == TestStatus.PASSED:
+                case_status = TestStatus.WARNING
             if not has_network_ignore_rules:
-                # No ignore rules configured, any network error causes failure
-                case_status = TestStatus.FAILED
                 error_messages.append(
                     f'Network errors detected: {len(failed_requests)} failed requests, '
                     f'{len(error_responses)} error responses'
                 )
-                logging.warning(f'{case_name} detected {len(failed_requests)} failed requests, {len(error_responses)} error responses - marking case as FAILED')
+                logging.warning(f'{case_name} detected {len(failed_requests)} failed requests, {len(error_responses)} error responses - marking case as WARNING')
             else:
-                # Ignore rules configured, but these errors were not filtered
-                # They don't match any ignore rules, so they should cause failure
-                case_status = TestStatus.FAILED
                 error_messages.append(
                     f'Unignored network errors detected: {len(failed_requests)} failed requests, '
                     f'{len(error_responses)} error responses'
                 )
-                logging.warning(f'{case_name} detected {len(failed_requests)} unignored failed requests, {len(error_responses)} unignored error responses - marking case as FAILED')
+                logging.warning(f'{case_name} detected {len(failed_requests)} unignored failed requests, {len(error_responses)} unignored error responses - marking case as WARNING')
 
-        return case_status, error_messages, messages_data
+        return case_status, error_messages, messages_data, error_counts
 
     def _build_case_result(
         self,
@@ -803,7 +797,7 @@ class CaseExecutor:
         final_summary = f'Executed {total_steps} steps: {passed_steps} passed, {failed_steps} failed'
 
         # Check monitoring errors (use case-specific ignore_rules if provided)
-        case_status, error_messages, messages_data = self._check_monitoring_errors(
+        case_status, error_messages, messages_data, error_counts = self._check_monitoring_errors(
             case_name=case_name,
             case_status=case_status,
             monitoring_data=monitoring_data,
@@ -822,10 +816,12 @@ class CaseExecutor:
                 'total_steps': total_steps,
                 'passed_steps': passed_steps,
                 'failed_steps': failed_steps,
-                'total_actions': total_actions
+                'total_actions': total_actions,
+                'console_error_count': error_counts.get('console_error_count', 0),
+                'network_error_count': error_counts.get('network_error_count', 0)
             },
             steps=executed_steps,
-            messages={},  # messages_data is not used for now
+            messages=messages_data,
             start_time=start_time.isoformat(),
             end_time=end_time.isoformat(),
             final_summary=final_summary,
