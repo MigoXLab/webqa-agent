@@ -91,20 +91,13 @@ target:
   max_concurrent_tests: 2               # Optional, default 2
 
 test_config:
-  function_test:                        # Functional testing
-    enabled: True
-    type: ai                            # 'default' or 'ai'
-    business_objectives: Test search functionality, generate 3 test cases
-    dynamic_step_generation:
-      enabled: True                     # Enable dynamic step generation
-      max_dynamic_steps: 8              # Generate up to 8 steps per discovery
-      min_elements_threshold: 2         # Require at least 2 new elements to trigger
-  ux_test:                              # User experience testing
-    enabled: True
-  performance_test:                     # Performance analysis (requires Lighthouse)
-    enabled: False
-  security_test:                        # Security scanning (requires Nuclei)
-    enabled: False
+  business_objectives: Test search functionality, generate 3 test cases
+  dynamic_step_generation:
+    enabled: True                       # Enable dynamic step generation
+    max_dynamic_steps: 8                # Generate up to 8 steps per discovery
+    min_elements_threshold: 2           # Require at least 2 new elements to trigger
+  custom_tools:                         # Optional custom tools (default: UI actions, UX verification)
+    enabled: []                         # Empty list: use only default tools
 ```
 
 1. Example 2: Default Functional Traversal + UX + Performance + Security
@@ -116,15 +109,11 @@ target:
   max_concurrent_tests: 4               # Optional, default 2
 
 test_config:
-  function_test:                        # Functional testing
-    enabled: True
-    type: default                       # 'default' or 'ai'
-  ux_test:                              # User experience testing
-    enabled: True
-  performance_test:                     # Performance analysis (requires Lighthouse)
-    enabled: True
-  security_test:                        # Security scanning (requires Nuclei)
-    enabled: True
+  business_objectives: Comprehensive testing with performance and security analysis
+  custom_tools:                         # Enable custom tools
+    enabled:
+      - lighthouse                      # Lighthouse performance testing (requires: npm install -g lighthouse)
+      - nuclei                          # Nuclei security scanning (requires: nuclei installed)
 ```
 
 ## 📋 Run Mode (Test Case Execution)

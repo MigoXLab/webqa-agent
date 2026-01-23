@@ -10,7 +10,11 @@ import threading
 import traceback
 from pathlib import Path
 
-from webqa_agent.executor import ParallelMode
+from webqa_agent.config_models.base_config import (BrowserConfig, LLMConfig,
+                                                   LogConfig, ReportConfig)
+from webqa_agent.config_models.gen_config import (CustomToolsConfig,
+                                                  DynamicStepConfig, GenConfig)
+from webqa_agent.executor.gen_executor import GenExecutor
 from webqa_agent.utils import (check_lighthouse_installation,
                                check_nuclei_installation,
                                check_playwright_browsers_async,
@@ -132,81 +136,6 @@ def validate_and_build_llm_config(cfg):
 
 
 # ============================================================================
-# Test Configuration Builder
-# ============================================================================
-
-def build_test_configurations(cfg, cookies=None):
-    """Build test configurations from config file."""
-    tests = []
-    tconf = cfg.get('test_config', {})
-
-    is_docker = os.getenv('DOCKER_ENV') == 'true'
-    config_headless = cfg.get('browser_config', {}).get('headless', True)
-    headless = True if is_docker else config_headless
-
-    base_browser = {
-        'viewport': cfg.get('browser_config', {}).get('viewport', {'width': 1280, 'height': 720}),
-        'headless': headless,
-    }
-    business_objectives = tconf.get('function_test', {}).get('business_objectives', '')
-    if not business_objectives:
-        business_objectives = ''
-    # Function test
-    if tconf.get('function_test', {}).get('enabled'):
-        if tconf['function_test'].get('type') == 'ai':
-            tests.append({
-                'test_type': 'ui_agent_langgraph',
-                'enabled': True,
-                'browser_config': base_browser,
-                'test_specific_config': {
-                    'cookies': cookies,
-                    'business_objectives': business_objectives,
-                    'dynamic_step_generation': tconf['function_test'].get('dynamic_step_generation', {
-                        'enabled': True,
-                        'max_dynamic_steps': 8,
-                        'min_elements_threshold': 2
-                    }),
-                },
-            })
-        else:
-            tests.append({
-                'test_type': 'basic_test',
-                'enabled': True,
-                'browser_config': base_browser,
-                'test_specific_config': {},
-            })
-
-    # UX test
-    if tconf.get('ux_test', {}).get('enabled'):
-        tests.append({
-            'test_type': 'ux_test',
-            'enabled': True,
-            'browser_config': base_browser,
-            'test_specific_config': {},
-        })
-
-    # Performance test
-    if tconf.get('performance_test', {}).get('enabled'):
-        tests.append({
-            'test_type': 'performance',
-            'enabled': True,
-            'browser_config': base_browser,
-            'test_specific_config': {},
-        })
-
-    # Security test
-    if tconf.get('security_test', {}).get('enabled'):
-        tests.append({
-            'test_type': 'security',
-            'enabled': True,
-            'browser_config': base_browser,
-            'test_specific_config': {},
-        })
-
-    return tests
-
-
-# ============================================================================
 # Command: init
 # ============================================================================
 
@@ -309,61 +238,9 @@ async def run_tests(cfg, execution_mode, config_path: str = None, workers: int =
 
 
 async def execute_gen_mode(cfg, workers: int = 1):
-    """Execute Gen mode tests."""
-    # Check enabled tests
+    """Execute Gen mode tests using GenConfig and GenExecutor."""
+    # Get config sections
     tconf = cfg.get('test_config', {})
-    enabled_tests = []
-    if tconf.get('function_test', {}).get('enabled'):
-        test_type = tconf.get('function_test', {}).get('type', 'default')
-        enabled_tests.append(f'Function Test ({test_type})')
-    if tconf.get('ux_test', {}).get('enabled'):
-        enabled_tests.append('User Experience Test')
-    if tconf.get('performance_test', {}).get('enabled'):
-        enabled_tests.append('Performance Test')
-    if tconf.get('security_test', {}).get('enabled'):
-        enabled_tests.append('Security Test')
-
-    if not enabled_tests:
-        print('⚠️ No test types enabled in configuration')
-        sys.exit(1)
-
-    print(f"📋 Tests enabled: {', '.join(enabled_tests)}")
-
-    # Check dependencies
-    needs_browser = any([
-        tconf.get('function_test', {}).get('enabled'),
-        tconf.get('ux_test', {}).get('enabled'),
-        tconf.get('performance_test', {}).get('enabled'),
-        tconf.get('security_test', {}).get('enabled'),
-    ])
-
-    if needs_browser:
-        ok = await check_playwright_browsers_async()
-        if not ok:
-            print('\n💡 Install browsers with: playwright install chromium', file=sys.stderr)
-            sys.exit(1)
-
-    if tconf.get('performance_test', {}).get('enabled'):
-        if not check_lighthouse_installation():
-            print('\n💡 Install Lighthouse: npm install lighthouse chrome-launcher', file=sys.stderr)
-            sys.exit(1)
-
-    if tconf.get('security_test', {}).get('enabled'):
-        if not check_nuclei_installation():
-            print('\n💡 Install Nuclei: https://github.com/projectdiscovery/nuclei', file=sys.stderr)
-            sys.exit(1)
-
-    # Validate LLM config
-    try:
-        llm_config = validate_and_build_llm_config(cfg)
-    except ValueError as e:
-        print(f'\n{e}', file=sys.stderr)
-        sys.exit(1)
-
-    # Build test configurations
-    cookies_value = cfg.get('browser_config', {}).get('cookies', [])
-    cookies = load_cookies(cookies_value)
-    test_configurations = build_test_configurations(cfg, cookies=cookies)
     target_url = cfg.get('target', {}).get('url', '')
 
     if not target_url:
@@ -372,18 +249,110 @@ async def execute_gen_mode(cfg, workers: int = 1):
 
     print(f'🎯 Target URL: {target_url}')
 
+    # Check Playwright browsers
+    ok = await check_playwright_browsers_async()
+    if not ok:
+        print('\n💡 Install browsers with: playwright install chromium', file=sys.stderr)
+        sys.exit(1)
+
+    # Check custom tool dependencies
+    custom_tools_enabled = tconf.get('custom_tools', {}).get('enabled', [])
+    if 'performance' in custom_tools_enabled:
+        if not check_lighthouse_installation():
+            print('\n💡 Install Lighthouse: npm install lighthouse chrome-launcher', file=sys.stderr)
+            sys.exit(1)
+
+    if 'security' in custom_tools_enabled:
+        if not check_nuclei_installation():
+            print('\n💡 Install Nuclei: https://github.com/projectdiscovery/nuclei', file=sys.stderr)
+            sys.exit(1)
+
+    # Validate and build LLM config
+    try:
+        llm_config_dict = validate_and_build_llm_config(cfg)
+        llm_config = LLMConfig(
+            model=llm_config_dict['model'],
+            api_key=llm_config_dict['api_key'],
+            base_url=llm_config_dict.get('base_url'),
+            filter_model=llm_config_dict.get('filter_model'),
+            temperature=llm_config_dict.get('temperature'),
+            top_p=llm_config_dict.get('top_p'),
+            max_tokens=llm_config_dict.get('max_tokens'),
+            reasoning=llm_config_dict.get('reasoning'),
+        )
+    except ValueError as e:
+        print(f'\n{e}', file=sys.stderr)
+        sys.exit(1)
+
+    # Build browser config
+    browser_cfg_raw = cfg.get('browser_config', {})
+    is_docker = os.getenv('DOCKER_ENV') == 'true'
+    headless = True if is_docker else browser_cfg_raw.get('headless', True)
+
+    cookies_value = browser_cfg_raw.get('cookies', [])
+    cookies = load_cookies(cookies_value)
+
+    browser_config = BrowserConfig(
+        browser_type=browser_cfg_raw.get('browser_type', 'chromium'),
+        headless=headless,
+        viewport=browser_cfg_raw.get('viewport', {'width': 1280, 'height': 720}),
+        language=browser_cfg_raw.get('language', 'en-US'),
+        cookies=cookies
+    )
+
+    # Build report config
+    report_cfg_raw = cfg.get('report', {})
+    report_config = ReportConfig(
+        language=report_cfg_raw.get('language', 'en-US'),
+        report_dir=report_cfg_raw.get('report_dir'),
+        save_screenshots=report_cfg_raw.get('save_screenshots', False)
+    )
+
+    # Build log config
+    log_cfg_raw = cfg.get('log', {})
+    log_config = LogConfig(
+        level=log_cfg_raw.get('level', 'info')
+    )
+
+    # Build test configuration
+    business_objectives = tconf.get('business_objectives', '')
+
+    dynamic_step_cfg = tconf.get('dynamic_step_generation', {})
+    dynamic_step_config = DynamicStepConfig(
+        enabled=dynamic_step_cfg.get('enabled', True),
+        max_dynamic_steps=dynamic_step_cfg.get('max_dynamic_steps', 8),
+        min_elements_threshold=dynamic_step_cfg.get('min_elements_threshold', 2)
+    )
+
+    custom_tools_cfg = tconf.get('custom_tools', {})
+    custom_tools_config = CustomToolsConfig(
+        enabled=custom_tools_cfg.get('enabled', [])
+    )
+
+    # Build GenConfig
+    gen_config = GenConfig(
+        target_url=target_url,
+        llm_config=llm_config,
+        browser_config=browser_config,
+        report_config=report_config,
+        log_config=log_config,
+        business_objectives=business_objectives,
+        dynamic_step_generation=dynamic_step_config,
+        custom_tools=custom_tools_config,
+        max_concurrent_tests=workers
+    )
+
+    # Display configuration
+    print('📋 Tests enabled: Function Test (AI-driven)')
+    if custom_tools_enabled:
+        print(f'🔧 Custom tools: {", ".join(custom_tools_enabled)}')
+
     # Execute tests
     try:
         print(f'⚙️ Concurrency: {workers}')
 
-        parallel_mode = ParallelMode([], max_concurrent_tests=workers)
-        results, report_path, html_report_path, result_count = await parallel_mode.run(
-            url=target_url,
-            llm_config=llm_config,
-            test_configurations=test_configurations,
-            log_cfg=cfg.get('log', {'level': 'info'}),
-            report_cfg=cfg.get('report', {'language': 'en-US'})
-        )
+        executor = GenExecutor(gen_config)
+        results, report_path, html_report_path, result_count = await executor.execute()
 
         if result_count:
             print('📊 Results Summary:')
@@ -408,28 +377,31 @@ async def execute_run_mode(config_path: str, workers: int = None):
         config_path: Path to config file or folder
         workers: Workers value from CLI (None if not specified)
     """
-    from webqa_agent.executor.case_mode import CaseMode
+    from webqa_agent.config_models.base_config import (BrowserConfig,
+                                                       LLMConfig, LogConfig,
+                                                       ReportConfig)
+    from webqa_agent.config_models.run_config import RunConfig
+    from webqa_agent.executor.run_executor import RunExecutor
 
-    # Load config(s)
-    is_folder = os.path.isdir(config_path)
-    if is_folder:
-        try:
+    # Load first config to extract settings
+    try:
+        if os.path.isdir(config_path):
             configs = load_yaml_files(config_path)
-        except Exception as e:
-            print(f'❌ Failed to load configs: {e}', file=sys.stderr)
-            sys.exit(1)
-        total_cases = sum(len(c.get('cases', [])) for c in configs)
-        print(f'📋 Loaded {len(configs)} config(s) with {total_cases} total cases')
-    else:
-        configs = [load_yaml(config_path)]
-        cases = configs[0].get('cases', [])
-        if not cases:
-            print('⚠️ No cases defined in configuration', file=sys.stderr)
-            sys.exit(1)
-        target_url = configs[0].get('target', {}).get('url', '')
-        if target_url:
-            print(f'🎯 Target URL: {target_url}')
-        print(f'📋 Total cases: {len(cases)}')
+            total_cases = sum(len(c.get('cases', [])) for c in configs)
+            print(f'📋 Loaded {len(configs)} config(s) with {total_cases} total cases')
+        else:
+            configs = [load_yaml(config_path)]
+            cases = configs[0].get('cases', [])
+            if not cases:
+                print('⚠️ No cases defined in configuration', file=sys.stderr)
+                sys.exit(1)
+            target_url = configs[0].get('target', {}).get('url', '')
+            if target_url:
+                print(f'🎯 Target URL: {target_url}')
+            print(f'📋 Total cases: {len(cases)}')
+    except Exception as e:
+        print(f'❌ Failed to load configs: {e}', file=sys.stderr)
+        sys.exit(1)
 
     # Resolve workers: CLI > config > default (2)
     w = workers if workers is not None else configs[0].get('target', {}).get('max_concurrent_tests', 2)
@@ -442,7 +414,7 @@ async def execute_run_mode(config_path: str, workers: int = None):
 
     # Validate LLM config
     try:
-        llm_config = validate_and_build_llm_config(configs[0])
+        llm_config_dict = validate_and_build_llm_config(configs[0])
     except ValueError as e:
         print(f'\n{e}', file=sys.stderr)
         sys.exit(1)
@@ -453,16 +425,25 @@ async def execute_run_mode(config_path: str, workers: int = None):
         print('\n💡 Install browsers with: playwright install chromium', file=sys.stderr)
         sys.exit(1)
 
-    # Execute cases (unified API handles both single/multi config)
+    # Build RunConfig from loaded settings
     try:
-        case_mode = CaseMode()
-        results, report_path, html_report_path, result_count = await case_mode.run(
-            configs=configs,  # Pass all configs - run() handles single vs multi
-            llm_config=llm_config,
-            log_config=configs[0].get('log', {'level': 'info'}),
-            report_config=configs[0].get('report', {'language': 'en-US'}),
+        run_config = RunConfig(
+            llm_config=LLMConfig(**llm_config_dict),
+            browser_config=BrowserConfig(**configs[0].get('browser_config', {})),
+            report_config=ReportConfig(**configs[0].get('report', {'language': 'en-US'})),
+            log_config=LogConfig(**configs[0].get('log', {'level': 'info'})),
+            cases_path=config_path,  # Pass original path for RunExecutor to load
             workers=workers,
+            ignore_rules=configs[0].get('ignore_rules')
         )
+    except Exception as e:
+        print(f'❌ Failed to create RunConfig: {e}', file=sys.stderr)
+        sys.exit(1)
+
+    # Execute cases using RunExecutor
+    try:
+        executor = RunExecutor(run_config)
+        results, report_path, html_report_path, result_count = await executor.execute()
 
         # Print results
         if result_count:

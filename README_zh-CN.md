@@ -69,6 +69,30 @@ Vibecoding, Vibe coding, 网页测试自动化, 浏览器测试工具, AI驱动�
 | **用户输入** | **极简**：只需 URL 或一句话业务目标                                        | **结构化**：简单的自然语言步骤描述                                    |
 | **优势**     | 具备反思能力，自适应 UI 变化；配置功能/性能/安全/UX 评估，提供全面质量保障 | 结果稳定可预期，摆脱繁琐的Selector维护；实时监控 Console/Network 状态 |
 
+### 🛠️ 工具系统
+
+**默认工具**（始终启用）：
+
+- **UI 操作**: 浏览器交互（点击、输入、导航）
+- **UI 断言**: 状态验证
+- **UX 验证**: 文本错误检查、布局分析
+
+**自定义工具**（可选，通过配置启用）：
+
+- **性能测试**: 基于 Lighthouse 的性能测试
+- **安全测试**: Nuclei 漏洞扫描
+- **链接检测**: 动态链接发现
+
+在 `config.yaml` 中启用自定义工具：
+
+```yaml
+test_config:
+  custom_tools:
+    enabled:
+      - lighthouse
+      - nuclei
+```
+
 ### 🧭 架构图
 
 <p>
@@ -155,14 +179,10 @@ curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/start.sh 
 
 配置文件需包含 `test_config` 字段，用于定义需要执行的测试类型。
 
-- **功能测试（AI 模式）**：验证页面功能的正确性。支持可选配置：
-  1. business_objectives：指定业务目标，以指导测试重点和覆盖范围。
-  2. dynamic_step_generation：启用后，在执行过程中检测到新的 UI 元素时，会自动生成额外的测试步骤。
-  3. filter_model：配置一个轻量级模型，用于预过滤页面元素，从而提高规划效率。
-- **功能测试（default 模式）**：不依赖大模型能力，只聚焦交互是否成功（点击、跳转等）。
-- **用户体验测试**：评估视觉质量、排版/语法、布局渲染，并给出基于最佳实践的优化建议。
-- **性能测试**：基于Lighthouse，检测页面性能、SEO等指标。
-- **安全测试**：基于Nuclei，扫描网页安全漏洞和潜在风险。
+- **业务目标**: 指定测试的业务目标，以指导 AI 规划测试重点和覆盖范围。
+- **自定义工具**: 可选启用性能（Lighthouse）、安全（Nuclei）、按钮检查、链接检测等工具。
+- **动态步骤生成**: 启用后，在执行过程中检测到新的 UI 元素时，会自动生成额外的测试步骤。
+- **过滤模型**: 配置一个轻量级模型，用于预过滤页面元素，从而提高规划效率。
 
 更多教程，请参考 [docs/MODES&CLI_zh-CN.md](docs/MODES&CLI_zh-CN.md)
 
@@ -172,16 +192,13 @@ target:
   description: 网站质量保证测试
 
 test_config:
-  function_test:                        # 功能测试
-    enabled: True
-    type: ai                            # 'default' 或 'ai'
-    business_objectives: 测试搜索功能，生成3个测试用例
-  ux_test:                              # 用户体验测试
-    enabled: True
-  performance_test:                     # 性能分析（需要 Lighthouse）
-    enabled: False
-  security_test:                        # 安全扫描（需要 Nuclei）
-    enabled: False
+  business_objectives: 测试搜索功能，生成3个测试用例
+  custom_tools:                         # 可选：启用自定义测试工具
+    enabled:
+      # - lighthouse                    # Lighthouse 性能测试（需要：npm install -g lighthouse）
+      # - nuclei                        # Nuclei 安全扫描（需要：nuclei 已安装）
+      # - button_check                  # 可点击元素遍历测试
+      # - link_check                    # 动态链接发现
 
 llm_config:                             # LLM 配置，支持 OpenAI、Anthropic Claude、Google Gemini 以及 OpenAI 兼容格式模型（如豆包、通义千问等）
   model: gpt-4.1-2025-04-14             # 主模型
@@ -259,7 +276,7 @@ WebQA Agent 支持**自定义工具开发**，满足特定领域的测试需求�
 | **[自定义工具开发](docs/CUSTOM_TOOL_DEVELOPMENT_zh-CN.md)** | 自定义工具开发快速参考                |
 | **[LLM 上下文文档](docs/CUSTOM_TOOL_DEVELOPMENT_AI.md)**    | AI 辅助开发的完整指南，可用于氛围编程 |
 
-欢迎贡献！查看[现有工具示例](webqa_agent/testers/case_gen/tools/custom/)获取参考。
+欢迎贡献！查看[现有工具示例](webqa_agent/tools/custom/)获取参考。
 
 <a id="roadmap"></a>
 

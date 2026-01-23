@@ -8,21 +8,24 @@ target:
   description: Test search functionality
   max_concurrent_tests: 5  # Optional, default parallel 2
 
-test_config: # Test configuration
-  function_test:
-    enabled: True
-    type: ai  # default or ai
-    business_objectives: Generate 5 test cases, exclude login cases   # Optional. If empty, AI will automatically explore and generate test cases. If specified, AI will focus on testing the specified business objectives.
-    dynamic_step_generation:
-      enabled: True  # Optional, default: True - Master switch for dynamic generation
-      max_dynamic_steps: 8  # Optional, default: 8 - Max steps per UI change (range: 3-15)
-      min_elements_threshold: 2  # Optional, default: 2 - Min new elements to trigger (1=sensitive, 3+=selective)
-  ux_test:
-    enabled: False
-  performance_test:
-    enabled: False
-  security_test:
-    enabled: False
+test_config: # Test configuration for Gen mode (AI-driven test generation)
+  business_objectives: Generate 5 test cases, exclude login cases   # Optional. If empty, AI will automatically explore and generate test cases. If specified, AI will focus on testing the specified business objectives.
+
+  # Custom tools configuration (optional, advanced features)
+  custom_tools:
+    enabled: []  # Optional: Enable additional testing tools
+                 # Options: lighthouse, nuclei, button_check, link_check
+                 # Example: ['lighthouse', 'nuclei']
+                 # - lighthouse: Lighthouse-based performance testing (requires: npm install -g lighthouse)
+                 # - nuclei: Nuclei vulnerability scanning (requires: nuclei installed)
+                 # - button_check: Clickable element traversal testing
+                 # - link_check: Dynamic link discovery
+
+  # Dynamic step generation (optional, adaptive testing)
+  dynamic_step_generation:
+    enabled: True  # Optional, default: True - Master switch for dynamic generation
+    max_dynamic_steps: 8  # Optional, default: 8 - Max steps per UI change (range: 3-15)
+    min_elements_threshold: 2  # Optional, default: 2 - Min new elements to trigger (1=sensitive, 3+=selective)
 
 llm_config: # LLM configuration, supports OpenAI, Anthropic Claude, and Google Gemini models
   # =========================

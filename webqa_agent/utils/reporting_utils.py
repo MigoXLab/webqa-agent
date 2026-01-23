@@ -6,8 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from webqa_agent.data import (ParallelTestSession, TestResult, TestStatus,
-                              TestType)
+from webqa_agent.data import ParallelTestSession, TestResult
 
 
 def sanitize_case_name(name: str, keep_chars: str = '-_') -> str:
@@ -51,6 +50,7 @@ def _resolve_output_dir(report_dir: str, storage_subdir: Optional[str] = 'tmp') 
     target_dir = base_dir / storage_subdir if storage_subdir else base_dir
     target_dir.mkdir(parents=True, exist_ok=True)
     return str(target_dir)
+
 
 def save_index_json(
     test_session: ParallelTestSession,
@@ -143,12 +143,14 @@ def save_index_json(
                 sub_dict['status'] = str(status)
                 results_list.append(sub_dict)
 
-    # Summary items
+    # Summary items - using unified i18n
+    from webqa_agent.utils.i18n import get_category_title
+
     cat_map = {
-        'function': '功能测试' if report_lang == 'zh-CN' else 'Function Test',
-        'ux': '用户体验' if report_lang == 'zh-CN' else 'User Experience',
-        'security': '安全扫描' if report_lang == 'zh-CN' else 'Security Scan',
-        'performance': '性能评估' if report_lang == 'zh-CN' else 'Performance',
+        'function': get_category_title('function', report_lang),
+        'ux': get_category_title('ux', report_lang),
+        'security': get_category_title('security', report_lang),
+        'performance': get_category_title('performance', report_lang),
     }
 
     test_items: List[Dict[str, str]] = []
@@ -239,6 +241,7 @@ def save_index_json(
     except Exception as e:
         logging.warning(f'Failed to generate index.json: {e}')
 
+
 def get_result_filename(index: int, name: str, category: str, mode: str = 'gen', is_monitor: bool = False, sub_test_id: str = '') -> str:
     """Generate result filename based on sub_test_id and sanitized name.
 
@@ -269,8 +272,9 @@ def get_result_filename(index: int, name: str, category: str, mode: str = 'gen',
 
     return f'{sub_test_id}_{safe_name}{suffix}.json'
 
+
 def save_test_result_json(
-    test_result: Any, # Can be TestResult or SubTestResult
+    test_result: Any,  # Can be TestResult or SubTestResult
     report_dir: str,
     index: int,
     name: str,
@@ -303,7 +307,7 @@ def save_test_result_json(
         if hasattr(test_result, 'model_dump'):
             result_dict = test_result.model_dump()
         elif hasattr(test_result, 'dict'):
-            result_dict = test_result.dict()
+            result_dict = test_result.model_dump()
         else:
             result_dict = test_result
 
@@ -321,8 +325,6 @@ def save_test_result_json(
         metrics = result_dict.get('metrics') or {}
         if not isinstance(metrics, dict):
             metrics = {}
-        steps_list = result_dict.get('steps', [])
-        step_count = len(steps_list) if isinstance(steps_list, list) else 0
 
         # Interface/API request count
         # Only compute/store api_request_count for run mode
@@ -357,6 +359,7 @@ def save_test_result_json(
     except Exception as e:
         logging.warning(f'Failed to save result JSON for {name}: {e}')
         return ''
+
 
 def save_monitor_data_json(
     monitoring_data: Dict[str, Any],

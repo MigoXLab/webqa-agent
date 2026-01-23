@@ -90,3 +90,4 @@ repos:
     hooks:
     -   id: markdown-link-check
         args: [-q,-c, ./.github/md-link-config.json]
+        exclude: 'MODES&CLI.*\.md$'  # Exclude files with & character

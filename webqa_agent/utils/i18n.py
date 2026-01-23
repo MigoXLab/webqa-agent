@@ -36,3 +36,43 @@ def t(lang: str, key: str, default: str | None = None) -> str:
 def get_lang_data(lang: str) -> dict[str, Any]:
     """Return the full language dict (read-only)."""
     return _load_lang(lang).copy()
+
+
+def get_category_title(category: str, lang: str = 'en-US') -> str:
+    """Get localized title for a test category.
+
+    Replaces the hardcoded CATEGORY_TITLES dict from test_structures.py.
+    Provides unified i18n for category titles across reporting and frontend.
+
+    Args:
+        category: Category key ('function', 'ux', 'performance', 'security')
+        lang: Language code ('en-US' or 'zh-CN')
+
+    Returns:
+        Localized category title string
+
+    Example:
+        >>> get_category_title('function', 'en-US')
+        'Function Test'
+        >>> get_category_title('ux', 'zh-CN')
+        'UX测试'
+    """
+    # Mapping of category keys to i18n keys or fallback titles
+    category_map = {
+        'zh-CN': {
+            'function': '功能测试',
+            'ux': 'UX测试',
+            'performance': '性能测试',
+            'security': '安全测试',
+        },
+        'en-US': {
+            'function': 'Function Test',
+            'ux': 'UX Test',
+            'performance': 'Performance Test',
+            'security': 'Security Test',
+        }
+    }
+
+    # Get localized title from map, fallback to category.title()
+    lang_titles = category_map.get(lang, category_map['en-US'])
+    return lang_titles.get(category, category.title())

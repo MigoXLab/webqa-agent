@@ -9,11 +9,11 @@ Minimal working example:
 ```python
 from typing import Any, Type
 from pydantic import BaseModel, Field
-from webqa_agent.testers.case_gen.tools.base import (
+from webqa_agent.tools.base import (
     WebQABaseTool,
     WebQAToolMetadata,
 )
-from webqa_agent.testers.case_gen.tools.registry import register_tool
+from webqa_agent.tools.registry import register_tool
 
 class HelloToolSchema(BaseModel):
     message: str = Field(description="Message to display")
@@ -65,7 +65,7 @@ Test: `webqa-agent gen -c config.yaml`
 ## File Structure
 
 ```
-webqa_agent/testers/case_gen/tools/
+webqa_agent/tools/
 ├── base.py              # Base classes
 ├── registry.py          # Registration system
 ├── custom/              # Your tools here
@@ -81,7 +81,7 @@ tests/custom_tools/
 ### WebQABaseTool
 
 ```python
-from webqa_agent.testers.case_gen.tools.base import WebQABaseTool
+from webqa_agent.tools.base import WebQABaseTool
 
 class MyTool(WebQABaseTool):
     name: str = "my_tool"
@@ -181,7 +181,7 @@ Tool metadata controls how your tool appears in LLM prompts and how it's registe
 
 #### Complete Example
 
-Based on `link_detection_tool.py`:
+Based on `link_check_tool.py`:
 
 ```python
 @classmethod
@@ -357,20 +357,20 @@ if self.case_recorder:
 
 ```bash
 # Check registration
-python -c "from webqa_agent.testers.case_gen.tools.registry import get_registry; print('my_tool' in get_registry().get_tool_names())"
+python -c "from webqa_agent.tools.registry import get_registry; print('my_tool' in get_registry().get_tool_names())"
 
 # Run tests
 pytest tests/custom_tools/test_my_tool.py -v
 
 # Format & lint
-black webqa_agent/ && isort webqa_agent/ && flake8 webqa_agent/testers/case_gen/tools/custom/my_tool.py
+black webqa_agent/ && isort webqa_agent/ && flake8 webqa_agent/tools/custom/my_tool.py
 ```
 
 ## Configuration Example
 
 To use your custom tool:
 
-1. Place your tool in `webqa_agent/testers/case_gen/tools/custom/`
+1. Place your tool in `webqa_agent/tools/custom/`
 2. Decorate with `@register_tool` - the LLM will automatically discover it
 3. Configure your test with business objectives
 
@@ -384,14 +384,13 @@ target:
 
 # Test Configuration - NO test_steps in AI mode!
 test_config:
-  function_test:
-    enabled: true
-    type: "ai"  # AI mode - LLM generates test steps
-    business_objectives: "Test custom functionality using my_tool"
-    dynamic_step_generation:
-      enabled: true  # Enable adaptive recovery
-      max_dynamic_steps: 8
-      min_elements_threshold: 2
+  business_objectives: "Test custom functionality using my_tool"
+  dynamic_step_generation:
+    enabled: true  # Enable adaptive recovery
+    max_dynamic_steps: 8
+    min_elements_threshold: 2
+  custom_tools:
+    enabled: []  # Your custom tool will be auto-discovered
 
 # LLM Configuration
 llm_config:
@@ -427,11 +426,11 @@ Page title checker:
 import re
 from typing import Any, Type
 from pydantic import BaseModel, Field
-from webqa_agent.testers.case_gen.tools.base import (
+from webqa_agent.tools.base import (
     WebQABaseTool,
     WebQAToolMetadata,
 )
-from webqa_agent.testers.case_gen.tools.registry import register_tool
+from webqa_agent.tools.registry import register_tool
 
 class TitleCheckerSchema(BaseModel):
     expected_title: str = Field(description="Expected page title pattern (regex)")
@@ -477,7 +476,7 @@ class TitleCheckerTool(WebQABaseTool):
 
 ## See Also
 
-- `webqa_agent/testers/case_gen/tools/base.py` - Base classes
-- `webqa_agent/testers/case_gen/tools/element_action_tool.py` - UITool reference
-- `webqa_agent/testers/case_gen/tools/custom/link_detection_tool.py` - Custom tool example
-- `webqa_agent/testers/case_gen/tools/registry.py` - Tool registry
+- `webqa_agent/tools/base.py` - Base classes
+- `webqa_agent/tools/action_tool.py` - UITool reference
+- `webqa_agent/tools/custom/link_check_tool.py` - Custom tool example
+- `webqa_agent/tools/registry.py` - Tool registry

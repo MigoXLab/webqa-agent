@@ -69,6 +69,30 @@ vibecoding, vibe coding, web evaluation, autonomous exploration, web testing aut
 | **User Input**    | **Minimal**: Only URL or a one-sentence business goal                                          | **Structured**: Simple natural language step descriptions                                 |
 | **Advantages**    | Reflection-based planning, adaptive to UI changes; Configurable functional / performance / security / UX evaluation for comprehensive QA | Stable and predictable results; No selector maintenance; Real-time Console and Network monitoring |
 
+### 🛠️ Tool System
+
+**Default Tools** (Always Enabled):
+
+- **UI Actions**: Browser interactions (click, type, navigate)
+- **UI Assertions**: State verification
+- **UX Verification**: Text typo checking, layout analysis
+
+**Custom Tools** (Optional, Configuration-Enabled):
+
+- **Performance**: Lighthouse-based performance testing
+- **Security**: Nuclei vulnerability scanning
+- **Link Detection**: Dynamic link discovery
+
+Enable custom tools in `config.yaml`:
+
+```yaml
+test_config:
+  custom_tools:
+    enabled:
+      - lighthouse
+      - nuclei
+```
+
 ### 🧭 Architecture
 
 <p>
@@ -172,16 +196,13 @@ target:
   description: Website QA testing
 
 test_config:
-  function_test:                        # Functional testing
-    enabled: True
-    type: ai                            # 'default' or 'ai'
-    business_objectives: Test search functionality, generate 3 test cases
-  ux_test:                              # User experience testing
-    enabled: True
-  performance_test:                     # Performance analysis (requires Lighthouse)
-    enabled: False
-  security_test:                        # Security scanning (requires Nuclei)
-    enabled: False
+  business_objectives: Test search functionality, generate 3 test cases
+  custom_tools:                         # Optional: Enable custom testing tools
+    enabled:
+      # - lighthouse                    # Lighthouse performance testing (requires: npm install -g lighthouse)
+      # - nuclei                        # Nuclei security scanning (requires: nuclei installed)
+      # - button_check                  # Clickable element traversal testing
+      # - link_check                    # Dynamic link discovery
 
 llm_config:                             # LLM configuration, supports OpenAI, Anthropic Claude, Google Gemini, and OpenAI-compatible models (e.g., Doubao, Qwen)
   model: gpt-4.1-2025-04-14             # Primary model
@@ -259,7 +280,7 @@ WebQA Agent supports **custom tool development** for domain-specific testing cap
 | **[Custom Tool Development](docs/CUSTOM_TOOL_DEVELOPMENT.md)** | Quick reference for creating custom tools                               |
 | **[LLM Context Document](docs/CUSTOM_TOOL_DEVELOPMENT_AI.md)** | Comprehensive guide for AI-assisted development, useful for vibe coding |
 
-We welcome contributions! Check out [existing tools](webqa_agent/testers/case_gen/tools/custom/) for examples.
+We welcome contributions! Check out [existing tools](webqa_agent/tools/custom/) for examples.
 
 <a id="roadmap"></a>
 
