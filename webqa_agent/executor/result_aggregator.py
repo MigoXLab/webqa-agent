@@ -246,7 +246,7 @@ class ResultAggregator:
     def _read_css_content(self) -> str:
         """Read and return CSS content."""
         try:
-            css_path = self._get_static_dir() / 'assets' / 'style.css'
+            css_path = self._get_static_dir() / 'assets' / 'index.css'
             if css_path.exists():
                 return css_path.read_text(encoding='utf-8')
         except Exception as e:
@@ -372,7 +372,7 @@ class ResultAggregator:
                 html_out = html_template
                 # Use flexible regex to match tags regardless of attribute order or extra whitespace
                 html_out = re.sub(
-                    r'<link[^>]*href=["\']?/assets/style\.css["\']?[^>]*>',
+                    r'<link[^>]*href=["\']?/assets/index\.css["\']?[^>]*>',
                     lambda m: f'<style>\n{css_content}\n</style>',
                     html_out,
                 )

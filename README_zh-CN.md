@@ -11,7 +11,7 @@
   <meta itemprop="license" content="Apache-2.0">
   <meta itemprop="keywords" content="Vibecoding, 网页评估, 自主探索, 自动化, AI, 浏览器自动化, 网页质量保障, 网页性能, 用户体验, 安全检查, 网页功能, 功能测试"/>
 
-<h1 align="center" itemprop="name">WebQA Agent</h1>
+<h1 align="center" itemprop="name"><img src="https://static.openxlab.org.cn/platform-config-upload/biz-images/extends/logo.svg" alt="Logo" width="84" height="84" style="vertical-align: middle;" /> WebQA Agent</h1>
 
 <!-- badges -->
 
