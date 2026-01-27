@@ -182,13 +182,27 @@ class CaseRunner:
         for idx, case in normal_cases:
             await case_queue.put((idx, case))
 
+        # Pre-place sentinels (workers will exit after processing all cases)
+        for _ in range(workers):
+            await case_queue.put(None)
+
         async def worker(worker_id: int):
-            """Worker that pulls cases from queue until sentinel."""
+            """Worker that pulls cases from queue until sentinel.
+
+            Optimizations:
+            - Worker holds session across cases with same config
+            - Reduces acquire/release overhead significantly
+            - Session released only on config change or worker exit
+            """
             nonlocal completed_count
+
+            session = None
+            current_config_key = None
 
             while True:
                 item = await case_queue.get()
                 if item is None:  # Sentinel - exit
+                    case_queue.task_done()
                     break
 
                 idx, case = item
@@ -197,6 +211,7 @@ class CaseRunner:
 
                 # Extract browser config for this case
                 browser_cfg = case.get('_config', {}).get('browser_config', self.browser_config)
+                new_config_key = session_pool._make_config_key(browser_cfg)
 
                 # Set test_id context for logging (imitating graph.py style)
                 # Including both ID and Name for maximum clarity
@@ -206,13 +221,18 @@ class CaseRunner:
                 # Set screenshot prefix to avoid filename collisions in parallel execution
                 prefix_token = screenshot_prefix_var.set(case_id)
 
-                session = None
                 case_result = None
                 raw_monitoring_data = None
 
                 try:
                     logging.info(f"Worker {worker_id}: Starting case '{case_name}' ({idx}/{total_cases})")
-                    session = await session_pool.acquire(browser_config=browser_cfg, timeout=120.0)
+
+                    # Acquire/reuse session based on config
+                    if session is None or new_config_key != current_config_key:
+                        if session:
+                            await session_pool.release(session, keep_alive=False)
+                        session = await session_pool.acquire(browser_config=browser_cfg, timeout=120.0)
+                        current_config_key = new_config_key
 
                     with Display.display(case_name):  # pylint: disable=not-callable
                         case_result, raw_monitoring_data = await self.execute_single_case(session=session, case=case, case_index=idx)
@@ -243,6 +263,12 @@ class CaseRunner:
                     case_result = None
                     raw_monitoring_data = None
 
+                    # Release session on exception
+                    if session:
+                        await session_pool.release(session, failed=True, keep_alive=False)
+                        session = None
+                        current_config_key = None
+
                 finally:
                     # Reset context variables
                     test_id_var.reset(token)
@@ -253,20 +279,22 @@ class CaseRunner:
                         self._save_case_result(case_result, case_name, idx, raw_monitoring_data=raw_monitoring_data, case_config=case_config)
                         self._clear_case_screenshots(case_result)
 
-                    if session:
-                        failed = case_result is None or case_result.status == TestStatus.FAILED
-                        await session_pool.release(session, failed=failed)
+                    # Release session on failure
+                    if session and case_result is not None and case_result.status == TestStatus.FAILED:
+                        await session_pool.release(session, failed=True, keep_alive=False)
+                        session = None
+                        current_config_key = None
 
                     case_queue.task_done()
+
+            # Worker exiting - release held session
+            if session:
+                await session_pool.release(session, keep_alive=False)
 
         try:
             # Start workers and wait for completion
             worker_tasks = [asyncio.create_task(worker(i)) for i in range(workers)]
             await case_queue.join()
-
-            # Stop workers
-            for _ in range(workers):
-                await case_queue.put(None)
             await asyncio.gather(*worker_tasks, return_exceptions=True)
 
         finally:
