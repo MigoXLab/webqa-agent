@@ -465,7 +465,8 @@ class CaseRunner:
         tester = UITester(
             llm_config=self.llm_config,
             browser_session=session,
-            ignore_rules=_ignore_rules
+            ignore_rules=_ignore_rules,
+            execution_mode='run'  # RUN mode: trusts user intent, allows degraded execution on unsupported pages
         )
         await tester.initialize()
         tester.set_current_test_name(case_name)
