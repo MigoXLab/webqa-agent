@@ -428,12 +428,13 @@ class _BrowserSession:
 
 
 class BrowserSessionPool:
-    """Pool is the ONLY owner/entry for browser lifecycle:
+    """Pool is the ONLY owner/entry for browser lifecycle.
 
-    - Queue is the only concurrency control
-    - Sessions are created on-demand (lazy init)
-    - Recover happens only when caller marks failed
-    - Supports multiple browser configurations (sessions reused by config key)
+    Architecture: Semaphore + Idle List
+    - Semaphore controls max concurrent sessions (resource slots)
+    - Idle list enables session reuse by config
+    - Cross-config eviction when needed
+    - Supports multiple browser configurations
     """
 
     @staticmethod
@@ -461,143 +462,150 @@ class BrowserSessionPool:
         self.browser_config = browser_config or {}
         self.disable_tab_interception = False  # Control tab interception behavior
 
-        self._available_sessions: Dict[tuple, asyncio.Queue] = {}  # config_key -> Queue[session]
-        self._all_sessions: Dict[tuple, List[_BrowserSession]] = {}  # all sessions with config_key -> [sessions]
-        self._session_counter = 0  # Session counter: unique ID generation & pool limit check
+        # Semaphore-based architecture
+        self._semaphore = asyncio.Semaphore(pool_size)  # Resource slot control
+        self._idle_sessions: Dict[tuple, List[_BrowserSession]] = {}  # config -> [idle sessions]
+        self._lock = asyncio.Lock()  # Protects _idle_sessions
+        self._session_counter = 0  # Session counter for unique ID generation
 
-        self._initialized = True  # Auto-initialized (lazy mode - sessions created on-demand)
         self._closed = False
-        self._creation_lock = asyncio.Lock()
 
-    async def initialize(self) -> 'BrowserSessionPool':
-        """Initialize the session pool (optional, auto-initialized on
-        creation)"""
-        if self._closed:
-            raise RuntimeError('BrowserSessionPool has been closed')
+    async def _create_session(self, config: dict) -> _BrowserSession:
+        """Create a new browser session.
 
-        self._initialized = True
-        logging.info(f'[SessionPool] Initialized (lazy mode, max_size={self.pool_size})')
-        return self
+        Args:
+            config: Browser configuration dict
 
-    async def _create_session(self, config: Optional[dict] = None) -> Optional[_BrowserSession]:
-        config = config or self.browser_config
-        config_key = self._make_config_key(config)
-
-        async with self._creation_lock:
-            if self._session_counter >= self.pool_size:
-                return None  # Pool limit reached
+        Returns:
+            Initialized _BrowserSession instance
+        """
+        async with self._lock:
             session_id = f'pool_session_{self._session_counter}'
             self._session_counter += 1
 
-        s = _BrowserSession(
+        session = _BrowserSession(
             session_id=session_id,
             browser_config=config,
             disable_tab_interception=self.disable_tab_interception,
             _token=_POOL_TOKEN,
         )
-        await s.initialize()  # Parallel browser init
+        await session.initialize()
 
-        async with self._creation_lock:
-            if config_key not in self._all_sessions:  # config-specific session tracking
-                self._all_sessions[config_key] = []
-            self._all_sessions[config_key].append(s)
-
-        logging.info(f'[SessionPool] Created session: {s.session_id} with config {config_key} (total: {self._session_counter}/{self.pool_size})')
-        return s
+        logging.info(f'[SessionPool] Created session: {session_id} (config: {self._make_config_key(config)})')
+        return session
 
     async def acquire(self, browser_config: Optional[dict] = None, timeout: Optional[float] = 60.0) -> _BrowserSession:
-        """Acquire a session with the specified browser config (O(1) lookup).
+        """Acquire a session with the specified browser config.
+
+        Uses semaphore-based resource control with cross-config eviction:
+        1. Acquire resource slot (blocks if pool full)
+        2. Try to reuse idle session with same config
+        3. If none, evict idle session from other config (free memory)
+        4. Create new session if no eviction candidate
 
         Args:
             browser_config: Desired browser configuration
-            timeout: Timeout for acquiring session
+            timeout: Timeout for acquiring resource slot
 
         Returns:
             Session matching the requested config
         """
-        if not self._initialized:
-            raise RuntimeError('BrowserSessionPool not initialized')
         if self._closed:
             raise RuntimeError('BrowserSessionPool has been closed')
 
         config = browser_config or self.browser_config
         config_key = self._make_config_key(config)
 
-        # double-checked locking, avoid overwrite in parallel execution
-        if config_key not in self._available_sessions:
-            async with self._creation_lock:
-                if config_key not in self._available_sessions:
-                    self._available_sessions[config_key] = asyncio.Queue()
-                    logging.debug(f'[SessionPool] Registered new config: {config_key}')
+        # 1. Acquire resource slot (blocks if pool full)
+        try:
+            if timeout:
+                await asyncio.wait_for(self._semaphore.acquire(), timeout=timeout)
+            else:
+                await self._semaphore.acquire()
+        except asyncio.TimeoutError:
+            raise asyncio.TimeoutError(f'Timeout acquiring session for config {config_key}')
 
         try:
-            return self._available_sessions[config_key].get_nowait()  # get session from available session queue (O(1))
-        except asyncio.QueueEmpty:
-            pass
+            async with self._lock:
+                # 2. Reuse idle session with same config
+                if self._idle_sessions.get(config_key):
+                    session = self._idle_sessions[config_key].pop()
+                    logging.debug(f'[SessionPool] Reused session: {session.session_id}')
+                    return session
 
-        # Queue empty, try to create new session
-        s = await self._create_session(config)
-        if s is not None:
-            return s
+                # 3. Evict idle session from other config (free browser memory)
+                for key, sessions in self._idle_sessions.items():
+                    if key != config_key and sessions:
+                        old = sessions.pop()
+                        logging.info(f'[SessionPool] Evicted session: {old.session_id} (config: {key})')
+                        await old.close()
+                        break
 
-        # Pool full - wait for ANY session release, then retry
-        if timeout is None:
-            return await self._available_sessions[config_key].get()
-        return await asyncio.wait_for(self._available_sessions[config_key].get(), timeout=timeout)
+            # 4. Create new session
+            return await self._create_session(config)
 
-    async def release(self, session: Optional[_BrowserSession], failed: bool = False) -> None:
-        """Release session back to its config-specific queue."""
+        except Exception:
+            self._semaphore.release()  # Return slot on failure
+            raise
+
+    async def release(
+        self,
+        session: Optional[_BrowserSession],
+        failed: bool = False,
+        keep_alive: bool = True,
+    ) -> None:
+        """Release session back to idle pool or close it.
+
+        Args:
+            session: Session to release
+            failed: Whether session failed (triggers recovery)
+            keep_alive: Whether to keep session alive (False = close immediately)
+
+        Notes:
+            - If keep_alive=False, session is closed and slot is released
+            - If failed=True, session is recovered before returning to pool
+            - Session state is cleaned before returning to pool
+        """
         if self._closed or session is None:
             return
 
-        if failed or session.is_closed():
-            session = await self._recover(session)
+        # Close immediately if not keeping alive
+        if not keep_alive:
+            await self._close_session_safe(session)
+            self._semaphore.release()
+            return
 
         config_key = self._make_config_key(session.browser_config)
 
-        # Ensure queue exists for this config
-        if config_key not in self._available_sessions:
-            async with self._creation_lock:
-                if config_key not in self._available_sessions:
-                    self._available_sessions[config_key] = asyncio.Queue()
-
         try:
-            self._available_sessions[config_key].put_nowait(session)  # Return to config-specific session queue
-        except asyncio.QueueFull as e:
-            raise RuntimeError(f'Session pool for config {config_key} is full') from e
+            # Recover failed session or clean state
+            if failed or session.is_closed():
+                logging.info(f'[SessionPool] Recovering failed session: {session.session_id}')
+                await self._close_session_safe(session)
+                session = await self._create_session(session.browser_config)
+            else:
+                await self._clean_session_state(session)
 
-    async def _recover(self, session: _BrowserSession) -> _BrowserSession:
-        """Recover a failed session by closing and recreating it with the same
-        config."""
-        session_id = getattr(session, 'session_id', 'unknown')
-        original_config = getattr(session, 'browser_config', self.browser_config)
-        config_key = self._make_config_key(original_config)
-        logging.info(f'[SessionPool] Recovering session: {session_id} with config {config_key}')
+            # Return to idle pool
+            async with self._lock:
+                self._idle_sessions.setdefault(config_key, []).append(session)
 
+        finally:
+            self._semaphore.release()  # Always return slot
+
+    async def _close_session_safe(self, session: _BrowserSession) -> None:
+        """Close session with error handling.
+
+        Args:
+            session: Session to close
+
+        Notes:
+            Swallows all exceptions to prevent release() failure
+        """
         try:
             await session.close()
         except Exception:
-            logging.exception(f'[SessionPool] Failed to close session {session_id}')
-
-        # Create new session with same config
-        new_s = _BrowserSession(
-            session_id=session_id,
-            browser_config=original_config,
-            disable_tab_interception=self.disable_tab_interception,
-            _token=_POOL_TOKEN,
-        )
-        await new_s.initialize()
-
-        # Update config-specific session tracking
-        async with self._creation_lock:
-            if config_key in self._all_sessions:
-                try:
-                    idx = self._all_sessions[config_key].index(session)
-                    self._all_sessions[config_key][idx] = new_s
-                except ValueError:
-                    self._all_sessions[config_key].append(new_s)
-
-        return new_s
+            logging.debug(f'[SessionPool] Failed to close session {session.session_id}', exc_info=True)
 
     async def _clean_session_state(self, session: _BrowserSession) -> None:
         """Clean session state to prevent pollution between cases.
@@ -625,39 +633,24 @@ class BrowserSessionPool:
             logging.warning(f'[SessionPool] Failed to clean session state: {e}')
 
     async def close_all(self) -> None:
-        """Close all browser sessions across all configurations."""
+        """Close all browser sessions.
+
+        Closes all idle sessions across all configurations.
+        """
         if self._closed:
             return
         self._closed = True
 
-        # Gather all sessions from all configs
-        all_sessions = []
-        for sessions_list in self._all_sessions.values():
-            all_sessions.extend(sessions_list)
+        # Gather all idle sessions
+        async with self._lock:
+            all_sessions = [s for sessions in self._idle_sessions.values() for s in sessions]
+            self._idle_sessions.clear()
 
         # Close all sessions in parallel
         await asyncio.gather(*[s.close() for s in all_sessions], return_exceptions=True)
-
-        # Clear all config-specific session lists
-        self._all_sessions.clear()
-
-        # Clear all config-specific queues
-        for queue in self._available_sessions.values():
-            while not queue.empty():
-                try:
-                    queue.get_nowait()
-                except Exception:
-                    break
-        self._available_sessions.clear()
-
-        # Reset session counter (for consistency, even though pool can't be reused)
-        self._session_counter = 0
-
         logging.info('[SessionPool] Closed')
 
     async def __aenter__(self):
-        if not self._initialized:
-            await self.initialize()
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
