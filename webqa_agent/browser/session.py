@@ -401,6 +401,27 @@ class _BrowserSession:
         # Default: treat as navigation
         return True
 
+    async def clean_state(self) -> None:
+        """Clean session state (cookies + storage) for case isolation.
+
+        This method clears:
+        - Context-level cookies
+        - Page-level localStorage and sessionStorage
+
+        Used between test cases to prevent state pollution.
+        """
+        if self._is_closed:
+            return
+        try:
+            await self._context.clear_cookies()
+            if self._page and not self._page.is_closed():
+                await self._page.evaluate('''() => {
+                    try { localStorage.clear(); } catch(e) {}
+                    try { sessionStorage.clear(); } catch(e) {}
+                }''')
+        except Exception as e:
+            logging.warning(f'[Session] Failed to clean state: {e}')
+
     def _check_state(self):
         if self._is_closed or not self._page:
             raise RuntimeError('Session not initialized or closed')
@@ -577,6 +598,31 @@ class BrowserSessionPool:
                     self._all_sessions[config_key].append(new_s)
 
         return new_s
+
+    async def _clean_session_state(self, session: _BrowserSession) -> None:
+        """Clean session state to prevent pollution between cases.
+
+        This method clears:
+        - Context-level cookies
+        - Page-level localStorage and sessionStorage
+
+        Called before each test case execution to ensure isolation.
+        """
+        try:
+            context = session.context
+            if context is None:
+                return
+
+            await context.clear_cookies()
+
+            page = session.page
+            if page and not page.is_closed():
+                await page.evaluate('''() => {
+                    try { localStorage.clear(); } catch(e) {}
+                    try { sessionStorage.clear(); } catch(e) {}
+                }''')
+        except Exception as e:
+            logging.warning(f'[SessionPool] Failed to clean session state: {e}')
 
     async def close_all(self) -> None:
         """Close all browser sessions across all configurations."""

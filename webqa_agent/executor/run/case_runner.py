@@ -291,6 +291,9 @@ class CaseRunner:
         case_name = case.get('name', f'Unnamed Case {case_index}')
         start_time = datetime.now()
 
+        # Clean session state to prevent pollution between cases
+        await session.clean_state()
+
         # Get case-specific config if available (for multi-YAML support)
         case_config = case.get('_config', {})
         url = case_config.get('url') or self.test_specific_config.get('url')
