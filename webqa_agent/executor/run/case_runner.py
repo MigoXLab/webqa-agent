@@ -694,13 +694,13 @@ class CaseRunner:
         monitoring_data: Dict[str, Any],
         error_messages: List[str],
         ignore_rules: Optional[Dict[str, Any]] = None
-    ) -> Tuple[TestStatus, List[str], Dict[str, Any]]:
+    ) -> Tuple[TestStatus, List[str], Dict[str, Any], Dict[str, int]]:
         """Check console and network errors from monitoring data.
 
         Logic:
-        - If case already FAILED from steps, don't override
-        - If no ignore rules configured, any error causes FAILED
-        - If ignore rules configured, only unignored errors cause FAILED
+        - Case status is primarily based on step execution
+        - Console/network errors downgrade PASSED to WARNING
+        - FAILED from steps is not overridden
 
         Args:
             case_name: Name of the case (for logging)
@@ -710,7 +710,7 @@ class CaseRunner:
             ignore_rules: Optional case-specific ignore rules
 
         Returns:
-            Tuple of (updated_case_status, updated_error_messages, messages_data)
+            Tuple of (updated_case_status, updated_error_messages, messages_data, error_counts)
         """
         # Convert monitoring data to template-expected format
         console_errors = monitoring_data.get('console', [])
@@ -728,25 +728,26 @@ class CaseRunner:
         has_console_ignore_rules = bool(ignore_rules.get('console', []))
         has_network_ignore_rules = bool(ignore_rules.get('network', []))
 
+        # Error count tracking
+        error_counts = {'console_errors': 0, 'network_errors': 0}
+
         # Only check errors if case status is currently PASSED (don't override step failures)
         if case_status != TestStatus.PASSED:
-            return case_status, error_messages, messages_data
+            return case_status, error_messages, messages_data, error_counts
 
         # ========== 1. Check Console Errors ==========
         # Note: ConsoleCheck has already filtered out ignored errors
         # So console_errors only contains unignored errors
         if console_errors:
+            error_counts['console_errors'] = len(console_errors)
+            if case_status == TestStatus.PASSED:
+                case_status = TestStatus.WARNING
             if not has_console_ignore_rules:
-                # No ignore rules configured, any console error causes failure
-                case_status = TestStatus.FAILED
                 error_messages.append(f'Console errors detected: {len(console_errors)} error(s)')
-                logging.warning(f'{case_name} detected {len(console_errors)} console errors - marking case as FAILED')
+                logging.warning(f'{case_name} detected {len(console_errors)} console errors - marking case as WARNING')
             else:
-                # Ignore rules configured, but these errors were not filtered
-                # They don't match any ignore rules, so they should cause failure
-                case_status = TestStatus.FAILED
                 error_messages.append(f'Unignored console errors detected: {len(console_errors)} error(s)')
-                logging.warning(f'{case_name} detected {len(console_errors)} unignored console errors - marking case as FAILED')
+                logging.warning(f'{case_name} detected {len(console_errors)} unignored console errors - marking case as WARNING')
 
         # ========== 2. Check Network Errors ==========
         # Note: NetworkCheck has already filtered out ignored requests
@@ -755,27 +756,25 @@ class CaseRunner:
         error_responses = [r for r in network_data.get('responses', []) if r.get('status', 0) >= 400]
 
         network_error_count = len(failed_requests) + len(error_responses)
+        error_counts['network_errors'] = network_error_count
 
         if network_error_count > 0:
+            if case_status == TestStatus.PASSED:
+                case_status = TestStatus.WARNING
             if not has_network_ignore_rules:
-                # No ignore rules configured, any network error causes failure
-                case_status = TestStatus.FAILED
                 error_messages.append(
                     f'Network errors detected: {len(failed_requests)} failed requests, '
                     f'{len(error_responses)} error responses'
                 )
-                logging.warning(f'{case_name} detected {len(failed_requests)} failed requests, {len(error_responses)} error responses - marking case as FAILED')
+                logging.warning(f'{case_name} detected {len(failed_requests)} failed requests, {len(error_responses)} error responses - marking case as WARNING')
             else:
-                # Ignore rules configured, but these errors were not filtered
-                # They don't match any ignore rules, so they should cause failure
-                case_status = TestStatus.FAILED
                 error_messages.append(
                     f'Unignored network errors detected: {len(failed_requests)} failed requests, '
                     f'{len(error_responses)} error responses'
                 )
-                logging.warning(f'{case_name} detected {len(failed_requests)} unignored failed requests, {len(error_responses)} unignored error responses - marking case as FAILED')
+                logging.warning(f'{case_name} detected {len(failed_requests)} unignored failed requests, {len(error_responses)} unignored error responses - marking case as WARNING')
 
-        return case_status, error_messages, messages_data
+        return case_status, error_messages, messages_data, error_counts
 
     def _build_case_result(
         self,
@@ -819,7 +818,7 @@ class CaseRunner:
         final_summary = f'Executed {total_steps} steps: {passed_steps} passed, {failed_steps} failed'
 
         # Check monitoring errors (use case-specific ignore_rules if provided)
-        case_status, error_messages, messages_data = self._check_monitoring_errors(
+        case_status, error_messages, messages_data, error_counts = self._check_monitoring_errors(
             case_name=case_name,
             case_status=case_status,
             monitoring_data=monitoring_data,
