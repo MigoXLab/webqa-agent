@@ -197,8 +197,12 @@ test_config:
   business_objectives: 测试搜索功能，生成3个测试用例
   custom_tools:                         # 可选：启用自定义测试工具（通过 step_type）
     enabled:
-      # - lighthouse                    # Lighthouse 性能测试（需要：npm install -g lighthouse chrome-launcher）
-      # - nuclei                        # Nuclei 安全扫描（需要：nuclei 已安装）
+      # - lighthouse                    # Lighthouse 性能测试
+                                        # 需要：npm install lighthouse chrome-launcher（本地，推荐）
+                                        # 或：npm install -g lighthouse chrome-launcher（全局）
+      # - nuclei                        # Nuclei 安全扫描
+                                        # 需要：go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+                                        # 或从以下地址下载：https://github.com/projectdiscovery/nuclei/releases
       # - traverse_clickable_elements   # 可点击元素遍历测试
       # - detect_dynamic_links          # 动态链接发现和验证
 
