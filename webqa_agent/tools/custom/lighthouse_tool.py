@@ -152,6 +152,7 @@ class LighthouseTool(WebQABaseTool):
             ],
             priority=30,  # Lower priority than core action tools (70-90)
             dependencies=['lighthouse'],  # Requires Node.js + lighthouse npm package
+            dependency_types={'lighthouse': 'command'},  # External command, not Python package
         )
 
     @classmethod

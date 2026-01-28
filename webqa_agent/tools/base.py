@@ -165,7 +165,8 @@ class WebQAToolMetadata(BaseModel):
         use_when: Hints for when to use this tool
         dont_use_when: Hints for when NOT to use this tool
         priority: Tool priority for sorting (higher = preferred)
-        dependencies: Required Python packages
+        dependencies: Required dependencies (Python packages or external commands)
+        dependency_types: Dependency type mapping (python|command, default: python)
     """
 
     # Core identification
@@ -223,7 +224,20 @@ class WebQAToolMetadata(BaseModel):
     # Dependencies (for auto-checking)
     dependencies: List[str] = Field(
         default_factory=list,
-        description="Required Python packages (e.g., ['aiohttp', 'beautifulsoup4'])"
+        description=(
+            "Required dependencies (Python packages or external commands). "
+            "Examples: ['aiohttp', 'beautifulsoup4'] for Python packages, "
+            "['lighthouse', 'nuclei'] for external commands"
+        )
+    )
+    dependency_types: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Dependency type mapping (optional). Specifies whether each dependency "
+            "is a 'python' package or 'command' (external binary). "
+            "Default: 'python' if not specified. "
+            "Example: {'lighthouse': 'command', 'aiohttp': 'python'}"
+        )
     )
 
     class Config:
