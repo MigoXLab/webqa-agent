@@ -6,24 +6,28 @@ from webqa_agent.tools.base import ActionTypes
 from webqa_agent.tools.registry import get_registry
 
 
-def _get_custom_tools_planning_section() -> str:
+def _get_custom_tools_planning_section(enabled_custom_tools: list[str] | None = None) -> str:
     """Generate custom tools documentation section for planning prompt.
 
-    Creates a dynamic documentation section listing all registered custom tools
+    Creates a dynamic documentation section listing registered custom tools
     with their step_type identifiers. This helps LLMs understand available
     custom tools during test case planning.
 
     Important distinctions:
     - step_type: Documentation identifier/label (e.g., 'detect_dynamic_links')
     - Tool selection: Entirely LLM-driven based on tool descriptions
-    - NO tool masking: LLM can freely choose any tool regardless of step_type
+    - Tool filtering: Only enabled tools are shown to LLM (prevents planning disabled tools)
 
     The step_type serves as a human-readable label in planning prompts like:
         "Use these custom actions: detect_dynamic_links, custom_api_test"
 
+    Args:
+        enabled_custom_tools: List of enabled custom tool step_types to include.
+                            If None, includes all custom tools.
+
     Returns:
         str: Formatted string describing custom step types with descriptions.
-             Empty string if no custom tools are registered.
+             Empty string if no custom tools are registered or enabled.
 
     Example output:
         "Custom Actions:\\n  - detect_dynamic_links: Detects new links after interactions\\n"
@@ -33,6 +37,10 @@ def _get_custom_tools_planning_section() -> str:
     for name in registry.get_tool_names():
         metadata = registry.get_metadata(name)
         if metadata and hasattr(metadata, 'category') and metadata.category == 'custom' and hasattr(metadata, 'step_type') and metadata.step_type:
+            # Filter by enabled_custom_tools if provided
+            if enabled_custom_tools is not None:
+                if metadata.step_type not in enabled_custom_tools:
+                    continue
             custom_tools.append((name, metadata))
 
     if not custom_tools:
@@ -524,12 +532,15 @@ If any check fails, revise the description using the composition formula above.
 def get_test_case_planning_system_prompt(
     business_objectives: str,
     language: str = 'zh-CN',
+    enabled_custom_tools: list[str] | None = None,
 ) -> str:
     """Generate system prompt for test case planning.
 
     Args:
         business_objectives: Business objectives
         language: Language for test case naming (zh-CN or en-US)
+        enabled_custom_tools: List of enabled custom tool step_types to include.
+                            If None, includes all custom tools.
 
     Returns:
         Formatted system prompt string
@@ -679,7 +690,7 @@ For each test case, provide:
 """
 
     shared_standards = get_shared_test_design_standards(language)
-    custom_tools_section = _get_custom_tools_planning_section()
+    custom_tools_section = _get_custom_tools_planning_section(enabled_custom_tools)
 
     # ============================================================================
     # Solution A+: Dynamic JSON Examples for Custom Tools
@@ -965,6 +976,7 @@ def get_planning_prompt(
     priority_elements: dict = None,
     all_page_links: list = None,
     navigation_map: dict = None,
+    enabled_custom_tools: list[str] | None = None,
 ) -> tuple[str, str]:
     """Generate prompts for planning (returns system and user prompt).
 
@@ -976,29 +988,38 @@ def get_planning_prompt(
         priority_elements: AI-filtered priority elements from Stage 1
         all_page_links: List of all navigable page links from extract_links()
         navigation_map: Element-to-URL correlation mapping for navigation testing
+        enabled_custom_tools: List of enabled custom tool step_types to include.
+                            If None, includes all custom tools.
 
     Returns:
         tuple: (system_prompt, user_prompt)
     """
-    system_prompt = get_test_case_planning_system_prompt(business_objectives, language)
+    system_prompt = get_test_case_planning_system_prompt(
+        business_objectives, language, enabled_custom_tools
+    )
     user_prompt = get_test_case_planning_user_prompt(
         state_url, page_text_summary, priority_elements, all_page_links, navigation_map
     )
     return system_prompt, user_prompt
 
 
-def get_reflection_system_prompt(language: str = 'zh-CN') -> str:
+def get_reflection_system_prompt(
+    language: str = 'zh-CN',
+    enabled_custom_tools: list[str] | None = None,
+) -> str:
     """Generate system prompt for reflection and replanning (static part).
 
     Args:
         language: Language for test case naming (zh-CN or en-US)
+        enabled_custom_tools: List of enabled custom tool step_types to include.
+                            If None, includes all custom tools.
 
     Returns:
         Formatted system prompt containing role definition, decision framework, and output format
     """
     name_language = '中文' if language == 'zh-CN' else 'English'
     shared_standards = get_shared_test_design_standards(language)
-    custom_tools_section = _get_custom_tools_planning_section()
+    custom_tools_section = _get_custom_tools_planning_section(enabled_custom_tools)
 
     # Get available action types including custom tools for replanning guidance
     # This ensures reflection stage can suggest custom tool steps dynamically
