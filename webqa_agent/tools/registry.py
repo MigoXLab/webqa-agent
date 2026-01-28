@@ -173,10 +173,16 @@ class ToolRegistry:
 
         Supports two dependency types:
         - Python packages: Checked via importlib.util.find_spec()
-        - External commands: Checked via shutil.which()
+        - External commands: Checked via dedicated functions (lighthouse, nuclei)
+                           or shutil.which() for other commands
 
         The dependency type is determined by metadata.dependency_types.
         Default type is 'python' if not specified.
+
+        Note:
+            Uses the same checking logic as cli.py to ensure consistency.
+            For lighthouse and nuclei, checks local node_modules/.bin and
+            other installation locations, not just PATH.
 
         Args:
             metadata: WebQAToolMetadata instance with dependencies list
@@ -195,6 +201,10 @@ class ToolRegistry:
                   Install: npm install lighthouse chrome-launcher
         """
         import shutil
+        from webqa_agent.utils.dependency import (
+            check_lighthouse_installation,
+            check_nuclei_installation,
+        )
 
         missing_deps = []
 
@@ -204,9 +214,23 @@ class ToolRegistry:
 
             if dep_type == 'command':
                 # Check external command availability
-                if not shutil.which(dep):
+                # Use dedicated check functions for lighthouse and nuclei
+                # to match cli.py behavior (checks local node_modules, not just PATH)
+                is_available = False
+
+                if dep == 'lighthouse':
+                    # Use silent=True since CLI already showed the result
+                    is_available = check_lighthouse_installation(silent=True)
+                elif dep == 'nuclei':
+                    # Use silent=True since CLI already showed the result
+                    is_available = check_nuclei_installation(silent=True)
+                else:
+                    # Fallback to PATH check for other commands
+                    is_available = shutil.which(dep) is not None
+
+                if not is_available:
                     missing_deps.append((dep, 'command'))
-                    logger.debug(f"External command '{dep}' not found in PATH")
+                    logger.debug(f"External command '{dep}' not available")
             else:
                 # Check Python package availability
                 try:
