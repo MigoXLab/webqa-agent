@@ -29,7 +29,7 @@ class CustomToolsConfig(BaseModel):
 
     enabled: List[str] = Field(
         default_factory=list,
-        description="List of custom tools to enable (e.g., ['performance', 'security', 'link_detection'])",
+        description="List of custom tools to enable. Available: ['lighthouse', 'nuclei', 'traverse_clickable_elements', 'detect_dynamic_links']",
     )
 
 
@@ -41,7 +41,7 @@ class GenConfig(BaseModel):
             target_url="https://example.com",
             llm_config=LLMConfig(model="gpt-4o", api_key="sk-..."),
             business_objectives="Test search functionality",
-            custom_tools=CustomToolsConfig(enabled=["performance", "security"])
+            custom_tools=CustomToolsConfig(enabled=["lighthouse", "nuclei"])
         )
     """
 
