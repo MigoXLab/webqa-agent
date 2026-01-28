@@ -171,6 +171,13 @@ class ToolRegistry:
     def _check_dependencies(self, metadata: Any) -> bool:
         """Validate that all declared tool dependencies are installed.
 
+        Supports two dependency types:
+        - Python packages: Checked via importlib.util.find_spec()
+        - External commands: Checked via shutil.which()
+
+        The dependency type is determined by metadata.dependency_types.
+        Default type is 'python' if not specified.
+
         Args:
             metadata: WebQAToolMetadata instance with dependencies list
 
@@ -178,26 +185,63 @@ class ToolRegistry:
             True if all dependencies satisfied, False otherwise
 
         Example:
-            If tool declares dependencies=['aiohttp'] but aiohttp not installed:
-            WARNING: Tool 'api_tool' missing 'aiohttp'. Install: pip install aiohttp
+            Python package:
+                dependencies=['aiohttp']
+                → WARNING: Tool 'api_tool' missing 'aiohttp'. Install: pip install aiohttp
+
+            External command:
+                dependencies=['lighthouse'], dependency_types={'lighthouse': 'command'}
+                → WARNING: Tool 'lighthouse_tool' missing 'lighthouse'.
+                  Install: npm install lighthouse chrome-launcher
         """
+        import shutil
+
         missing_deps = []
 
         for dep in metadata.dependencies:
-            try:
-                spec = importlib.util.find_spec(dep)
-                if spec is None:
-                    missing_deps.append(dep)
-            except (ModuleNotFoundError, ImportError, ValueError) as e:
-                # Treat import exceptions as missing dependency
-                logger.debug(f"Dependency check for '{dep}' raised: {e}")
-                missing_deps.append(dep)
+            # Determine dependency type (default: 'python')
+            dep_type = metadata.dependency_types.get(dep, 'python')
+
+            if dep_type == 'command':
+                # Check external command availability
+                if not shutil.which(dep):
+                    missing_deps.append((dep, 'command'))
+                    logger.debug(f"External command '{dep}' not found in PATH")
+            else:
+                # Check Python package availability
+                try:
+                    spec = importlib.util.find_spec(dep)
+                    if spec is None:
+                        missing_deps.append((dep, 'python'))
+                except (ModuleNotFoundError, ImportError, ValueError) as e:
+                    # Treat import exceptions as missing dependency
+                    logger.debug(f"Dependency check for '{dep}' raised: {e}")
+                    missing_deps.append((dep, 'python'))
 
         if missing_deps:
-            # Simple, actionable message
+            # Generate appropriate install instructions based on dependency type
+            install_lines = []
+            for dep, dep_type in missing_deps:
+                if dep_type == 'command':
+                    # Provide specific installation commands for known tools
+                    if dep == 'lighthouse':
+                        install_lines.append(
+                            f"  - {dep}: npm install lighthouse chrome-launcher "
+                            "(local, recommended) or npm install -g lighthouse chrome-launcher (global)"
+                        )
+                    elif dep == 'nuclei':
+                        install_lines.append(
+                            f"  - {dep}: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest "
+                            "or download from https://github.com/projectdiscovery/nuclei/releases"
+                        )
+                    else:
+                        install_lines.append(f"  - {dep}: (external command, see tool documentation)")
+                else:
+                    install_lines.append(f"  - {dep}: pip install {dep}")
+
             logger.warning(
-                f"Tool '{metadata.name}' missing {', '.join(repr(d) for d in missing_deps)}. "
-                f"Install: pip install {' '.join(missing_deps)}"
+                f"Tool '{metadata.name}' missing dependencies:\n" +
+                "\n".join(install_lines)
             )
             return False
 
