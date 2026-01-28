@@ -85,6 +85,8 @@ def save_index_json(
     security_scene_total = 0
     performance_total = 0
     api_request_total = 0
+    console_error_total = 0
+    network_error_total = 0
     results_list: List[Dict[str, Any]] = []
 
     # Collect result summaries and counters
@@ -125,6 +127,10 @@ def save_index_json(
                 api_request_total += api_count
                 if isinstance(metrics, dict):
                     metrics.setdefault('api_request_count', api_count)
+
+                # Console/API error counts for summary display
+                console_error_total += _get_metric_value(metrics, 'console_error_count', 0)
+                network_error_total += _get_metric_value(metrics, 'network_error_count', 0)
 
                 raw_name = _get_attr(sub, 'name')
                 display_name = raw_name
@@ -193,6 +199,17 @@ def save_index_json(
         test_items.append({
             'name': '接口请求' if report_lang == 'zh-CN' else 'API Requests',
             'item': f'已检查{api_request_total}个接口请求' if report_lang == 'zh-CN' else f'Checked {api_request_total} API requests'
+        })
+
+    # Console/API error summary (only when any error exists)
+    if console_error_total > 0 or network_error_total > 0:
+        if report_lang == 'zh-CN':
+            error_item = f'Console报错{console_error_total}个，接口报错{network_error_total}个'
+        else:
+            error_item = f'Console errors: {console_error_total}, API errors: {network_error_total}'
+        test_items.append({
+            'name': '控制台/接口报错' if report_lang == 'zh-CN' else 'Console/API Errors',
+            'item': error_item
         })
 
     total_items = result_count.get('total', 0)

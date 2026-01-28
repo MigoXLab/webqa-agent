@@ -150,15 +150,12 @@ class UITester:
                 prev = await dp.crawl(highlight=True, viewport_only=viewport_only, cache_dom=True)
 
                 # Extract page status information for LLM context
-                page_status = getattr(prev, 'page_status', 'SUPPORTED')
-                page_type = getattr(prev, 'page_type', 'html')
+                page_status = prev.page_status
+                page_type = prev.page_type or 'html'
 
-                # Enhanced unsupported page handling with execution mode differentiation
-                # Check for unsupported page types (PDF, plugins, etc.)
-                if hasattr(prev, 'page_status') and prev.page_status == 'UNSUPPORTED_PAGE':
-                    page_type = getattr(prev, 'page_type', 'unknown')
-
-                    # Determine if execution should continue based on mode and operation type
+                # Handle unsupported page types (PDF, plugins, etc.) based on execution mode
+                if page_status == 'UNSUPPORTED_PAGE':
+                    # Determine if execution should continue
                     can_continue = self.execution_mode == 'run' or is_likely_page_agnostic
 
                     if can_continue:
@@ -169,40 +166,19 @@ class UITester:
                             f"[{mode_label}] Executing {op_type} operation '{test_step}' on {page_type} page "
                             f'(degraded mode - limited DOM interaction)'
                         )
-                        # Allow execution to continue with degraded data
-                        # Note: prev will have minimal data, but that's acceptable for RUN mode or browser-level operations
                     else:
                         # GEN mode + DOM-dependent operation: abort to save resources
                         error_msg = f"Cannot execute action: page type '{page_type}' is unsupported for DOM operations"
                         logging.error(f'[GEN MODE] {error_msg}')
 
-                        end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-                        # Build error step structure
-                        error_steps_dict = {
-                            'description': f'action: {test_step}',
-                            'actions': all_execution_steps,
-                            'screenshots': [],
-                            'screenshots_paths': [],
-                            'modelIO': '',
-                            'status': 'failed',
-                            'error': error_msg,
-                            'start_time': start_time,
-                            'end_time': end_time,
-                            'dom_diff': {}
-                        }
-
-                        # Build error result
-                        error_result = {
-                            'success': False,
-                            'unsupported_page': True,
-                            'page_type': page_type,
-                            'message': error_msg,
-                            'before_screenshot': global_before_screenshot,
-                            'dom_diff': {}
-                        }
-
-                        return error_steps_dict, error_result
+                        return self._build_unsupported_page_error(
+                            test_step=test_step,
+                            page_type=page_type,
+                            start_time=start_time,
+                            all_execution_steps=all_execution_steps,
+                            global_before_screenshot=global_before_screenshot,
+                            error_msg=error_msg
+                        )
 
                 await self._actions.update_element_buffer(prev.raw_dict())
 
@@ -343,10 +319,8 @@ class UITester:
             })
 
             # Clean up markers before returning to ensure clean state for next step
-            # Skip marker removal for PDF/unsupported pages (no DOM manipulation)
             if curr.page_status != 'UNSUPPORTED_PAGE':
                 await dp.remove_marker()
-
             return execution_steps_dict, execution_result
 
         except Exception as e:
@@ -820,7 +794,7 @@ class UITester:
         page_type: str = 'html',
         is_page_agnostic: bool = False
     ) -> str:
-        """Prepare LLM prompt with tab context and page status awareness.
+        """Prepare LLM prompt with execution mode and page status awareness.
 
         Args:
             test_step: The test step instruction
@@ -842,27 +816,23 @@ class UITester:
             browser_elements.strip() == 'null'
         )
 
-        # Add special guidance if:
-        # 1. Page is unsupported (PDF, plugin, etc.) - always show guidance
-        # 2. Operation is page-agnostic - ALWAYS show guidance (regardless of DOM state)
-        # Rationale: Page-agnostic operations (GoBack, GoToPage, Sleep)
-        # fundamentally don't require DOM elements, so guidance should always be shown
+        # Determine if we should add special guidance
+        # Add guidance when: page is unsupported OR operation is page-agnostic
         should_add_guidance = (
             page_status == 'UNSUPPORTED_PAGE' or
-            is_page_agnostic  # Removed dom_is_empty check - always guide for page-agnostic ops
+            is_page_agnostic
         )
 
         if should_add_guidance:
-            # Determine appropriate status message based on actual page state
+            # Determine appropriate status message
             if page_status == 'UNSUPPORTED_PAGE':
-                status_message = f'Current page is {page_type} content (non-HTML). DOM interaction not possible.'
+                status_message = f'Current page is {page_type} content (non-HTML).'
             elif dom_is_empty:
                 status_message = 'Current page has no interactive elements (empty DOM or minimal content).'
             else:
-                # Safety fallback (shouldn't reach here due to condition logic)
                 status_message = 'Note: This is a browser-level operation.'
 
-            # Log diagnostic information for debugging
+            # Log diagnostic information
             logging.debug(
                 f'Adding guidance: page_status={page_status}, '
                 f'execution_mode={self.execution_mode}, '
@@ -902,26 +872,32 @@ class UITester:
                     '',
                     '**GUIDANCE**:',
                     '  - Plan the action as requested by the user',
-                    '  - Use available page information (even if minimal)',
-                    '  - If DOM elements are unavailable, plan browser-level fallback actions',
+                    '  - Use any available DOM elements from pageDescription',
+                    '  - If pageDescription is empty but instruction is clear, still plan the action',
+                    '  - Example: "Click button X" → Plan Tap action even if pageDescription is minimal',
+                    '',
+                    '**CRITICAL**: In RUN mode, plan the user-requested action. Empty actions array means "cannot understand instruction", NOT "page is unsupported".',
                     '===================='
                 ])
-            else:
-                # GEN mode + UNSUPPORTED_PAGE: original conservative guidance
+            elif page_status == 'UNSUPPORTED_PAGE':
+                # GEN mode + UNSUPPORTED_PAGE + DOM-dependent operation
+                # Conservative approach: return empty actions
                 prompt_parts.extend([
-                    '⚠️ **OPERATION TYPE**: Page-agnostic browser-level operation',
-                    f'**PAGE STATUS**: {page_status}',
-                    f'**IMPORTANT**: {status_message}',
+                    '⚠️ **EXECUTION MODE**: GEN (AI Exploration)',
+                    f'**PAGE STATUS**: {page_status} (page_type: {page_type})',
+                    f'**IMPORTANT**: {status_message} DOM interaction not possible.',
                     '',
-                    '**ALLOWED ACTIONS** (work at browser level, no DOM needed):',
+                    '**GEN MODE POLICY**:',
+                    '  - Conservative approach for unsupported pages',
+                    '  - Only plan actions that can work without DOM elements',
+                    '  - Return empty actions array for DOM-dependent operations',
+                    '',
+                    '**ALLOWED ACTIONS** on unsupported pages:',
                     '  - GoBack, GoToPage: Browser navigation',
                     '  - Sleep: Utility operations',
                     '',
-                    '**FORBIDDEN ACTIONS** (require DOM elements):',
-                    '  - Tap, Input, Hover, Scroll, SelectDropdown',
-                    '',
-                    '**CRITICAL**: Plan the page-agnostic action even when pageDescription is empty!',
-                    '**DO NOT**: Return empty actions array for browser-level operations.',
+                    '**FORBIDDEN ACTIONS** on unsupported pages:',
+                    '  - Tap, Input, Hover, Scroll, SelectDropdown (require DOM elements)',
                     '===================='
                 ])
 
@@ -1331,6 +1307,54 @@ class UITester:
 
     async def get_current_page(self):
         return self.browser_session.page
+
+    def _build_unsupported_page_error(
+        self,
+        test_step: str,
+        page_type: str,
+        start_time: str,
+        all_execution_steps: List[Dict[str, Any]],
+        global_before_screenshot: Optional[str],
+        error_msg: str
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Build error response for unsupported page scenarios.
+
+        Args:
+            test_step: The test step description
+            page_type: Type of unsupported page (pdf, plugin, etc.)
+            start_time: Start time of the action
+            all_execution_steps: Steps executed before the error
+            global_before_screenshot: Screenshot taken before the action
+            error_msg: Error message to include
+
+        Returns:
+            Tuple of (error_steps_dict, error_result)
+        """
+        end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        error_steps_dict = {
+            'description': f'action: {test_step}',
+            'actions': all_execution_steps,
+            'screenshots': [],
+            'screenshots_paths': [],
+            'modelIO': '',
+            'status': 'failed',
+            'error': error_msg,
+            'start_time': start_time,
+            'end_time': end_time,
+            'dom_diff': {}
+        }
+
+        error_result = {
+            'success': False,
+            'unsupported_page': True,
+            'page_type': page_type,
+            'message': error_msg,
+            'before_screenshot': global_before_screenshot,
+            'dom_diff': {}
+        }
+
+        return error_steps_dict, error_result
 
     def _is_instruction_page_agnostic(self, test_step: str) -> bool:
         """Check if instruction likely represents a page-agnostic operation.

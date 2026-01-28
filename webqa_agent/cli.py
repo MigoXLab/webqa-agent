@@ -407,7 +407,6 @@ async def execute_run_mode(config_path: str, workers: int = None):
     for cfg in configs:
         raw_cookies = cfg.get('cookies') or cfg.get('browser_config', {}).get('cookies')
         if raw_cookies:
-            from webqa_agent.utils.config import load_cookies
             loaded_cookies = load_cookies(raw_cookies)
             # Update both possible locations to ensure consistency
             if 'cookies' in cfg:

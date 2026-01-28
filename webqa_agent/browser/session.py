@@ -81,6 +81,20 @@ class _BrowserSession:
     def is_closed(self) -> bool:
         return self._is_closed
 
+    async def clean_state(self) -> None:
+        """Clean session state (cookies + storage) for case isolation."""
+        if self._is_closed:
+            return
+        try:
+            await self._context.clear_cookies()
+            if self._page and not self._page.is_closed():
+                await self._page.evaluate('''() => {
+                    try { localStorage.clear(); } catch(e) {}
+                    try { sessionStorage.clear(); } catch(e) {}
+                }''')
+        except Exception as e:
+            logging.warning(f'[Session] Failed to clean state: {e}')
+
     async def initialize(self) -> '_BrowserSession':
         async with self._lock:
             if self._is_closed:
@@ -401,27 +415,6 @@ class _BrowserSession:
         # Default: treat as navigation
         return True
 
-    async def clean_state(self) -> None:
-        """Clean session state (cookies + storage) for case isolation.
-
-        This method clears:
-        - Context-level cookies
-        - Page-level localStorage and sessionStorage
-
-        Used between test cases to prevent state pollution.
-        """
-        if self._is_closed:
-            return
-        try:
-            await self._context.clear_cookies()
-            if self._page and not self._page.is_closed():
-                await self._page.evaluate('''() => {
-                    try { localStorage.clear(); } catch(e) {}
-                    try { sessionStorage.clear(); } catch(e) {}
-                }''')
-        except Exception as e:
-            logging.warning(f'[Session] Failed to clean state: {e}')
-
     def _check_state(self):
         if self._is_closed or not self._page:
             raise RuntimeError('Session not initialized or closed')
@@ -434,25 +427,19 @@ class BrowserSessionPool:
     - Semaphore controls max concurrent sessions (resource slots)
     - Idle list enables session reuse by config
     - Cross-config eviction when needed
-    - Supports multiple browser configurations
     """
 
     @staticmethod
     def _make_config_key(config: dict) -> tuple:
-        """Create simple tuple key from browser config for session matching.
-
-        Handles edge cases:
-        - viewport=None -> use default
-        - viewport not a dict -> use default
-        - missing width/height -> use default values
-        """
+        """Create tuple key from browser config for session matching."""
         vp = config.get('viewport')
         if not vp or not isinstance(vp, dict):
             vp = {'width': 1280, 'height': 720}
-        width = vp.get('width', 1280)
-        height = vp.get('height', 720)
-        vp_str = f'{width}x{height}'
-        return (vp_str, config.get('language', 'en-US'), config.get('headless', True))
+        return (
+            f"{vp.get('width', 1280)}x{vp.get('height', 720)}",
+            config.get('language', 'en-US'),
+            config.get('headless', True),
+        )
 
     def __init__(self, pool_size: int = 2, browser_config: Optional[dict] = None):
         if pool_size <= 0:
@@ -460,56 +447,16 @@ class BrowserSessionPool:
 
         self.pool_size = pool_size
         self.browser_config = browser_config or {}
-        self.disable_tab_interception = False  # Control tab interception behavior
+        self.disable_tab_interception = False
 
-        # Semaphore-based architecture
         self._semaphore = asyncio.Semaphore(pool_size)  # Resource slot control
         self._idle_sessions: Dict[tuple, List[_BrowserSession]] = {}  # config -> [idle sessions]
         self._lock = asyncio.Lock()  # Protects _idle_sessions
-        self._session_counter = 0  # Session counter for unique ID generation
-
+        self._session_counter = 0
         self._closed = False
 
-    async def _create_session(self, config: dict) -> _BrowserSession:
-        """Create a new browser session.
-
-        Args:
-            config: Browser configuration dict
-
-        Returns:
-            Initialized _BrowserSession instance
-        """
-        async with self._lock:
-            session_id = f'pool_session_{self._session_counter}'
-            self._session_counter += 1
-
-        session = _BrowserSession(
-            session_id=session_id,
-            browser_config=config,
-            disable_tab_interception=self.disable_tab_interception,
-            _token=_POOL_TOKEN,
-        )
-        await session.initialize()
-
-        logging.info(f'[SessionPool] Created session: {session_id} (config: {self._make_config_key(config)})')
-        return session
-
     async def acquire(self, browser_config: Optional[dict] = None, timeout: Optional[float] = 60.0) -> _BrowserSession:
-        """Acquire a session with the specified browser config.
-
-        Uses semaphore-based resource control with cross-config eviction:
-        1. Acquire resource slot (blocks if pool full)
-        2. Try to reuse idle session with same config
-        3. If none, evict idle session from other config (free memory)
-        4. Create new session if no eviction candidate
-
-        Args:
-            browser_config: Desired browser configuration
-            timeout: Timeout for acquiring resource slot
-
-        Returns:
-            Session matching the requested config
-        """
+        """Acquire a session with the specified browser config."""
         if self._closed:
             raise RuntimeError('BrowserSessionPool has been closed')
 
@@ -554,22 +501,10 @@ class BrowserSessionPool:
         failed: bool = False,
         keep_alive: bool = True,
     ) -> None:
-        """Release session back to idle pool or close it.
-
-        Args:
-            session: Session to release
-            failed: Whether session failed (triggers recovery)
-            keep_alive: Whether to keep session alive (False = close immediately)
-
-        Notes:
-            - If keep_alive=False, session is closed and slot is released
-            - If failed=True, session is recovered before returning to pool
-            - Session state is cleaned before returning to pool
-        """
+        """Release session back to idle pool or close it."""
         if self._closed or session is None:
             return
 
-        # Close immediately if not keeping alive
         if not keep_alive:
             await self._close_session_safe(session)
             self._semaphore.release()
@@ -578,7 +513,6 @@ class BrowserSessionPool:
         config_key = self._make_config_key(session.browser_config)
 
         try:
-            # Recover failed session or clean state
             if failed or session.is_closed():
                 logging.info(f'[SessionPool] Recovering failed session: {session.session_id}')
                 await self._close_session_safe(session)
@@ -586,36 +520,38 @@ class BrowserSessionPool:
             else:
                 await self._clean_session_state(session)
 
-            # Return to idle pool
             async with self._lock:
                 self._idle_sessions.setdefault(config_key, []).append(session)
 
         finally:
             self._semaphore.release()  # Always return slot
 
+    async def _create_session(self, config: dict) -> _BrowserSession:
+        """Create a new browser session."""
+        async with self._lock:
+            session_id = f'pool_session_{self._session_counter}'
+            self._session_counter += 1
+
+        session = _BrowserSession(
+            session_id=session_id,
+            browser_config=config,
+            disable_tab_interception=self.disable_tab_interception,
+            _token=_POOL_TOKEN,
+        )
+        await session.initialize()
+
+        logging.info(f'[SessionPool] Created session: {session_id} (config: {self._make_config_key(config)})')
+        return session
+
     async def _close_session_safe(self, session: _BrowserSession) -> None:
-        """Close session with error handling.
-
-        Args:
-            session: Session to close
-
-        Notes:
-            Swallows all exceptions to prevent release() failure
-        """
+        """Close session with error handling."""
         try:
             await session.close()
         except Exception:
             logging.debug(f'[SessionPool] Failed to close session {session.session_id}', exc_info=True)
 
     async def _clean_session_state(self, session: _BrowserSession) -> None:
-        """Clean session state to prevent pollution between cases.
-
-        This method clears:
-        - Context-level cookies
-        - Page-level localStorage and sessionStorage
-
-        Called before each test case execution to ensure isolation.
-        """
+        """Clean session state to prevent pollution between cases."""
         try:
             context = session.context
             if context is None:
@@ -629,24 +565,21 @@ class BrowserSessionPool:
                     try { localStorage.clear(); } catch(e) {}
                     try { sessionStorage.clear(); } catch(e) {}
                 }''')
+
+            logging.debug(f'[SessionPool] Cleaned state: {session.session_id}')
         except Exception as e:
-            logging.warning(f'[SessionPool] Failed to clean session state: {e}')
+            logging.warning(f'[SessionPool] Failed to clean state: {e}')
 
     async def close_all(self) -> None:
-        """Close all browser sessions.
-
-        Closes all idle sessions across all configurations.
-        """
+        """Close all browser sessions."""
         if self._closed:
             return
         self._closed = True
 
-        # Gather all idle sessions
         async with self._lock:
             all_sessions = [s for sessions in self._idle_sessions.values() for s in sessions]
             self._idle_sessions.clear()
 
-        # Close all sessions in parallel
         await asyncio.gather(*[s.close() for s in all_sessions], return_exceptions=True)
         logging.info('[SessionPool] Closed')
 
