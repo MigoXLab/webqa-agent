@@ -62,7 +62,7 @@ def _get_tools(ui_tester_instance, llm_config, case_recorder, enabled_custom_too
         llm_config: LLM configuration dict
         case_recorder: CentralCaseRecorder instance
         enabled_custom_tools: Optional list of custom tool step_types to enable
-                             (e.g., ['performance', 'security', 'link_detection'])
+                             (e.g., ['lighthouse', 'nuclei', 'detect_dynamic_links'])
 
     Returns:
         List of instantiated tool objects (core tools + enabled custom tools)
