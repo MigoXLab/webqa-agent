@@ -230,6 +230,8 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
 
         # === Stage 2: Test Case Planning with Enhanced Context ===
         logging.info('Stage 2: Test case planning with enhanced context...')
+        # Get enabled custom tools from state for prompt filtering
+        enabled_custom_tools = state.get('enabled_custom_tools')
         system_prompt, user_prompt = get_planning_prompt(
             business_objectives=enhanced_business_objectives,
             state_url=state['url'],
@@ -238,6 +240,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             priority_elements=priority_elements,
             all_page_links=all_page_links,
             navigation_map=navigation_map,
+            enabled_custom_tools=enabled_custom_tools,
         )
 
         logging.info('Stage 2: Sending request to primary LLM...')
