@@ -166,6 +166,7 @@ class NucleiTool(WebQABaseTool):
             ],
             priority=20,  # Lower priority than most tools (security testing is specialized)
             dependencies=['nuclei'],  # Requires Nuclei binary installation
+            dependency_types={'nuclei': 'command'},  # External command, not Python package
         )
 
     @classmethod
