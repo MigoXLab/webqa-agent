@@ -195,12 +195,12 @@ target:
 
 test_config:
   business_objectives: 测试搜索功能，生成3个测试用例
-  custom_tools:                         # 可选：启用自定义测试工具
+  custom_tools:                         # 可选：启用自定义测试工具（通过 step_type）
     enabled:
-      # - lighthouse                    # Lighthouse 性能测试（需要：npm install -g lighthouse）
+      # - lighthouse                    # Lighthouse 性能测试（需要：npm install -g lighthouse chrome-launcher）
       # - nuclei                        # Nuclei 安全扫描（需要：nuclei 已安装）
-      # - button_check                  # 可点击元素遍历测试
-      # - link_check                    # 动态链接发现
+      # - traverse_clickable_elements   # 可点击元素遍历测试
+      # - detect_dynamic_links          # 动态链接发现和验证
 
 llm_config:                             # LLM 配置，支持 OpenAI、Anthropic Claude、Google Gemini 以及 OpenAI 兼容格式模型（如豆包、通义千问等）
   model: gpt-4.1-2025-04-14             # 主模型

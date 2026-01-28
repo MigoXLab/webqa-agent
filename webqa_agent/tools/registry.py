@@ -250,7 +250,7 @@ class ToolRegistry:
             case_recorder: CentralCaseRecorder instance
             categories: Optional filter by category (e.g., ['action', 'assertion'])
             enabled_custom_tools: Optional list of custom tool step_types to enable
-                                  (e.g., ['performance', 'security', 'link_detection'])
+                                  (e.g., ['lighthouse', 'nuclei', 'detect_dynamic_links'])
             **extra_params: Additional parameters for custom tools
 
         Returns:
