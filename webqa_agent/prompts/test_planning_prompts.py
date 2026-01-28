@@ -24,6 +24,7 @@ def _get_custom_tools_planning_section(enabled_custom_tools: list[str] | None = 
     Args:
         enabled_custom_tools: List of enabled custom tool step_types to include.
                             If None, includes all custom tools.
+                            If empty list, hides all custom tools.
 
     Returns:
         str: Formatted string describing custom step types with descriptions.
@@ -705,6 +706,10 @@ For each test case, provide:
             if (metadata and hasattr(metadata, 'category') and metadata.category == 'custom'
                     and hasattr(metadata, 'step_type') and metadata.step_type
                     and metadata.examples):  # Only include if has examples
+                # Filter by enabled_custom_tools if provided
+                if enabled_custom_tools is not None:
+                    if metadata.step_type not in enabled_custom_tools:
+                        continue  # Skip disabled tools in examples
                 # Use first example directly (already in unified JSON format)
                 custom_step_examples.append(metadata.examples[0])
 
@@ -1312,6 +1317,7 @@ def get_reflection_prompt(
     completed_cases: list,
     page_content_summary: dict = None,
     language: str = 'zh-CN',
+    enabled_custom_tools: list[str] | None = None,
 ) -> tuple[str, str]:
     """Generate prompts for reflection and replanning (returns system and user
     prompt).
@@ -1322,11 +1328,13 @@ def get_reflection_prompt(
         current_plan: Current test plan
         completed_cases: Completed test cases
         page_content_summary: Interactive element mapping (dict from ID to element info), optional
+        enabled_custom_tools: List of enabled custom tool step_types to include.
+                            If None, includes all custom tools.
 
     Returns:
         tuple: (system_prompt, user_prompt)
     """
-    system_prompt = get_reflection_system_prompt(language)
+    system_prompt = get_reflection_system_prompt(language, enabled_custom_tools)
     user_prompt = get_reflection_user_prompt(
         business_objectives, current_plan, completed_cases, page_content_summary
     )

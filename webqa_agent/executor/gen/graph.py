@@ -638,12 +638,14 @@ async def _do_reflection(ui_tester: UITester, state: dict, case_name: str) -> di
         await dp.remove_marker()
 
         language = state.get('language', 'zh-CN')
+        enabled_custom_tools = state.get('enabled_custom_tools')
         system_prompt, user_prompt = get_reflection_prompt(
             business_objectives=state.get('business_objectives'),
             current_plan=state.get('test_cases', []),
             completed_cases=state.get('completed_cases', []),
             page_content_summary=page_content_summary,
             language=language,
+            enabled_custom_tools=enabled_custom_tools,
         )
 
         logging.info(f'[{case_name}] Sending reflection request to LLM...')
