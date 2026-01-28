@@ -13,13 +13,13 @@ test_config: # Test configuration for Gen mode (AI-driven test generation)
 
   # Custom tools configuration (optional, advanced features)
   custom_tools:
-    enabled: []  # Optional: Enable additional testing tools
-                 # Options: lighthouse, nuclei, button_check, link_check
+    enabled: []  # Optional: Enable additional testing tools (by step_type)
+                 # Available custom tools:
+                 # - lighthouse: Performance testing with Google Lighthouse (requires: npm install -g lighthouse chrome-launcher)
+                 # - nuclei: Security vulnerability scanning with Nuclei (requires: nuclei installed, see https://github.com/projectdiscovery/nuclei)
+                 # - traverse_clickable_elements: Clickable element traversal testing
+                 # - detect_dynamic_links: Dynamic link discovery and validation
                  # Example: ['lighthouse', 'nuclei']
-                 # - lighthouse: Lighthouse-based performance testing (requires: npm install -g lighthouse)
-                 # - nuclei: Nuclei vulnerability scanning (requires: nuclei installed)
-                 # - button_check: Clickable element traversal testing
-                 # - link_check: Dynamic link discovery
 
   # Dynamic step generation (optional, adaptive testing)
   dynamic_step_generation:

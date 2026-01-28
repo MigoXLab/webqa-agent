@@ -257,12 +257,12 @@ async def execute_gen_mode(cfg, workers: int = 1):
 
     # Check custom tool dependencies
     custom_tools_enabled = tconf.get('custom_tools', {}).get('enabled', [])
-    if 'performance' in custom_tools_enabled:
+    if 'lighthouse' in custom_tools_enabled:
         if not check_lighthouse_installation():
-            print('\n💡 Install Lighthouse: npm install lighthouse chrome-launcher', file=sys.stderr)
+            print('\n💡 Install Lighthouse: npm install -g lighthouse chrome-launcher', file=sys.stderr)
             sys.exit(1)
 
-    if 'security' in custom_tools_enabled:
+    if 'nuclei' in custom_tools_enabled:
         if not check_nuclei_installation():
             print('\n💡 Install Nuclei: https://github.com/projectdiscovery/nuclei', file=sys.stderr)
             sys.exit(1)
