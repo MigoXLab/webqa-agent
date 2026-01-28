@@ -278,7 +278,7 @@ class ToolRegistry:
                 if not enabled_custom_tools:
                     continue
                 # Check if this tool's step_type is in the enabled list
-                tool_key = metadata.step_type  # e.g., 'performance', 'security'
+                tool_key = metadata.step_type  # e.g., 'lighthouse', 'nuclei', 'traverse_clickable_elements'
                 if not tool_key or tool_key not in enabled_custom_tools:
                     continue
 

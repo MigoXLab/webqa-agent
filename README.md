@@ -201,8 +201,12 @@ test_config:
   business_objectives: Test search functionality, generate 3 test cases
   custom_tools:                         # Optional: Enable custom testing tools (by step_type)
     enabled:
-      # - lighthouse                    # Lighthouse performance testing (requires: npm install -g lighthouse chrome-launcher)
-      # - nuclei                        # Nuclei security scanning (requires: nuclei installed)
+      # - lighthouse                    # Lighthouse performance testing
+                                        # Requires: npm install lighthouse chrome-launcher (local, recommended)
+                                        # or: npm install -g lighthouse chrome-launcher (global)
+      # - nuclei                        # Nuclei security scanning
+                                        # Requires: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+                                        # or download from: https://github.com/projectdiscovery/nuclei/releases
       # - traverse_clickable_elements   # Clickable element traversal testing
       # - detect_dynamic_links          # Dynamic link discovery and validation
 
