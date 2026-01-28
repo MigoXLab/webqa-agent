@@ -1,6 +1,6 @@
 {
   "name": "webqa-agent",
-  "version": "0.2.3.1",
+  "version": "0.2.3.2",
   "description": "WebQA Agent is an autonomous web browser agent that audits performance, functionality & UX for engineers and vibe-coding creators.",
   "dependencies": {
     "chrome-launcher": "^1.2.0",
