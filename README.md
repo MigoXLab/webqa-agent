@@ -199,12 +199,12 @@ target:
 
 test_config:
   business_objectives: Test search functionality, generate 3 test cases
-  custom_tools:                         # Optional: Enable custom testing tools
+  custom_tools:                         # Optional: Enable custom testing tools (by step_type)
     enabled:
-      # - lighthouse                    # Lighthouse performance testing (requires: npm install -g lighthouse)
+      # - lighthouse                    # Lighthouse performance testing (requires: npm install -g lighthouse chrome-launcher)
       # - nuclei                        # Nuclei security scanning (requires: nuclei installed)
-      # - button_check                  # Clickable element traversal testing
-      # - link_check                    # Dynamic link discovery
+      # - traverse_clickable_elements   # Clickable element traversal testing
+      # - detect_dynamic_links          # Dynamic link discovery and validation
 
 llm_config:                             # LLM configuration, supports OpenAI, Anthropic Claude, Google Gemini, and OpenAI-compatible models (e.g., Doubao, Qwen)
   model: gpt-4.1-2025-04-14             # Primary model
