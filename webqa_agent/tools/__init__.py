@@ -16,7 +16,7 @@ Usage:
     registry = get_registry()
     tools = registry.get_tools(
         ui_tester_instance=tester,
-        enabled_custom_tools=['performance', 'link_detection']
+        enabled_custom_tools=['lighthouse', 'nuclei']
     )
 """
 

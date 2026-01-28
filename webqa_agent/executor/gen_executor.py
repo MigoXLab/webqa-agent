@@ -225,7 +225,7 @@ class GenExecutor:
         """Get list of enabled custom tool step_types from config.
 
         Returns:
-            List of custom tool keys (e.g., ['performance', 'security'])
+            List of custom tool step_types (e.g., ['lighthouse', 'nuclei', 'traverse_clickable_elements'])
         """
         return self.config.custom_tools.enabled
 
