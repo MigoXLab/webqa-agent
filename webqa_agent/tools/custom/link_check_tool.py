@@ -20,7 +20,6 @@ Example test step:
     {"action": "Click the navigation dropdown"},
     {"action": "detect_dynamic_links", "description": "Check for new links in dropdown"}
 """
-import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, Type
@@ -114,7 +113,7 @@ class LinkCheckTool(WebQABaseTool):
             name='detect_dynamic_links',
             category='custom',  # Custom tool - marks as user-defined
             step_type='detect_dynamic_links',  # Explicit step type for planning
-            description_short='Detects new links appearing after user interactions',
+            description_short='Detects new links appearing after user interactions (fast: typically <5s)',
             description_long=(
                 'Identifies and validates new links that appear dynamically after user '
                 'interactions such as clicking navigation menus, submitting forms, or '
@@ -337,16 +336,15 @@ class LinkCheckTool(WebQABaseTool):
 
             # Step 6: Format response
             if not new_links:
-                # Record step even when no new links found
-                if self.case_recorder:
-                    self.case_recorder.add_step(
-                        description='Detect dynamic links (no new links found)',
-                        screenshots=[],
-                        model_io=f'Total links on page: {len(current_links)}. No new links since last check.',
-                        actions=[],
-                        status='passed',
-                        step_type='action',
-                    )
+                # Record step even when no new links found (using safe_record_step helper)
+                self.safe_record_step(
+                    description='Detect dynamic links (no new links found)',
+                    model_io_data={
+                        'message': f'Total links on page: {len(current_links)}. No new links since last check.',
+                        'total_links': len(current_links),
+                    },
+                    status='passed',
+                )
 
                 # Update context even when no new links (enables proper assertion context)
                 self.update_action_context(
@@ -403,43 +401,24 @@ class LinkCheckTool(WebQABaseTool):
             if len(new_links) > 10:
                 summary += f'\n... and {len(new_links) - 10} more links'
 
-            # Record step when new links are detected
-            if self.case_recorder:
-                # Build detailed model_io with all validation results
-                # Ensure all data is JSON serializable using helper method
-                serializable_links = [
-                    {k: self._serialize_value(v) for k, v in link_data.items()}
-                    for link_data in validated_links[:20]
-                ]
+            # Record step when new links are detected (using safe_record_step helper)
+            # Build detailed model_io with all validation results
+            # Ensure all data is JSON serializable using helper method
+            serializable_links = [
+                {k: self._serialize_value(v) for k, v in link_data.items()}
+                for link_data in validated_links[:20]
+            ]
 
-                model_io_data = {
+            self.safe_record_step(
+                description=f'Detect dynamic links (found {len(new_links)} new)',
+                model_io_data={
                     'detected_count': len(new_links),
                     'validated_links': serializable_links,
                     'check_https': check_https,
                     'check_status': check_status,
-                }
-
-                try:
-                    self.case_recorder.add_step(
-                        description=f'Detect dynamic links (found {len(new_links)} new)',
-                        screenshots=[],
-                        model_io=json.dumps(model_io_data, ensure_ascii=False, indent=2),
-                        actions=[],
-                        status='passed',
-                        step_type='action',
-                    )
-                except (TypeError, ValueError) as json_err:
-                    # Fallback: record minimal info if JSON serialization still fails
-                    logging.warning(f'JSON serialization failed for link validation data: {json_err}')
-                    self.case_recorder.add_step(
-                        description=f'Detect dynamic links (found {len(new_links)} new)',
-                        screenshots=[],
-                        model_io=(f'Detected {len(new_links)} new links. '
-                                  f'Detailed validation data could not be serialized.'),
-                        actions=[],
-                        status='passed',
-                        step_type='action',
-                    )
+                },
+                status='passed',
+            )
 
             return self.format_success(
                 f'Detected {len(new_links)} new links',
@@ -447,31 +426,15 @@ class LinkCheckTool(WebQABaseTool):
             )
 
         except Exception as e:
-            # Record failed step
-            if self.case_recorder:
-                try:
-                    self.case_recorder.add_step(
-                        description='Detect dynamic links (failed)',
-                        screenshots=[],
-                        model_io=json.dumps({
-                            'error': self._serialize_value(e),
-                            'error_type': type(e).__name__
-                        }, ensure_ascii=False),
-                        actions=[],
-                        status='failed',
-                        step_type='action',
-                    )
-                except (TypeError, ValueError) as json_err:
-                    # Fallback: use plain text if JSON serialization fails
-                    logging.warning(f'JSON serialization failed for error data: {json_err}')
-                    self.case_recorder.add_step(
-                        description='Detect dynamic links (failed)',
-                        screenshots=[],
-                        model_io=f'Error: {str(e)} (Type: {type(e).__name__})',
-                        actions=[],
-                        status='failed',
-                        step_type='action',
-                    )
+            # Record failed step (using safe_record_step helper)
+            self.safe_record_step(
+                description='Detect dynamic links (failed)',
+                model_io_data={
+                    'error': self._serialize_value(e),
+                    'error_type': type(e).__name__
+                },
+                status='failed',
+            )
 
             # Update context to indicate detection failure (enables proper assertion skip logic)
             # This ensures subsequent assertion steps know about the failure and can handle it appropriately

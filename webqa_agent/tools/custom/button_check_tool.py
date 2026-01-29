@@ -21,7 +21,6 @@ Usage in test plans:
 Example test step:
     {"action": "traverse_clickable_elements", "params": {}}
 """
-import json
 import logging
 from typing import Any, Dict, Type
 
@@ -141,6 +140,8 @@ class ButtonCheckTool(WebQABaseTool):
                 # Performance and safety considerations
                 'On pages with hundreds of clickable elements (use sampling instead)',
                 'During performance testing (adds significant overhead)',
+                'Too frequently (execution time: 10-30 seconds depending on element count)',
+                'On every page navigation (use once per page for regression testing)',
                 'On production environments without proper sandboxing',
                 'When testing destructive actions (delete, payment submission)',
 
@@ -236,16 +237,12 @@ class ButtonCheckTool(WebQABaseTool):
             clickable_elements = crawl_result.raw_dict()
 
             if not clickable_elements:
-                # No clickable elements found - record as success
-                if self.case_recorder:
-                    self.case_recorder.add_step(
-                        description='Traverse clickable elements (no elements found)',
-                        screenshots=[],
-                        model_io='No clickable elements found on page',
-                        actions=[],
-                        status='passed',
-                        step_type='action',
-                    )
+                # No clickable elements found - record as success (using safe_record_step helper)
+                self.safe_record_step(
+                    description='Traverse clickable elements (no elements found)',
+                    model_io_data={'message': 'No clickable elements found on page'},
+                    status='passed',
+                )
 
                 return self.format_success(
                     'No clickable elements found on page',
@@ -298,37 +295,28 @@ class ButtonCheckTool(WebQABaseTool):
                 }
             )
 
-            # Step 6: Record to case_recorder
-            if self.case_recorder:
-                try:
-                    # Extract failure details for logging
-                    failures = [
-                        {
-                            'element_id': step.id,
-                            'description': step.description,
-                            'error': step.errors if hasattr(step, 'errors') and step.errors else 'Unknown error'
-                        }
-                        for step in result.steps
-                        if step.status == TestStatus.FAILED
-                    ]
+            # Step 6: Record to case_recorder (using safe_record_step helper)
+            # Extract failure details for logging
+            failures = [
+                {
+                    'element_id': step.id,
+                    'description': step.description,
+                    'error': step.errors if hasattr(step, 'errors') and step.errors else 'Unknown error'
+                }
+                for step in result.steps
+                if step.status == TestStatus.FAILED
+            ]
 
-                    model_io_data = {
-                        'total_elements': total_elements,
-                        'passed': passed_count,
-                        'failed': failed_count,
-                        'failures': failures[:10],  # Limit to first 10 failures
-                    }
-
-                    self.case_recorder.add_step(
-                        description=f'Traverse clickable elements (tested {total_elements})',
-                        screenshots=[],
-                        model_io=json.dumps(model_io_data, ensure_ascii=False, indent=2),
-                        actions=[],
-                        status='passed' if result.status == TestStatus.PASSED else 'failed',
-                        step_type='action',
-                    )
-                except Exception as record_err:
-                    logger.warning(f'Failed to record button test step: {record_err}')
+            self.safe_record_step(
+                description=f'Traverse clickable elements (tested {total_elements})',
+                model_io_data={
+                    'total_elements': total_elements,
+                    'passed': passed_count,
+                    'failed': failed_count,
+                    'failures': failures[:10],  # Limit to first 10 failures
+                },
+                status='passed' if result.status == TestStatus.PASSED else 'failed',
+            )
 
             # Step 7: Format response with detailed error context
             if result.status == TestStatus.PASSED:
@@ -399,22 +387,15 @@ class ButtonCheckTool(WebQABaseTool):
                 return self.format_failure(message, recovery_hints=recovery_hints)
 
         except Exception as e:
-            # Record failed step
-            if self.case_recorder:
-                try:
-                    self.case_recorder.add_step(
-                        description='Traverse clickable elements (failed)',
-                        screenshots=[],
-                        model_io=json.dumps({
-                            'error': str(e),
-                            'error_type': type(e).__name__
-                        }, ensure_ascii=False),
-                        actions=[],
-                        status='failed',
-                        step_type='action',
-                    )
-                except Exception:
-                    pass  # Ignore case_recorder errors
+            # Record failed step (using safe_record_step helper)
+            self.safe_record_step(
+                description='Traverse clickable elements (failed)',
+                model_io_data={
+                    'error': str(e),
+                    'error_type': type(e).__name__
+                },
+                status='failed',
+            )
 
             # Update context to indicate failure
             self.update_action_context(

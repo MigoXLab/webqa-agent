@@ -82,6 +82,129 @@ def _get_custom_tools_planning_section(enabled_custom_tools: list[str] | None = 
         f'- **Custom tools** ({custom_tools_list}): Testing utilities - can use technical parameters\n'
         '- **Core UI actions** (Tap, Input, Scroll): User simulations - should use natural language from user perspective\n'
     )
+
+    # Add custom tool invocation pattern decision framework
+    section += """
+
+### Custom Tool Invocation Pattern Decision Framework
+
+**Purpose**: Determine optimal invocation pattern for ANY custom tool (current or future) based on metadata characteristics, not hardcoded tool names.
+
+---
+
+#### 📊 Tool Characteristic Dimensions
+
+Extract these characteristics from tool metadata to guide decision-making:
+
+**1. Execution Time** (from `dont_use_when`)
+- 🐌 **Long** (>30s): Contains "takes X seconds" with X>30, or "frequently", "every navigation"
+- 🏃 **Medium** (5-30s): Contains "takes X seconds" with 5<X<30, or "every single", "too often"
+- ⚡ **Fast** (<5s): No time warnings, or "quick", "fast", "<5s"
+
+**2. Scope** (from `description` and `use_when`)
+- 🌐 **Page-level**: "entire page", "all elements on page", "comprehensive"
+- 🔗 **URL-level**: "on URL", "endpoint", "target URL"
+- 🖱️ **Interaction-level**: "after clicking", "after interaction", "reveals new"
+- 🎯 **Element-level**: "specific element", "form field"
+
+**3. Test Objective** (from `use_when`)
+- 🏆 **Independent**: "comprehensive", "audit", "regression testing", "monitoring"
+- 🔗 **Interaction-dependent**: "after clicking", "after submission", "reveals"
+
+**4. Frequency Constraint** (from `dont_use_when`)
+- 1️⃣ **Once per scope**: "once per page/URL", "use sampling", "avoid frequent"
+- 🔄 **After interactions**: "after specific actions", no "once" constraints
+- ⚠️ **Avoid frequent**: "too frequently", "every navigation", "every page"
+
+---
+
+#### 🎯 Decision Logic (Simplified)
+
+**Apply these rules in order**:
+
+```
+IF (Long Execution >30s) OR (Independent Objective) OR (Frequency = "once per scope")
+  → Pattern 1: Independent Test Case
+
+ELSE IF ("after interaction" in use_when) AND (Interaction-level scope)
+  → Pattern 2: Embedded Test Step
+
+ELSE
+  → Pattern 3: Flexible (decide based on test objective)
+```
+
+**Pattern 1: Independent Test Case** 🎯
+- **Structure**: Separate test case with tool as main action
+- **Example**: `{"name": "Performance audit", "steps": [{"action": "GoToPage"}, {"action": "lighthouse"}]}`
+- **Frequency**: One test case per page/URL, NOT per navigation
+
+**Pattern 2: Embedded Test Step** 🔗
+- **Structure**: Tool as verification step after user action
+- **Example**: `{"name": "Menu test", "steps": [{"action": "Tap"}, {"action": "detect_dynamic_links"}]}`
+- **Trigger**: Only after interactions that change page state
+
+**Pattern 3: Flexible** ⚖️
+- **Decision factors**: Test objective (comprehensive vs. targeted), page complexity, time constraints
+- **Use as Test Case**: For comprehensive regression/smoke testing
+- **Use as Test Step**: For targeted validation after specific interactions
+
+---
+
+#### 🚫 Anti-Patterns (Universal Rules)
+
+**Avoid these regardless of tool**:
+- ❌ Tool invoked after EVERY navigation without state change
+- ❌ Long-running tools (>30s) appearing in >5 test cases
+- ❌ Page-level tools invoked multiple times on same page
+- ❌ Interaction-level tools invoked on initial page load (no interaction yet)
+
+**Red Flag Detection**:
+- See "frequently", "every", "multiple times" in dont_use_when → Limit invocations
+- See "once per" in dont_use_when → Create independent test cases
+- See "after" in use_when → Use as embedded steps after interactions
+
+---
+
+#### 🔍 Self-Verification Checklist
+
+Before finalizing test plan with custom tools, verify:
+- [ ] Long-running tools (>30s): Used as independent test cases, NOT in every test?
+- [ ] Interaction-level tools: Only invoked AFTER interactions that change state?
+- [ ] Frequency constraints: Followed "once per page/URL" guidance from dont_use_when?
+- [ ] Pattern selection: Based on extracted characteristics, NOT memorized tool names?
+
+---
+
+#### 🆕 Future Tool Compatibility
+
+**For new custom tools**, the framework automatically applies if metadata includes:
+- ✅ Execution time indicators in `dont_use_when` ("takes X seconds", "frequently")
+- ✅ Scope indicators in `description` ("page-level", "after interaction")
+- ✅ Objective indicators in `use_when` ("comprehensive", "audit", "after")
+- ✅ Frequency constraints in `dont_use_when` ("once per", "avoid frequent")
+
+**Example**: A new tool `execute_api_fuzzing` with:
+- `dont_use_when`: ["frequently (takes 45 seconds)", "on every endpoint"]
+- `use_when`: ["comprehensive API security testing"]
+- LLM inference: Long (45s) + Independent (comprehensive) + Once per endpoint → **Pattern 1**
+
+---
+
+#### 📚 Current Tool Reference (Examples Only)
+
+**Do NOT memorize these patterns - always analyze metadata**:
+
+| Tool | Time | Scope | Objective | Pattern | Reasoning |
+|------|------|-------|-----------|---------|-----------|
+| lighthouse | Long (30-60s) | Page | Independent audit | Pattern 1 | dont_use_when: "takes 30-60 seconds", "frequently" |
+| nuclei | Long (10-60s) | URL | Independent scan | Pattern 1 | dont_use_when: "takes 10-60 seconds", "once per URL" |
+| traverse_clickable_elements | Medium (10-30s) | Page | Can be both | Pattern 3 | Flexible: comprehensive OR targeted |
+| detect_dynamic_links | Fast (<5s) | Interaction | Dependent | Pattern 2 | use_when: "After clicking", "After form submissions" |
+
+**Key Insight**: These patterns emerge from metadata analysis, not hardcoded rules. A future tool with "Long + Independent + Once per scope" will follow Pattern 1 automatically.
+
+"""
+
     return section
 
 
