@@ -34,6 +34,26 @@ from webqa_agent.tools.registry import register_tool
 
 logger = logging.getLogger(__name__)
 
+# Performance metric thresholds (recommended values)
+PERFORMANCE_THRESHOLDS = {
+    'fcp': {
+        'threshold': 1800,
+        'hint': 'Optimize server response time, reduce render-blocking CSS/JS, use CDN'
+    },
+    'lcp': {
+        'threshold': 2500,
+        'hint': 'Optimize largest content element (images/videos), preload critical resources, improve server response time'
+    },
+    'tbt': {
+        'threshold': 200,
+        'hint': 'Reduce JavaScript execution time, split long tasks, defer non-critical scripts'
+    },
+    'cls': {
+        'threshold': 0.1,
+        'hint': 'Add size attributes to images/videos, avoid inserting content above existing content, use CSS transforms'
+    }
+}
+
 
 class LighthouseToolSchema(BaseModel):
     """Schema for Lighthouse tool parameters.
@@ -280,30 +300,21 @@ class LighthouseTool(WebQABaseTool):
 
             # Step 8: Generate targeted recovery hints based on specific metrics
             recovery_hints = []
+            metrics_data = {
+                'fcp': fcp,
+                'lcp': lcp,
+                'tbt': tbt,
+                'cls': cls_value
+            }
 
-            # FCP (First Contentful Paint) - Recommended < 1800ms
-            if fcp > 1800:
-                recovery_hints.append(
-                    f'FCP {fcp}ms > 1800ms: Optimize server response time, reduce render-blocking CSS/JS, use CDN'
-                )
-
-            # LCP (Largest Contentful Paint) - Recommended < 2500ms
-            if lcp > 2500:
-                recovery_hints.append(
-                    f'LCP {lcp}ms > 2500ms: Optimize largest content element (images/videos), preload critical resources, improve server response time'
-                )
-
-            # TBT (Total Blocking Time) - Recommended < 200ms
-            if tbt > 200:
-                recovery_hints.append(
-                    f'TBT {tbt}ms > 200ms: Reduce JavaScript execution time, split long tasks, defer non-critical scripts'
-                )
-
-            # CLS (Cumulative Layout Shift) - Recommended < 0.1
-            if cls_value > 0.1:
-                recovery_hints.append(
-                    f'CLS {cls_value} > 0.1: Add size attributes to images/videos, avoid inserting content above existing content, use CSS transforms'
-                )
+            # Check each metric against thresholds
+            for metric_name, metric_value in metrics_data.items():
+                threshold_config = PERFORMANCE_THRESHOLDS[metric_name]
+                # Skip if metric value is not numeric (e.g., 'N/A')
+                if isinstance(metric_value, (int, float)) and metric_value > threshold_config['threshold']:
+                    recovery_hints.append(
+                        f"{metric_name.upper()} {metric_value}ms > {threshold_config['threshold']}ms: {threshold_config['hint']}"
+                    )
 
             # Add general hints if no specific issues or for overall optimization
             if not recovery_hints:
@@ -323,7 +334,11 @@ class LighthouseTool(WebQABaseTool):
             if result.status.value == 'passed':
                 return self.format_success(message)
             elif result.status.value == 'warning':
-                return self.format_warning(message, recovery_hints=recovery_hints)
+                # format_warning doesn't accept recovery_hints, include in message
+                warning_message = message
+                if recovery_hints:
+                    warning_message += '\n\nOptimization recommendations:\n' + '\n'.join(f'- {hint}' for hint in recovery_hints)
+                return self.format_warning(warning_message)
             else:
                 return self.format_failure(message, recovery_hints=recovery_hints)
 
