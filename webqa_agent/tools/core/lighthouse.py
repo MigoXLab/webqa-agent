@@ -22,6 +22,29 @@ class LighthouseMetricsTest:
         """Get localized text for the given key."""
         return self.localized_strings.get(self.language, {}).get(key, key)
 
+    async def _get_playwright_chromium_path(self) -> str:
+        """Get Playwright chromium executable path.
+
+        Returns:
+            str: Path to Playwright chromium, or None if not found
+        """
+        try:
+            from playwright.sync_api import sync_playwright
+
+            with sync_playwright() as p:
+                # Get chromium browser type
+                browser_type = p.chromium
+                # Get executable path
+                executable_path = browser_type.executable_path
+                logging.debug(f'Found Playwright chromium at: {executable_path}')
+                return executable_path
+        except ImportError:
+            logging.warning('Playwright not installed, cannot get chromium path')
+            return None
+        except Exception as e:
+            logging.warning(f'Failed to get Playwright chromium path: {e}')
+            return None
+
     async def run(self, url: str, browser_config: dict = None, **kwargs) -> SubTestResult:
         """Run Lighthouse test on the given URL.
 
@@ -195,14 +218,31 @@ class LighthouseMetricsTest:
                                 '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
                             ];
 
+                            // Try to find Playwright chromium in user cache directory
                             try {{
-                                const findResult = execSync('find /ms-playwright -name chrome -type f -executable 2>/dev/null | head -1', {{encoding: 'utf8'}}).trim();
-                                if (findResult && existsSync(findResult)) {{
-                                    chromePath = findResult;
-                                    console.log(`Found Chrome via find command: ${{chromePath}}`);
+                                const homeDir = process.env.HOME || process.env.USERPROFILE;
+                                if (homeDir) {{
+                                    const findResult = execSync(`find ${{homeDir}}/.cache/ms-playwright -name chrome -type f -executable 2>/dev/null | head -1`, {{encoding: 'utf8'}}).trim();
+                                    if (findResult && existsSync(findResult)) {{
+                                        chromePath = findResult;
+                                        console.log(`Found Playwright Chrome in user cache: ${{chromePath}}`);
+                                    }}
                                 }}
                             }} catch (e) {{
-                                console.log('Find command failed, trying predefined paths...');
+                                console.log('User cache search failed, trying system paths...');
+                            }}
+
+                            // Fallback to system-level Playwright
+                            if (!chromePath || !existsSync(chromePath)) {{
+                                try {{
+                                    const findResult = execSync('find /ms-playwright -name chrome -type f -executable 2>/dev/null | head -1', {{encoding: 'utf8'}}).trim();
+                                    if (findResult && existsSync(findResult)) {{
+                                        chromePath = findResult;
+                                        console.log(`Found Chrome via find command: ${{chromePath}}`);
+                                    }}
+                                }} catch (e) {{
+                                    console.log('Find command failed, trying predefined paths...');
+                                }}
                             }}
 
                             if (!chromePath || !existsSync(chromePath)) {{
@@ -282,10 +322,25 @@ class LighthouseMetricsTest:
                 )
 
             try:
+                # Get Playwright chromium path
+                chrome_path = await self._get_playwright_chromium_path()
+                if chrome_path:
+                    logging.info(f'Using Playwright chromium at: {chrome_path}')
+                else:
+                    logging.warning('Could not find Playwright chromium, will use default Chrome search')
+
+                # Prepare environment variables with Chrome path
+                env = os.environ.copy()
+                if chrome_path:
+                    env['CHROME_PATH'] = chrome_path
+
                 # Run the Node.js script
                 logging.debug('Running Lighthouse via Node.js')
                 process = await asyncio.create_subprocess_exec(
-                    'node', js_file_path, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                    'node', js_file_path,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=env
                 )
 
                 stdout, stderr = await process.communicate()
