@@ -396,16 +396,31 @@ class NucleiTool(WebQABaseTool):
                 f"  Total: {findings['total']}"
             ]
 
-            # Add critical/high findings details
+            # Add critical/high findings details with enhanced information
             if findings_data['critical']:
-                message_parts.append('\nCritical Issues:')
+                message_parts.append('\nCritical Issues (Immediate Action Required):')
                 for finding in findings_data['critical'][:3]:
-                    message_parts.append(f"  - {finding['name']} ({finding['template_id']})")
+                    # Extract additional metadata
+                    severity = finding.get('info', {}).get('severity', 'critical')
+                    matched_at = finding.get('matched_at', finding.get('host', 'Unknown endpoint'))
+                    cvss_score = finding.get('info', {}).get('classification', {}).get('cvss-score', 'N/A')
+
+                    message_parts.append(
+                        f"  - {finding['name']} ({finding['template_id']})\n"
+                        f"    Severity: {severity.upper()} | CVSS: {cvss_score} | Affected: {matched_at}"
+                    )
 
             if findings_data['high']:
-                message_parts.append('\nHigh Severity Issues:')
+                message_parts.append('\nHigh Severity Issues (Urgent):')
                 for finding in findings_data['high'][:3]:
-                    message_parts.append(f"  - {finding['name']} ({finding['template_id']})")
+                    severity = finding.get('info', {}).get('severity', 'high')
+                    matched_at = finding.get('matched_at', finding.get('host', 'Unknown endpoint'))
+                    cvss_score = finding.get('info', {}).get('classification', {}).get('cvss-score', 'N/A')
+
+                    message_parts.append(
+                        f"  - {finding['name']} ({finding['template_id']})\n"
+                        f"    Severity: {severity.upper()} | CVSS: {cvss_score} | Affected: {matched_at}"
+                    )
 
             message = '\n'.join(message_parts)
 
