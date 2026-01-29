@@ -278,22 +278,54 @@ class LighthouseTool(WebQABaseTool):
                 except Exception as record_err:
                     logger.warning(f'Failed to record performance test step: {record_err}')
 
-            # Step 8: Return formatted response based on status
+            # Step 8: Generate targeted recovery hints based on specific metrics
+            recovery_hints = []
+
+            # FCP (First Contentful Paint) - Recommended < 1800ms
+            if fcp > 1800:
+                recovery_hints.append(
+                    f'FCP {fcp}ms > 1800ms: Optimize server response time, reduce render-blocking CSS/JS, use CDN'
+                )
+
+            # LCP (Largest Contentful Paint) - Recommended < 2500ms
+            if lcp > 2500:
+                recovery_hints.append(
+                    f'LCP {lcp}ms > 2500ms: Optimize largest content element (images/videos), preload critical resources, improve server response time'
+                )
+
+            # TBT (Total Blocking Time) - Recommended < 200ms
+            if tbt > 200:
+                recovery_hints.append(
+                    f'TBT {tbt}ms > 200ms: Reduce JavaScript execution time, split long tasks, defer non-critical scripts'
+                )
+
+            # CLS (Cumulative Layout Shift) - Recommended < 0.1
+            if cls_value > 0.1:
+                recovery_hints.append(
+                    f'CLS {cls_value} > 0.1: Add size attributes to images/videos, avoid inserting content above existing content, use CSS transforms'
+                )
+
+            # Add general hints if no specific issues or for overall optimization
+            if not recovery_hints:
+                recovery_hints = [
+                    'Performance is good! Continue monitoring metrics',
+                    'Consider further optimizations for mobile devices',
+                    'Monitor real user metrics (RUM) for production insights'
+                ]
+            else:
+                # Add general optimization tips
+                recovery_hints.extend([
+                    'General: Compress images (WebP/AVIF), minify CSS/JS, enable HTTP/2',
+                    'General: Use lazy loading, implement caching strategies, optimize fonts'
+                ])
+
+            # Step 9: Return formatted response based on status
             if result.status.value == 'passed':
                 return self.format_success(message)
             elif result.status.value == 'warning':
-                return self.format_warning(message)
+                return self.format_warning(message, recovery_hints=recovery_hints)
             else:
-                return self.format_failure(
-                    message,
-                    recovery_hints=[
-                        'Optimize image sizes and formats',
-                        'Reduce JavaScript execution time',
-                        'Minimize render-blocking resources',
-                        'Implement lazy loading for images',
-                        'Use content delivery network (CDN)'
-                    ]
-                )
+                return self.format_failure(message, recovery_hints=recovery_hints)
 
         except ImportError as e:
             logger.error(f'Performance Tool: Lighthouse dependency missing: {e}')
