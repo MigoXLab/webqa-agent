@@ -23,15 +23,15 @@ class LighthouseMetricsTest:
         return self.localized_strings.get(self.language, {}).get(key, key)
 
     async def _get_playwright_chromium_path(self) -> str:
-        """Get Playwright chromium executable path.
+        """Get Playwright chromium executable path using async API.
 
         Returns:
             str: Path to Playwright chromium, or None if not found
         """
         try:
-            from playwright.sync_api import sync_playwright
+            from playwright.async_api import async_playwright
 
-            with sync_playwright() as p:
+            async with async_playwright() as p:
                 # Get chromium browser type
                 browser_type = p.chromium
                 # Get executable path
