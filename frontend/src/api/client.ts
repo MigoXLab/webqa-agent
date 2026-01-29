@@ -1,0 +1,354 @@
+/**
+ * API Client for WebQA Backend
+ */
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+
+// Types matching backend schemas
+export interface Environment {
+  id?: string;
+  name: string;
+  url: string;
+  browser_config?: Record<string, any>;
+  ignore_rules?: Record<string, any>;
+  auth_type: 'none' | 'sso' | 'cookies';
+  sso_username?: string;
+  sso_password?: string;
+  sso_env?: 'prod' | 'staging';
+  cookies?: Array<Record<string, any>>;
+  created_at?: string;
+}
+
+export interface Business {
+  id: string;
+  name: string;
+  description?: string;
+  created_at: string;
+  environments: Environment[];
+}
+
+export interface TestStep {
+  step_type: 'action' | 'verify';
+  description?: string;
+  assertion?: string;
+  args?: Record<string, any>;
+}
+
+export interface TestCase {
+  id: string;
+  business_id: string;
+  name: string;
+  description?: string;
+  login_required: boolean;
+  steps: TestStep[];
+  snapshot?: string;
+  use_snapshot?: string;
+  status: 'active' | 'draft' | 'disabled';
+  created_at: string;
+}
+
+export interface Execution {
+  id: string;
+  business_id: string;
+  business_name?: string;
+  environment_id?: string;
+  environment_name?: string;
+  trigger_type: 'manual' | 'scheduled';
+  scheduled_task_id?: string;
+  model: string;
+  workers: number;
+  test_case_ids: string[];
+  status: 'pending' | 'running' | 'passed' | 'failed' | 'warning' | 'timeout' | 'completed';
+  oss_report_url?: string;
+  local_report_path?: string;
+  started_at?: string;
+  completed_at?: string;
+  created_at: string;
+  error_message?: string;
+  result_count?: {
+    total: number;
+    passed: number;
+    failed: number;
+    warning: number;
+  };
+}
+
+// Progress types for real-time execution tracking
+export interface TaskProgress {
+  name: string;
+  duration?: number;
+  elapsed?: number;
+  status?: string;
+  error?: string;
+}
+
+export interface ExecutionProgress {
+  execution_id: string;
+  status: string;
+  updated_at?: string;
+  completed: TaskProgress[];
+  running: TaskProgress[];
+  logs: string[];
+}
+
+export interface APIResponse<T> {
+  code: number;
+  message: string;
+  data: T;
+}
+
+export interface ListResponse<T> {
+  items: T[];
+  total: number;
+}
+
+// API Client class
+class APIClient {
+  private baseUrl: string;
+
+  constructor(baseUrl: string = API_BASE_URL) {
+    this.baseUrl = baseUrl;
+  }
+
+  private async request<T>(
+    endpoint: string,
+    options: RequestInit = {}
+  ): Promise<T> {
+    const url = `${this.baseUrl}${endpoint}`;
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    };
+
+    const response = await fetch(url, {
+      ...options,
+      headers,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail?.message || `HTTP ${response.status}`);
+    }
+
+    const data: APIResponse<T> = await response.json();
+
+    if (data.code !== 0) {
+      throw new Error(data.message || 'API Error');
+    }
+
+    return data.data;
+  }
+
+  // Business APIs
+  async getBusinesses(): Promise<ListResponse<Business>> {
+    return this.request<ListResponse<Business>>('/businesses');
+  }
+
+  async getBusiness(id: string): Promise<Business> {
+    return this.request<Business>(`/businesses/${id}`);
+  }
+
+  async createBusiness(data: {
+    name: string;
+    description?: string;
+    environments: Omit<Environment, 'id' | 'created_at'>[];
+  }): Promise<Business> {
+    return this.request<Business>('/businesses', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateBusiness(
+    id: string,
+    data: {
+      name?: string;
+      description?: string;
+      environments?: Environment[];
+    }
+  ): Promise<Business> {
+    return this.request<Business>(`/businesses/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteBusiness(id: string): Promise<void> {
+    await this.request(`/businesses/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Test Case APIs
+  async getTestCases(businessId: string): Promise<ListResponse<TestCase>> {
+    return this.request<ListResponse<TestCase>>(`/businesses/${businessId}/cases`);
+  }
+
+  async getTestCase(id: string): Promise<TestCase> {
+    return this.request<TestCase>(`/cases/${id}`);
+  }
+
+  async createTestCase(data: {
+    business_id: string;
+    name: string;
+    description?: string;
+    login_required?: boolean;
+    steps: TestStep[];
+    snapshot?: string;
+    use_snapshot?: string;
+    status?: string;
+  }): Promise<TestCase> {
+    return this.request<TestCase>('/cases', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateTestCase(
+    id: string,
+    data: Partial<Omit<TestCase, 'id' | 'business_id' | 'created_at'>>
+  ): Promise<TestCase> {
+    return this.request<TestCase>(`/cases/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteTestCase(id: string): Promise<void> {
+    await this.request(`/cases/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async importTestCases(businessId: string, yamlContent: string): Promise<{
+    imported_count: number;
+    cases: TestCase[];
+  }> {
+    return this.request<{ imported_count: number; cases: TestCase[] }>(
+      `/cases/import/${businessId}`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ yaml_content: yamlContent }),
+      }
+    );
+  }
+
+  async exportTestCases(businessId: string): Promise<{
+    yaml_content: string;
+    count: number;
+  }> {
+    return this.request<{ yaml_content: string; count: number }>(
+      `/cases/export/${businessId}`
+    );
+  }
+
+  // Execution APIs
+  async getExecutions(params?: {
+    business_id?: string;
+    trigger_type?: string;
+    status?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<ListResponse<Execution>> {
+    const searchParams = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined) {
+          searchParams.append(key, String(value));
+        }
+      });
+    }
+    const query = searchParams.toString();
+    return this.request<ListResponse<Execution>>(`/executions${query ? `?${query}` : ''}`);
+  }
+
+  async getExecution(id: string): Promise<Execution> {
+    return this.request<Execution>(`/executions/${id}`);
+  }
+
+  async createExecution(data: {
+    business_id: string;
+    environment_id: string;
+    test_case_ids: string[];
+    model?: string;
+    workers?: number;
+  }): Promise<Execution> {
+    return this.request<Execution>('/executions', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getExecutionStatus(id: string): Promise<{
+    id: string;
+    status: string;
+    oss_report_url?: string;
+    result_count?: Record<string, number>;
+    error_message?: string;
+  }> {
+    return this.request(`/executions/${id}/status`);
+  }
+
+  async getExecutionProgress(id: string): Promise<ExecutionProgress> {
+    return this.request<ExecutionProgress>(`/executions/${id}/progress`);
+  }
+
+  // Config APIs
+  async getAvailableModels(): Promise<{
+    models: string[];
+    default: string;
+  }> {
+    return this.request('/config/models');
+  }
+
+  // File APIs
+  async getFiles(businessId: string): Promise<ListResponse<{
+    id: string;
+    name: string;
+    size: number;
+    type: string;
+    uploaded_at: string;
+    url: string;
+  }>> {
+    return this.request(`/files/${businessId}`);
+  }
+
+  async uploadFile(businessId: string, file: File): Promise<{
+    id: string;
+    name: string;
+    size: number;
+    type: string;
+    uploaded_at: string;
+    url: string;
+  }> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    // For FormData, we let the browser set the Content-Type header with the boundary
+    const response = await fetch(`${this.baseUrl}/files/${businessId}/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail?.message || `HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (data.code !== 0) {
+      throw new Error(data.message || 'API Error');
+    }
+    return data.data;
+  }
+
+  async deleteFile(businessId: string, filename: string): Promise<void> {
+    await this.request(`/files/${businessId}/${filename}`, {
+      method: 'DELETE',
+    });
+  }
+}
+
+// Export singleton instance
+export const apiClient = new APIClient();
+export default apiClient;

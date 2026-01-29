@@ -143,6 +143,10 @@ class LogConfig(BaseModel):
     level: str = Field(
         default='info', description='Log level (debug, info, warning, error)'
     )
+    stdout: bool = Field(
+        default=False,
+        description='Disable file logging, only stdout'
+    )
 
     @field_validator('level')
     @classmethod

@@ -1,0 +1,347 @@
+# 测试用例管理平台 - 架构设计文档
+
+## 1. 系统架构
+
+```
+┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│                  │     │                  │     │                  │
+│     Frontend     │────▶│     Backend      │────▶│   WebQA-Agent    │
+│   (React + TS)   │     │   (FastAPI)      │     │   (Executor)     │
+│                  │     │                  │     │                  │
+└──────────────────┘     └────────┬─────────┘     └────────┬─────────┘
+                                 │                        │
+                   ┌─────────────┼─────────────┐          │
+                   ▼             ▼             ▼          ▼
+           ┌────────────┐ ┌────────────┐ ┌────────────────────┐
+           │            │ │            │ │                    │
+           │  Database  │ │   Redis    │ │  阿里云 OSS        │
+           │ PostgreSQL │ │ (进度缓存) │ │  (报告/截图/文件)   │
+           │            │ │            │ │                    │
+           └────────────┘ └────────────┘ └────────────────────┘
+```
+
+______________________________________________________________________
+
+## 2. 技术栈选型
+
+| 组件     | 技术选型         | 说明                                       |
+| -------- | ---------------- | ------------------------------------------ |
+| 后端框架 | FastAPI (Python) | 与 webqa-agent 同语言，便于集成            |
+| 数据库   | PostgreSQL       | 成熟稳定，支持 JSON 字段                   |
+| 任务调度 | APScheduler      | 轻量级定时任务                             |
+| 对象存储 | 阿里云 OSS       | 报告、截图、业务文件统一存储               |
+| 缓存     | Redis            | 实时进度缓存（集群模式），单机可用内存缓存 |
+
+______________________________________________________________________
+
+## 3. 统一执行流程
+
+所有部署模式（本地开发、Docker Compose、Kubernetes）使用统一的执行流程：
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    统一执行流程（所有模式）                       │
+│                                                                 │
+│  Backend                              Agent (run_webqa.py)      │
+│     │                                        │                  │
+│     ├─ 创建 Execution (status=pending)       │                  │
+│     │                                        │                  │
+│     ├─ 根据 EXECUTION_MODE 启动 Agent:       │                  │
+│     │   ├─ local: subprocess                │                  │
+│     │   └─ kubernetes: K8s Job              │                  │
+│     │         │                             │                  │
+│     │         └─────────────────────────────▶│                  │
+│     │                                        │                  │
+│     │ (不等待，直接返回)                      ▼                  │
+│     │                                  执行测试                 │
+│     │                                  写入 /shared/            │
+│     │                                        │                  │
+│     │◀────── POST /api/internal/.../complete─┤                  │
+│     │                                        │                  │
+│     ├─ 读取共享存储                           │                  │
+│     ├─ 上传 OSS                              │                  │
+│     └─ 更新 DB                               │                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 3.2 实时进度推送流程
+
+Agent 执行过程中定期推送进度到 Backend，前端轮询获取实时状态：
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        实时进度推送流程                                       │
+│                                                                             │
+│  Agent (K8s Job / Local)                   Backend (FastAPI)               │
+│         │                                           │                      │
+│         │  POST /api/internal/.../progress         │                      │
+│         │─────────────────────────────────────────▶│                      │
+│         │  (每 1-2 秒推送一次)                       │                      │
+│         │                                           │                      │
+│         │  {                                        ├─▶ 内存缓存（单机）   │
+│         │    "completed": [...],                   │   或                  │
+│         │    "running": [...],                     ├─▶ Redis（集群模式）  │
+│         │    "logs": [...]                         │                      │
+│         │  }                                        │                      │
+│         │                                           │                      │
+│         │                                     Frontend                      │
+│         │                                           │                      │
+│         │             GET /api/.../progress         │                      │
+│         │                                     ◀─────│ (轮询 2 秒)          │
+│         │                                           │                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**设计要点**：
+
+- **不依赖文件系统**：通过 HTTP API 推送，支持 K8s 集群部署
+- **缓存策略**：单机用内存缓存，集群用 Redis（TTL 5分钟）
+- **推送频率**：Agent 每 1-2 秒推送一次，避免过多网络开销
+- **容错**：推送失败静默处理，不影响主流程
+
+### 3.3 执行模式说明
+
+| 模式      | EXECUTION_MODE | 启动方式                | 适用场景 |
+| --------- | -------------- | ----------------------- | -------- |
+| **Local** | `local`        | `subprocess` 启动子进程 | 本地开发 |
+| **K8s**   | `kubernetes`   | 创建 K8s Job            | K8s 集群 |
+
+______________________________________________________________________
+
+## 4. 共享存储设计
+
+Backend 和 Agent 通过共享存储交换数据：
+
+```
+/shared/
+├── reports/                    # 测试报告（Agent 写入，Backend 读取上传 OSS）
+│   └── exec_{execution_id}/
+│       ├── config.yaml         # 执行配置
+│       ├── test_report.html
+│       ├── test_results.json
+│       └── screenshots/
+│
+└── logs/                       # Agent 执行日志 TODO：后续agent日志优化，非cli情况不需要写入文件
+    └── {execution_id}/
+        └── agent.log
+```
+
+### 4.1 不同环境的共享存储
+
+| 环境       | 共享存储实现          |
+| ---------- | --------------------- |
+| 本地开发   | 项目内 `data/` 目录   |
+| Kubernetes | PVC (阿里云 NAS, RWX) |
+
+______________________________________________________________________
+
+## 5. 部署架构
+
+### 5.1 Kubernetes 部署
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                         Kubernetes Cluster                        │
+│  ┌─────────────────────┐  ┌─────────────────────┐                │
+│  │ Frontend Deploy/Pod │  │  Backend Deploy/Pod │                │
+│  └─────────────────────┘  └─────────┬───────────┘                │
+│                                     │                            │
+│          ┌──────────────────────────┼──────────────────┐         │
+│          ▼                          ▼                  ▼         │
+│  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐      │
+│  │ Agent Job 1    │  │ Agent Job 2    │  │ Agent Job N    │      │
+│  │ (Job/Pod)      │  │ (Job/Pod)      │  │ (Job/Pod)      │      │
+│  └───────┬────────┘  └───────┬────────┘  └───────┬────────┘      │
+│          │                   │                   │               │
+│          └───────────────────┼───────────────────┘               │
+│                              ▼                                   │
+│                 ┌────────────────────────┐                       │
+│                 │   PVC (阿里云 NAS)      │                       │
+│                 │   /shared (RWX)        │                       │
+│                 └────────────────────────┘                       │
+│                                                                  │
+│  ┌─────────────────────┐                                         │
+│  │ PostgreSQL Stateful │  ──────────▶  阿里云 OSS                │
+│  └─────────────────────┘                                         │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+______________________________________________________________________
+
+## 6. 异常处理
+
+### 6.1 超时控制
+
+| 配置项                  | 默认值       | 说明                  |
+| ----------------------- | ------------ | --------------------- |
+| **JOB_TIMEOUT_SECONDS** | 7200 (2小时) | 单个 Job 最长执行时间 |
+
+**超时处理流程**：
+
+```
+Agent 启动
+    │
+    ├─ 后台监控任务启动
+    │
+    ├─ 正常完成 → status=completed + result_count
+    │
+    ├─ 异常退出 → status=failed + error_message
+    │
+    └─ 超过 JOB_TIMEOUT_SECONDS (2小时)
+        │
+        ├─ 终止进程 (SIGTERM → SIGKILL)
+        └─ status=timeout + error_message
+```
+
+### 6.2 并发控制
+
+| 配置项                  | 默认值 | 说明                        |
+| ----------------------- | ------ | --------------------------- |
+| **MAX_CONCURRENT_JOBS** | 5      | 系统同时执行的 Job 数量上限 |
+
+### 6.3 定时任务冲突处理
+
+| 场景           | 处理策略                             |
+| -------------- | ------------------------------------ |
+| 系统并发已满   | 跳过本次执行，记录日志，等待下次触发 |
+| 上次执行未完成 | 跳过本次执行，避免重复               |
+
+______________________________________________________________________
+
+## 7. 环境变量汇总
+
+```bash
+# ============================================================
+# 执行控制
+# ============================================================
+JOB_TIMEOUT_SECONDS=7200      # Job 超时时间（秒），默认 2 小时
+MAX_CONCURRENT_JOBS=5          # 系统最大并发 Job 数
+
+# 执行模式: local / kubernetes
+EXECUTION_MODE=local
+
+# ============================================================
+# 共享存储配置
+# ============================================================
+SHARED_STORAGE_PATH=/shared   # 共享存储根路径（本地开发留空使用 ./data）
+SHARED_REPORTS_DIR=reports    # 报告子目录
+SHARED_LOGS_DIR=logs          # 日志子目录
+
+# Backend 回调 URL（供 Agent 通知执行完成）
+BACKEND_CALLBACK_URL=http://localhost:8000
+
+# ============================================================
+# Kubernetes 配置（仅 EXECUTION_MODE=kubernetes 时使用）
+# ============================================================
+K8S_NAMESPACE=default
+K8S_JOB_IMAGE=webqa-agent:latest
+K8S_JOB_SERVICE_ACCOUNT=
+K8S_CONFIG_PATH=              # 留空则使用 in-cluster config
+K8S_PVC_NAME=webqa-shared-storage
+
+# ============================================================
+# LLM 配置
+# ============================================================
+LLM_API=openai
+LLM_API_KEY=sk-xxx
+LLM_BASE_URL=http://35.220.164.252:3888/v1
+LLM_AVAILABLE_MODELS=gpt-4o-mini,gpt-4o,gpt-4.1-mini-2025-04-14
+
+# ============================================================
+# OSS 配置
+# ============================================================
+OSS_ENDPOINT=oss-cn-hangzhou.aliyuncs.com
+OSS_BUCKET=webqa-reports
+OSS_ACCESS_KEY_ID=xxx
+OSS_ACCESS_KEY_SECRET=xxx
+
+# ============================================================
+# 数据库
+# ============================================================
+DATABASE_URL=postgresql://user:pass@localhost:5432/webqa
+
+# ============================================================
+# Redis 配置（集群模式用于进度缓存，可选）
+# ============================================================
+REDIS_URL=redis://redis:6379/0   # 集群部署时需要，单机可留空
+```
+
+______________________________________________________________________
+
+## 8. WebQA-Agent 集成
+
+### 8.1 配置转换
+
+```python
+from webqa_agent.executor.case_mode import CaseMode
+
+async def execute_cases(
+    execution_id: str,
+    environment: dict,
+    test_cases: list,
+    model: str,
+    workers: int
+):
+    """执行测试用例"""
+
+    # 构建 Agent 配置
+    config = {
+        'url': environment['url'],
+        'browser_config': environment.get('browser_config', {}),
+        'ignore_rules': environment.get('ignore_rules', {}),
+        'cases': []
+    }
+
+    # 处理登录配置（从 environment 读取）
+    auth_type = environment.get('auth_type', 'none')
+    if auth_type == 'sso':
+        config['config'] = [{
+            'sso_config': {
+                'username': environment['sso_username'],
+                'password': environment['sso_password']
+            }
+        }]
+    elif auth_type == 'cookies':
+        config['cookies'] = environment['cookies']
+
+    # 构建 cases
+    for tc in test_cases:
+        case_dict = {
+            'name': tc['name'],
+            'case_id': str(tc['id']),
+            'steps': tc['steps']
+        }
+        if tc.get('snapshot'):
+            case_dict['snapshot'] = tc['snapshot']
+        if tc.get('use_snapshot'):
+            case_dict['use_snapshot'] = tc['use_snapshot']
+        config['cases'].append(case_dict)
+
+    # LLM 配置从环境变量读取
+    llm_config = {
+        'api': os.getenv('LLM_API', 'openai'),
+        'api_key': os.getenv('LLM_API_KEY'),
+        'base_url': os.getenv('LLM_BASE_URL'),
+        'model': model
+    }
+
+    # 调用 Agent
+    case_mode = CaseMode()
+    result = await case_mode.run(
+        configs=[config],
+        llm_config=llm_config,
+        workers=workers,
+        report_config={
+            'language': 'zh-CN',
+            'report_dir': f'reports/{execution_id}'
+        }
+    )
+
+    return result
+```
+
+______________________________________________________________________
+
+*文档版本: v1.1*
+*最后更新: 2026-01-28*
+*更新内容: 添加实时进度推送流程、Redis 缓存配置*

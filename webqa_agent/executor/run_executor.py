@@ -127,10 +127,11 @@ class RunExecutor:
 
         # Initialize logging and display
         log_level = self.config.log_config.level
+        stdout = self.config.log_config.stdout
         report_lang = self.config.report_config.language
 
-        GetLog.get_log(log_level=log_level)
-        Display.init(language=report_lang)
+        GetLog.get_log(log_level=log_level, stdout=stdout)
+        Display.init(language=report_lang, no_terminal_ui=stdout)
         Display.display.start()
 
         mode_str = f'parallel ({self.config.workers} workers)' if self.config.workers > 1 else 'serial'

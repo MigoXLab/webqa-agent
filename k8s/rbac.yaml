@@ -1,0 +1,99 @@
+# WebQA RBAC Configuration
+#
+# 为Backend和Agent创建ServiceAccount和必要的权限
+# Backend需要权限来创建和管理Agent Jobs
+#
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: webqa-be-sa
+  namespace: cloud-staging
+  labels:
+    app: webqa-be
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: webqa-fe-sa
+  namespace: cloud-staging
+  labels:
+    app: webqa-fe
+
+---
+# Backend需要的权限：创建、查看、删除Jobs
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: webqa-be-role
+  namespace: cloud-staging
+rules:
+  # 管理Jobs
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete", "patch"]
+  # 查看Pods（用于获取Job的Pod状态和日志）
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  # 读取Pod日志
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  # 读取ConfigMap和Secret（可选，如果需要动态读取配置）
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: webqa-be-rolebinding
+  namespace: cloud-staging
+subjects:
+  - kind: ServiceAccount
+    name: webqa-be-sa
+    namespace: cloud-staging
+roleRef:
+  kind: Role
+  name: webqa-be-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Agent Job ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: webqa-agent-sa
+  namespace: cloud-staging
+  labels:
+    app: webqa-agent
+
+---
+# Agent Job的ServiceAccount通常不需要特殊权限
+# 但如果Agent需要访问某些K8s资源，可以在这里添加
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: webqa-agent-role
+  namespace: cloud-staging
+rules:
+  # Agent通常只需要最小权限，这里为空
+  # 如果需要，可以添加访问ConfigMap等的权限
+  []
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: webqa-agent-rolebinding
+  namespace: cloud-staging
+subjects:
+  - kind: ServiceAccount
+    name: webqa-agent-sa
+    namespace: cloud-staging
+roleRef:
+  kind: Role
+  name: webqa-agent-role
+  apiGroup: rbac.authorization.k8s.io

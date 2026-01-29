@@ -1,0 +1,82 @@
+stages:
+  - build
+  - deploy
+
+variables:
+  DOCKER_DRIVER: overlay2
+  PROJECT: webqa-agent
+  SERVICE_NAME_BACKEND: webqa-be
+  SERVICE_NAME_FRONTEND: webqa-fe
+  SERVICE_NAME_AGENT: webqa-agent
+
+  # 镜像 Tag 格式: harbor_url/project/service:tag
+  # 注意：需要在 GitLab CI/CD Variables 中配置:
+  # - harbor_url_prod (e.g. registry.cn-hangzhou.aliyuncs.com)
+  # - harbor_user
+  # - harbor_password
+  # - RUN_TAG (GitLab Runner Tag)
+  # - KUBE_CONFIG (K8s Config)
+
+# --- Build Stage ---
+
+build-backend:
+  stage: build
+  image: eng-center-registry.cn-shanghai.cr.aliyuncs.com/public/docker-git:latest
+  retry: 2
+  tags:
+    - $RUN_TAG
+  before_script:
+    - echo $harbor_url_prod_vpc $harbor_user $harbor_password
+    - docker login $harbor_url_prod_vpc -u $harbor_user -p $harbor_password
+  script:
+    - echo "Build Backend"
+    # 在根目录构建，使用 backend/Dockerfile，这样可以访问 webqa_agent/
+    - docker build -t $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:$CI_COMMIT_SHORT_SHA -f backend/Dockerfile .
+    - docker push $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:$CI_COMMIT_SHORT_SHA
+    - docker rmi $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:$CI_COMMIT_SHORT_SHA
+  only:
+    - main
+    - changes:
+      - backend/**/*
+      - webqa_agent/**/*
+
+build-frontend:
+  stage: build
+  image: eng-center-registry.cn-shanghai.cr.aliyuncs.com/public/docker-git:latest
+  retry: 2
+  tags:
+    - $RUN_TAG
+  before_script:
+    - echo $harbor_url_prod_vpc $harbor_user $harbor_password
+    - docker login $harbor_url_prod_vpc -u $harbor_user -p $harbor_password
+  script:
+    - echo "Build Frontend"
+    - docker build -t $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:$CI_COMMIT_SHORT_SHA -f frontend/Dockerfile .
+    - docker push $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:$CI_COMMIT_SHORT_SHA
+    - docker rmi $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:$CI_COMMIT_SHORT_SHA
+  only:
+    - main
+    - master
+    - changes:
+      - frontend/**/*
+
+build-agent:
+  stage: build
+  image: eng-center-registry.cn-shanghai.cr.aliyuncs.com/public/docker-git:latest
+  retry: 2
+  tags:
+    - $RUN_TAG
+  before_script:
+    - echo $harbor_url_prod_vpc $harbor_user $harbor_password
+    - docker login $harbor_url_prod_vpc -u $harbor_user -p $harbor_password
+  script:
+    - echo "Build Agent"
+    # 在根目录构建，使用 webqa_agent/Dockerfile，这样可以访问 backend/ 和 webqa_agent/
+    - docker build -t $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:$CI_COMMIT_SHORT_SHA -f Dockerfile .
+    - docker push $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:$CI_COMMIT_SHORT_SHA
+    - docker rmi $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:$CI_COMMIT_SHORT_SHA
+  only:
+    - main
+    - changes:
+      - backend/**/*
+      - webqa_agent/**/*

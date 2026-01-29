@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webqa-be
+  namespace: cloud-staging
+  labels:
+    app: webqa-be
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webqa-be
+  template:
+    metadata:
+      labels:
+        app: webqa-be
+    spec:
+      imagePullSecrets:
+        - name: regcred-vpc
+      containers:
+        - name: webqa-be
+          image: eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/webqa-be:_tag  # CI/CD 过程中会被替换
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: webqa-config
+            - secretRef:
+                name: webqa-secrets
+          env:
+            - name: K8S_NAMESPACE
+              value: "cloud-staging"
+            - name: K8S_JOB_SERVICE_ACCOUNT
+              value: "webqa-agent-sa"
+            - name: K8S_PVC_NAME
+              value: "webqa-pvc"
+          serviceAccountName: webqa-be-sa
+          volumeMounts:
+            - name: shared-storage
+              mountPath: /shared
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: shared-storage
+          persistentVolumeClaim:
+            claimName: webqa-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webqa-be
+  namespace: cloud-staging
+spec:
+  selector:
+    app: webqa-be
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP

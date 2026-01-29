@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: webqa-config
+  namespace: cloud-staging
+data:
+  # Redis Configuration (Aliyun Redis)
+  # 注意：REDIS_URL 需要在 Secret 中配置，或者在这里配置非敏感部分
+  # 这里我们假设 REDIS_URL 包含密码，所以放到 Secret 中更安全
+  # 如果没有密码，可以直接写在这里: redis://redis-host:6379/0
+  PROGRESS_CACHE_TTL: "36000"
+  REDIS_MAX_CONNECTIONS: "50"
+  PROGRESS_MAX_LOGS: "1000"
+
+  # LLM Configuration
+  LLM_API: "openai"
+  LLM_BASE_URL: "http://35.220.164.252:3888/v1"
+  LLM_AVAILABLE_MODELS: "gpt-4.1-mini-2025-04-14,gpt-4.1-2025-04-14,gpt-5-mini-2025-08-07"
+  LLM_DEFAULT_MODEL: "gpt-4.1-mini-2025-04-14"
+
+  # Execution Control
+  JOB_TIMEOUT_SECONDS: "7200"
+  MAX_CONCURRENT_JOBS: "5"
+  DEFAULT_WORKERS: "1"
+  MAX_WORKERS: "5"
+
+  # Execution Mode
+  EXECUTION_MODE: "kubernetes"
+
+  # Shared Storage
+  SHARED_STORAGE_PATH: "/shared"
+  SHARED_REPORTS_DIR: "reports"
+  SHARED_LOGS_DIR: "logs"
+
+  # CORS
+  CORS_ORIGINS: "http://localhost:3000,http://localhost:5173"
+
+  # Callback URL for Agent to report back to Backend
+  # 在 K8s 内部，Agent 可以通过 Service 名称访问 Backend
+  BACKEND_CALLBACK_URL: "http://webqa-be:8000"
+
+  # Kubernetes Job Configuration
+  K8S_NAMESPACE: "cloud-staging"
+  K8S_JOB_IMAGE: "eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/webqa-agent:latest"
+  K8S_PVC_NAME: "webqa-pvc"
+  K8S_JOB_SERVICE_ACCOUNT: "webqa-agent-sa"

@@ -1,0 +1,322 @@
+"""TestCase API routes."""
+import logging
+from typing import List
+from uuid import UUID
+
+import yaml
+from app.database import get_db
+from app.models import Business, TestCase
+from app.schemas.common import APIResponse
+from app.schemas.test_case import (TestCaseCreate, TestCaseExport,
+                                   TestCaseImport, TestCaseResponse,
+                                   TestCaseUpdate)
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+@router.post('', response_model=APIResponse[TestCaseResponse], status_code=status.HTTP_201_CREATED)
+async def create_test_case(
+    data: TestCaseCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new test case."""
+    # Verify business exists
+    business_result = await db.execute(
+        select(Business).where(Business.id == data.business_id)
+    )
+    if not business_result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={'code': 2001, 'message': '业务不存在'}
+        )
+
+    # Convert steps to dict format
+    steps = []
+    for step in data.steps:
+        step_dict = {'step_type': step.step_type}
+        if step.step_type == 'action':
+            step_dict['description'] = step.description or ''
+        else:
+            step_dict['assertion'] = step.assertion or ''
+        if step.args:
+            step_dict['args'] = step.args
+        steps.append(step_dict)
+
+    test_case = TestCase(
+        business_id=data.business_id,
+        name=data.name,
+        description=data.description,
+        login_required=data.login_required,
+        steps=steps,
+        snapshot=data.snapshot,
+        use_snapshot=data.use_snapshot,
+        status=data.status,
+    )
+    db.add(test_case)
+    await db.commit()
+    await db.refresh(test_case)
+
+    logger.info(f'[API] Created test case: id={test_case.id}, name={data.name}, business={data.business_id}')
+    return APIResponse(data=TestCaseResponse.model_validate(test_case))
+
+
+@router.get('/{case_id}', response_model=APIResponse[TestCaseResponse])
+async def get_test_case(
+    case_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a test case by ID."""
+    result = await db.execute(
+        select(TestCase).where(TestCase.id == case_id)
+    )
+    test_case = result.scalar_one_or_none()
+
+    if not test_case:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={'code': 2003, 'message': '用例不存在'}
+        )
+
+    return APIResponse(data=TestCaseResponse.model_validate(test_case))
+
+
+@router.put('/{case_id}', response_model=APIResponse[TestCaseResponse])
+async def update_test_case(
+    case_id: UUID,
+    data: TestCaseUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a test case."""
+    result = await db.execute(
+        select(TestCase).where(TestCase.id == case_id)
+    )
+    test_case = result.scalar_one_or_none()
+
+    if not test_case:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={'code': 2003, 'message': '用例不存在'}
+        )
+
+    # Update fields
+    if data.name is not None:
+        test_case.name = data.name
+    if data.description is not None:
+        test_case.description = data.description
+    if data.login_required is not None:
+        test_case.login_required = data.login_required
+    if data.steps is not None:
+        steps = []
+        for step in data.steps:
+            step_dict = {'step_type': step.step_type}
+            if step.step_type == 'action':
+                step_dict['description'] = step.description or ''
+            else:
+                step_dict['assertion'] = step.assertion or ''
+            if step.args:
+                step_dict['args'] = step.args
+            steps.append(step_dict)
+        test_case.steps = steps
+    if data.snapshot is not None:
+        test_case.snapshot = data.snapshot
+    if data.use_snapshot is not None:
+        test_case.use_snapshot = data.use_snapshot
+    if data.status is not None:
+        test_case.status = data.status
+
+    await db.commit()
+    await db.refresh(test_case)
+
+    logger.info(f'[API] Updated test case: id={case_id}')
+    return APIResponse(data=TestCaseResponse.model_validate(test_case))
+
+
+@router.delete('/{case_id}', response_model=APIResponse)
+async def delete_test_case(
+    case_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a test case."""
+    result = await db.execute(
+        select(TestCase).where(TestCase.id == case_id)
+    )
+    test_case = result.scalar_one_or_none()
+
+    if not test_case:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={'code': 2003, 'message': '用例不存在'}
+        )
+
+    await db.delete(test_case)
+    await db.commit()
+
+    logger.info(f'[API] Deleted test case: id={case_id}')
+    return APIResponse(message='用例已删除')
+
+
+# Import/Export routes (nested under businesses in the main router)
+async def import_cases_from_yaml(
+    business_id: UUID,
+    yaml_content: str,
+    db: AsyncSession,
+) -> List[TestCase]:
+    """Import test cases from YAML content."""
+    try:
+        data = yaml.safe_load(yaml_content)
+    except yaml.YAMLError as e:
+        logger.warning(f'[API] YAML 解析失败: business={business_id}, error={e}')
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={'code': 1002, 'message': f'YAML格式错误: {str(e)}'}
+        )
+
+    if not data or 'cases' not in data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={'code': 1002, 'message': "YAML格式错误: 缺少 'cases' 字段"}
+        )
+
+    imported_cases = []
+    for case_data in data['cases']:
+        # Parse steps
+        steps = []
+        for step in case_data.get('steps', []):
+            if 'action' in step:
+                step_dict = {
+                    'step_type': 'action',
+                    'description': step['action'],
+                }
+            elif 'verify' in step:
+                step_dict = {
+                    'step_type': 'verify',
+                    'assertion': step['verify'],
+                }
+            else:
+                continue
+
+            if 'args' in step:
+                step_dict['args'] = step['args']
+            steps.append(step_dict)
+
+        test_case = TestCase(
+            business_id=business_id,
+            name=case_data.get('name', 'Unnamed Case'),
+            description=case_data.get('description'),
+            login_required=case_data.get('login_required', False),
+            steps=steps,
+            snapshot=case_data.get('snapshot'),
+            use_snapshot=case_data.get('use_snapshot'),
+            status='active',
+        )
+        db.add(test_case)
+        imported_cases.append(test_case)
+
+    await db.commit()
+
+    # Refresh all cases
+    for case in imported_cases:
+        await db.refresh(case)
+
+    logger.info(f'[API] Imported {len(imported_cases)} test cases for business={business_id}')
+    return imported_cases
+
+
+def export_cases_to_yaml(cases: List[TestCase]) -> str:
+    """Export test cases to YAML format."""
+    yaml_cases = []
+
+    for case in cases:
+        case_dict = {
+            'name': case.name,
+            'login_required': case.login_required,
+            'steps': [],
+        }
+
+        if case.snapshot:
+            case_dict['snapshot'] = case.snapshot
+        if case.use_snapshot:
+            case_dict['use_snapshot'] = case.use_snapshot
+
+        for step in case.steps:
+            step_dict = {}
+            if step.get('step_type') == 'action':
+                step_dict['action'] = step.get('description', '')
+            elif step.get('step_type') == 'verify':
+                step_dict['verify'] = step.get('assertion', '')
+
+            if 'args' in step and step['args']:
+                step_dict['args'] = step['args']
+
+            case_dict['steps'].append(step_dict)
+
+        yaml_cases.append(case_dict)
+
+    return yaml.dump({'cases': yaml_cases}, allow_unicode=True, default_flow_style=False)
+
+
+# =============================================================================
+# Import/Export API Endpoints
+# =============================================================================
+
+@router.post('/import/{business_id}', response_model=APIResponse, status_code=status.HTTP_201_CREATED)
+async def import_test_cases(
+    business_id: UUID,
+    data: TestCaseImport,
+    db: AsyncSession = Depends(get_db),
+):
+    """Import test cases from YAML content."""
+    # Verify business exists
+    business_result = await db.execute(
+        select(Business).where(Business.id == business_id)
+    )
+    if not business_result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={'code': 2001, 'message': '业务不存在'}
+        )
+
+    imported_cases = await import_cases_from_yaml(business_id, data.yaml_content, db)
+
+    return APIResponse(
+        data={
+            'imported_count': len(imported_cases),
+            'cases': [TestCaseResponse.model_validate(c) for c in imported_cases]
+        },
+        message=f'成功导入 {len(imported_cases)} 个测试用例'
+    )
+
+
+@router.get('/export/{business_id}', response_model=APIResponse[TestCaseExport])
+async def export_test_cases(
+    business_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Export all test cases for a business to YAML format."""
+    # Verify business exists
+    business_result = await db.execute(
+        select(Business).where(Business.id == business_id)
+    )
+    if not business_result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={'code': 2001, 'message': '业务不存在'}
+        )
+
+    # Get all test cases for the business
+    result = await db.execute(
+        select(TestCase)
+        .where(TestCase.business_id == business_id)
+        .order_by(TestCase.created_at.desc())
+    )
+    cases = result.scalars().all()
+
+    yaml_content = export_cases_to_yaml(cases)
+
+    return APIResponse(
+        data=TestCaseExport(yaml_content=yaml_content, count=len(cases))
+    )
