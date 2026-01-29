@@ -7,6 +7,7 @@ from enum import Enum
 from itertools import groupby
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+from urllib.parse import urlparse
 
 from playwright.async_api import Page
 from pydantic import BaseModel, Field
@@ -17,6 +18,7 @@ from webqa_agent.crawler.dom_tree import DomTreeNode as dtree
 # ============================================================================
 # UTILITY FUNCTIONS
 # ============================================================================
+
 
 def get_time() -> str:
     """Get the current time as a formatted string.
@@ -224,19 +226,24 @@ class DeepCrawler:
                 - ("UNSUPPORTED_PAGE", "download") for download files
         """
         try:
-            # === Layer 1: URL Extension Check (Fastest, Most Reliable) ===
+            # === Layer 1: URL Path Extension Check (Fastest, Most Reliable) ===
+            # IMPORTANT: Only check path component, NOT query params or fragments
+            # This correctly handles: https://example.com/page?file=test.pdf (NOT a PDF page)
+            # vs: https://example.com/documents/file.pdf (IS a PDF page)
             url = page.url.lower()
+            parsed_url = urlparse(url)
+            url_path = parsed_url.path  # Only the path: "/documents/file.pdf"
 
-            # PDF detection via URL
-            if url.endswith('.pdf'):
-                logging.info(f'Detected PDF via URL suffix: {url}')
+            # PDF detection via URL path extension
+            if url_path.endswith('.pdf'):
+                logging.info(f'Detected PDF via URL path: {url_path} (full URL: {url})')
                 return ('UNSUPPORTED_PAGE', 'pdf')
 
-            # Download file detection via URL
-            download_extensions = ['.zip', '.rar', '.exe', '.dmg', '.pkg', '.deb', '.tar', '.gz']
+            # Download file detection via URL path extension
+            download_extensions = ['.zip', '.rar', '.exe', '.dmg', '.pkg', '.deb', '.tar', '.gz', '.7z']
             for ext in download_extensions:
-                if url.endswith(ext):
-                    logging.info(f'Detected download file via URL: {url}')
+                if url_path.endswith(ext):
+                    logging.info(f'Detected download file via URL path: {url_path}')
                     return ('UNSUPPORTED_PAGE', 'download')
 
             # === Layer 2: PDF Embed Element Detection (Catches Chromium PDF Viewer) ===
@@ -312,12 +319,9 @@ class DeepCrawler:
         # Multi-layer detection of unsupported page types (PDF, plugins, etc.)
         page_status, page_type = await self._detect_page_type(page)
         if page_status == 'UNSUPPORTED_PAGE':
-            logging.warning(f'Detected unsupported page type: {page_type}, skipping crawl')
-            return CrawlResultModel(
-                flat_element_map=ElementMap(data={}),
-                element_tree={},
-                page_status=page_status,
-                page_type=page_type
+            logging.info(
+                f'Detected unsupported page type: {page_type}, '
+                f'attempting to extract available data in degraded mode'
             )
 
         try:
@@ -327,7 +331,9 @@ class DeepCrawler:
                     _, merged_id_map = await self.crawl_all_frames(page=page, enable_highlight=highlight)
                     return CrawlResultModel(
                         flat_element_map=ElementMap(data=merged_id_map or {}),
-                        element_tree={}
+                        element_tree={},
+                        page_status=page_status,  # Pass detected page status for multi-frame pages
+                        page_type=page_type        # Pass detected page type for multi-frame pages
                     )
             except Exception:
                 pass
@@ -350,7 +356,9 @@ class DeepCrawler:
 
             result = CrawlResultModel(
                 flat_element_map=ElementMap(data=flat_elements or {}),
-                element_tree=self.element_tree or {}
+                element_tree=self.element_tree or {},
+                page_status=page_status,  # Pass detected page status
+                page_type=page_type        # Pass detected page type
             )
 
             if cache_dom and self.element_tree:
@@ -372,7 +380,10 @@ class DeepCrawler:
 
         except Exception as e:
             logging.error(f'JavaScript injection failed during element detection: {e}')
-            return CrawlResultModel()
+            return CrawlResultModel(
+                page_status=page_status,  # Pass detected page status even on failure
+                page_type=page_type        # Pass detected page type even on failure
+            )
 
     def extract_interactive_elements(self, get_new_elems: bool = False) -> Dict:
         """Extract interactive elements with comprehensive attribute
@@ -541,7 +552,7 @@ class DeepCrawler:
                     el = await cur.frame_element()
                     rect = await el.evaluate('(el) => el.getBoundingClientRect()')
                     total_left += rect.get('left', 0) or 0
-                    total_top  += rect.get('top', 0) or 0
+                    total_top += rect.get('top', 0) or 0
                 except Exception:
                     pass
                 cur = parent
@@ -579,7 +590,7 @@ class DeepCrawler:
 
                 # Get frame URL for later action execution in correct frame context
                 frame_url = frame.url
-                
+
                 for k, v in (iframe_id_map or {}).items():
                     try:
                         # frame document -> frame viewport

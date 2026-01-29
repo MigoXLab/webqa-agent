@@ -61,7 +61,11 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
     s = await sp.acquire(timeout=120.0)
     try:
         await s.navigate_to(state['url'], cookies=state.get('cookies'))
-        ui_tester = UITester(llm_config=llm_cfg, browser_session=s)
+        ui_tester = UITester(
+            llm_config=llm_cfg,
+            browser_session=s,
+            execution_mode='gen'  # GEN mode: conservative approach for AI exploration
+        )
         await ui_tester.initialize()
         page = await ui_tester.get_current_page()
         dp = DeepCrawler(page)
@@ -392,7 +396,11 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
 
                 await s.navigate_to(state['url'], cookies=state.get('cookies'))
 
-                ui_tester = UITester(llm_config=state['llm_config'], browser_session=s)
+                ui_tester = UITester(
+                    llm_config=state['llm_config'],
+                    browser_session=s,
+                    execution_mode='gen'  # GEN mode: conservative approach for AI exploration
+                )
                 await ui_tester.initialize()
 
                 # Set testcase context

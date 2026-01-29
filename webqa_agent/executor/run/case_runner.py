@@ -181,14 +181,21 @@ class CaseRunner:
         case_queue: asyncio.Queue = asyncio.Queue()  # Queue for normal cases
         for idx, case in normal_cases:
             await case_queue.put((idx, case))
+        # Add sentinels early so idle workers can exit immediately
+        for _ in range(workers):
+            await case_queue.put(None)
 
         async def worker(worker_id: int):
             """Worker that pulls cases from queue until sentinel."""
             nonlocal completed_count
 
+            session = None
+            current_config_key = None
+
             while True:
                 item = await case_queue.get()
                 if item is None:  # Sentinel - exit
+                    case_queue.task_done()
                     break
 
                 idx, case = item
@@ -197,6 +204,7 @@ class CaseRunner:
 
                 # Extract browser config for this case
                 browser_cfg = case.get('_config', {}).get('browser_config', self.browser_config)
+                new_config_key = session_pool._make_config_key(browser_cfg)
 
                 # Set test_id context for logging (imitating graph.py style)
                 # Including both ID and Name for maximum clarity
@@ -206,13 +214,16 @@ class CaseRunner:
                 # Set screenshot prefix to avoid filename collisions in parallel execution
                 prefix_token = screenshot_prefix_var.set(case_id)
 
-                session = None
                 case_result = None
                 raw_monitoring_data = None
 
                 try:
                     logging.info(f"Worker {worker_id}: Starting case '{case_name}' ({idx}/{total_cases})")
-                    session = await session_pool.acquire(browser_config=browser_cfg, timeout=120.0)
+                    if session is None or new_config_key != current_config_key:
+                        if session:
+                            await session_pool.release(session, keep_alive=False)
+                        session = await session_pool.acquire(browser_config=browser_cfg, timeout=120.0)
+                        current_config_key = new_config_key
 
                     with Display.display(case_name):  # pylint: disable=not-callable
                         case_result, raw_monitoring_data = await self.execute_single_case(session=session, case=case, case_index=idx)
@@ -242,6 +253,10 @@ class CaseRunner:
                         ))
                     case_result = None
                     raw_monitoring_data = None
+                    if session:
+                        await session_pool.release(session, failed=True, keep_alive=False)
+                        session = None
+                        current_config_key = None
 
                 finally:
                     # Reset context variables
@@ -253,27 +268,28 @@ class CaseRunner:
                         self._save_case_result(case_result, case_name, idx, raw_monitoring_data=raw_monitoring_data, case_config=case_config)
                         self._clear_case_screenshots(case_result)
 
-                    if session:
-                        failed = case_result is None or case_result.status == TestStatus.FAILED
-                        await session_pool.release(session, failed=failed)
+                    # Release session on failure (cleanup handled in execute_single_case)
+                    if session and case_result is not None and case_result.status == TestStatus.FAILED:
+                        await session_pool.release(session, failed=True, keep_alive=False)
+                        session = None
+                        current_config_key = None
 
                     case_queue.task_done()
+            if session:
+                await session_pool.release(session, keep_alive=False)
 
         try:
             # Start workers and wait for completion
             worker_tasks = [asyncio.create_task(worker(i)) for i in range(workers)]
             await case_queue.join()
-
-            # Stop workers
-            for _ in range(workers):
-                await case_queue.put(None)
             await asyncio.gather(*worker_tasks, return_exceptions=True)
 
         finally:
             await session_pool.close_all()
 
-        # Sort by original index
-        results.sort(key=lambda r: next((i for i, c in enumerate(cases, 1) if c.get('case_id') == r.sub_test_id), 999))
+        # Sort by original index (O(n) using lookup dict)
+        case_order = {c.get('case_id'): i for i, c in enumerate(cases, 1)}
+        results.sort(key=lambda r: case_order.get(r.sub_test_id, 999))
         logging.info(f"{icon['check']} Execution completed: {len(results)}/{total_cases} cases")
         return results
 
@@ -291,13 +307,17 @@ class CaseRunner:
         case_name = case.get('name', f'Unnamed Case {case_index}')
         start_time = datetime.now()
 
+        # Clean session state for case isolation (clear cookies/storage from previous case)
+        # This runs before navigate_to which will inject new cookies if configured
+        await session.clean_state()
+
         # Get case-specific config if available (for multi-YAML support)
         case_config = case.get('_config', {})
         url = case_config.get('url') or self.test_specific_config.get('url')
         cookies = case_config.get('cookies') or self.test_specific_config.get('cookies')
         ignore_rules = case_config.get('ignore_rules') or self.test_specific_config.get('ignore_rules', {})
 
-        # Initialize tester and execute steps
+        # Initialize tester and execute steps (navigate_to could inject cookies)
         tester = await self._initialize_tester(session, case_name, url=url, cookies=cookies, ignore_rules=ignore_rules)
 
         # Load fixture state AFTER navigation (cookies + localStorage + sessionStorage)
@@ -434,7 +454,8 @@ class CaseRunner:
         tester = UITester(
             llm_config=self.llm_config,
             browser_session=session,
-            ignore_rules=_ignore_rules
+            ignore_rules=_ignore_rules,
+            execution_mode='run'  # RUN mode: trust user-specified operations in YAML
         )
         await tester.initialize()
         tester.set_current_test_name(case_name)
@@ -502,33 +523,29 @@ class CaseRunner:
         prev_step_context: Optional[StepContext] = None
 
         for step_idx, step in enumerate(steps, 1):
-            try:
-                parsed_step = CaseStep.model_validate(step)
+            parsed_step = CaseStep.model_validate(step)
 
-                if parsed_step.step_type == 'action':
-                    logging.info(f'Executing step {step_idx}: {parsed_step.action}')
-                    step_result, prev_step_context = await self._execute_action_step(
-                        tester, parsed_step.action, step_idx
-                    )
-                elif parsed_step.step_type == 'verify':
-                    logging.info(f'Executing step {step_idx}: {parsed_step.verify}')
-                    step_result, prev_step_context = await self._execute_verify_step(
-                        tester, parsed_step.verify, step_idx, prev_step_context
-                    )
-                else:
-                    raise ValueError(f'Unsupported step type: {parsed_step.step_type}')
+            if parsed_step.step_type == 'action':
+                logging.info(f'Executing step {step_idx}: {parsed_step.action}')
+                step_result, prev_step_context = await self._execute_action_step(
+                    tester, parsed_step.action, step_idx
+                )
+            elif parsed_step.step_type == 'verify':
+                logging.info(f'Executing step {step_idx}: {parsed_step.verify}')
+                step_result, prev_step_context = await self._execute_verify_step(
+                    tester, parsed_step.verify, step_idx, prev_step_context
+                )
+            else:
+                raise ValueError(f'Unsupported step type: {parsed_step.step_type}')
 
-                executed_steps.append(step_result)
+            executed_steps.append(step_result)
 
-                # Update case status
-                if step_result.status == TestStatus.FAILED:
-                    case_status = TestStatus.FAILED
-                    error_messages.append(f'Step {step_idx} failed: {step_result.errors}')
-                elif step_result.status == TestStatus.WARNING and case_status == TestStatus.PASSED:
-                    case_status = TestStatus.WARNING
-
-            except Exception as e:
-                raise e
+            # Update case status
+            if step_result.status == TestStatus.FAILED:
+                case_status = TestStatus.FAILED
+                error_messages.append(f'Step {step_idx} failed: {step_result.errors}')
+            elif step_result.status == TestStatus.WARNING and case_status == TestStatus.PASSED:
+                case_status = TestStatus.WARNING
 
         return executed_steps, case_status, error_messages, prev_step_context
 
@@ -663,13 +680,13 @@ class CaseRunner:
         monitoring_data: Dict[str, Any],
         error_messages: List[str],
         ignore_rules: Optional[Dict[str, Any]] = None
-    ) -> Tuple[TestStatus, List[str], Dict[str, Any]]:
+    ) -> Tuple[TestStatus, List[str], Dict[str, Any], Dict[str, int]]:
         """Check console and network errors from monitoring data.
 
         Logic:
-        - If case already FAILED from steps, don't override
-        - If no ignore rules configured, any error causes FAILED
-        - If ignore rules configured, only unignored errors cause FAILED
+        - Case status is primarily based on step execution
+        - Console/network errors downgrade PASSED to WARNING
+        - FAILED from steps is not overridden
 
         Args:
             case_name: Name of the case (for logging)
@@ -679,7 +696,7 @@ class CaseRunner:
             ignore_rules: Optional case-specific ignore rules
 
         Returns:
-            Tuple of (updated_case_status, updated_error_messages, messages_data)
+            Tuple of (updated_case_status, updated_error_messages, messages_data, error_counts)
         """
         # Convert monitoring data to template-expected format
         console_errors = monitoring_data.get('console', [])
@@ -697,54 +714,51 @@ class CaseRunner:
         has_console_ignore_rules = bool(ignore_rules.get('console', []))
         has_network_ignore_rules = bool(ignore_rules.get('network', []))
 
-        # Only check errors if case status is currently PASSED (don't override step failures)
-        if case_status != TestStatus.PASSED:
-            return case_status, error_messages, messages_data
+        failed_requests = network_data.get('failed_requests', [])
+        error_responses = [r for r in network_data.get('responses', []) if r.get('status', 0) >= 400]
+        network_error_count = len(failed_requests) + len(error_responses)
+        error_counts = {
+            'console_error_count': len(console_errors),
+            'network_error_count': network_error_count
+        }
+
+        # Do not override step failures; still record counts for reporting
+        if case_status == TestStatus.FAILED:
+            return case_status, error_messages, messages_data, error_counts
 
         # ========== 1. Check Console Errors ==========
         # Note: ConsoleCheck has already filtered out ignored errors
         # So console_errors only contains unignored errors
         if console_errors:
+            if case_status == TestStatus.PASSED:
+                case_status = TestStatus.WARNING
             if not has_console_ignore_rules:
-                # No ignore rules configured, any console error causes failure
-                case_status = TestStatus.FAILED
                 error_messages.append(f'Console errors detected: {len(console_errors)} error(s)')
-                logging.warning(f'{case_name} detected {len(console_errors)} console errors - marking case as FAILED')
+                logging.warning(f'{case_name} detected {len(console_errors)} console errors - marking case as WARNING')
             else:
-                # Ignore rules configured, but these errors were not filtered
-                # They don't match any ignore rules, so they should cause failure
-                case_status = TestStatus.FAILED
                 error_messages.append(f'Unignored console errors detected: {len(console_errors)} error(s)')
-                logging.warning(f'{case_name} detected {len(console_errors)} unignored console errors - marking case as FAILED')
+                logging.warning(f'{case_name} detected {len(console_errors)} unignored console errors - marking case as WARNING')
 
         # ========== 2. Check Network Errors ==========
         # Note: NetworkCheck has already filtered out ignored requests
         # So failed_requests and error responses only contain unignored errors
-        failed_requests = network_data.get('failed_requests', [])
-        error_responses = [r for r in network_data.get('responses', []) if r.get('status', 0) >= 400]
-
-        network_error_count = len(failed_requests) + len(error_responses)
-
         if network_error_count > 0:
+            if case_status == TestStatus.PASSED:
+                case_status = TestStatus.WARNING
             if not has_network_ignore_rules:
-                # No ignore rules configured, any network error causes failure
-                case_status = TestStatus.FAILED
                 error_messages.append(
                     f'Network errors detected: {len(failed_requests)} failed requests, '
                     f'{len(error_responses)} error responses'
                 )
-                logging.warning(f'{case_name} detected {len(failed_requests)} failed requests, {len(error_responses)} error responses - marking case as FAILED')
+                logging.warning(f'{case_name} detected {len(failed_requests)} failed requests, {len(error_responses)} error responses - marking case as WARNING')
             else:
-                # Ignore rules configured, but these errors were not filtered
-                # They don't match any ignore rules, so they should cause failure
-                case_status = TestStatus.FAILED
                 error_messages.append(
                     f'Unignored network errors detected: {len(failed_requests)} failed requests, '
                     f'{len(error_responses)} error responses'
                 )
-                logging.warning(f'{case_name} detected {len(failed_requests)} unignored failed requests, {len(error_responses)} unignored error responses - marking case as FAILED')
+                logging.warning(f'{case_name} detected {len(failed_requests)} unignored failed requests, {len(error_responses)} unignored error responses - marking case as WARNING')
 
-        return case_status, error_messages, messages_data
+        return case_status, error_messages, messages_data, error_counts
 
     def _build_case_result(
         self,
@@ -788,7 +802,7 @@ class CaseRunner:
         final_summary = f'Executed {total_steps} steps: {passed_steps} passed, {failed_steps} failed'
 
         # Check monitoring errors (use case-specific ignore_rules if provided)
-        case_status, error_messages, messages_data = self._check_monitoring_errors(
+        case_status, error_messages, messages_data, error_counts = self._check_monitoring_errors(
             case_name=case_name,
             case_status=case_status,
             monitoring_data=monitoring_data,
@@ -807,10 +821,12 @@ class CaseRunner:
                 'total_steps': total_steps,
                 'passed_steps': passed_steps,
                 'failed_steps': failed_steps,
-                'total_actions': total_actions
+                'total_actions': total_actions,
+                'console_error_count': error_counts.get('console_error_count', 0),
+                'network_error_count': error_counts.get('network_error_count', 0)
             },
             steps=executed_steps,
-            messages={},  # messages_data is not used for now
+            messages=messages_data,
             start_time=start_time.isoformat(),
             end_time=end_time.isoformat(),
             final_summary=final_summary,
