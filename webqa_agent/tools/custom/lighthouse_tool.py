@@ -23,7 +23,6 @@ Usage in test plans:
 Example test step:
     {"action": "execute_lighthouse_test", "params": {}}
 """
-import json
 import logging
 from typing import Any, Dict, Type
 
@@ -272,31 +271,22 @@ class LighthouseTool(WebQABaseTool):
                 }
             )
 
-            # Step 7: Record to case_recorder
-            if self.case_recorder:
-                try:
-                    model_io_data = {
-                        'url': url,
-                        'performance_score': performance_score,
-                        'metrics': {
-                            'fcp': fcp,
-                            'lcp': lcp,
-                            'tbt': tbt,
-                            'cls': cls_value,
-                        },
-                        'status': result.status.value,
-                    }
-
-                    self.case_recorder.add_step(
-                        description=f'Execute performance test (score: {performance_score}/100)',
-                        screenshots=[],
-                        model_io=json.dumps(model_io_data, ensure_ascii=False, indent=2),
-                        actions=[],
-                        status='passed' if result.status.value == 'passed' else 'warning',
-                        step_type='action',
-                    )
-                except Exception as record_err:
-                    logger.warning(f'Failed to record performance test step: {record_err}')
+            # Step 7: Record to case_recorder (using safe_record_step helper)
+            self.safe_record_step(
+                description=f'Execute performance test (score: {performance_score}/100)',
+                model_io_data={
+                    'url': url,
+                    'performance_score': performance_score,
+                    'metrics': {
+                        'fcp': fcp,
+                        'lcp': lcp,
+                        'tbt': tbt,
+                        'cls': cls_value,
+                    },
+                    'status': result.status.value,
+                },
+                status='passed' if result.status.value == 'passed' else 'warning',
+            )
 
             # Step 8: Generate targeted recovery hints based on specific metrics
             recovery_hints = []
@@ -345,22 +335,15 @@ class LighthouseTool(WebQABaseTool):
         except ImportError as e:
             logger.error(f'Performance Tool: Lighthouse dependency missing: {e}')
 
-            # Record failed step
-            if self.case_recorder:
-                try:
-                    self.case_recorder.add_step(
-                        description='Execute performance test (failed - dependency missing)',
-                        screenshots=[],
-                        model_io=json.dumps({
-                            'error': 'Lighthouse not installed',
-                            'error_type': 'ImportError'
-                        }, ensure_ascii=False),
-                        actions=[],
-                        status='failed',
-                        step_type='action',
-                    )
-                except Exception:
-                    pass
+            # Record failed step (using safe_record_step helper)
+            self.safe_record_step(
+                description='Execute performance test (failed - dependency missing)',
+                model_io_data={
+                    'error': 'Lighthouse not installed',
+                    'error_type': 'ImportError'
+                },
+                status='failed',
+            )
 
             return self.format_critical_error(
                 'VALIDATION_ERROR',
@@ -370,22 +353,15 @@ class LighthouseTool(WebQABaseTool):
         except Exception as e:
             logger.error(f'Performance Tool: Unexpected error: {e}', exc_info=True)
 
-            # Record failed step
-            if self.case_recorder:
-                try:
-                    self.case_recorder.add_step(
-                        description='Execute performance test (failed)',
-                        screenshots=[],
-                        model_io=json.dumps({
-                            'error': str(e),
-                            'error_type': type(e).__name__
-                        }, ensure_ascii=False),
-                        actions=[],
-                        status='failed',
-                        step_type='action',
-                    )
-                except Exception:
-                    pass
+            # Record failed step (using safe_record_step helper)
+            self.safe_record_step(
+                description='Execute performance test (failed)',
+                model_io_data={
+                    'error': str(e),
+                    'error_type': type(e).__name__
+                },
+                status='failed',
+            )
 
             # Update context to indicate failure
             self.update_action_context(

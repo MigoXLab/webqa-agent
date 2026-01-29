@@ -225,7 +225,7 @@ class WebQAToolMetadata(BaseModel):
     dependencies: List[str] = Field(
         default_factory=list,
         description=(
-            "Required dependencies (Python packages or external commands). "
+            'Required dependencies (Python packages or external commands). '
             "Examples: ['aiohttp', 'beautifulsoup4'] for Python packages, "
             "['lighthouse', 'nuclei'] for external commands"
         )
@@ -233,7 +233,7 @@ class WebQAToolMetadata(BaseModel):
     dependency_types: Dict[str, str] = Field(
         default_factory=dict,
         description=(
-            "Dependency type mapping (optional). Specifies whether each dependency "
+            'Dependency type mapping (optional). Specifies whether each dependency '
             "is a 'python' package or 'command' (external binary). "
             "Default: 'python' if not specified. "
             "Example: {'lighthouse': 'command', 'aiohttp': 'python'}"
@@ -479,6 +479,90 @@ class WebQABaseTool(BaseTool, ABC):
                 if h.get('success') is False
             ]
         }
+
+    def safe_record_step(
+        self,
+        description: str,
+        model_io_data: Dict[str, Any],
+        status: str = 'passed',
+        screenshots: Optional[List[str]] = None,
+        actions: Optional[List[Any]] = None,
+        step_type: str = 'action',
+    ) -> None:
+        """Record step with automatic JSON serialization fallback.
+
+        This helper method eliminates duplicate JSON serialization error handling
+        across custom tools. It safely serializes model_io_data and falls back
+        to a simplified string representation if serialization fails.
+
+        Args:
+            description: Step description
+            model_io_data: Data to serialize as JSON (dict containing step details)
+            status: Step status - 'passed', 'failed', or 'warning'
+            screenshots: Optional list of screenshot paths
+            actions: Optional list of actions taken
+            step_type: Step type - 'action', 'assertion', 'navigation', etc.
+
+        Example:
+            self.safe_record_step(
+                description='Execute performance test (score: 85/100)',
+                model_io_data={
+                    'url': url,
+                    'performance_score': 85,
+                    'metrics': {'fcp': 1200, 'lcp': 2100}
+                },
+                status='passed'
+            )
+
+        Note:
+            - If case_recorder is None, this method does nothing (no-op)
+            - If JSON serialization fails, records a simplified fallback message
+            - Logs warnings for serialization failures but doesn't raise exceptions
+        """
+        if not hasattr(self, 'case_recorder') or self.case_recorder is None:
+            return
+
+        import json
+
+        try:
+            # Attempt to serialize to JSON
+            model_io = json.dumps(model_io_data, ensure_ascii=False, indent=2)
+
+            self.case_recorder.add_step(
+                description=description,
+                screenshots=screenshots or [],
+                model_io=model_io,
+                actions=actions or [],
+                status=status,
+                step_type=step_type,
+            )
+
+        except (TypeError, ValueError) as json_err:
+            # JSON serialization failed - log warning and use fallback
+            logger.warning(
+                f'JSON serialization failed for step "{description}": {json_err}. '
+                f'Using fallback representation.'
+            )
+
+            # Fallback: Create simplified string representation
+            fallback_io = f'{description}\n\n(Detailed data could not be serialized due to: {type(json_err).__name__})'
+
+            try:
+                self.case_recorder.add_step(
+                    description=description,
+                    screenshots=screenshots or [],
+                    model_io=fallback_io,
+                    actions=actions or [],
+                    status=status,
+                    step_type=step_type,
+                )
+            except Exception as fallback_err:
+                # Even fallback failed - log error but don't raise
+                # (case_recorder failures should not block tool execution)
+                logger.error(
+                    f'Failed to record step "{description}" even with fallback: {fallback_err}',
+                    exc_info=True
+                )
 
     # ========================================================================
     # Abstract Methods (子类必须实现)

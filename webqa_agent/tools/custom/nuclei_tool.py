@@ -163,6 +163,13 @@ class NucleiTool(WebQABaseTool):
                 'On dynamic content that changes frequently',
                 'When network access to Nuclei templates is blocked',
                 'On localhost or private network targets (unless authorized)',
+
+                # Performance and frequency considerations
+                'Too frequently (execution time varies by scan type: 10-60 seconds)',
+                'Quick scans (~10s): Targeted testing with specific templates (e.g., CVE only)',
+                'Comprehensive scans (~60s): Full security audit with all templates',
+                'Multiple times on the same URL without changes (use once per URL or endpoint group)',
+                'On every page navigation (security scans should be targeted to high-risk pages)',
             ],
             priority=20,  # Lower priority than most tools (security testing is specialized)
             dependencies=['nuclei'],  # Requires Nuclei binary installation
@@ -322,22 +329,15 @@ class NucleiTool(WebQABaseTool):
             if not shutil.which('nuclei'):
                 logger.warning('Security Tool: Nuclei not installed')
 
-                # Record failed step
-                if self.case_recorder:
-                    try:
-                        self.case_recorder.add_step(
-                            description='Execute security scan (failed - Nuclei not installed)',
-                            screenshots=[],
-                            model_io=json.dumps({
-                                'error': 'Nuclei not installed',
-                                'install_url': 'https://github.com/projectdiscovery/nuclei'
-                            }, ensure_ascii=False),
-                            actions=[],
-                            status='failed',
-                            step_type='action',
-                        )
-                    except Exception:
-                        pass
+                # Record failed step (using safe_record_step helper)
+                self.safe_record_step(
+                    description='Execute security scan (failed - Nuclei not installed)',
+                    model_io_data={
+                        'error': 'Nuclei not installed',
+                        'install_url': 'https://github.com/projectdiscovery/nuclei'
+                    },
+                    status='failed',
+                )
 
                 return self.format_critical_error(
                     'VALIDATION_ERROR',
@@ -476,34 +476,25 @@ class NucleiTool(WebQABaseTool):
                 }
             )
 
-            # Step 9: Record to case_recorder
-            if self.case_recorder:
-                try:
-                    model_io_data = {
-                        'url': url,
-                        'scan_types': scan_types,
-                        'tags_used': tags,
-                        'findings': findings,
-                        'critical_findings': [
-                            {'name': f['name'], 'template': f['template_id']}
-                            for f in findings_data['critical'][:10]
-                        ],
-                        'high_findings': [
-                            {'name': f['name'], 'template': f['template_id']}
-                            for f in findings_data['high'][:10]
-                        ]
-                    }
-
-                    self.case_recorder.add_step(
-                        description=f'Execute security scan (findings: {findings["total"]})',
-                        screenshots=[],
-                        model_io=json.dumps(model_io_data, ensure_ascii=False, indent=2),
-                        actions=[],
-                        status='passed' if findings['total'] == 0 else ('critical' if findings['critical'] > 0 else 'warning'),
-                        step_type='action',
-                    )
-                except Exception as record_err:
-                    logger.warning(f'Failed to record security scan step: {record_err}')
+            # Step 9: Record to case_recorder (using safe_record_step helper)
+            self.safe_record_step(
+                description=f'Execute security scan (findings: {findings["total"]})',
+                model_io_data={
+                    'url': url,
+                    'scan_types': scan_types,
+                    'tags_used': tags,
+                    'findings': findings,
+                    'critical_findings': [
+                        {'name': f['name'], 'template': f['template_id']}
+                        for f in findings_data['critical'][:10]
+                    ],
+                    'high_findings': [
+                        {'name': f['name'], 'template': f['template_id']}
+                        for f in findings_data['high'][:10]
+                    ]
+                },
+                status='passed' if findings['total'] == 0 else ('critical' if findings['critical'] > 0 else 'warning'),
+            )
 
             # Step 10: Return formatted response
             if findings['total'] == 0:
@@ -528,22 +519,15 @@ class NucleiTool(WebQABaseTool):
         except Exception as e:
             logger.error(f'Security Tool: Unexpected error: {e}', exc_info=True)
 
-            # Record failed step
-            if self.case_recorder:
-                try:
-                    self.case_recorder.add_step(
-                        description='Execute security scan (failed)',
-                        screenshots=[],
-                        model_io=json.dumps({
-                            'error': str(e),
-                            'error_type': type(e).__name__
-                        }, ensure_ascii=False),
-                        actions=[],
-                        status='failed',
-                        step_type='action',
-                    )
-                except Exception:
-                    pass
+            # Record failed step (using safe_record_step helper)
+            self.safe_record_step(
+                description='Execute security scan (failed)',
+                model_io_data={
+                    'error': str(e),
+                    'error_type': type(e).__name__
+                },
+                status='failed',
+            )
 
             # Update context to indicate failure
             self.update_action_context(
