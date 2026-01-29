@@ -169,6 +169,37 @@ class ButtonCheckTool(WebQABaseTool):
             'llm_config': 'llm_config',
         }
 
+    def _build_failure_info(self, step: Any, error_details: Dict[str, Any]) -> str:
+        """Build detailed failure information string for a failed test step.
+
+        Args:
+            step: Failed test step with description and ID
+            error_details: Error details from ActionHandler context
+
+        Returns:
+            Formatted failure information string
+        """
+        error_type = error_details.get('error_type', 'unknown')
+        error_reason = error_details.get('error_reason', getattr(step, 'errors', 'Unknown error'))
+
+        failure_info = f'  - {step.description} (ID: {step.id}): {error_type}'
+
+        if error_reason:
+            failure_info += f' - {error_reason}'
+
+        # Add attempted strategies if available
+        attempted = error_details.get('attempted_strategies', [])
+        if attempted:
+            failure_info += f"\n    Attempted: {', '.join(attempted)}"
+
+        # Add scroll info if relevant
+        scroll_attempts = error_details.get('scroll_attempts', 0)
+        if scroll_attempts > 0:
+            max_attempts = error_details.get('max_scroll_attempts', 0)
+            failure_info += f' (scroll: {scroll_attempts}/{max_attempts} attempts)'
+
+        return failure_info
+
     async def _arun(self) -> str:
         """Execute comprehensive button testing.
 
@@ -318,33 +349,18 @@ class ButtonCheckTool(WebQABaseTool):
                             error_details = step.error_details
 
                         error_type = error_details.get('error_type', 'unknown')
-                        error_reason = error_details.get('error_reason', step.errors if hasattr(step, 'errors') else 'Unknown error')
 
                         # Count by error type
                         error_stats[error_type] = error_stats.get(error_type, 0) + 1
 
-                        # Build detailed failure info
-                        failure_info = f"  - {step.description} (ID: {step.id}): {error_type}"
-                        if error_reason:
-                            failure_info += f" - {error_reason}"
-
-                        # Add attempted strategies if available
-                        attempted = error_details.get('attempted_strategies', [])
-                        if attempted:
-                            failure_info += f"\n    Attempted: {', '.join(attempted)}"
-
-                        # Add scroll info if relevant
-                        scroll_attempts = error_details.get('scroll_attempts', 0)
-                        if scroll_attempts > 0:
-                            max_attempts = error_details.get('max_scroll_attempts', 0)
-                            failure_info += f" (scroll: {scroll_attempts}/{max_attempts} attempts)"
-
+                        # Build detailed failure info using helper
+                        failure_info = self._build_failure_info(step, error_details)
                         detailed_failures.append(failure_info)
 
                 # Build error summary by type
                 error_summary_parts = []
                 for error_type, count in sorted(error_stats.items(), key=lambda x: x[1], reverse=True):
-                    error_summary_parts.append(f"  - {error_type}: {count} elements")
+                    error_summary_parts.append(f'  - {error_type}: {count} elements')
                 error_summary = '\n'.join(error_summary_parts)
 
                 # Show first 5 detailed failures

@@ -182,6 +182,47 @@ class NucleiTool(WebQABaseTool):
             'case_recorder': 'case_recorder',
         }
 
+    def _format_finding(self, finding: Dict[str, Any], default_severity: str) -> str:
+        """Format a single security finding with metadata.
+
+        Args:
+            finding: Finding dictionary from Nuclei scan
+            default_severity: Default severity level if not found in data
+
+        Returns:
+            Formatted finding string with severity, CVSS, and endpoint
+        """
+        severity = finding.get('info', {}).get('severity', default_severity)
+        matched_at = finding.get('matched_at', finding.get('host', 'Unknown endpoint'))
+        cvss_score = finding.get('info', {}).get('classification', {}).get('cvss-score', 'N/A')
+
+        return (
+            f"  - {finding['name']} ({finding['template_id']})\n"
+            f'    Severity: {severity.upper()} | CVSS: {cvss_score} | Affected: {matched_at}'
+        )
+
+    def _add_findings_details(
+        self,
+        message_parts: List[str],
+        findings: List[Dict[str, Any]],
+        header: str,
+        default_severity: str
+    ) -> None:
+        """Add formatted findings details to message parts.
+
+        Args:
+            message_parts: List to append formatted messages to
+            findings: List of findings to format
+            header: Section header text
+            default_severity: Default severity level for findings
+        """
+        if not findings:
+            return
+
+        message_parts.append(header)
+        for finding in findings:
+            message_parts.append(self._format_finding(finding, default_severity))
+
     def _map_scan_types_to_tags(self, scan_types: str) -> List[str]:
         """Map user-friendly scan types to Nuclei template tags.
 
@@ -397,30 +438,19 @@ class NucleiTool(WebQABaseTool):
             ]
 
             # Add critical/high findings details with enhanced information
-            if findings_data['critical']:
-                message_parts.append('\nCritical Issues (Immediate Action Required):')
-                for finding in findings_data['critical'][:3]:
-                    # Extract additional metadata
-                    severity = finding.get('info', {}).get('severity', 'critical')
-                    matched_at = finding.get('matched_at', finding.get('host', 'Unknown endpoint'))
-                    cvss_score = finding.get('info', {}).get('classification', {}).get('cvss-score', 'N/A')
+            self._add_findings_details(
+                message_parts,
+                findings_data['critical'][:3],
+                '\nCritical Issues (Immediate Action Required):',
+                'critical'
+            )
 
-                    message_parts.append(
-                        f"  - {finding['name']} ({finding['template_id']})\n"
-                        f"    Severity: {severity.upper()} | CVSS: {cvss_score} | Affected: {matched_at}"
-                    )
-
-            if findings_data['high']:
-                message_parts.append('\nHigh Severity Issues (Urgent):')
-                for finding in findings_data['high'][:3]:
-                    severity = finding.get('info', {}).get('severity', 'high')
-                    matched_at = finding.get('matched_at', finding.get('host', 'Unknown endpoint'))
-                    cvss_score = finding.get('info', {}).get('classification', {}).get('cvss-score', 'N/A')
-
-                    message_parts.append(
-                        f"  - {finding['name']} ({finding['template_id']})\n"
-                        f"    Severity: {severity.upper()} | CVSS: {cvss_score} | Affected: {matched_at}"
-                    )
+            self._add_findings_details(
+                message_parts,
+                findings_data['high'][:3],
+                '\nHigh Severity Issues (Urgent):',
+                'high'
+            )
 
             message = '\n'.join(message_parts)
 
