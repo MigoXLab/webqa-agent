@@ -68,6 +68,7 @@ class SubTestStep(BaseModel):
     description: Optional[str] = ''
     status: Optional[TestStatus] = TestStatus.PASSED
     errors: Optional[str] = ''
+    error_details: Optional[Dict[str, Any]] = None  # Detailed error context from ActionHandler
 
 
 class SubTestReport(BaseModel):
