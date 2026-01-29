@@ -187,15 +187,15 @@ class PageButtonTest:
         return self.localized_strings.get(self.language, {}).get(key, key)
 
     async def run(self, url: str, page: Page, clickable_elements: dict, **kwargs) -> SubTestResult:
-        """Run page button test.
+        """Run page button test using ActionHandler for enhanced error handling.
 
         Args:
             url: target url
             page: playwright page
-            clickable_elements: list of clickable elements
+            clickable_elements: dict of clickable elements (id -> element_info)
 
         Returns:
-            SubTestResult containing test results and click screenshots
+            SubTestResult containing test results, click screenshots, and detailed error context
         """
 
         result = SubTestResult(name=self._get_text('clickable_element_check'), sub_test_id='basic_2')
@@ -204,10 +204,15 @@ class PageButtonTest:
         with Display.display(self._get_text('basic_test_display') + result.name):  # pylint: disable=not-callable
             try:
                 status = TestStatus.PASSED
-                from webqa_agent.actions.click_handler import ClickHandler
+                from webqa_agent.actions.action_handler import ActionHandler, action_context_var
 
-                click_handler = ClickHandler()
-                await click_handler.setup_listeners(page)
+                # Initialize ActionHandler with element buffer
+                action_handler = ActionHandler()
+                action_handler.page = page
+                # Convert clickable_elements to ActionHandler buffer format
+                action_handler.page_element_buffer = {
+                    str(k): v for k, v in clickable_elements.items()
+                }
 
                 # count total passed / failed
                 total, total_failed = 0, 0
@@ -218,58 +223,74 @@ class PageButtonTest:
                         element_text = element.get('selector', 'Unknown')
                         logging.info(f'Testing clickable element {highlight_id}...')
 
+                        step = SubTestStep(
+                            id=int(highlight_id),
+                            description=f"{self._get_text('click_element')}: {element_text}",
+                            screenshots=[]
+                        )
+
                         try:
                             current_url = page.url
                             if current_url != url:
                                 await page.goto(url)
                                 await asyncio.sleep(0.5)  # Wait for page to stabilize
 
-                            screenshots = []
-                            click_result = await click_handler.click_and_screenshot(page, element, highlight_id)
+                            # Use ActionHandler.click() for enhanced error handling
+                            click_success = await action_handler.click(str(highlight_id))
 
-                            # Handle screenshot after click
-                            if click_result.get('screenshot_after_path'):
-                                screenshots.append(SubTestScreenshot(type='path', data=click_result['screenshot_after_path'], label='After Click'))
+                            # Get error context from ActionContext
+                            ctx = action_context_var.get()
 
-                            if click_result.get('screenshot_after'):
-                                scr = click_result['screenshot_after']
-                                if not click_result.get('screenshot_after_path'):
-                                    if isinstance(scr, str) and scr.startswith('data:image'):
-                                        screenshots.append(SubTestScreenshot(type='base64', data=scr, label='After Click'))
-                                    elif isinstance(scr, dict) and scr.get('data'):
-                                        screenshots.append(SubTestScreenshot(
-                                            type=scr.get('type', 'base64'),
-                                            data=scr['data'],
-                                            label=scr.get('label', 'After Click')
-                                        ))
+                            if click_success:
+                                # Click succeeded, take screenshot
+                                await asyncio.sleep(1)  # Wait for page to update
+                                screenshot_b64, screenshot_path = await action_handler.b64_page_screenshot(
+                                    file_name=f'element_{highlight_id}_after_click',
+                                    context='test'
+                                )
+                                if screenshot_path:
+                                    step.screenshots.append(SubTestScreenshot(
+                                        type='path',
+                                        data=screenshot_path,
+                                        label='After Click'
+                                    ))
+                                elif screenshot_b64:
+                                    step.screenshots.append(SubTestScreenshot(
+                                        type='base64',
+                                        data=screenshot_b64,
+                                        label='After Click'
+                                    ))
 
-                            # Handle new page screenshot
-                            if click_result.get('new_page_screenshot_path'):
-                                screenshots.append(SubTestScreenshot(type='path', data=click_result['new_page_screenshot_path'], label='New Page'))
+                                step.status = TestStatus.PASSED
+                                total += 1
 
-                            if click_result.get('new_page_screenshot'):
-                                scr = click_result['new_page_screenshot']
-                                if not click_result.get('new_page_screenshot_path'):
-                                    if isinstance(scr, str) and scr.startswith('data:image'):
-                                        screenshots.append(SubTestScreenshot(type='base64', data=scr, label='New Page'))
-                                    elif isinstance(scr, dict) and scr.get('data'):
-                                        screenshots.append(SubTestScreenshot(
-                                            type=scr.get('type', 'base64'),
-                                            data=scr['data'],
-                                            label=scr.get('label', 'New Page')
-                                        ))
+                            else:
+                                # Click failed, collect detailed error information
+                                error_details = {}
+                                if ctx:
+                                    error_details = {
+                                        'error_type': ctx.error_type,
+                                        'error_reason': ctx.error_reason,
+                                        'attempted_strategies': ctx.attempted_strategies,
+                                        'element_info': ctx.element_info,
+                                        'scroll_attempts': ctx.scroll_attempts,
+                                        'max_scroll_attempts': ctx.max_scroll_attempts,
+                                        'playwright_error': ctx.playwright_error
+                                    }
 
-                            business_success = click_result['success']
-                            step = SubTestStep(
-                                id=int(highlight_id), description=f"{self._get_text('click_element')}: {element_text}", screenshots=screenshots
-                            )
-                            # Determine step status based on business result
-                            step_status = TestStatus.PASSED if business_success else TestStatus.FAILED
-                            step.status = step_status  # record status for each step
-                            total += 1
-                            if step_status != TestStatus.PASSED:
+                                # Store error details in step
+                                step.error_details = error_details
+                                step.errors = f"{error_details.get('error_type', 'unknown')}: {error_details.get('error_reason', 'Click failed')}"
+                                step.status = TestStatus.FAILED
+                                total += 1
                                 total_failed += 1
                                 status = TestStatus.FAILED
+
+                                logging.warning(
+                                    f"Click failed for element {highlight_id}: "
+                                    f"type={error_details.get('error_type')}, "
+                                    f"reason={error_details.get('error_reason')}"
+                                )
 
                             # Brief pause between clicks
                             await asyncio.sleep(0.5)
@@ -279,6 +300,7 @@ class PageButtonTest:
                             logging.error(error_message)
                             step.status = TestStatus.FAILED
                             step.errors = str(e)
+                            step.error_details = {'error_type': 'exception', 'error_reason': str(e)}
                             total_failed += 1
                             status = TestStatus.FAILED
                         finally:

@@ -299,33 +299,88 @@ class ButtonCheckTool(WebQABaseTool):
                 except Exception as record_err:
                     logger.warning(f'Failed to record button test step: {record_err}')
 
-            # Step 7: Format response
+            # Step 7: Format response with detailed error context
             if result.status == TestStatus.PASSED:
                 return self.format_success(
                     f'All {total_elements} clickable elements passed testing',
                     page_state=f'Tested buttons/links on {url}'
                 )
             else:
-                # Build failure summary
-                failure_details = []
+                # Categorize failures by error type
+                error_stats = {}
+                detailed_failures = []
+
                 for step in result.steps:
                     if step.status == TestStatus.FAILED:
-                        error_msg = step.errors if hasattr(step, 'errors') and step.errors else 'Unknown error'
-                        failure_details.append(f'  - {step.description}: {error_msg}')
+                        # Extract error details from ActionHandler context
+                        error_details = {}
+                        if hasattr(step, 'error_details') and step.error_details:
+                            error_details = step.error_details
 
-                failure_summary = '\n'.join(failure_details[:5])  # Show first 5 failures
+                        error_type = error_details.get('error_type', 'unknown')
+                        error_reason = error_details.get('error_reason', step.errors if hasattr(step, 'errors') else 'Unknown error')
+
+                        # Count by error type
+                        error_stats[error_type] = error_stats.get(error_type, 0) + 1
+
+                        # Build detailed failure info
+                        failure_info = f"  - {step.description} (ID: {step.id}): {error_type}"
+                        if error_reason:
+                            failure_info += f" - {error_reason}"
+
+                        # Add attempted strategies if available
+                        attempted = error_details.get('attempted_strategies', [])
+                        if attempted:
+                            failure_info += f"\n    Attempted: {', '.join(attempted)}"
+
+                        # Add scroll info if relevant
+                        scroll_attempts = error_details.get('scroll_attempts', 0)
+                        if scroll_attempts > 0:
+                            max_attempts = error_details.get('max_scroll_attempts', 0)
+                            failure_info += f" (scroll: {scroll_attempts}/{max_attempts} attempts)"
+
+                        detailed_failures.append(failure_info)
+
+                # Build error summary by type
+                error_summary_parts = []
+                for error_type, count in sorted(error_stats.items(), key=lambda x: x[1], reverse=True):
+                    error_summary_parts.append(f"  - {error_type}: {count} elements")
+                error_summary = '\n'.join(error_summary_parts)
+
+                # Show first 5 detailed failures
+                failure_summary = '\n'.join(detailed_failures[:5])
                 if failed_count > 5:
                     failure_summary += f'\n  ... and {failed_count - 5} more failures'
 
-                return self.format_failure(
-                    f'{failed_count} of {total_elements} elements failed:\n{failure_summary}',
-                    recovery_hints=[
+                # Build full message
+                message = (
+                    f'{failed_count} of {total_elements} elements failed:\n\n'
+                    f'{failure_summary}\n\n'
+                    f'Summary by failure type:\n{error_summary}'
+                )
+
+                # Generate targeted recovery hints based on error types
+                recovery_hints = []
+                if 'scroll_timeout' in error_stats or 'scroll_timeout_lazy_loading' in error_stats:
+                    recovery_hints.append('For scroll timeouts: Increase wait time or check lazy-loading implementation')
+                if 'element_not_found' in error_stats:
+                    recovery_hints.append('For not found errors: Verify element selectors are correct and elements exist')
+                if 'element_not_clickable' in error_stats:
+                    recovery_hints.append('For not clickable errors: Check if elements are obscured by overlays or z-index issues')
+                if 'element_obscured' in error_stats:
+                    recovery_hints.append('For obscured elements: Check for modal dialogs, fixed headers, or overlapping elements')
+                if 'playwright_error' in error_stats:
+                    recovery_hints.append('For Playwright errors: Review page structure and Playwright locator strategies')
+
+                # Add general hints if no specific ones
+                if not recovery_hints:
+                    recovery_hints = [
                         'Review failed elements for broken functionality',
                         'Check if elements require authentication or permissions',
-                        'Verify elements are not disabled or hidden',
-                        'Consider testing specific elements individually for debugging'
+                        'Verify browser session is still active'
                     ]
-                )
+
+                return self.format_failure(message, recovery_hints=recovery_hints)
 
         except Exception as e:
             # Record failed step
