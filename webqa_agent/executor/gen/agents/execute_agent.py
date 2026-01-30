@@ -1109,14 +1109,25 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     if case.get('_is_replanned'):
         logging.info(f'Detected replanned case: {case_name}, attempting state restoration')
         try:
-            from webqa_agent.executor.gen.utils.state_restorer import \
-                StateRestorer
+            # P2 Performance: Get pre-initialized StateRestorer from config (created once in graph.py)
+            # This avoids rebuilding StateRestorer for every replanned case (22+ times)
+            state_restorer = config['configurable'].get('state_restorer')
 
-            # Initialize StateRestorer with completed cases and UITester
-            restorer = StateRestorer(completed_cases, ui_tester_instance)
+            if not state_restorer:
+                # Fallback: Create StateRestorer if not provided (backward compatibility)
+                from webqa_agent.executor.gen.utils.state_restorer import \
+                    StateRestorer
+                logging.warning('StateRestorer not found in config, creating new instance (performance warning)')
+                state_restorer = StateRestorer(completed_cases, ui_tester_instance)
+            else:
+                # P2 Performance: Update state_map with latest completed cases
+                # This ensures we can restore from newly completed cases without rebuilding
+                state_restorer.update_state_map(completed_cases)
+                # Update ui_tester reference for current worker
+                state_restorer.ui_tester = ui_tester_instance
 
             # Attempt to restore state from source case
-            restored_url = await restorer.restore_state_if_needed(case)
+            restored_url = await state_restorer.restore_state_if_needed(case)
 
             if restored_url:
                 logging.info(f'Successfully restored state to URL: {restored_url}')
@@ -1550,10 +1561,10 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 # P4: Get current executed step count for accurate error reporting
                                 current_executed_step = len(case_recorder.current_case_steps)
                                 logging.error(
-                                    f"Aborting test at executed step {current_executed_step} (planned step {i + 1}) "
+                                    f'Aborting test at executed step {current_executed_step} (planned step {i + 1}) '
                                     f"based on recovery analysis: {recovery_result.get('reason', 'N/A')}")
                                 final_summary = (
-                                    f"FINAL_SUMMARY: Test aborted at executed step {current_executed_step} "
+                                    f'FINAL_SUMMARY: Test aborted at executed step {current_executed_step} '
                                     f"(planned step {i + 1}). {recovery_result.get('reason', 'Critical failure')}"
                                 )
                                 break
