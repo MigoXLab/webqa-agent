@@ -1167,6 +1167,110 @@ When using the **REPLAN** strategy to create new test cases, you can use any of 
 - Consider using custom tools if they could provide additional verification or context
 - Maintain test case structure: clear objectives, appropriate step granularity (3-8 steps)
 - Ensure new test cases have proper verification points
+
+### Replanned Test Case Pre-conditions (CRITICAL)
+
+When creating replanned test cases based on discovered opportunities:
+
+**Context Awareness**:
+- The current test case has already navigated to a specific page/state
+- The replanned case will be executed in a **new browser session** (fresh state)
+- You MUST restore the necessary UI state before the replanned case steps
+
+**State Restoration Strategy**:
+The framework provides **automatic URL restoration** from the source case's last URL.
+However, if additional UI interactions are needed beyond navigation:
+
+1. **Add preamble_actions for Complex State Restoration**:
+   ```json
+   {{
+     "name": "Verify_Language_Switcher",
+     "_is_replanned": true,
+     "_replan_source": "Verify_Login_Button",
+     "preamble_actions": [
+       {{"action": "Click the user menu button"}},
+       {{"action": "Select 'Settings' from dropdown"}},
+       {{"action": "Navigate to 'Language Preferences' tab"}}
+     ],
+     "steps": [
+       {{"action": "Click on language dropdown"}},
+       {{"verify": "Available language options are displayed"}}
+     ]
+   }}
+   ```
+
+2. **Preamble Actions Guidelines**:
+   - **URL navigation is automatic** - do NOT add "Navigate to X page" in preamble_actions
+   - **Only add preamble_actions if UI interactions are needed** (clicks, form fills, etc.)
+   - Keep preamble simple and focused on state restoration
+   - Preamble will be executed before main test steps
+   - If replanned case can start directly from restored URL, set `"preamble_actions": []`
+
+3. **Example Scenarios**:
+
+   **Scenario A: Simple replanning from login page**
+   ```json
+   {{
+     "name": "Verify_Login_Error_Messages",
+     "_is_replanned": true,
+     "_replan_source": "Verify_Header_Try_Now_Button",
+     "preamble_actions": [],  // URL auto-restored to login page
+     "steps": [
+       {{"action": "Enter invalid email"}},
+       {{"verify": "Error message displayed"}}
+     ]
+   }}
+   ```
+
+   **Scenario B: Replanning requiring UI interaction**
+   ```json
+   {{
+     "name": "Verify_Form_Validation_Messages",
+     "_is_replanned": true,
+     "_replan_source": "Verify_Submit_Button",
+     "preamble_actions": [
+       {{"action": "Click 'Sign Up' button"}},
+       {{"action": "Wait for registration form to load"}}
+     ],
+     "steps": [
+       {{"action": "Enter invalid phone number"}},
+       {{"verify": "Validation error displayed"}}
+     ]
+   }}
+   ```
+
+   **Scenario C: Replanning from user dashboard**
+   ```json
+   {{
+     "name": "Verify_Profile_Settings",
+     "_is_replanned": true,
+     "_replan_source": "Verify_Dashboard_Layout",
+     "preamble_actions": [
+       {{"action": "Perform login sequence"}},
+       {{"action": "Navigate to user dashboard"}},
+       {{"action": "Click 'Profile' menu item"}}
+     ],
+     "steps": [
+       {{"verify": "Profile settings page is displayed"}},
+       {{"action": "Update username field"}}
+     ]
+   }}
+   ```
+
+**Decision Tree for Preamble Actions**:
+```
+Is this a replanned case? YES → Does it need UI interactions beyond URL?
+                               ├─ YES → Add specific preamble_actions
+                               └─ NO  → Use preamble_actions: []
+
+Is this a replanned case? NO  → Use preamble_actions only if needed for setup
+```
+
+**Important Notes**:
+- Mark replanned cases with `"_is_replanned": true` and `"_replan_source": "source_case_name"`
+- The framework will automatically restore the last URL from the source case
+- Only use preamble_actions for UI interactions that cannot be automated
+- Avoid redundant navigation steps - focus on essential state restoration
 """
 
     return f"""## Role
