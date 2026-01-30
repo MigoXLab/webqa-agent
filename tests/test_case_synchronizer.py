@@ -149,8 +149,10 @@ class TestCaseJsonSynchronizerSyncCases:
         # Cases should remain unchanged
         assert not temp_cases_json.exists()
 
-    def test_sync_cases_missing_case_id(self, temp_cases_json, sample_test_cases):
+    def test_sync_cases_missing_case_id(self, temp_cases_json, sample_test_cases, caplog):
         """Test synchronization handles missing case_id gracefully."""
+        import logging
+
         recorded_cases = [
             {
                 # Missing case_id
@@ -160,14 +162,16 @@ class TestCaseJsonSynchronizerSyncCases:
         ]
 
         synchronizer = CaseJsonSynchronizer(temp_cases_json)
-        synchronizer.sync_cases(sample_test_cases, recorded_cases)
 
-        # Should sync successfully, ignoring invalid recorded case
-        with open(temp_cases_json, encoding='utf-8') as f:
-            synced_cases = json.load(f)
+        # Capture warning logs
+        with caplog.at_level(logging.WARNING):
+            synchronizer.sync_cases(sample_test_cases, recorded_cases)
 
-        # Original cases should remain with pending status
-        assert synced_cases[0]['status'] == 'pending'
+        # Should log warning about no valid recorded cases
+        assert 'No valid recorded cases' in caplog.text
+
+        # File should not be created when all recorded cases are invalid
+        assert not temp_cases_json.exists()
 
     def test_sync_cases_creates_parent_dir(self, tmp_path, sample_test_cases, sample_recorded_cases):
         """Test synchronization creates parent directory if missing."""

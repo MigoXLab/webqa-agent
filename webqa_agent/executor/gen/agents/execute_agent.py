@@ -1122,9 +1122,20 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             else:
                 # P2 Performance: Update state_map with latest completed cases
                 # This ensures we can restore from newly completed cases without rebuilding
-                state_restorer.update_state_map(completed_cases)
-                # Update ui_tester reference for current worker
-                state_restorer.ui_tester = ui_tester_instance
+
+                # Thread safety: Acquire lock when updating shared state
+                # Although asyncio is single-threaded and update_state_map() has no await points,
+                # we use the lock for robustness and to prevent potential issues if the
+                # implementation changes in the future.
+                results_lock = config['configurable'].get('results_lock')
+                if results_lock:
+                    async with results_lock:
+                        state_restorer.update_state_map(completed_cases)
+                        state_restorer.ui_tester = ui_tester_instance
+                else:
+                    # Fallback: No lock provided (backward compatibility)
+                    state_restorer.update_state_map(completed_cases)
+                    state_restorer.ui_tester = ui_tester_instance
 
             # Attempt to restore state from source case
             restored_url = await state_restorer.restore_state_if_needed(case)

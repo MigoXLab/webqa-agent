@@ -34,7 +34,10 @@ Reference:
 """
 
 import logging
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from webqa_agent.tools.core.ui_driver import UITester
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +61,7 @@ class StateRestorer:
         state_map: Dictionary mapping case_name to last_known_url
     """
 
-    def __init__(self, completed_cases: List[Dict], ui_tester):
+    def __init__(self, completed_cases: List[Dict], ui_tester: Optional['UITester']):
         """Initialize StateRestorer with completed cases and UI tester.
 
         Args:
@@ -66,7 +69,8 @@ class StateRestorer:
                 Each dict should have:
                 - 'case_name': Name of the test case
                 - 'recorded_case': Dict with execution history including 'steps'
-            ui_tester: UITester instance for performing state restorations
+            ui_tester: UITester instance for performing state restorations.
+                Can be None during initialization; set per-worker before use.
 
         Example:
             completed_cases = [
