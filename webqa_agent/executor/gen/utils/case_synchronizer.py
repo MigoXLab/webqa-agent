@@ -202,7 +202,10 @@ class CaseJsonSynchronizer:
 
         Updates:
             - status: Final execution status (passed/failed/warning)
-            - completed_steps: List of executed step summaries
+            - completed_steps: List of executed step summaries (legacy)
+            - executed_steps: Detailed execution steps (P3 enhancement)
+            - planned_steps: Original planned steps (preserved)
+            - step_expansion_ratio: Ratio of executed to planned steps
             - start_time: Execution start timestamp
             - end_time: Execution end timestamp
             - duration: Execution duration in seconds
@@ -210,8 +213,26 @@ class CaseJsonSynchronizer:
         # Update status (most critical field)
         updated_case['status'] = recorded.get('status', 'pending')
 
-        # Add completed steps summary
+        # P3 Enhancement: Preserve original planned steps
+        # Store original steps as 'planned_steps' before overwriting
+        if 'steps' in updated_case and 'planned_steps' not in updated_case:
+            updated_case['planned_steps'] = updated_case['steps']
+
+        # P3 Enhancement: Extract detailed executed steps
+        executed_steps = self._extract_executed_steps(recorded)
+        updated_case['executed_steps'] = executed_steps
+
+        # Legacy field for backward compatibility
         updated_case['completed_steps'] = self._extract_step_summaries(recorded)
+
+        # P3 Enhancement: Calculate step expansion ratio
+        # This helps identify cases where UI Agent generated many sub-steps
+        planned_count = len(updated_case.get('planned_steps', []))
+        executed_count = len(executed_steps)
+        if planned_count > 0:
+            updated_case['step_expansion_ratio'] = round(executed_count / planned_count, 2)
+        else:
+            updated_case['step_expansion_ratio'] = 1.0
 
         # Add execution metadata
         if 'start_time' in recorded:
@@ -268,6 +289,75 @@ class CaseJsonSynchronizer:
             for step in steps
             if step.get('description')  # Filter out steps without description
         ]
+
+    def _extract_executed_steps(self, recorded_case: Dict) -> List[Dict]:
+        """Extract detailed executed steps from recorded case (P3 enhancement).
+
+        This method extracts more detailed execution step information compared to
+        _extract_step_summaries(), including screenshots and truncated model I/O.
+
+        Args:
+            recorded_case: Recorded execution result with steps
+
+        Returns:
+            List of detailed step dicts with:
+            - description: Step description
+            - status: Step status (passed/failed/warning)
+            - timestamp: Execution timestamp
+            - screenshot: First screenshot URL if available
+            - step_type: Type of step (action/verify/ux_verify/etc)
+
+        Example:
+            Input: recorded_case['steps'] = [
+                {
+                    'description': 'Click login button',
+                    'status': 'passed',
+                    'timestamp': '2026-01-29T17:28:20',
+                    'screenshots': ['path/to/screenshot1.png', 'path/to/screenshot2.png'],
+                    'step_type': 'action',
+                    'model_io': '...'  # Long JSON string
+                }
+            ]
+
+            Output: [
+                {
+                    'description': 'Click login button',
+                    'status': 'passed',
+                    'timestamp': '2026-01-29T17:28:20',
+                    'screenshot': 'path/to/screenshot1.png',
+                    'step_type': 'action'
+                }
+            ]
+
+        Note:
+            - Excludes heavy fields like full model_io to keep cases.json manageable
+            - Preserves first screenshot for visual reference
+        """
+        steps = recorded_case.get('steps', [])
+
+        executed_steps = []
+        for step in steps:
+            if not step.get('description'):
+                continue  # Skip steps without description
+
+            executed_step = {
+                'description': step.get('description'),
+                'status': step.get('status'),
+                'timestamp': step.get('timestamp'),
+            }
+
+            # Add step_type if available (action, verify, ux_verify, custom_tool, etc.)
+            if 'step_type' in step:
+                executed_step['step_type'] = step['step_type']
+
+            # Include first screenshot for visual reference
+            screenshots = step.get('screenshots', [])
+            if screenshots and len(screenshots) > 0:
+                executed_step['screenshot'] = screenshots[0]
+
+            executed_steps.append(executed_step)
+
+        return executed_steps
 
     def _write_cases_json(self, cases: List[Dict]) -> None:
         """Write updated cases to JSON file.
