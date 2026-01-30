@@ -367,6 +367,13 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
     replan_count = 0  # 全局 replan 计数
     results_lock = asyncio.Lock()
 
+    # P2 Performance: Create StateRestorer once for all workers
+    # Avoids rebuilding for every replanned case (22+ times -> 1 time)
+    # StateRestorer will be updated with latest completed_cases before each use
+    from webqa_agent.executor.gen.utils.state_restorer import StateRestorer
+    state_restorer = StateRestorer(completed_cases, None)  # ui_tester set per-worker
+    logging.debug('StateRestorer initialized for worker pool (will be updated before each restore)')
+
     # Worker 函数：持续从队列拉取 case 并执行
     async def worker(worker_id: int):
         global _completed_case_count
@@ -433,7 +440,15 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                     # 执行 case 并添加超时
                     try:
                         result = await asyncio.wait_for(
-                            agent_worker_node(worker_input_state, config={'configurable': {'ui_tester_instance': ui_tester}}),
+                            agent_worker_node(
+                                worker_input_state,
+                                config={
+                                    'configurable': {
+                                        'ui_tester_instance': ui_tester,
+                                        'state_restorer': state_restorer  # P2 Performance: Pass shared StateRestorer
+                                    }
+                                }
+                            ),
                             timeout=1800
                         )
                         logging.debug(f"Worker {worker_id}: Case '{case_name}' completed")

@@ -260,3 +260,30 @@ class StateRestorer:
                 print('Restoration available')
         """
         return replan_source in self.state_map
+
+    def update_state_map(self, completed_cases: List[Dict]) -> None:
+        """Update state map with new completed cases.
+
+        This method allows reusing the same StateRestorer instance across
+        multiple test case executions, avoiding repeated reconstruction.
+
+        Args:
+            completed_cases: Updated list of completed case results
+
+        Performance Note:
+            Call this method when new cases have completed to update the
+            restorable state map without recreating the StateRestorer instance.
+
+        Example:
+            # Created once in run_test_cases
+            restorer = StateRestorer([], ui_tester)
+
+            # Updated in worker before each restoration
+            restorer.update_state_map(completed_cases)
+            restored_url = await restorer.restore_state_if_needed(case)
+        """
+        self.completed_cases = completed_cases
+        self.state_map = self._build_state_map()
+        logger.debug(
+            f'State map updated: {len(self.state_map)} restorable states available'
+        )
