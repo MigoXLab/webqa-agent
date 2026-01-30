@@ -401,6 +401,68 @@ class TestStateRestorerHelperMethods:
         assert restorer.has_restoration_for('Nonexistent_Case') is False
         assert restorer.has_restoration_for('Verify_Search_Functionality') is False
 
+    def test_update_state_map_adds_new_cases(self, mock_ui_tester):
+        """Test update_state_map adds new cases to state_map (P2 performance
+        optimization test)."""
+        # Initialize with empty completed_cases
+        restorer = StateRestorer([], mock_ui_tester)
+        assert len(restorer.state_map) == 0
+
+        # Update with new completed cases
+        new_completed_cases = [
+            {
+                'case_name': 'New_Case_1',
+                'recorded_case': {
+                    'steps': [
+                        {'description': 'Step 1', 'current_url': 'https://example.com/page1'}
+                    ]
+                }
+            },
+            {
+                'case_name': 'New_Case_2',
+                'recorded_case': {
+                    'steps': [
+                        {'description': 'Step 1', 'url': 'https://example.com/page2'}
+                    ]
+                }
+            }
+        ]
+
+        restorer.update_state_map(new_completed_cases)
+
+        # Verify state_map was updated
+        assert len(restorer.state_map) == 2
+        assert restorer.state_map['New_Case_1'] == 'https://example.com/page1'
+        assert restorer.state_map['New_Case_2'] == 'https://example.com/page2'
+        assert restorer.completed_cases == new_completed_cases
+
+    def test_update_state_map_replaces_existing_state(self, sample_completed_cases, mock_ui_tester):
+        """Test update_state_map replaces existing state_map."""
+        # Initialize with sample cases
+        restorer = StateRestorer(sample_completed_cases, mock_ui_tester)
+        initial_map_size = len(restorer.state_map)
+        assert initial_map_size == 2  # From sample_completed_cases
+
+        # Update with different cases
+        new_completed_cases = [
+            {
+                'case_name': 'Completely_New_Case',
+                'recorded_case': {
+                    'steps': [
+                        {'description': 'Step 1', 'current_url': 'https://newsite.com/new'}
+                    ]
+                }
+            }
+        ]
+
+        restorer.update_state_map(new_completed_cases)
+
+        # Verify state_map was completely replaced
+        assert len(restorer.state_map) == 1
+        assert restorer.state_map['Completely_New_Case'] == 'https://newsite.com/new'
+        assert 'Verify_Header_Try_Now_Button' not in restorer.state_map  # Old case removed
+        assert restorer.completed_cases == new_completed_cases
+
 
 class TestStateRestorerEdgeCases:
     """Test edge cases and boundary conditions."""

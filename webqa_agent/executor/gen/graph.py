@@ -419,6 +419,11 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                 )
                 await ui_tester.initialize()
 
+                # P0 Fix: Initialize URLValidator to prevent LLM URL hallucinations in worker execution
+                if state.get('url'):
+                    ui_tester._actions.set_url_validator(state['url'])
+                    logging.debug(f"Worker {worker_id}: URLValidator initialized with base_url: {state['url']}")
+
                 # Set testcase context
                 ui_tester.current_test_objective = case.get('objective', case.get('name'))
                 ui_tester.current_success_criteria = case.get('success_criteria', [])
@@ -445,7 +450,8 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                                 config={
                                     'configurable': {
                                         'ui_tester_instance': ui_tester,
-                                        'state_restorer': state_restorer  # P2 Performance: Pass shared StateRestorer
+                                        'state_restorer': state_restorer,  # P2 Performance: Pass shared StateRestorer
+                                        'results_lock': results_lock  # Thread safety: Pass lock for state updates
                                     }
                                 }
                             ),

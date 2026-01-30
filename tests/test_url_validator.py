@@ -140,8 +140,10 @@ class TestURLValidatorAutoCorrection:
 
     def test_validate_or_fix_logs_correction(self, validator, caplog):
         """Test auto-correction logs the fix."""
-        validator.validate_or_fix('/login')
-        assert 'auto-corrected' in caplog.text.lower()
+        import logging
+        with caplog.at_level(logging.INFO):
+            validator.validate_or_fix('/login')
+            assert 'auto-corrected' in caplog.text.lower()
 
 
 class TestURLValidatorIsSameDomain:
