@@ -1,204 +1,393 @@
-"""Quick verification script for CaseJsonSynchronizer (Phase 1 - P1)."""
+"""Unit tests for CaseJsonSynchronizer (Phase 1 - P1 + Phase 3 - P3).
+
+Tests cases.json synchronization logic and step hierarchy tracking.
+"""
+
 import json
-from pathlib import Path
+
+import pytest
 
 from webqa_agent.executor.gen.utils.case_synchronizer import \
     CaseJsonSynchronizer
 
-print('=' * 60)
-print('CaseJsonSynchronizer 验证测试')
-print('=' * 60)
 
-# 准备测试目录
-test_dir = Path('/tmp/webqa-test-sync')
-test_dir.mkdir(exist_ok=True)
-cases_json_path = test_dir / 'cases.json'
+@pytest.fixture
+def temp_cases_json(tmp_path):
+    """Provide temporary cases.json path."""
+    return tmp_path / 'cases.json'
 
-print(f'\n✓ 测试目录: {test_dir}')
-print(f'✓ cases.json 路径: {cases_json_path}\n')
 
-# 模拟原始 test_cases (planning 阶段生成)
-test_cases = [
-    {
-        'case_id': 'case_1',
-        'name': 'Test_Login',
-        'status': 'pending',  # 初始状态
-        'objective': '测试登录功能',
-        'steps': [{'action': 'click', 'target': 'login_button'}],
-    },
-    {
-        'case_id': 'case_2',
-        'name': 'Test_Signup',
-        'status': 'pending',  # 初始状态
-        'objective': '测试注册功能',
-        'steps': [{'action': 'fill', 'target': 'email_input'}],
-    },
-    {
-        'case_id': 'case_3',
-        'name': 'Test_Navigation',
-        'status': 'pending',  # 初始状态
-        'objective': '测试导航功能',
-        'steps': [{'action': 'click', 'target': 'nav_link'}],
-    },
-]
+@pytest.fixture
+def sample_test_cases():
+    """Provide sample test cases (planning stage)."""
+    return [
+        {
+            'case_id': 'case_1',
+            'name': 'Test_Login',
+            'status': 'pending',
+            'objective': 'Test login functionality',
+            'steps': [
+                {'action': 'Navigate to login page'},
+                {'action': 'Click login button'}
+            ]
+        },
+        {
+            'case_id': 'case_2',
+            'name': 'Test_Signup',
+            'status': 'pending',
+            'objective': 'Test signup functionality',
+            'steps': [
+                {'action': 'Fill registration form'}
+            ]
+        }
+    ]
 
-# 保存初始 cases.json
-with open(cases_json_path, 'w', encoding='utf-8') as f:
-    json.dump(test_cases, f, ensure_ascii=False, indent=4)
 
-print('=== 步骤 1: 初始 cases.json (所有状态为 pending) ===')
-for case in test_cases:
-    print(f"  {case['case_id']}: {case['name']} - status: {case['status']}")
+@pytest.fixture
+def sample_recorded_cases():
+    """Provide sample recorded cases (execution stage)."""
+    return [
+        {
+            'case_id': 'case_1',
+            'status': 'passed',
+            'start_time': '2026-01-30T10:00:00',
+            'end_time': '2026-01-30T10:00:15',
+            'duration': 15.2,
+            'steps': [
+                {
+                    'description': 'Navigate to login page',
+                    'status': 'passed',
+                    'timestamp': '2026-01-30T10:00:05',
+                    'step_type': 'action',
+                    'screenshots': ['screenshot1.png']
+                },
+                {
+                    'description': 'Locate login button',
+                    'status': 'passed',
+                    'timestamp': '2026-01-30T10:00:08',
+                    'step_type': 'action'
+                },
+                {
+                    'description': 'Click login button',
+                    'status': 'passed',
+                    'timestamp': '2026-01-30T10:00:12',
+                    'step_type': 'action',
+                    'screenshots': ['screenshot2.png', 'screenshot3.png']
+                }
+            ]
+        },
+        {
+            'case_id': 'case_2',
+            'status': 'failed',
+            'start_time': '2026-01-30T10:00:20',
+            'end_time': '2026-01-30T10:00:35',
+            'duration': 15.8,
+            'error': 'Element not found',
+            'failure_type': 'element_not_found',
+            'steps': [
+                {
+                    'description': 'Fill registration form',
+                    'status': 'failed',
+                    'timestamp': '2026-01-30T10:00:30'
+                }
+            ]
+        }
+    ]
 
-# 模拟 recorded_cases (execution 阶段生成)
-recorded_cases = [
-    {
-        'case_id': 'case_1',
-        'status': 'passed',  # ✅ 执行成功
-        'start_time': '2026-01-30T10:00:00',
-        'end_time': '2026-01-30T10:00:15',
-        'duration': 15.2,
-        'steps': [
+
+class TestCaseJsonSynchronizerInit:
+    """Test CaseJsonSynchronizer initialization."""
+
+    def test_init_valid_path(self, temp_cases_json):
+        """Test initialization with valid path."""
+        synchronizer = CaseJsonSynchronizer(temp_cases_json)
+        assert synchronizer.cases_json_path == temp_cases_json
+
+    def test_init_invalid_path_none(self):
+        """Test initialization fails with None path."""
+        with pytest.raises(ValueError, match='cannot be None or empty'):
+            CaseJsonSynchronizer(None)
+
+    def test_init_invalid_path_empty(self):
+        """Test initialization fails with empty path."""
+        with pytest.raises(ValueError, match='cannot be None or empty'):
+            CaseJsonSynchronizer('')
+
+
+class TestCaseJsonSynchronizerSyncCases:
+    """Test cases.json synchronization (P1)."""
+
+    def test_sync_cases_success(self, temp_cases_json, sample_test_cases, sample_recorded_cases):
+        """Test successful synchronization of execution results."""
+        synchronizer = CaseJsonSynchronizer(temp_cases_json)
+        synchronizer.sync_cases(sample_test_cases, sample_recorded_cases)
+
+        # Read synchronized cases.json
+        with open(temp_cases_json, encoding='utf-8') as f:
+            synced_cases = json.load(f)
+
+        # Verify case_1 (passed)
+        case_1 = synced_cases[0]
+        assert case_1['status'] == 'passed'
+        assert case_1['start_time'] == '2026-01-30T10:00:00'
+        assert case_1['duration'] == 15.2
+        assert 'completed_steps' in case_1
+        assert len(case_1['completed_steps']) == 3
+
+        # Verify case_2 (failed)
+        case_2 = synced_cases[1]
+        assert case_2['status'] == 'failed'
+        assert case_2['error'] == 'Element not found'
+        assert case_2['failure_type'] == 'element_not_found'
+
+    def test_sync_cases_empty_recorded(self, temp_cases_json, sample_test_cases):
+        """Test synchronization with empty recorded cases."""
+        synchronizer = CaseJsonSynchronizer(temp_cases_json)
+        synchronizer.sync_cases(sample_test_cases, [])
+
+        # Should not crash, just log warning
+        # Cases should remain unchanged
+        assert not temp_cases_json.exists()
+
+    def test_sync_cases_missing_case_id(self, temp_cases_json, sample_test_cases):
+        """Test synchronization handles missing case_id gracefully."""
+        recorded_cases = [
             {
-                'description': 'Click login button',
+                # Missing case_id
                 'status': 'passed',
-                'timestamp': '2026-01-30T10:00:10',
+                'steps': []
             }
-        ],
-    },
-    {
-        'case_id': 'case_2',
-        'status': 'failed',  # ❌ 执行失败
-        'start_time': '2026-01-30T10:00:20',
-        'end_time': '2026-01-30T10:00:35',
-        'duration': 15.8,
-        'error': 'Element not found',
-        'failure_type': 'element_not_found',
-        'steps': [
+        ]
+
+        synchronizer = CaseJsonSynchronizer(temp_cases_json)
+        synchronizer.sync_cases(sample_test_cases, recorded_cases)
+
+        # Should sync successfully, ignoring invalid recorded case
+        with open(temp_cases_json, encoding='utf-8') as f:
+            synced_cases = json.load(f)
+
+        # Original cases should remain with pending status
+        assert synced_cases[0]['status'] == 'pending'
+
+    def test_sync_cases_creates_parent_dir(self, tmp_path, sample_test_cases, sample_recorded_cases):
+        """Test synchronization creates parent directory if missing."""
+        nested_path = tmp_path / 'reports' / 'test_session' / 'cases.json'
+
+        synchronizer = CaseJsonSynchronizer(nested_path)
+        synchronizer.sync_cases(sample_test_cases, sample_recorded_cases)
+
+        assert nested_path.exists()
+        assert nested_path.parent.exists()
+
+
+class TestCaseJsonSynchronizerStepHierarchy:
+    """Test step hierarchy tracking (P3)."""
+
+    def test_extract_executed_steps_with_expansion(self, temp_cases_json, sample_test_cases, sample_recorded_cases):
+        """Test extraction of executed steps (P3 key test)."""
+        synchronizer = CaseJsonSynchronizer(temp_cases_json)
+        synchronizer.sync_cases(sample_test_cases, sample_recorded_cases)
+
+        with open(temp_cases_json, encoding='utf-8') as f:
+            synced_cases = json.load(f)
+
+        case_1 = synced_cases[0]
+
+        # P3: Should have executed_steps field
+        assert 'executed_steps' in case_1
+        executed_steps = case_1['executed_steps']
+        assert len(executed_steps) == 3  # UI Agent expanded 2 planned steps into 3 executed steps
+
+        # Verify executed step structure
+        assert executed_steps[0]['description'] == 'Navigate to login page'
+        assert executed_steps[0]['status'] == 'passed'
+        assert executed_steps[0]['timestamp'] == '2026-01-30T10:00:05'
+        assert executed_steps[0]['step_type'] == 'action'
+        assert executed_steps[0]['screenshot'] == 'screenshot1.png'  # First screenshot
+
+        # Second executed step (sub-step)
+        assert executed_steps[1]['description'] == 'Locate login button'
+        assert 'screenshot' not in executed_steps[1]  # No screenshots
+
+        # Third executed step with multiple screenshots (only first preserved)
+        assert executed_steps[2]['screenshot'] == 'screenshot2.png'
+
+    def test_step_expansion_ratio_calculation(self, temp_cases_json, sample_test_cases, sample_recorded_cases):
+        """Test step expansion ratio calculation (P3 key test)."""
+        synchronizer = CaseJsonSynchronizer(temp_cases_json)
+        synchronizer.sync_cases(sample_test_cases, sample_recorded_cases)
+
+        with open(temp_cases_json, encoding='utf-8') as f:
+            synced_cases = json.load(f)
+
+        case_1 = synced_cases[0]
+
+        # P3: Should calculate step_expansion_ratio
+        assert 'step_expansion_ratio' in case_1
+        # 3 executed steps / 2 planned steps = 1.5
+        assert case_1['step_expansion_ratio'] == 1.5
+
+    def test_planned_steps_preserved(self, temp_cases_json, sample_test_cases, sample_recorded_cases):
+        """Test original planned steps are preserved (P3)."""
+        synchronizer = CaseJsonSynchronizer(temp_cases_json)
+        synchronizer.sync_cases(sample_test_cases, sample_recorded_cases)
+
+        with open(temp_cases_json, encoding='utf-8') as f:
+            synced_cases = json.load(f)
+
+        case_1 = synced_cases[0]
+
+        # P3: Should preserve original planned steps
+        assert 'planned_steps' in case_1
+        assert len(case_1['planned_steps']) == 2
+        assert case_1['planned_steps'][0]['action'] == 'Navigate to login page'
+
+    def test_backward_compatibility_completed_steps(self, temp_cases_json, sample_test_cases, sample_recorded_cases):
+        """Test backward compatibility - legacy completed_steps field (P3)."""
+        synchronizer = CaseJsonSynchronizer(temp_cases_json)
+        synchronizer.sync_cases(sample_test_cases, sample_recorded_cases)
+
+        with open(temp_cases_json, encoding='utf-8') as f:
+            synced_cases = json.load(f)
+
+        case_1 = synced_cases[0]
+
+        # P3: Should maintain legacy completed_steps for backward compatibility
+        assert 'completed_steps' in case_1
+        assert len(case_1['completed_steps']) == 3
+
+        # Legacy format has less detail
+        assert 'description' in case_1['completed_steps'][0]
+        assert 'status' in case_1['completed_steps'][0]
+        assert 'timestamp' in case_1['completed_steps'][0]
+
+
+class TestCaseJsonSynchronizerEdgeCases:
+    """Test edge cases and boundary conditions."""
+
+    def test_sync_cases_no_steps(self, temp_cases_json):
+        """Test synchronization with recorded case having no steps."""
+        test_cases = [{'case_id': 'case_1', 'name': 'Test', 'status': 'pending'}]
+        recorded_cases = [{'case_id': 'case_1', 'status': 'passed', 'steps': []}]
+
+        synchronizer = CaseJsonSynchronizer(temp_cases_json)
+        synchronizer.sync_cases(test_cases, recorded_cases)
+
+        with open(temp_cases_json, encoding='utf-8') as f:
+            synced_cases = json.load(f)
+
+        assert synced_cases[0]['status'] == 'passed'
+        assert synced_cases[0]['executed_steps'] == []
+        assert synced_cases[0]['step_expansion_ratio'] == 1.0  # Default when no planned steps
+
+    def test_sync_cases_duplicate_case_id(self, temp_cases_json, sample_test_cases, caplog):
+        """Test synchronization with duplicate case IDs in recorded cases."""
+        recorded_cases = [
+            {'case_id': 'case_1', 'status': 'passed', 'steps': []},
+            {'case_id': 'case_1', 'status': 'failed', 'steps': []}  # Duplicate
+        ]
+
+        synchronizer = CaseJsonSynchronizer(temp_cases_json)
+        synchronizer.sync_cases(sample_test_cases, recorded_cases)
+
+        # Should log warning about duplicate
+        assert 'Duplicate case_id' in caplog.text
+
+    def test_sync_cases_with_replanned_cases(self, temp_cases_json):
+        """Test synchronization works with replanned cases metadata."""
+        test_cases = [
             {
-                'description': 'Fill email input',
-                'status': 'failed',
-                'timestamp': '2026-01-30T10:00:30',
-            }
-        ],
-    },
-    {
-        'case_id': 'case_3',
-        'status': 'warning',  # ⚠️ 执行有警告
-        'start_time': '2026-01-30T10:00:40',
-        'end_time': '2026-01-30T10:00:55',
-        'duration': 15.5,
-        'steps': [
-            {
-                'description': 'Click navigation link',
-                'status': 'passed',
-                'timestamp': '2026-01-30T10:00:45',
+                'case_id': 'case_1',
+                'name': 'Test_Original',
+                'status': 'pending',
+                'steps': [{'action': 'Click button'}]
             },
             {
-                'description': 'Verify page title',
+                'case_id': 'case_2',
+                'name': 'Test_Replanned',
+                'status': 'pending',
+                '_is_replanned': True,
+                '_replan_source': 'case_1',
+                'steps': [{'action': 'Verify element'}]
+            }
+        ]
+
+        recorded_cases = [
+            {'case_id': 'case_1', 'status': 'passed', 'steps': [{'description': 'Click button', 'status': 'passed'}]},
+            {'case_id': 'case_2', 'status': 'passed', 'steps': [{'description': 'Verify element', 'status': 'passed'}]}
+        ]
+
+        synchronizer = CaseJsonSynchronizer(temp_cases_json)
+        synchronizer.sync_cases(test_cases, recorded_cases)
+
+        with open(temp_cases_json, encoding='utf-8') as f:
+            synced_cases = json.load(f)
+
+        # Both should sync successfully
+        assert synced_cases[0]['status'] == 'passed'
+        assert synced_cases[1]['status'] == 'passed'
+        # Replanned metadata should be preserved
+        assert synced_cases[1]['_is_replanned'] is True
+
+    def test_sync_cases_warning_status(self, temp_cases_json):
+        """Test synchronization with warning status."""
+        test_cases = [{'case_id': 'case_1', 'name': 'Test', 'status': 'pending'}]
+        recorded_cases = [
+            {
+                'case_id': 'case_1',
                 'status': 'warning',
-                'timestamp': '2026-01-30T10:00:50',
-            },
-        ],
-    },
-]
+                'steps': [
+                    {'description': 'Step 1', 'status': 'passed'},
+                    {'description': 'Step 2', 'status': 'warning'}
+                ]
+            }
+        ]
 
-print('\n=== 步骤 2: Recorded Execution Results ===')
-for case in recorded_cases:
-    print(
-        f"  {case['case_id']}: status={case['status']}, "
-        f"duration={case['duration']}s, steps={len(case['steps'])}"
-    )
+        synchronizer = CaseJsonSynchronizer(temp_cases_json)
+        synchronizer.sync_cases(test_cases, recorded_cases)
 
-# 执行同步
-print('\n=== 步骤 3: 执行同步 ===')
-synchronizer = CaseJsonSynchronizer(cases_json_path)
-synchronizer.sync_cases(test_cases, recorded_cases)
-print('✓ 同步完成')
+        with open(temp_cases_json, encoding='utf-8') as f:
+            synced_cases = json.load(f)
 
-# 读取同步后的 cases.json
-with open(cases_json_path, 'r', encoding='utf-8') as f:
-    synced_cases = json.load(f)
-
-print('\n=== 步骤 4: 同步后的 cases.json ===')
-for case in synced_cases:
-    print(f"  {case['case_id']}: {case['name']}")
-    print(f"    - status: {case['status']}")
-    print(f"    - has completed_steps: {'completed_steps' in case}")
-    print(f"    - has start_time: {'start_time' in case}")
-    print(f"    - has duration: {'duration' in case}")
-    if case.get('status') == 'failed':
-        print(f"    - error: {case.get('error')}")
-        print(f"    - failure_type: {case.get('failure_type')}")
-
-# 验证结果
-print('\n' + '=' * 60)
-print('验证结果')
-print('=' * 60)
-
-passed = 0
-failed = 0
-tests = []
+        assert synced_cases[0]['status'] == 'warning'
 
 
-def verify(condition, message):
-    global passed, failed
-    tests.append({'message': message, 'result': '✅' if condition else '❌'})
-    if condition:
-        passed += 1
-        print(f'✅ {message}')
-    else:
-        failed += 1
-        print(f'❌ {message}')
+class TestCaseJsonSynchronizerFileIO:
+    """Test file I/O operations."""
 
+    def test_write_preserves_unicode(self, temp_cases_json):
+        """Test writing preserves Unicode characters."""
+        test_cases = [
+            {
+                'case_id': 'case_1',
+                'name': '测试用例',  # Chinese characters
+                'objective': '验证登录功能',
+                'status': 'pending'
+            }
+        ]
+        recorded_cases = [
+            {'case_id': 'case_1', 'status': 'passed', 'steps': []}
+        ]
 
-# 验证 case_1 (passed)
-case_1 = synced_cases[0]
-verify(case_1['status'] == 'passed', "Case 1 status 更新为 'passed'")
-verify('completed_steps' in case_1, 'Case 1 包含 completed_steps')
-verify('start_time' in case_1, 'Case 1 包含 start_time')
-verify('duration' in case_1, 'Case 1 包含 duration')
-verify(case_1['duration'] == 15.2, 'Case 1 duration 正确 (15.2s)')
+        synchronizer = CaseJsonSynchronizer(temp_cases_json)
+        synchronizer.sync_cases(test_cases, recorded_cases)
 
-# 验证 case_2 (failed)
-case_2 = synced_cases[1]
-verify(case_2['status'] == 'failed', "Case 2 status 更新为 'failed'")
-verify(case_2.get('error') == 'Element not found', 'Case 2 包含 error 信息')
-verify(
-    case_2.get('failure_type') == 'element_not_found', 'Case 2 包含 failure_type'
-)
-verify('completed_steps' in case_2, 'Case 2 包含 completed_steps')
+        with open(temp_cases_json, encoding='utf-8') as f:
+            content = f.read()
+            synced_cases = json.loads(content)
 
-# 验证 case_3 (warning)
-case_3 = synced_cases[2]
-verify(case_3['status'] == 'warning', "Case 3 status 更新为 'warning'")
-verify('completed_steps' in case_3, 'Case 3 包含 completed_steps')
-verify(len(case_3['completed_steps']) == 2, 'Case 3 包含 2 个 completed_steps')
+        # Unicode should be preserved
+        assert synced_cases[0]['name'] == '测试用例'
+        assert synced_cases[0]['objective'] == '验证登录功能'
 
-# 验证 completed_steps 结构
-verify(
-    case_1['completed_steps'][0].get('description') == 'Click login button',
-    'Case 1 completed_steps[0] description 正确',
-)
-verify(
-    case_1['completed_steps'][0].get('status') == 'passed',
-    'Case 1 completed_steps[0] status 正确',
-)
+    def test_write_formatting(self, temp_cases_json, sample_test_cases, sample_recorded_cases):
+        """Test JSON is written with proper formatting."""
+        synchronizer = CaseJsonSynchronizer(temp_cases_json)
+        synchronizer.sync_cases(sample_test_cases, sample_recorded_cases)
 
-# 总结
-print('\n' + '=' * 60)
-print('测试总结')
-print('=' * 60)
-print(f'总计: {passed + failed} 个验证')
-print(f'✅ 通过: {passed} 个')
-print(f'❌ 失败: {failed} 个')
+        with open(temp_cases_json) as f:
+            content = f.read()
 
-if failed == 0:
-    print('\n🎉 所有验证通过！CaseJsonSynchronizer 工作正常。')
-    print('\n最终 cases.json 已保存到:')
-    print(f'  {cases_json_path}')
-    print('\n你可以查看该文件验证同步结果。')
-    exit(0)
-else:
-    print(f'\n⚠️  有 {failed} 个验证失败，需要检查。')
-    exit(1)
+        # Should be indented (not minified)
+        assert '    ' in content  # 4-space indentation
+        assert '\n' in content
