@@ -612,6 +612,36 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
         f'replan count: {replan_count}/{max_replan_count})'
     )
 
+    # Synchronize execution results to cases.json
+    # This ensures cases.json reflects actual execution status
+    try:
+        from pathlib import Path
+
+        from webqa_agent.executor.gen.utils.case_synchronizer import \
+            CaseJsonSynchronizer
+
+        # Get report directory
+        report_dir = state.get('report_config', {}).get('report_dir')
+        if not report_dir:
+            timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP')
+            report_dir = os.path.join('reports', f'test_{timestamp}')
+
+        cases_json_path = Path(report_dir) / 'cases.json'
+
+        # Only sync if cases.json exists and we have recorded cases
+        if cases_json_path.exists() and recorded_cases:
+            synchronizer = CaseJsonSynchronizer(cases_json_path)
+            synchronizer.sync_cases(all_test_cases, recorded_cases)
+            logging.info(f'Synchronized {len(recorded_cases)} execution results to cases.json')
+        elif not recorded_cases:
+            logging.warning('No recorded cases to sync to cases.json')
+        else:
+            logging.warning(f'cases.json not found at {cases_json_path}, skipping sync')
+
+    except Exception as sync_err:
+        # Don't fail the entire execution if sync fails
+        logging.error(f'Failed to synchronize cases.json: {sync_err}', exc_info=True)
+
     return {
         'completed_cases': completed_cases,
         'recorded_cases': recorded_cases,
