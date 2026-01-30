@@ -158,19 +158,20 @@ class URLValidator:
             >>> validator.validate_or_fix("https://discovery.intern-ai.org.cn/login")
             "https://discovery.intern-ai.org.cn/login"
         """
-        # Validate first
+        # Fix 1: Relative path -> Make absolute with base domain
+        # Do this BEFORE validation, as validate() returns True for relative paths
+        if url.startswith('/'):
+            fixed_url = f'{self.base_scheme}://{self.base_domain}{url}'
+            logger.info(f'URL auto-corrected (relative->absolute): {url} -> {fixed_url}')
+            return fixed_url
+
+        # Validate absolute URLs
         is_valid, error = self.validate(url)
         if is_valid:
             return url
 
         # Attempt to fix common issues
         parsed = urlparse(url)
-
-        # Fix 1: Relative path -> Make absolute with base domain
-        if url.startswith('/'):
-            fixed_url = f'{self.base_scheme}://{self.base_domain}{url}'
-            logger.info(f'URL auto-corrected (relative->absolute): {url} -> {fixed_url}')
-            return fixed_url
 
         # Fix 2: Wrong domain but has path -> Use base domain with target path
         if parsed.path and parsed.netloc != self.base_domain:
