@@ -1102,6 +1102,41 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                    return_intermediate_steps=True)
     logging.debug('AgentExecutor created successfully')
 
+    # --- State Restoration for Replanned Cases ---
+    # Restore execution state for replanned test cases before executing preamble or main steps
+    # This ensures replanned cases start from the correct page state (last URL of source case)
+    # instead of defaulting to the homepage
+    if case.get('_is_replanned'):
+        logging.info(f'Detected replanned case: {case_name}, attempting state restoration')
+        try:
+            from webqa_agent.executor.gen.utils.state_restorer import \
+                StateRestorer
+
+            # Initialize StateRestorer with completed cases and UITester
+            restorer = StateRestorer(completed_cases, ui_tester_instance)
+
+            # Attempt to restore state from source case
+            restored_url = await restorer.restore_state_if_needed(case)
+
+            if restored_url:
+                logging.info(f'Successfully restored state to URL: {restored_url}')
+                # Record state restoration as a step in case execution history
+                case_recorder.record_step(
+                    description=f'State restored from source case to URL: {restored_url}',
+                    status='passed',
+                    step_type='state_restoration'
+                )
+            else:
+                logging.warning(f'State restoration skipped or failed for case: {case_name}')
+                # Continue with default state (no blocking error)
+
+        except Exception as e:
+            logging.error(f'State restoration failed for {case_name}: {e}', exc_info=True)
+            # Don't fail the entire case - state restoration is a best-effort optimization
+            # The case can still execute, just from the default starting state
+    else:
+        logging.debug(f'Case {case_name} is not replanned, skipping state restoration')
+
     # --- Execute Preamble Actions to Restore State ---
     preamble_actions = case.get('preamble_actions', [])
     if preamble_actions:
