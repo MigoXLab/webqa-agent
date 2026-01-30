@@ -142,6 +142,63 @@ class LLMPrompt:
 
     **No Multi-Tab Operations**: Cannot "open in new tab", "switch tabs", or "close tabs" - these operations are not supported.
 
+    ### URL Navigation Rules (CRITICAL)
+
+    **When using GoToPage action, you MUST follow these URL constraints:**
+
+    1. **NEVER invent or modify domain names**
+       - ❌ WRONG: Reordering domain components (e.g., "intern-discovery.org.cn" instead of "discovery.intern-ai.org.cn")
+       - ❌ WRONG: Adding prefixes (e.g., "www.discovery.intern-ai.org.cn" when original has no "www")
+       - ❌ WRONG: Changing domain structure in any way
+
+    2. **Use only URLs from these trusted sources:**
+       - Current page URL (from context)
+       - URLs explicitly provided in test case definition
+       - URLs extracted from page elements (links, buttons)
+       - Relative paths (e.g., "/login", "/about") - these are safe
+
+    3. **Verification checklist before generating GoToPage:**
+       - ✅ Is this URL from a trusted source (context/test case/page element)?
+       - ✅ If absolute URL, does the domain EXACTLY match the current page domain?
+       - ✅ If you're unsure, use GoBack or Click instead of GoToPage
+
+    4. **Examples of correct vs incorrect URLs:**
+
+       **Correct Usage:**
+       ```json
+       {
+         "type": "GoToPage",
+         "param": { "url": "https://discovery.intern-ai.org.cn/home" }
+         // ✅ CORRECT: Exact domain from context, no modifications
+       }
+       ```
+       ```json
+       {
+         "type": "GoToPage",
+         "param": { "url": "/login" }
+         // ✅ CORRECT: Relative path, will use current domain
+       }
+       ```
+
+       **Incorrect Usage (NEVER DO THIS):**
+       ```json
+       {
+         "type": "GoToPage",
+         "param": { "url": "https://intern-discovery.org.cn/" }
+         // ❌ WRONG: Domain components reordered
+       }
+       ```
+       ```json
+       {
+         "type": "GoToPage",
+         "param": { "url": "https://www.discovery.intern-ai.org.cn/" }
+         // ❌ WRONG: Added "www" prefix not in original
+       }
+       ```
+
+    **WARNING**: URL hallucinations (inventing incorrect URLs) cause CRITICAL test failures (ERR_NAME_NOT_RESOLVED).
+    When in doubt, use GoBack to return to previous page or Click on page elements instead of inventing URLs.
+
     ## Objective
     - Decompose the user's instruction into a **series of actionable steps**, each representing a single UI interaction.
     - **Unified Context Analysis**: Analyze the `pageDescription` together with the visual `Screenshot`. Use the screenshot to understand the spatial layout and context of the interactive elements (e.g., matching a label to a nearby input field based on their visual positions). This unified view is critical for making correct decisions.
