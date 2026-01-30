@@ -259,12 +259,12 @@ async def execute_gen_mode(cfg, workers: int = 1):
     custom_tools_enabled = tconf.get('custom_tools', {}).get('enabled', [])
     if 'lighthouse' in custom_tools_enabled:
         if not check_lighthouse_installation():
-            print('\n💡 Install Lighthouse: npm install -g lighthouse chrome-launcher', file=sys.stderr)
+            print('\n💡 Install Lighthouse: npm install lighthouse chrome-launcher (local, recommended) or npm install -g lighthouse chrome-launcher (global)', file=sys.stderr)
             sys.exit(1)
 
     if 'nuclei' in custom_tools_enabled:
         if not check_nuclei_installation():
-            print('\n💡 Install Nuclei: https://github.com/projectdiscovery/nuclei', file=sys.stderr)
+            print('\n💡 Install Nuclei: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest or download from https://github.com/projectdiscovery/nuclei/releases', file=sys.stderr)
             sys.exit(1)
 
     # Validate and build LLM config
