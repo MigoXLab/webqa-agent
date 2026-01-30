@@ -1438,28 +1438,36 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     else:
                         # DOM-dependent operation on unsupported page: Must abort
                         failed_steps.append(i + 1)
+                        # P4: Get current executed step count for accurate error reporting
+                        current_executed_step = len(case_recorder.current_case_steps)
                         final_summary = (
-                            f'FINAL_SUMMARY: Critical failure at step {i + 1}: '
+                            f'FINAL_SUMMARY: Critical failure at executed step {current_executed_step} '
+                            f'(planned step {i + 1}): '
                             f"'{instruction_to_execute}'. "
                             f'DOM-dependent operation cannot execute on unsupported page type. '
                             f'Error details: {tool_output}'
                         )
                         logging.error(
-                            f'[CRITICAL] Step {i + 1} requires DOM elements but page is unsupported (PDF/plugin). '
-                            f'Aborting remaining {len(case_steps) - i - 1} steps to conserve resources.'
+                            f'[CRITICAL] Executed step {current_executed_step} (planned step {i + 1}) '
+                            f'requires DOM elements but page is unsupported (PDF/plugin). '
+                            f'Aborting remaining {len(case_steps) - i - 1} planned steps to conserve resources.'
                         )
                         break  # Abort test case immediately
                 else:
                     # Other types of critical errors (not unsupported page): Abort immediately
                     failed_steps.append(i + 1)
+                    # P4: Get current executed step count for accurate error reporting
+                    current_executed_step = len(case_recorder.current_case_steps)
                     final_summary = (
-                        f'FINAL_SUMMARY: Critical failure at step {i + 1}: '
+                        f'FINAL_SUMMARY: Critical failure at executed step {current_executed_step} '
+                        f'(planned step {i + 1}): '
                         f"'{instruction_to_execute}'. "
                         f'Error details: {tool_output}'
                     )
                     logging.error(
-                        f'[CRITICAL] Step {i + 1} encountered critical failure. '
-                        f'Aborting remaining {len(case_steps) - i - 1} steps to conserve resources.'
+                        f'[CRITICAL] Executed step {current_executed_step} (planned step {i + 1}) '
+                        f'encountered critical failure. '
+                        f'Aborting remaining {len(case_steps) - i - 1} planned steps to conserve resources.'
                     )
                     break  # Abort test case immediately
 
@@ -1539,9 +1547,15 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 # i will increment normally, skip this step
 
                             elif strategy == 'abort':
+                                # P4: Get current executed step count for accurate error reporting
+                                current_executed_step = len(case_recorder.current_case_steps)
                                 logging.error(
-                                    f"Aborting test at step {i + 1} based on recovery analysis: {recovery_result.get('reason', 'N/A')}")
-                                final_summary = f"FINAL_SUMMARY: Test aborted at step {i + 1}. {recovery_result.get('reason', 'Critical failure')}"
+                                    f"Aborting test at executed step {current_executed_step} (planned step {i + 1}) "
+                                    f"based on recovery analysis: {recovery_result.get('reason', 'N/A')}")
+                                final_summary = (
+                                    f"FINAL_SUMMARY: Test aborted at executed step {current_executed_step} "
+                                    f"(planned step {i + 1}). {recovery_result.get('reason', 'Critical failure')}"
+                                )
                                 break
 
                         else:
@@ -1634,13 +1648,16 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
                                 elif strategy == 'abort':
                                     # Cannot recover, abort test
+                                    # P4: Get current executed step count for accurate error reporting
+                                    current_executed_step = len(case_recorder.current_case_steps)
                                     logging.error(
-                                        f'[ADAPTIVE_RECOVERY] Cannot recover from step {i + 1} failure. '
-                                        f'Aborting test. Reason: {reason}'
+                                        f'[ADAPTIVE_RECOVERY] Cannot recover from executed step {current_executed_step} '
+                                        f'(planned step {i + 1}) failure. Aborting test. Reason: {reason}'
                                     )
                                     failed_steps.append(i + 1)
                                     final_summary = (
-                                        f'FINAL_SUMMARY: Unrecoverable failure at step {i + 1}: '
+                                        f'FINAL_SUMMARY: Unrecoverable failure at executed step {current_executed_step} '
+                                        f'(planned step {i + 1}): '
                                         f"'{instruction_to_execute}'. "
                                         f'LLM adaptive recovery determined abortion necessary. '
                                         f'Reason: {reason}'
@@ -1821,6 +1838,17 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         logging.debug('All test steps completed, generating final summary')
         logging.debug(f'Failed steps detected during execution: {failed_steps}')
 
+        # P4 Enhancement: Get executed steps count from case_recorder
+        # This provides accurate step count including UI Agent's sub-steps
+        executed_steps_count = len(case_recorder.current_case_steps)
+        planned_steps_count = len(case_steps)
+        step_expansion_ratio = round(executed_steps_count / planned_steps_count, 2) if planned_steps_count > 0 else 1.0
+
+        logging.debug(
+            f'Step counts: {planned_steps_count} planned steps → '
+            f'{executed_steps_count} executed steps (expansion ratio: {step_expansion_ratio}x)'
+        )
+
         # Helper function to sanitize messages for summary generation
         def _sanitize_message_for_summary(msg, max_length: int = 250) -> str:
             """Clean message content to avoid Azure OpenAI content filter
@@ -1873,21 +1901,26 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         # Use the LLM directly to generate the summary (not through the agent)
         try:
             # Prepare context for summary generation
+            # P4 Enhancement: Use executed steps count for accurate reporting
             summary_prompt = f"""Based on the test execution of case "{case_name}", generate a summary.
 
 Test Objective: {case.get('objective', 'Not specified')}
 Success Criteria: {case.get('success_criteria', ['Not specified'])}
-Total Steps Executed: {total_steps}
+Planned Steps: {planned_steps_count} steps
+Executed Steps: {executed_steps_count} steps (expansion ratio: {step_expansion_ratio}x)
 Failed Steps: {failed_steps if failed_steps else 'None'}
+
+**Important**: Use executed step numbers when referencing steps. The test had {planned_steps_count} planned steps,
+but the UI Agent executed {executed_steps_count} detailed steps (including sub-steps for element location, scrolling, etc.).
 
 Generate a test summary in this format:
 FINAL_SUMMARY: Test case "{case_name}" [status]. [details about execution]. [objective achievement status].
 
 If all steps passed without failures:
-FINAL_SUMMARY: Test case "{case_name}" completed successfully. All {total_steps} test steps executed without critical errors. Test objective achieved: [confirmation]. All success criteria met.
+FINAL_SUMMARY: Test case "{case_name}" completed successfully. All {executed_steps_count} executed steps completed without critical errors. Test objective achieved: [confirmation]. All success criteria met.
 
 If there were failures:
-FINAL_SUMMARY: Test case "{case_name}" failed at step [X]. Error: [description]. Recovery attempts: [if any]. Recommendation: [suggested fix]."""
+FINAL_SUMMARY: Test case "{case_name}" failed at executed step [X] (out of {executed_steps_count} total executed steps). Error: [description]. Recovery attempts: [if any]. Recommendation: [suggested fix]."""
 
             # Get and sanitize recent messages (reduced from 6 to 4 to minimize content filter risk)
             recent_messages = []
@@ -1964,19 +1997,22 @@ Generate a brief summary without referencing specific execution details."""
                 # Auto-format the response if it doesn't follow the expected format
                 logging.debug('LLM summary missing FINAL_SUMMARY prefix, auto-formatting')
                 if not failed_steps:
-                    final_summary = f"FINAL_SUMMARY: Test case \"{case_name}\" completed successfully. All {total_steps} test steps executed. {agent_output}"
+                    # P4: Use executed steps count
+                    final_summary = f"FINAL_SUMMARY: Test case \"{case_name}\" completed successfully. All {executed_steps_count} executed steps completed. {agent_output}"
                 else:
                     final_summary = f"FINAL_SUMMARY: Test case \"{case_name}\" failed. {agent_output}"
             else:
-                final_summary = agent_output if agent_output else f"FINAL_SUMMARY: Test case \"{case_name}\" completed all {total_steps} steps."
+                # P4: Use executed steps count
+                final_summary = agent_output if agent_output else f"FINAL_SUMMARY: Test case \"{case_name}\" completed all {executed_steps_count} executed steps."
 
             logging.debug(f'Final summary generated: {final_summary}')
 
         except Exception as e:
             logging.error(f'Exception during final summary generation: {str(e)}')
             # Provide a reasonable default summary based on what we know
+            # P4: Use executed steps count
             if not failed_steps:
-                final_summary = f"FINAL_SUMMARY: Test case \"{case_name}\" completed successfully. All {total_steps} test steps executed without detected failures."
+                final_summary = f"FINAL_SUMMARY: Test case \"{case_name}\" completed successfully. All {executed_steps_count} executed steps completed without detected failures."
             else:
                 final_summary = f"FINAL_SUMMARY: Test case \"{case_name}\" completed with failures at steps {failed_steps}. Review execution logs for details."
 
