@@ -67,6 +67,12 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             execution_mode='gen'  # GEN mode: conservative approach for AI exploration
         )
         await ui_tester.initialize()
+
+        # P0 Fix: Initialize URLValidator to prevent LLM URL hallucinations
+        # Set base URL from test target for runtime validation
+        ui_tester._actions.set_url_validator(state['url'])
+        logging.debug(f"URLValidator initialized with base_url: {state['url']}")
+
         page = await ui_tester.get_current_page()
         dp = DeepCrawler(page)
 
