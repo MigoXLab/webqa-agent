@@ -462,6 +462,13 @@ class CaseRunner:
 
         _url = url or self.test_specific_config.get('url')
         _cookies = cookies or self.test_specific_config.get('cookies')
+
+        # P0 Fix: Initialize URLValidator to prevent LLM URL hallucinations
+        # Set base URL from test target for runtime validation
+        if _url:
+            tester._actions.set_url_validator(_url)
+            logging.debug(f'URLValidator initialized with base_url: {_url}')
+
         await tester.start_session(url=_url, cookies=_cookies)
         return tester
 
