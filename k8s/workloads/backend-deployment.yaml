@@ -15,11 +15,12 @@ spec:
       labels:
         app: webqa-be
     spec:
+      serviceAccountName: webqa-be-sa
       imagePullSecrets:
         - name: regcred-vpc
       containers:
         - name: webqa-be
-          image: eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/webqa-be:_tag  # CI/CD 过程中会被替换
+          image: eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/webqa-be:latest  # CI/CD 过程中会被替换
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
@@ -30,7 +31,6 @@ spec:
             # 使用 Secret 获取敏感配置
             - secretRef:
                 name: webqa-secrets
-          serviceAccountName: webqa-be-sa
           volumeMounts:
             - name: shared-storage
               mountPath: /shared
