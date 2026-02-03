@@ -29,6 +29,6 @@ spec:
   resources:
     requests:
       storage: 10Gi
-  storageClassName: managed-nfs-storage
+  storageClassName: ""
   volumeMode: Filesystem
   volumeName: webqa-pv

@@ -32,7 +32,10 @@ build-backend:
     # 在根目录构建，使用 backend/Dockerfile，这样可以访问 webqa_agent/
     - docker build -t $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:$CI_COMMIT_SHORT_SHA -f backend/Dockerfile .
     - docker push $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:$CI_COMMIT_SHORT_SHA
-    - docker rmi $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:$CI_COMMIT_SHORT_SHA
+    # 同时推送 latest 标签
+    - docker tag $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:$CI_COMMIT_SHORT_SHA $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:latest
+    - docker push $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:latest
+    - docker rmi $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:$CI_COMMIT_SHORT_SHA $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:latest
   rules:
     # 当 backend 或 webqa_agent 代码变化时自动触发
     - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH =~ /^dev_.*$/'
@@ -58,7 +61,10 @@ build-frontend:
     - echo "Build Frontend"
     - docker build -t $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:$CI_COMMIT_SHORT_SHA -f frontend/Dockerfile .
     - docker push $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:$CI_COMMIT_SHORT_SHA
-    - docker rmi $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:$CI_COMMIT_SHORT_SHA
+    # 同时推送 latest 标签
+    - docker tag $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:$CI_COMMIT_SHORT_SHA $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:latest
+    - docker push $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:latest
+    - docker rmi $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:$CI_COMMIT_SHORT_SHA $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:latest
   rules:
     # 当 frontend 代码变化时自动触发
     - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH =~ /^dev_.*$/'
