@@ -1,38 +1,32 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
+  name: webqa-fe-ingress
+  namespace: cloud-staging
   annotations:
-    kubectl.kubernetes.io/last-applied-configuration: |
-      {"apiVersion":"networking.k8s.io/v1","kind":"Ingress","metadata":{"annotations":{"nginx.ingress.kubernetes.io/proxy-body-size":"10g","nginx.ingress.kubernetes.io/proxy-read-timeout":"600","nginx.ingress.kubernetes.io/proxy-send-timeout":"600"},"name":"lmeterx-fe-ingress","namespace":"cloud-staging"},"spec":{"ingressClassName":"nginx","rules":[{"host":"lmeterx.openxlab.org.cn","http":{"paths":[{"backend":{"service":{"name":"lmeterx-fe-svc","port":{"number":80}}},"path":"/","pathType":"Prefix"}]}}],"tls":[{"hosts":["lmeterx.openxlab.org.cn"],"secretName":"generic.openxlab.org.cn"}]}}
+    nginx.ingress.kubernetes.io/proxy-body-size: "10g"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
     nginx.ingress.kubernetes.io/client-body-buffer-size: "1m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
     nginx.ingress.kubernetes.io/configuration-snippet: |
       proxy_set_header Authorization $http_authorization;
       proxy_set_header X-Authorization $http_x_authorization;
-    nginx.ingress.kubernetes.io/proxy-body-size: 10g
-    nginx.ingress.kubernetes.io/proxy-buffering: "off"
-    nginx.ingress.kubernetes.io/proxy-connect-timeout: "600"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
-    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
-  creationTimestamp: "2025-10-30T10:04:27Z"
-  generation: 1
-  name: webqa-fe-ingress
-  namespace: cloud-staging
-  resourceVersion: "1463354673"
-  uid: 4bf3028c-2d33-49c9-8545-2ceb3c8b166f
 spec:
   ingressClassName: nginx
   rules:
   - host: webqa.staging.openxlab.org.cn
     http:
       paths:
-      - backend:
+      - path: /
+        pathType: Prefix
+        backend:
           service:
             name: webqa-fe-svc
             port:
               number: 80
-        path: /
-        pathType: Prefix
   tls:
   - hosts:
     - webqa.staging.openxlab.org.cn
