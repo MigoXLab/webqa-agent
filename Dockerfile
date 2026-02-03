@@ -1,4 +1,4 @@
-FROM eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/public/playwright-python:v1.52.0-noble
+FROM eng-center-registry.cn-shanghai.cr.aliyuncs.com/qa/mcr.microsoft.com/playwright/python:v1.52.0-noble
 
 # 设置工作目录
 WORKDIR /app
