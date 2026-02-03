@@ -33,12 +33,17 @@ build-backend:
     - docker build -t $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:$CI_COMMIT_SHORT_SHA -f backend/Dockerfile .
     - docker push $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:$CI_COMMIT_SHORT_SHA
     - docker rmi $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:$CI_COMMIT_SHORT_SHA
-  only:
-    refs:
-      - main
-    changes:
-      - backend/**/*
-      - webqa_agent/**/*
+  rules:
+    # 当 backend 或 webqa_agent 代码变化时自动触发
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH =~ /^dev_.*$/'
+      changes:
+        - backend/**/*
+        - webqa_agent/**/*
+      when: on_success
+    # 支持手动触发
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH =~ /^dev_.*$/'
+      when: manual
+      allow_failure: true
 
 build-frontend:
   stage: build
@@ -54,11 +59,16 @@ build-frontend:
     - docker build -t $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:$CI_COMMIT_SHORT_SHA -f frontend/Dockerfile .
     - docker push $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:$CI_COMMIT_SHORT_SHA
     - docker rmi $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:$CI_COMMIT_SHORT_SHA
-  only:
-    refs:
-      - main
-    changes:
-      - frontend/**/*
+  rules:
+    # 当 frontend 代码变化时自动触发
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH =~ /^dev_.*$/'
+      changes:
+        - frontend/**/*
+      when: on_success
+    # 支持手动触发
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH =~ /^dev_.*$/'
+      when: manual
+      allow_failure: true
 
 build-agent:
   stage: build
@@ -78,12 +88,17 @@ build-agent:
     - docker tag $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:$CI_COMMIT_SHORT_SHA $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:latest
     - docker push $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:latest
     - docker rmi $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:$CI_COMMIT_SHORT_SHA $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:latest
-  only:
-    # refs:
-    #   - main
-    changes:
-      - backend/**/*
-      - webqa_agent/**/*
+  rules:
+    # 当 backend 或 webqa_agent 代码变化时自动触发
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH =~ /^dev_.*$/'
+      changes:
+        - backend/**/*
+        - webqa_agent/**/*
+      when: on_success
+    # 支持手动触发
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH =~ /^dev_.*$/'
+      when: manual
+      allow_failure: true
 
 
 # --- Deploy Stage: Public dev ---
@@ -109,7 +124,7 @@ deploy-be-dev:
     # - kubectl --kubeconfig $kubeconfig_dev_puyu rollout restart deployment/webqa-be -n cloud-staging
     - echo "Backend successfully deployed."
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev"'
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH =~ /^dev_.*$/'
       when: manual
       allow_failure: false
 
@@ -130,6 +145,6 @@ deploy-fe-dev:
     - kubectl --kubeconfig $kubeconfig_dev_puyu apply -f ingress.yaml
     - echo "Frontend successfully deployed."
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev"'
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH =~ /^dev_.*$/'
       when: manual
       allow_failure: false
