@@ -4,7 +4,7 @@ stages:
 
 variables:
   DOCKER_DRIVER: overlay2
-  PROJECT: webqa-agent
+  PROJECT: qa
   SERVICE_NAME_BACKEND: webqa-be
   SERVICE_NAME_FRONTEND: webqa-fe
   SERVICE_NAME_AGENT: webqa-agent
