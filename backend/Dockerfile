@@ -12,7 +12,10 @@ COPY package.json /app/
 RUN pip install --no-cache-dir -r /app/requirements.txt && \
     pip install --no-cache-dir -r /app/backend/requirements.txt
 
-# 设置工作目录为项目根目录（这样可以正确导入 webqa_agent 和 backend）
-WORKDIR /app
+# 设置 PYTHONPATH 以便正确导入 backend 和 webqa_agent 模块
+ENV PYTHONPATH=/app:/app/backend
 
-CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# 设置工作目录为 backend 目录
+WORKDIR /app/backend
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
