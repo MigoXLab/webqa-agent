@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import uuid
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
@@ -39,6 +40,10 @@ class _BrowserSession:
 
     - Must be created by BrowserSessionPool (token-gated).
     - DO NOT use `async with _BrowserSession` from outside pool.
+
+    Supports two browser modes:
+    - Local: Launches Playwright chromium locally
+    - Cloud: Connects to AgentBay cloud browser via CDP
     """
 
     def __init__(
@@ -58,6 +63,14 @@ class _BrowserSession:
         self.session_id = session_id or str(uuid.uuid4())
         self.browser_config = {**DEFAULT_CONFIG, **(browser_config or {})}
         self.disable_tab_interception = disable_tab_interception
+
+        # Cloud browser configuration (extracted from browser_config)
+        self._cloud_config = self.browser_config.pop('cloud_config', None)
+        self._is_cloud_mode = bool(self._cloud_config and self._cloud_config.get('enabled', False))
+
+        # AgentBay-specific resources (only used in cloud mode)
+        self._agentbay_client = None
+        self._cloud_session = None
 
         self._browser: Optional[Browser] = None
         self._context: Optional[BrowserContext] = None
@@ -103,24 +116,13 @@ class _BrowserSession:
                 return self
 
             cfg = self.browser_config
-            self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.launch(
-                headless=cfg['headless'],
-                args=[
-                    '--disable-dev-shm-usage',
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-gpu',
-                    '--force-device-scale-factor=1',
-                    f'--window-size={cfg["viewport"]["width"]},{cfg["viewport"]["height"]}',
-                    '--block-new-web-contents',
-                ],
-            )
-            self._context = await self._browser.new_context(
-                viewport=cfg['viewport'],
-                device_scale_factor=1,
-                locale=cfg.get('language', 'en-US'),
-            )
+
+            # Branch between local and cloud browser initialization
+            if self._is_cloud_mode:
+                await self._initialize_cloud_browser(cfg)
+                logging.info(f'[Session {self.session_id}] Cloud browser initialized via AgentBay CDP')
+            else:
+                await self._initialize_local_browser(cfg)
 
             # Single-Tab Architecture (Layered Defense with Coordination)
             #
@@ -201,6 +203,10 @@ class _BrowserSession:
             except Exception:
                 logging.debug('Failed to stop playwright', exc_info=True)
 
+            # Cleanup cloud resources if in cloud mode
+            if self._is_cloud_mode:
+                await self._cleanup_cloud_resources()
+
             self._page = None
             self._context = None
             self._browser = None
@@ -237,6 +243,123 @@ class _BrowserSession:
     async def get_url(self) -> tuple[str, str]:
         self._check_state()
         return self._page.url, await self._page.title()
+
+    async def _initialize_local_browser(self, cfg: Dict[str, Any]) -> None:
+        """Initialize local browser via Playwright launch."""
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.launch(
+            headless=cfg['headless'],
+            args=[
+                '--disable-dev-shm-usage',
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-gpu',
+                '--force-device-scale-factor=1',
+                f'--window-size={cfg["viewport"]["width"]},{cfg["viewport"]["height"]}',
+                '--block-new-web-contents',
+            ],
+        )
+        self._context = await self._browser.new_context(
+            viewport=cfg['viewport'],
+            device_scale_factor=1,
+            locale=cfg.get('language', 'en-US'),
+        )
+
+    async def _initialize_cloud_browser(self, cfg: Dict[str, Any]) -> None:
+        """Initialize cloud browser via AgentBay CDP connection.
+
+        Flow:
+        1. AgentBay(api_key) - create client
+        2. agent_bay.create(CreateSessionParams(image_id=...)) - create cloud session
+        3. session.browser.initialize(BrowserOption(...)) - init remote browser
+        4. session.browser.get_endpoint_url() - get CDP endpoint
+        5. playwright.chromium.connect_over_cdp(endpoint) - connect via CDP
+        6. browser.contexts[0] - use existing context (avoid cloud profile issues)
+        """
+        try:
+            from agentbay import (
+                AgentBay,
+                CreateSessionParams,
+                BrowserOption,
+                BrowserViewport,
+            )
+        except ImportError as e:
+            raise RuntimeError(
+                'AgentBay SDK not installed. Run: pip install wuying-agentbay-sdk'
+            ) from e
+
+        # 1. Get API key from cloud_config or environment
+        api_key = self._cloud_config.get('api_key') or os.getenv('AGENTBAY_API_KEY')
+        if not api_key:
+            raise ValueError(
+                'AgentBay API key required. Set AGENTBAY_API_KEY env var or provide api_key in cloud_config.'
+            )
+
+        # 2. Create AgentBay client and session
+        self._agentbay_client = AgentBay(api_key=api_key)
+        image_id = self._cloud_config.get('image_id', 'browser_latest')
+        result = self._agentbay_client.create(CreateSessionParams(image_id=image_id))
+        if not result.success:
+            raise RuntimeError(f'AgentBay session creation failed: {result.error_message}')
+        self._cloud_session = result.session
+        logging.info(f'[Cloud] AgentBay session created: {self._cloud_session.session_id}')
+
+        # 3. Initialize remote browser with viewport from browser_config
+        viewport = cfg.get('viewport', {'width': 1280, 'height': 720})
+        browser_option = BrowserOption(
+            viewport=BrowserViewport(
+                width=viewport.get('width', 1280),
+                height=viewport.get('height', 720),
+            ),
+        )
+        # Note: initialize() is a synchronous method that returns bool
+        ok = self._cloud_session.browser.initialize(browser_option)
+        if not ok:
+            await self._cleanup_cloud_resources()
+            raise RuntimeError('AgentBay browser initialization failed')
+        logging.info(f'[Cloud] Browser initialized with viewport {viewport["width"]}x{viewport["height"]}')
+
+        # 4. Get CDP endpoint
+        cdp_endpoint = self._cloud_session.browser.get_endpoint_url()
+        logging.info(f'[Cloud] CDP endpoint: {cdp_endpoint}')
+
+        # 5. Connect Playwright via CDP
+        self._playwright = await async_playwright().start()
+        timeout_ms = self._cloud_config.get('timeout', 30) * 1000
+
+        try:
+            self._browser = await asyncio.wait_for(
+                self._playwright.chromium.connect_over_cdp(cdp_endpoint),
+                timeout=timeout_ms / 1000
+            )
+        except asyncio.TimeoutError:
+            await self._cleanup_cloud_resources()
+            raise RuntimeError(f'CDP connection timeout after {timeout_ms}ms')
+
+        # 6. Use existing context (preferred for cloud) or create new one
+        if self._browser.contexts:
+            self._context = self._browser.contexts[0]
+            logging.debug('[Cloud] Using existing browser context')
+        else:
+            self._context = await self._browser.new_context(
+                viewport=cfg['viewport'],
+                device_scale_factor=1,
+                locale=cfg.get('language', 'en-US'),
+            )
+            logging.debug('[Cloud] Created new browser context')
+
+        logging.info(f'[Cloud] Session {self.session_id} initialized successfully')
+
+    async def _cleanup_cloud_resources(self) -> None:
+        """Cleanup AgentBay cloud resources."""
+        if self._cloud_session:
+            try:
+                self._cloud_session.release()
+                logging.debug('[Cloud] AgentBay session released')
+            except Exception as e:
+                logging.warning(f'[Cloud] Failed to release AgentBay session: {e}')
+            self._cloud_session = None
+        self._agentbay_client = None
 
     async def _enforce_single_tab_dom_preprocessing(self):
         """

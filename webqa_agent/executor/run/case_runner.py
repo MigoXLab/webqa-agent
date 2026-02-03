@@ -317,11 +317,19 @@ class CaseRunner:
         cookies = case_config.get('cookies') or self.test_specific_config.get('cookies')
         ignore_rules = case_config.get('ignore_rules') or self.test_specific_config.get('ignore_rules', {})
 
-        # Initialize tester and execute steps (navigate_to could inject cookies)
-        tester = await self._initialize_tester(session, case_name, url=url, cookies=cookies, ignore_rules=ignore_rules)
+        # Check if using snapshot (skip navigation for snapshot cases)
+        use_snapshot = case.get('use_snapshot')
 
-        # Load fixture state AFTER navigation (cookies + localStorage + sessionStorage)
-        if case.get('use_snapshot'):
+        # Initialize tester (navigation will be skipped if use_snapshot is True)
+        tester = await self._initialize_tester(
+            session, case_name,
+            url=url if not use_snapshot else None,  # Pass None to skip navigation
+            cookies=cookies,
+            ignore_rules=ignore_rules
+        )
+
+        # Load fixture state for snapshot cases (includes navigated page state)
+        if use_snapshot:
             await self._load_fixture_state(session, case, case_config)
 
         # Execute steps
@@ -423,6 +431,8 @@ class CaseRunner:
 
             # Reload page to apply storage
             await page.reload(wait_until='domcontentloaded')
+            await page.wait_for_load_state('networkidle', timeout=60000)
+            await asyncio.sleep(1)
             logging.info(f"Reloaded page to apply snapshot '{snapshot_name}' state")
 
         except Exception as e:
@@ -462,7 +472,13 @@ class CaseRunner:
 
         _url = url or self.test_specific_config.get('url')
         _cookies = cookies or self.test_specific_config.get('cookies')
-        await tester.start_session(url=_url, cookies=_cookies)
+
+        # Only navigate if URL is provided (None means skip navigation for snapshot cases)
+        if _url:
+            await tester.start_session(url=_url, cookies=_cookies)
+        else:
+            # No navigation needed (snapshot will load page state)
+            logging.debug("Skipping navigation for snapshot case")
         return tester
 
     async def _end_session(self, tester) -> Dict[str, Any]:

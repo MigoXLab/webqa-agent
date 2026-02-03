@@ -5,10 +5,24 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, field_validator
 
 
+class CloudConfig(BaseModel):
+    """Cloud browser configuration for AgentBay integration."""
+
+    enabled: bool = Field(default=False, description='Enable cloud browser mode')
+    api_key: Optional[str] = Field(
+        default=None, description='AgentBay API key (falls back to AGENTBAY_API_KEY env var)'
+    )
+    image_id: str = Field(default='browser_latest', description='AgentBay browser image ID')
+    timeout: int = Field(default=30, ge=5, le=300, description='CDP connection timeout in seconds')
+
+
 class BrowserConfig(BaseModel):
     """Browser configuration with unified cookies management.
 
     This is the single source of truth for browser settings and cookies.
+    Supports two modes:
+    - Local: Launches Playwright chromium locally
+    - Cloud: Connects to AgentBay cloud browser via CDP
     """
 
     browser_type: str = Field(default='chromium', description='Browser engine type')
@@ -19,6 +33,9 @@ class BrowserConfig(BaseModel):
     language: str = Field(default='en-US', description='Browser language')
     cookies: Optional[List[Dict[str, Any]]] = Field(
         default=None, description='Browser cookies (single source of truth)'
+    )
+    cloud_config: Optional[CloudConfig] = Field(
+        default=None, description='Cloud browser configuration (AgentBay)'
     )
 
     @field_validator('viewport')
