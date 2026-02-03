@@ -14,7 +14,7 @@ variables:
   # - harbor_url_prod_vpc
   # - harbor_user
   # - harbor_password
-  # - RUN_TAG
+  # - kubeconfig_dev_puyu
 
 # --- Build Stage ---
 
@@ -23,7 +23,7 @@ build-backend:
   image: eng-center-registry.cn-shanghai.cr.aliyuncs.com/public/docker-git:latest
   retry: 2
   tags:
-    - $RUN_TAG
+    - ecs
   before_script:
     - echo $harbor_url_prod_vpc $harbor_user $harbor_password
     - docker login $harbor_url_prod_vpc -u $harbor_user -p $harbor_password
@@ -50,7 +50,7 @@ build-frontend:
   image: eng-center-registry.cn-shanghai.cr.aliyuncs.com/public/docker-git:latest
   retry: 2
   tags:
-    - $RUN_TAG
+    - ecs
   before_script:
     - echo $harbor_url_prod_vpc $harbor_user $harbor_password
     - docker login $harbor_url_prod_vpc -u $harbor_user -p $harbor_password
@@ -75,7 +75,7 @@ build-agent:
   image: eng-center-registry.cn-shanghai.cr.aliyuncs.com/public/docker-git:latest
   retry: 2
   tags:
-    - $RUN_TAG
+    - ecs
   before_script:
     - echo $harbor_url_prod_vpc $harbor_user $harbor_password
     - docker login $harbor_url_prod_vpc -u $harbor_user -p $harbor_password
