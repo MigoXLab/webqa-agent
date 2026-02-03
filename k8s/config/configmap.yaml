@@ -4,10 +4,15 @@ metadata:
   name: webqa-config
   namespace: cloud-staging
 data:
-  # Redis Configuration (Aliyun Redis)
-  # 注意：REDIS_URL 需要在 Secret 中配置，或者在这里配置非敏感部分
-  # 这里我们假设 REDIS_URL 包含密码，所以放到 Secret 中更安全
-  # 如果没有密码，可以直接写在这里: redis://redis-host:6379/0
+  # Database Configuration (非敏感信息)
+  DB_HOST: "pgm-uf6oh577565h59wt.pg.rds.aliyuncs.com"  # 阿里云 Postgre RDS 内网地址
+  DB_PORT: "5432"
+  DB_NAME: "webqa_be"
+
+  # Redis Configuration (非敏感信息)
+  REDIS_HOST: "eng-redis-prod.redis.rds.aliyuncs.com"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
   PROGRESS_CACHE_TTL: "36000"
   REDIS_MAX_CONNECTIONS: "50"
   PROGRESS_MAX_LOGS: "1000"
@@ -15,7 +20,7 @@ data:
   # LLM Configuration
   LLM_API: "openai"
   LLM_BASE_URL: "http://35.220.164.252:3888/v1"
-  LLM_AVAILABLE_MODELS: "gpt-4.1-mini-2025-04-14,gpt-4.1-2025-04-14,gpt-5-mini-2025-08-07"
+  LLM_AVAILABLE_MODELS: "gpt-4.1-mini-2025-04-14,gpt-5-mini-2025-08-07"
   LLM_DEFAULT_MODEL: "gpt-4.1-mini-2025-04-14"
 
   # Execution Control
@@ -33,10 +38,9 @@ data:
   SHARED_LOGS_DIR: "logs"
 
   # CORS
-  CORS_ORIGINS: "http://localhost:3000,http://localhost:5173"
+  CORS_ORIGINS: "https://webqa.staging.openxlab.org.cn,http://localhost:3000,http://localhost:5173"
 
-  # Callback URL for Agent to report back to Backend
-  # 在 K8s 内部，Agent 可以通过 Service 名称访问 Backend
+  # Backend Callback URL
   BACKEND_CALLBACK_URL: "http://webqa-be:8000"
 
   # Kubernetes Job Configuration

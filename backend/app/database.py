@@ -10,7 +10,7 @@ settings = get_settings()
 
 # Create async engine
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    settings.database_url,
     echo=False,  # Set to True for SQL logging
     pool_pre_ping=True,
 )

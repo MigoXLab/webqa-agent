@@ -11,11 +11,10 @@ variables:
 
   # 镜像 Tag 格式: harbor_url/project/service:tag
   # 注意：需要在 GitLab CI/CD Variables 中配置:
-  # - harbor_url_prod (e.g. registry.cn-hangzhou.aliyuncs.com)
+  # - harbor_url_prod_vpc
   # - harbor_user
   # - harbor_password
-  # - RUN_TAG (GitLab Runner Tag)
-  # - KUBE_CONFIG (K8s Config)
+  # - RUN_TAG
 
 # --- Build Stage ---
 
@@ -35,8 +34,9 @@ build-backend:
     - docker push $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:$CI_COMMIT_SHORT_SHA
     - docker rmi $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:$CI_COMMIT_SHORT_SHA
   only:
-    - main
-    - changes:
+    refs:
+      - main
+    changes:
       - backend/**/*
       - webqa_agent/**/*
 
@@ -55,9 +55,9 @@ build-frontend:
     - docker push $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:$CI_COMMIT_SHORT_SHA
     - docker rmi $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:$CI_COMMIT_SHORT_SHA
   only:
-    - main
-    - master
-    - changes:
+    refs:
+      - main
+    changes:
       - frontend/**/*
 
 build-agent:
@@ -74,9 +74,62 @@ build-agent:
     # 在根目录构建，使用 webqa_agent/Dockerfile，这样可以访问 backend/ 和 webqa_agent/
     - docker build -t $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:$CI_COMMIT_SHORT_SHA -f Dockerfile .
     - docker push $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:$CI_COMMIT_SHORT_SHA
-    - docker rmi $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:$CI_COMMIT_SHORT_SHA
+    # 同时推送 latest 标签，供 K8s Job 使用
+    - docker tag $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:$CI_COMMIT_SHORT_SHA $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:latest
+    - docker push $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:latest
+    - docker rmi $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:$CI_COMMIT_SHORT_SHA $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:latest
   only:
-    - main
-    - changes:
+    refs:
+      - main
+    changes:
       - backend/**/*
       - webqa_agent/**/*
+
+
+# --- Deploy Stage: Public dev ---
+
+deploy-be-dev:
+  stage: deploy
+  retry: 2
+  tags:
+    - ecs
+  image: eng-center-registry.cn-shanghai.cr.aliyuncs.com/public/dtzar/helm-kubectl
+  script:
+    - echo "Deploying webqa-be"
+    # Apply Dependencies (ConfigMap, Secret, PVC, RBAC)
+    - kubectl --kubeconfig $kubeconfig_dev_puyu apply -f k8s/config/configmap.yaml
+    - kubectl --kubeconfig $kubeconfig_dev_puyu apply -f k8s/config/secret.yaml
+    - kubectl --kubeconfig $kubeconfig_dev_puyu apply -f k8s/storage/pvc.yaml
+    - kubectl --kubeconfig $kubeconfig_dev_puyu apply -f k8s/rbac.yaml
+    # Deploy Backend
+    - cd k8s/workloads
+    - sed -i "s/_tag/$CI_COMMIT_SHORT_SHA/g" backend-deployment.yaml
+    - kubectl --kubeconfig $kubeconfig_dev_puyu apply -f backend-deployment.yaml
+    # 重启 Backend Pod 以加载最新 ConfigMap (如果有变化)
+    # - kubectl --kubeconfig $kubeconfig_dev_puyu rollout restart deployment/webqa-be -n cloud-staging
+    - echo "Backend successfully deployed."
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev"'
+      when: manual
+      allow_failure: false
+
+deploy-fe-dev:
+  stage: deploy
+  retry: 2
+  tags:
+    - ecs
+  image: eng-center-registry.cn-shanghai.cr.aliyuncs.com/public/dtzar/helm-kubectl
+  script:
+    - echo "Deploying webqa-fe"
+    # Deploy Frontend
+    - cd k8s/workloads
+    - sed -i "s/_tag/$CI_COMMIT_SHORT_SHA/g" frontend-deployment.yaml
+    - kubectl --kubeconfig $kubeconfig_dev_puyu apply -f frontend-deployment.yaml
+    # Apply Ingress
+    - cd ../network
+    - kubectl --kubeconfig $kubeconfig_dev_puyu apply -f ingress.yaml
+    - echo "Frontend successfully deployed."
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev"'
+      when: manual
+      allow_failure: false

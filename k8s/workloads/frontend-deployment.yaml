@@ -15,6 +15,8 @@ spec:
       labels:
         app: webqa-fe
     spec:
+      imagePullSecrets:
+        - name: regcred-vpc
       containers:
         - name: webqa-fe
           image: eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/webqa-fe:_tag
@@ -53,6 +55,6 @@ spec:
     app: webqa-fe
   ports:
     - protocol: TCP
-  port: 80
-  targetPort: 80
+      port: 80
+      targetPort: 80
   type: ClusterIP  # 如果需要外部访问，可以改为 LoadBalancer 或使用 Ingress

@@ -13,8 +13,16 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    # Database
-    DATABASE_URL: str = 'postgresql+asyncpg://postgres:postgres@localhost:5432/webqa'
+    # Database Configuration
+    # 支持两种方式：
+    # 1. 直接提供 DATABASE_URL (完整连接字符串)
+    # 2. 分别提供 DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME (K8s 推荐)
+    DATABASE_URL: Optional[str] = None
+    DB_HOST: str = 'localhost'
+    DB_PORT: int = 5432
+    DB_USER: str = 'postgres'
+    DB_PASSWORD: str = 'postgres'
+    DB_NAME: str = 'webqa'
 
     # LLM Configuration
     LLM_API: str = 'openai'
@@ -52,12 +60,42 @@ class Settings(BaseSettings):
     # Backend Callback URL (供 Agent Job 回调使用)
     BACKEND_CALLBACK_URL: str = 'http://localhost:8000'
 
-    # Redis Configuration (进度缓存)
-    REDIS_URL: str = 'redis://localhost:6379/0'
+    # Redis Configuration
+    # 支持两种方式：
+    # 1. 直接提供 REDIS_URL (完整连接字符串)
+    # 2. 分别提供 REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, REDIS_DB (K8s 推荐)
+    REDIS_URL: Optional[str] = None
+    REDIS_HOST: str = 'localhost'
+    REDIS_PORT: int = 6379
+    REDIS_PASSWORD: str = ''
+    REDIS_DB: int = 0
     PROGRESS_CACHE_TTL: int = 36000  # 进度缓存 TTL（秒），执行完成后仍可查看 10 小时
 
     # CORS
     CORS_ORIGINS: str = 'http://localhost:3000,http://localhost:5173'
+
+    @property
+    def database_url(self) -> str:
+        """Get database URL, construct from components if not provided
+        directly."""
+        if self.DATABASE_URL:
+            return self.DATABASE_URL
+        # 构建 DATABASE_URL from components
+        from urllib.parse import quote_plus
+        password = quote_plus(self.DB_PASSWORD)
+        return f'postgresql+asyncpg://{self.DB_USER}:{password}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}'
+
+    @property
+    def redis_url(self) -> str:
+        """Get Redis URL, construct from components if not provided
+        directly."""
+        if self.REDIS_URL:
+            return self.REDIS_URL
+        # 构建 REDIS_URL from components
+        if self.REDIS_PASSWORD:
+            return f'redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}'
+        else:
+            return f'redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}'
 
     @property
     def available_models(self) -> List[str]:

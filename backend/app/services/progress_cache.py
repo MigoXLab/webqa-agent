@@ -32,7 +32,7 @@ async def get_redis_client() -> Optional[redis.Redis]:
 
     try:
         _redis_pool = redis.ConnectionPool.from_url(
-            settings.REDIS_URL,
+            settings.redis_url,
             decode_responses=True,
             max_connections=10,
         )
@@ -40,7 +40,7 @@ async def get_redis_client() -> Optional[redis.Redis]:
 
         # 测试连接
         await _redis_client.ping()
-        logger.info(f'[Redis] 连接成功: {settings.REDIS_URL}')
+        logger.info(f'[Redis] 连接成功: {settings.redis_url}')
         return _redis_client
     except Exception as e:
         logger.warning(f'[Redis] 连接失败: {e}，将回退到内存缓存')
