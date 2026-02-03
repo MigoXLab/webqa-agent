@@ -37,12 +37,12 @@ build-backend:
     - docker push $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:latest
     - docker rmi $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:$CI_COMMIT_SHORT_SHA $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:latest
   rules:
-    # 当 backend 或 webqa_agent 代码变化时自动触发
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH =~ /^dev_.*$/'
-      changes:
-        - backend/**/*
-        - webqa_agent/**/*
-      when: on_success
+    # # 当 backend 或 webqa_agent 代码变化时自动触发
+    # - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH =~ /^dev_.*$/'
+    #   changes:
+    #     - backend/**/*
+    #     - webqa_agent/**/*
+    #   when: on_success
     # 支持手动触发
     - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH =~ /^dev_.*$/'
       when: manual
@@ -66,11 +66,11 @@ build-frontend:
     - docker push $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:latest
     - docker rmi $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:$CI_COMMIT_SHORT_SHA $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:latest
   rules:
-    # 当 frontend 代码变化时自动触发
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH =~ /^dev_.*$/'
-      changes:
-        - frontend/**/*
-      when: on_success
+    # # 当 frontend 代码变化时自动触发
+    # - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH =~ /^dev_.*$/'
+    #   changes:
+    #     - frontend/**/*
+    #   when: on_success
     # 支持手动触发
     - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH =~ /^dev_.*$/'
       when: manual
