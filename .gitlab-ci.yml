@@ -143,9 +143,9 @@ deploy-fe-dev:
   script:
     - echo "Deploying webqa-fe"
     # Deploy Frontend
-    # - cd k8s/workloads
-    # - sed -i "s/_tag/$CI_COMMIT_SHORT_SHA/g" frontend-deployment.yaml
-    # - kubectl --kubeconfig $kubeconfig_dev_puyu apply -f frontend-deployment.yaml
+    - cd k8s/workloads
+    - sed -i "s/_tag/$CI_COMMIT_SHORT_SHA/g" frontend-deployment.yaml
+    - kubectl --kubeconfig $kubeconfig_dev_puyu apply -f frontend-deployment.yaml
     # Apply Ingress
     - cd ../network
     - kubectl --kubeconfig $kubeconfig_dev_puyu apply -f ingress.yaml
