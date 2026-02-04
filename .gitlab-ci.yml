@@ -166,14 +166,14 @@ deploy-be-prod:
   script:
     - echo "Deploying webqa-be"
     # Apply Dependencies (ConfigMap, Secret, PVC, RBAC)
-    - kubectl --kubeconfig $kubeconfig_prod_public apply -f k8s/config/configmap.yaml
-    - kubectl --kubeconfig $kubeconfig_prod_public apply -f k8s/config/secret.yaml
-    - kubectl --kubeconfig $kubeconfig_prod_public apply -f k8s/storage/pvc.yaml
-    - kubectl --kubeconfig $kubeconfig_prod_public apply -f k8s/rbac.yaml
+    # - kubectl --kubeconfig $kubeconfig_prod_public_webqa apply -f k8s/config/configmap.yaml
+    # - kubectl --kubeconfig $kubeconfig_prod_public_webqa apply -f k8s/config/secret.yaml
+    # - kubectl --kubeconfig $kubeconfig_prod_public_webqa apply -f k8s/storage/pvc.yaml
+    # - kubectl --kubeconfig $kubeconfig_prod_public_webqa apply -f k8s/rbac.yaml
     # Deploy Backend
     - cd k8s/workloads
-    # - sed -i "s/_tag/$CI_COMMIT_SHORT_SHA/g" backend-deployment.yaml
-    - kubectl --kubeconfig $kubeconfig_prod_public apply -f backend-deployment.yaml
+    - sed -i "s/_tag/$CI_COMMIT_SHORT_SHA/g" backend-deployment.yaml
+    - kubectl --kubeconfig $kubeconfig_prod_public_webqa apply -f backend-deployment.yaml
     # 重启 Backend Pod 以加载最新 ConfigMap (如果有变化)
     # - kubectl --kubeconfig $kubeconfig_prod_public rollout restart deployment/webqa-be -n cloud-staging
     - echo "Backend successfully deployed."
@@ -190,9 +190,9 @@ deploy-fe-prod:
     # Deploy Frontend
     - cd k8s/workloads
     # - sed -i "s/_tag/$CI_COMMIT_SHORT_SHA/g" frontend-deployment.yaml
-    - kubectl --kubeconfig $kubeconfig_prod_public apply -f frontend-deployment.yaml
+    - kubectl --kubeconfig $kubeconfig_prod_public_webqa apply -f frontend-deployment.yaml
     # Apply Ingress
-    - cd ../network
-    - kubectl --kubeconfig $kubeconfig_prod_public apply -f ingress.yaml
+    # - cd ../network
+    # - kubectl --kubeconfig $kubeconfig_prod_public_webqa apply -f ingress.yaml
     - echo "Frontend successfully deployed."
   when: manual

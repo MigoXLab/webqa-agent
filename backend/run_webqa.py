@@ -365,11 +365,37 @@ def main():
     config_yaml_content = os.getenv('CONFIG_YAML')
     if config_yaml_content:
         # 确保配置目录存在
-        os.makedirs(os.path.dirname(config_path), exist_ok=True)
-        # 将环境变量内容写入文件
-        with open(config_path, 'w', encoding='utf-8') as f:
-            f.write(config_yaml_content)
-        print(f'[执行] 已从 CONFIG_YAML 环境变量生成配置文件: {config_path}')
+        config_dir = os.path.dirname(config_path)
+        os.makedirs(config_dir, exist_ok=True)
+        
+        try:
+            # 尝试解析 YAML 内容
+            parsed_config = yaml.safe_load(config_yaml_content)
+            
+            # 如果是列表，说明有多个配置，需要拆分为多个文件
+            if isinstance(parsed_config, list):
+                print(f'[执行] 检测到多配置列表，正在拆分为多个文件...')
+                
+                # 写入多个子配置文件
+                for i, cfg in enumerate(parsed_config):
+                    sub_config_path = os.path.join(config_dir, f'config_{i}.yaml')
+                    with open(sub_config_path, 'w', encoding='utf-8') as f:
+                        yaml.dump(cfg, f, allow_unicode=True)
+                    print(f'[执行] 已写入子配置: {sub_config_path}')
+                
+                # 更新 config_path 为目录，以便加载该目录下所有配置
+                config_path = config_dir
+                print(f'[执行] 配置路径已更新为目录: {config_path}')
+            else:
+                # 单个配置，照常写入
+                with open(config_path, 'w', encoding='utf-8') as f:
+                    f.write(config_yaml_content)
+                print(f'[执行] 已从 CONFIG_YAML 环境变量生成配置文件: {config_path}')
+                
+        except Exception as e:
+            print(f'[警告] 解析 CONFIG_YAML 失败，回退到直接写入: {e}')
+            with open(config_path, 'w', encoding='utf-8') as f:
+                f.write(config_yaml_content)
     
     if not os.path.exists(config_path):
         print(f'错误: 配置文件不存在: {config_path}')

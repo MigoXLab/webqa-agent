@@ -19,7 +19,7 @@ spec:
         - name: regcred-vpc
       containers:
         - name: webqa-fe
-          image: eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/webqa-fe:latest
+          image: eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/webqa-fe:_tag
           imagePullPolicy: Always
           ports:
             - containerPort: 80

@@ -22,7 +22,7 @@ spec:
         - name: regcred-vpc
       containers:
         - name: webqa-be
-          image: eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/webqa-be:latest  # CI/CD 过程中会被替换
+          image: eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/webqa-be:_tag  # CI/CD 过程中会被替换
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
