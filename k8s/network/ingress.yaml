@@ -2,7 +2,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: webqa-fe-ingress
-  namespace: cloud-staging
+  namespace: _namespace
   annotations:
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
@@ -19,7 +19,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-  - host: webqa.staging.openxlab.org.cn
+  - host: _ingress_host
     http:
       paths:
       - path: /
@@ -31,5 +31,5 @@ spec:
               number: 80
   tls:
   - hosts:
-    - webqa.staging.openxlab.org.cn
-    secretName: webqa.staging.openxlab.org.cn
+    - _ingress_host
+    secretName: _tls_secret
