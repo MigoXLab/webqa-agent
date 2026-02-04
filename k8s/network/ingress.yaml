@@ -19,7 +19,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-  - host: _ingress_host
+  - host: webqa.openxlab.org.cn
     http:
       paths:
       - path: /
@@ -31,5 +31,5 @@ spec:
               number: 80
   tls:
   - hosts:
-    - _ingress_host
-    secretName: _tls_secret
+    - webqa.openxlab.org.cn
+    secretName: webqa.openxlab.org.cn
