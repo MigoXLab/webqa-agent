@@ -427,6 +427,7 @@ async def _create_k8s_job(
                             image=k8s_job_image,
                             command=['python', '-m', 'backend.run_webqa'],
                             args=[
+                                '-c', '/shared/reports/exec_' + execution_id + '/config.yaml',  # 使用生成的配置文件路径
                                 '--execution-id', execution_id,
                                 '--workers', str(workers),
                                 '--report-dir', report_dir,

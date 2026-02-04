@@ -7,6 +7,7 @@ from app.api.internal import router as internal_router
 from app.config import get_settings
 from app.database import init_db
 from app.services.progress_cache import close_redis
+from app.services.scheduler import job_monitor
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -28,10 +29,14 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info('Database initialized')
 
+    # Start Job Monitor
+    job_monitor.start()
+    
     yield
 
     # Shutdown
     logger.info('Shutting down...')
+    await job_monitor.stop()
     await close_redis()
     logger.info('Redis connection closed')
 

@@ -360,6 +360,17 @@ def main():
     os.environ['EXECUTION_ID'] = execution_id
 
     config_path = os.path.abspath(args.config)
+    
+    # 检查是否需要从环境变量生成配置文件
+    config_yaml_content = os.getenv('CONFIG_YAML')
+    if config_yaml_content:
+        # 确保配置目录存在
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        # 将环境变量内容写入文件
+        with open(config_path, 'w', encoding='utf-8') as f:
+            f.write(config_yaml_content)
+        print(f'[执行] 已从 CONFIG_YAML 环境变量生成配置文件: {config_path}')
+    
     if not os.path.exists(config_path):
         print(f'错误: 配置文件不存在: {config_path}')
         sys.exit(1)
