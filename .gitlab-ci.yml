@@ -117,11 +117,11 @@ deploy-be-dev:
   image: eng-center-registry.cn-shanghai.cr.aliyuncs.com/public/dtzar/helm-kubectl
   script:
     - echo "Deploying webqa-be"
-    # Apply Dependencies (ConfigMap, Secret, PVC, RBAC)
-    - kubectl --kubeconfig $kubeconfig_dev_puyu apply -f k8s/config/configmap.yaml
-    - kubectl --kubeconfig $kubeconfig_dev_puyu apply -f k8s/config/secret.yaml
-    - kubectl --kubeconfig $kubeconfig_dev_puyu apply -f k8s/storage/pvc.yaml
-    - kubectl --kubeconfig $kubeconfig_dev_puyu apply -f k8s/rbac.yaml
+    # # Apply Dependencies (ConfigMap, Secret, PVC, RBAC)
+    # - kubectl --kubeconfig $kubeconfig_dev_puyu apply -f k8s/config/configmap.yaml
+    # - kubectl --kubeconfig $kubeconfig_dev_puyu apply -f k8s/config/secret.yaml
+    # - kubectl --kubeconfig $kubeconfig_dev_puyu apply -f k8s/storage/pvc.yaml
+    # - kubectl --kubeconfig $kubeconfig_dev_puyu apply -f k8s/rbac.yaml
     # Deploy Backend
     - cd k8s/workloads
     - sed -i "s/_tag/$CI_COMMIT_SHORT_SHA/g" backend-deployment.yaml
@@ -143,9 +143,9 @@ deploy-fe-dev:
   script:
     - echo "Deploying webqa-fe"
     # Deploy Frontend
-    - cd k8s/workloads
-    - sed -i "s/_tag/$CI_COMMIT_SHORT_SHA/g" frontend-deployment.yaml
-    - kubectl --kubeconfig $kubeconfig_dev_puyu apply -f frontend-deployment.yaml
+    # - cd k8s/workloads
+    # - sed -i "s/_tag/$CI_COMMIT_SHORT_SHA/g" frontend-deployment.yaml
+    # - kubectl --kubeconfig $kubeconfig_dev_puyu apply -f frontend-deployment.yaml
     # Apply Ingress
     - cd ../network
     - kubectl --kubeconfig $kubeconfig_dev_puyu apply -f ingress.yaml
