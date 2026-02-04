@@ -7,6 +7,8 @@ metadata:
     app: webqa-be
 spec:
   replicas: 1
+  # strategy:
+  #   type: Recreate  # 使用 Recreate 策略避免 RWO PVC 多挂载问题
   selector:
     matchLabels:
       app: webqa-be

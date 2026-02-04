@@ -1,5 +1,5 @@
 # Build stage
-FROM eng-center-registry.cn-shanghai.cr.aliyuncs.com/qa/node:20-alpine as build
+FROM eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/node:20-alpine as build
 
 WORKDIR /app
 
@@ -10,7 +10,7 @@ COPY frontend/ .
 RUN npm run build
 
 # Production stage
-FROM eng-center-registry.cn-shanghai.cr.aliyuncs.com/qa/nginx:alpine
+FROM eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/nginx:alpine
 
 COPY --from=build /app/build /usr/share/nginx/html
 COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
