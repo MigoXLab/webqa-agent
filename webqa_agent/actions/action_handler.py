@@ -212,7 +212,10 @@ class ActionHandler:
                 raise Exception(f'add context cookies error: {e}')
 
         await self.page.goto(url=url, wait_until='domcontentloaded', timeout=60000)
-        await self.page.wait_for_load_state('networkidle', timeout=60000)
+        try:
+            await self.page.wait_for_load_state('networkidle', timeout=60000)
+        except Exception as e:
+            logging.warning(f'Wait for networkidle timed out: {e}. Proceeding since domcontentloaded is complete.')
 
     async def smart_navigate_to_page(self, page: Page, url: str, cookies=None) -> bool | None:
         """Smart navigation to target page, avoiding redundant navigation.

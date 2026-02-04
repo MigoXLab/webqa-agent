@@ -165,15 +165,18 @@ deploy-be-prod:
   image: eng-center-registry.cn-shanghai.cr.aliyuncs.com/public/dtzar/helm-kubectl
   script:
     - echo "Deploying webqa-be"
+    # 处理 kubeconfig 变量 (Type: Variable)
+    - echo "$kubeconfig_prod_public_webqa" > /tmp/kubeconfig_prod
+    - chmod 600 /tmp/kubeconfig_prod
     # Apply Dependencies (ConfigMap, Secret, PVC, RBAC)
-    # - kubectl --kubeconfig $kubeconfig_prod_public_webqa apply -f k8s/config/configmap.yaml
-    # - kubectl --kubeconfig $kubeconfig_prod_public_webqa apply -f k8s/config/secret.yaml
-    # - kubectl --kubeconfig $kubeconfig_prod_public_webqa apply -f k8s/storage/pvc.yaml
-    # - kubectl --kubeconfig $kubeconfig_prod_public_webqa apply -f k8s/rbac.yaml
+    # - kubectl --kubeconfig /tmp/kubeconfig_prod apply -f k8s/config/configmap.yaml
+    # - kubectl --kubeconfig /tmp/kubeconfig_prod apply -f k8s/config/secret.yaml
+    # - kubectl --kubeconfig /tmp/kubeconfig_prod apply -f k8s/storage/pvc.yaml
+    # - kubectl --kubeconfig /tmp/kubeconfig_prod apply -f k8s/rbac.yaml
     # Deploy Backend
     - cd k8s/workloads
     - sed -i "s/_tag/$CI_COMMIT_SHORT_SHA/g" backend-deployment.yaml
-    - kubectl --kubeconfig $kubeconfig_prod_public_webqa apply -f backend-deployment.yaml
+    - kubectl --kubeconfig /tmp/kubeconfig_prod apply -f backend-deployment.yaml
     # 重启 Backend Pod 以加载最新 ConfigMap (如果有变化)
     # - kubectl --kubeconfig $kubeconfig_prod_public rollout restart deployment/webqa-be -n cloud-staging
     - echo "Backend successfully deployed."
@@ -187,10 +190,13 @@ deploy-fe-prod:
   image: eng-center-registry.cn-shanghai.cr.aliyuncs.com/public/dtzar/helm-kubectl
   script:
     - echo "Deploying webqa-fe"
+    # 处理 kubeconfig 变量 (Type: Variable)
+    - echo "$kubeconfig_prod_public_webqa" > /tmp/kubeconfig_prod
+    - chmod 600 /tmp/kubeconfig_prod
     # Deploy Frontend
     - cd k8s/workloads
     # - sed -i "s/_tag/$CI_COMMIT_SHORT_SHA/g" frontend-deployment.yaml
-    - kubectl --kubeconfig $kubeconfig_prod_public_webqa apply -f frontend-deployment.yaml
+    - kubectl --kubeconfig /tmp/kubeconfig_prod apply -f frontend-deployment.yaml
     # Apply Ingress
     # - cd ../network
     # - kubectl --kubeconfig $kubeconfig_prod_public_webqa apply -f ingress.yaml
