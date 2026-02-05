@@ -324,7 +324,7 @@ def save_test_result_json(
         if hasattr(test_result, 'model_dump'):
             result_dict = test_result.model_dump()
         elif hasattr(test_result, 'dict'):
-            result_dict = test_result.model_dump()
+            result_dict = test_result.dict()
         else:
             result_dict = test_result
 
