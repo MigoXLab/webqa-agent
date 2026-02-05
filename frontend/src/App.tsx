@@ -5,7 +5,7 @@ import { TestCaseManager } from './components/TestCaseManager';
 import { ScheduledTaskManager, ScheduledTask } from './components/ScheduledTaskManager';
 import { ExecutionHistory } from './components/ExecutionHistory';
 import { ExecutionDetail } from './components/ExecutionDetail';
-import { LayoutDashboard, History, Box, ChevronRight, Loader2 } from 'lucide-react';
+import { LayoutDashboard, History, Box, ChevronRight, Loader2, Github } from 'lucide-react';
 import { apiClient, Business as APIBusiness, TestCase as APITestCase, Execution as APIExecution } from './api/client';
 
 // Re-export types for backward compatibility
@@ -415,7 +415,7 @@ export default function App() {
       <header className="bg-white border-b border-gray-200 sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-16">
-            <div className="flex items-center gap-3 flex-shrink-0">
+            <Link to="/" className="flex items-center gap-3 flex-shrink-0 hover:opacity-80 transition-opacity">
               <img
                 src="https://static.openxlab.org.cn/platform-config-upload/biz-images/extends/logo-title.svg"
                 alt="Logo"
@@ -423,7 +423,7 @@ export default function App() {
                 style={{ width: '220px', height: 'auto' }}
               />
               {/* <h1 className="text-gray-900 text-lg md:text-xl font-bold">WebQA Agent</h1> */}
-            </div>
+            </Link>
 
             <nav className="flex items-center gap-2">
               <Link
@@ -455,19 +455,34 @@ export default function App() {
             </nav>
           </div>
 
-          {/* Breadcrumb / Context Info */}
-          {view === 'business_detail' && (() => {
-            const businessIdMatch = location.pathname.match(/^\/business\/([^/]+)/);
-            const businessId = businessIdMatch?.[1];
-            const business = businesses.find(b => b.id === businessId);
-            return business ? (
-              <div className="flex items-center gap-2 text-sm text-gray-500">
-                <span>业务管理</span>
-                <ChevronRight className="w-4 h-4" />
-                <span className="font-medium text-gray-900">{business.name}</span>
-              </div>
-            ) : null;
-          })()}
+          <div className="flex items-center justify-between flex-1">
+            {/* Breadcrumb / Context Info */}
+            <div className="flex-1">
+              {view === 'business_detail' && (() => {
+                const businessIdMatch = location.pathname.match(/^\/business\/([^/]+)/);
+                const businessId = businessIdMatch?.[1];
+                const business = businesses.find(b => b.id === businessId);
+                return business ? (
+                  <div className="flex items-center gap-2 text-sm text-gray-500">
+                    <span>业务管理</span>
+                    <ChevronRight className="w-4 h-4" />
+                    <span className="font-medium text-gray-900">{business.name}</span>
+                  </div>
+                ) : null;
+              })()}
+            </div>
+
+            <a
+              href="https://github.com/MigoXLab/webqa-agent"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-gray-500 hover:text-gray-900 transition-colors flex items-center gap-2"
+              title="View on GitHub"
+            >
+              <Github className="w-5 h-5" />
+              <span className="text-sm font-medium hidden sm:inline">GitHub Star ⭐</span>
+            </a>
+          </div>
         </div>
       </header>
 

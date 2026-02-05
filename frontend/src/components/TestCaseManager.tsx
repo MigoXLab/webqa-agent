@@ -125,7 +125,9 @@ const formToYaml = (formData: Partial<TestCase>): string => {
     }
   }) || [];
 
-  const yamlText = yaml.dump(obj, { lineWidth: -1, noRefs: true });
+  // Wrap in array to get "- name:" format
+  const arrayObj = [obj];
+  const yamlText = yaml.dump(arrayObj, { lineWidth: -1, noRefs: true });
   // 将 file_path 数组转换为流格式 [a, b]
   return convertArraysToFlowStyle(yamlText);
 };
@@ -139,10 +141,23 @@ const yamlToForm = (yamlText: string): { data: Partial<TestCase> | null; error: 
 
   try {
     // Use yaml.load() to properly parse YAML, including multiline strings
-    const parsed: any = yaml.load(yamlText);
+    let parsed: any = yaml.load(yamlText);
 
     if (!parsed || typeof parsed !== 'object') {
-      return { data: null, error: 'YAML 格式错误: 必须是一个对象' };
+      return { data: null, error: 'YAML 格式错误: 必须是一个对象或数组' };
+    }
+
+    // Support both formats:
+    // 1. Direct object: { name: ..., steps: [...] }
+    // 2. Array format: [{ name: ..., steps: [...] }]
+    if (Array.isArray(parsed)) {
+      if (parsed.length === 0) {
+        return { data: null, error: 'YAML 格式错误: 数组不能为空' };
+      }
+      if (parsed.length > 1) {
+        return { data: null, error: 'YAML 格式错误: 单个用例编辑器只能包含一个测试用例' };
+      }
+      parsed = parsed[0];
     }
 
     const result: Partial<TestCase> = {
@@ -521,8 +536,13 @@ export function TestCaseManager({
   // Helper to update form data and sync to YAML
   const updateFormData = (newData: Partial<TestCase>) => {
     setFormData(newData);
-    setModalYaml(formToYaml(newData));
-    setModalYamlError(null);
+    try {
+      setModalYaml(formToYaml(newData));
+      setModalYamlError(null);
+    } catch (error) {
+      console.error('Failed to convert form to YAML:', error);
+      setModalYamlError('YAML 生成失败: ' + (error as Error).message);
+    }
   };
 
   // Initialize global YAML when switching to YAML view
@@ -534,6 +554,9 @@ export function TestCaseManager({
   }, [viewMode, testCases]);
 
   const saveTestCase = async (data: Partial<TestCase>) => {
+    // Prevent multiple simultaneous saves
+    if (saving) return;
+
     setError(null);
     setSaving(true);
 
@@ -564,6 +587,8 @@ export function TestCaseManager({
           name: updatedApiCase.name,
           description: updatedApiCase.description || '',
           login_required: updatedApiCase.login_required ?? false,
+          snapshot: updatedApiCase.snapshot,
+          use_snapshot: updatedApiCase.use_snapshot,
           steps: updatedApiCase.steps.map((step, idx) => ({
             id: crypto.randomUUID(),
             order: idx + 1,
@@ -603,6 +628,8 @@ export function TestCaseManager({
           name: createdApiCase.name,
           description: createdApiCase.description || '',
           login_required: createdApiCase.login_required ?? false,
+          snapshot: createdApiCase.snapshot,
+          use_snapshot: createdApiCase.use_snapshot,
           steps: createdApiCase.steps.map((step, idx) => ({
             id: crypto.randomUUID(),
             order: idx + 1,
@@ -673,20 +700,44 @@ export function TestCaseManager({
       ],
     };
     setEditingCase(null);
-    updateFormData(newData);
+    setFormData(newData);
+    // Set YAML template with list format for new test cases
+    const template = `- name: ''
+  login_required: false
+  steps:
+    - action: ''`;
+    setModalYaml(template);
+    setModalYamlError(null);
     setIsYamlEditing(false);
   };
 
   const handleEdit = (testCase: TestCase) => {
     setEditingCase(testCase);
+
+    // Ensure steps is an array and properly formatted
+    const steps = Array.isArray(testCase.steps) ? testCase.steps : [];
+    const validSteps = steps.map(step => ({
+      id: step.id || crypto.randomUUID(),
+      order: step.order || 0,
+      step_type: step.step_type,
+      action: step.step_type === 'action' ? {
+        description: step.action?.description || '',
+        args: step.action?.args || {}
+      } : undefined,
+      verify: step.step_type === 'verify' ? {
+        assertion: step.verify?.assertion || '',
+        args: step.verify?.args || {}
+      } : undefined,
+    }));
+
     const newData: Partial<TestCase> = {
-      name: testCase.name,
-      description: testCase.description,
+      name: testCase.name || '',
+      description: testCase.description || '',
       login_required: testCase.login_required ?? false,
       snapshot: testCase.snapshot,
       use_snapshot: testCase.use_snapshot,
-      status: testCase.status,
-      steps: testCase.steps,
+      status: testCase.status || 'active',
+      steps: validSteps,
     };
     updateFormData(newData);
     setIsYamlEditing(false);
@@ -846,6 +897,9 @@ export function TestCaseManager({
   };
 
   const handleBatchRun = async () => {
+    // Prevent multiple simultaneous executions
+    if (executing) return;
+
     if (selectedCases.length === 0) {
       alert('请至少选择一个测试用例');
       return;
@@ -889,18 +943,90 @@ export function TestCaseManager({
   };
 
   const getStepDescription = (step: TestStep) => {
+    if (!step) return '';
+
     if (step.step_type === 'action') {
-      return step.action?.description || '';
-    } else {
-      return step.verify?.assertion || '';
+      const desc = step.action?.description;
+      // Ensure it's a string
+      if (typeof desc === 'string') return desc;
+      if (typeof desc === 'object' && desc !== null) {
+        console.error('Action description is an object:', desc);
+        return JSON.stringify(desc);
+      }
+      return '';
+    } else if (step.step_type === 'verify') {
+      const assertion = step.verify?.assertion;
+      // Ensure it's a string
+      if (typeof assertion === 'string') return assertion;
+      if (typeof assertion === 'object' && assertion !== null) {
+        console.error('Verify assertion is an object:', assertion);
+        return JSON.stringify(assertion);
+      }
+      return '';
     }
+    return '';
   };
 
   const handleImportCases = (importedCases: TestCase[]) => {
-    setTestCases([...testCases, ...importedCases]);
+    console.log('Importing cases:', importedCases);
+
+    // Validate imported cases
+    const validatedCases = importedCases.map(tc => {
+      if (!tc || !tc.id || !tc.name) {
+        console.error('Invalid test case:', tc);
+        return null;
+      }
+
+      // Ensure steps is an array
+      if (!Array.isArray(tc.steps)) {
+        console.error('Test case has invalid steps:', tc);
+        tc.steps = [];
+      }
+
+      // Validate each step
+      tc.steps = tc.steps.map((step, idx) => {
+        if (!step || !step.step_type) {
+          console.error('Invalid step:', step);
+          return null;
+        }
+
+        // Ensure description/assertion is a string, not an object
+        if (step.step_type === 'action' && step.action) {
+          if (typeof step.action.description === 'object') {
+            console.error('Action description is an object:', step.action.description);
+            const descObj = step.action.description as any;
+            step.action.description = descObj.description || JSON.stringify(descObj);
+          }
+        }
+
+        if (step.step_type === 'verify' && step.verify) {
+          if (typeof step.verify.assertion === 'object') {
+            console.error('Verify assertion is an object:', step.verify.assertion);
+            const assertObj = step.verify.assertion as any;
+            step.verify.assertion = assertObj.assertion || JSON.stringify(assertObj);
+          }
+        }
+
+        return {
+          ...step,
+          id: step.id || crypto.randomUUID(),
+          order: step.order || idx + 1,
+        };
+      }).filter(Boolean) as TestStep[];
+
+      return tc;
+    }).filter(Boolean) as TestCase[];
+
+    console.log('Validated cases:', validatedCases);
+    setTestCases([...testCases, ...validatedCases]);
   };
 
   const handleGlobalSave = async () => {
+    // Prevent multiple simultaneous saves
+    if (saving) return;
+
+    setSaving(true);
+
     try {
       const parsedCases = parseGlobalYaml(globalYaml, business.id);
 
@@ -926,8 +1052,6 @@ export function TestCaseManager({
           casesToDelete.push(oldCase.id);
         }
       }
-
-      setSaving(true);
 
       // 1. Delete
       for (const id of casesToDelete) {
@@ -961,6 +1085,8 @@ export function TestCaseManager({
           name: updatedApiCase.name,
           description: updatedApiCase.description || '',
           login_required: updatedApiCase.login_required ?? false,
+          snapshot: updatedApiCase.snapshot,
+          use_snapshot: updatedApiCase.use_snapshot,
           steps: updatedApiCase.steps.map((step, idx) => ({
             id: crypto.randomUUID(),
             order: idx + 1,
@@ -1005,6 +1131,8 @@ export function TestCaseManager({
           name: createdApiCase.name,
           description: createdApiCase.description || '',
           login_required: createdApiCase.login_required ?? false,
+          snapshot: createdApiCase.snapshot,
+          use_snapshot: createdApiCase.use_snapshot,
           steps: createdApiCase.steps.map((step, idx) => ({
             id: crypto.randomUUID(),
             order: idx + 1,
@@ -1115,7 +1243,7 @@ export function TestCaseManager({
                   className="flex items-center justify-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-sm"
                 >
                   <Upload className="w-4 h-4" />
-                  导入/导出
+                  导入/导出 YAML
                 </button>
                 <button
                   onClick={() => setShowFileManager(true)}
@@ -1129,10 +1257,13 @@ export function TestCaseManager({
                   className="flex items-center justify-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-sm"
                 >
                   <Settings className="w-4 h-4" />
-                  业务设置
+                  环境管理
                 </button>
                 <button
-                  onClick={() => setShowModal(true)}
+                  onClick={() => {
+                    resetForm();
+                    setShowModal(true);
+                  }}
                   className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
                 >
                   <Plus className="w-4 h-4" />
@@ -1158,8 +1289,8 @@ export function TestCaseManager({
             {/* Batch Actions */}
             {testCases.length > 0 && viewMode === 'cards' && (
                 <div className="bg-white rounded-lg border border-gray-200 p-4 mb-6">
-                <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-4">
-                    <div className="flex items-center gap-2">
+                <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-4 lg:justify-start">
+                    <div className="flex items-center gap-2 flex-shrink-0 w-[200px]">
                     <input
                         type="checkbox"
                         checked={selectedCases.length === testCases.length}
@@ -1170,19 +1301,19 @@ export function TestCaseManager({
                             setSelectedCases([]);
                         }
                         }}
-                        className="w-4 h-4 rounded border-gray-300"
+                        className="w-4 h-4 rounded border-gray-300 flex-shrink-0"
                     />
-                    <span className="text-sm text-gray-600">
-                        已选择 {selectedCases.length} / {testCases.length} 个用例
+                    <span className="text-sm text-gray-600 whitespace-nowrap">
+                        已选择 <span className="font-mono inline-block w-[20px] text-center">{selectedCases.length}</span> / <span className="font-mono inline-block w-[20px] text-center">{testCases.length}</span> 个用例
                     </span>
                     </div>
 
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                    <label className="text-sm text-gray-600 sm:whitespace-nowrap">执行环境：</label>
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-shrink-0">
+                    <label className="text-sm text-gray-600 sm:whitespace-nowrap flex-shrink-0">执行环境：</label>
                     <select
                         value={selectedEnv}
                         onChange={(e) => setSelectedEnv(e.target.value)}
-                        className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                        className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm w-full sm:w-auto"
                     >
                         <option value="">请选择环境</option>
                         {business.environments.map(env => (
@@ -1193,12 +1324,12 @@ export function TestCaseManager({
                     </select>
                     </div>
 
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                    <label className="text-sm text-gray-600 sm:whitespace-nowrap">执行并发数：</label>
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-shrink-0">
+                    <label className="text-sm text-gray-600 sm:whitespace-nowrap flex-shrink-0">执行并发数：</label>
                     <select
                         value={workers}
                         onChange={(e) => setWorkers(parseInt(e.target.value))}
-                        className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                        className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm w-full sm:w-auto"
                     >
                         {[1, 2, 3, 4, 5].map(n => (
                         <option key={n} value={n}>
@@ -1208,12 +1339,12 @@ export function TestCaseManager({
                     </select>
                     </div>
 
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                    <label className="text-sm text-gray-600 sm:whitespace-nowrap">模型：</label>
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-shrink-0">
+                    <label className="text-sm text-gray-600 sm:whitespace-nowrap flex-shrink-0">模型：</label>
                     <select
                         value={selectedModel}
                         onChange={(e) => setSelectedModel(e.target.value)}
-                        className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                        className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm w-full sm:w-auto"
                     >
                         {availableModels.models.map(model => (
                         <option key={model} value={model}>
@@ -1226,7 +1357,7 @@ export function TestCaseManager({
                     <button
                     onClick={handleBatchRun}
                     disabled={selectedCases.length === 0 || !selectedEnv || executing}
-                    className="flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm"
+                    className="flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm flex-shrink-0"
                     title={!selectedEnv ? '请先选择执行环境' : selectedCases.length === 0 ? '请先选择测试用例' : ''}
                     >
                     {executing ? <Loader2 className="w-5 h-5 animate-spin" /> : <PlayCircle className="w-5 h-5" />}
@@ -1239,7 +1370,13 @@ export function TestCaseManager({
             {/* Cards View */}
             {viewMode === 'cards' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {testCases.map((testCase) => (
+                {testCases.filter(tc => tc && tc.id && tc.name).map((testCase) => {
+                  // Defensive check: ensure steps is an array
+                  if (!Array.isArray(testCase.steps)) {
+                    console.error('Invalid testCase.steps:', testCase);
+                    return null;
+                  }
+                  return (
                 <div
                     key={testCase.id}
                     className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6 hover:shadow-md transition-shadow"
@@ -1249,7 +1386,7 @@ export function TestCaseManager({
                         type="checkbox"
                         checked={selectedCases.includes(testCase.id)}
                         onChange={() => toggleCaseSelection(testCase.id)}
-                        className="w-4 h-4 mt-1 rounded border-gray-300 flex-shrink-0"
+                        className="w-4 h-4 mt-2 rounded border-gray-300 flex-shrink-0"
                     />
 
                     <div className="flex-1 min-w-0">
@@ -1265,10 +1402,20 @@ export function TestCaseManager({
                                   e.stopPropagation();
                                   handleToggleLoginRequired(testCase, e as any);
                                 }}
-                                className="w-3.5 h-3.5 rounded border-amber-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                                className="w-4 h-3.5 rounded border-amber-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
                               />
                               需登录
                             </label>
+                            {testCase.snapshot && (
+                              <span className="px-3 py-1.5 bg-green-50 text-green-700 rounded-lg text-xs font-medium flex-shrink-0 border border-green-200">
+                                📸 快照: {testCase.snapshot}
+                              </span>
+                            )}
+                            {testCase.use_snapshot && (
+                              <span className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-xs font-medium flex-shrink-0 border border-blue-200">
+                                🔄 使用: {testCase.use_snapshot}
+                              </span>
+                            )}
                             <div className="min-w-0 flex-1">
                             <h3 className="mb-1 truncate font-semibold">{testCase.name}</h3>
                             {testCase.description && (
@@ -1297,21 +1444,34 @@ export function TestCaseManager({
                         <div className="bg-gray-50 rounded-lg p-3 sm:p-4">
                         <div className="flex items-center gap-2 mb-3 text-sm text-gray-600">
                             <FileText className="w-4 h-4" />
-                            <span>测试步骤 ({testCase.steps.length})</span>
+                            <span>测试步骤 ({testCase.steps?.length || 0})</span>
                         </div>
                         <div className="space-y-2">
-                            {testCase.steps.slice(0, 3).map((step) => (
+                            {(testCase.steps || []).slice(0, 3).map((step) => {
+                              if (!step || !step.id) return null;
+                              const filePath = step.step_type === 'action' && step.action?.args?.file_path;
+                              const fileCount = filePath ? (Array.isArray(filePath) ? filePath.length : 1) : 0;
+
+                              return (
                             <div key={step.id} className="flex items-center gap-3 text-sm">
                                 <span className="w-6 h-6 bg-white rounded-full border border-gray-200 flex items-center justify-center text-gray-600 flex-shrink-0 text-xs font-medium">
-                                {step.order}
+                                {step.order || 0}
                                 </span>
                                 <span className="text-gray-700 flex-1 truncate">{getStepDescription(step)}</span>
-                                <span className="text-gray-400 text-xs flex-shrink-0">({step.step_type})</span>
+                                <div className="flex items-center gap-2 flex-shrink-0">
+                                  {fileCount > 0 && (
+                                    <span className="px-1.5 py-0.5 text-xs bg-orange-100 text-orange-700 rounded">
+                                      📎 {fileCount}
+                                    </span>
+                                  )}
+                                  <span className="text-gray-400 text-xs">({step.step_type || 'unknown'})</span>
+                                </div>
                             </div>
-                            ))}
-                            {testCase.steps.length > 3 && (
+                              );
+                            })}
+                            {(testCase.steps?.length || 0) > 3 && (
                             <p className="text-sm text-gray-500 pl-9">
-                                还有 {testCase.steps.length - 3} 个步骤...
+                                还有 {(testCase.steps?.length || 0) - 3} 个步骤...
                             </p>
                             )}
                         </div>
@@ -1319,14 +1479,18 @@ export function TestCaseManager({
                     </div>
                     </div>
                 </div>
-                ))}
+                  );
+                }).filter(Boolean)}
 
                 {testCases.length === 0 && (
                 <div className="text-center py-12 bg-white rounded-lg border border-gray-200 border-dashed">
                     <FileText className="w-12 h-12 text-gray-300 mx-auto mb-4" />
                     <p className="text-gray-500 mb-4">还没有测试用例</p>
                     <button
-                    onClick={() => setShowModal(true)}
+                    onClick={() => {
+                      resetForm();
+                      setShowModal(true);
+                    }}
                     className="text-blue-600 hover:text-blue-700 font-medium"
                     >
                     创建第一个测试用例
@@ -1584,9 +1748,15 @@ export function TestCaseManager({
                               >
                                 {expandedArgs[step.id] ? '▼ 参数' : '▶ 参数'}
                               </button>
-                              {step.step_type === 'action' && step.action?.args?.file_path && (
-                                <span className="px-2 py-0.5 text-xs bg-orange-100 text-orange-700 rounded">📎</span>
-                              )}
+                              {step.step_type === 'action' && step.action?.args?.file_path && (() => {
+                                const fp = step.action.args.file_path;
+                                const fileCount = Array.isArray(fp) ? fp.length : 1;
+                                return (
+                                  <span className="px-2 py-0.5 text-xs bg-orange-100 text-orange-700 rounded">
+                                    📎 {fileCount > 1 ? `${fileCount} 个文件` : ''}
+                                  </span>
+                                );
+                              })()}
                               {step.step_type === 'verify' && step.verify?.args?.use_context && (
                                 <span className="px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">🔗</span>
                               )}
@@ -1595,16 +1765,69 @@ export function TestCaseManager({
                             {expandedArgs[step.id] && (
                               <div className="mt-2 bg-gray-50 rounded p-2">
                                 {step.step_type === 'action' && (
-                                  <select
-                                    value={step.action?.args?.file_path || ''}
-                                    onChange={(e) => updateStepArg(index, 'file_path', e.target.value)}
-                                    className="w-full px-2 py-1.5 border border-gray-200 rounded text-xs bg-white"
-                                  >
-                                    <option value="">不上传文件</option>
-                                    {businessFiles.map(file => (
-                                      <option key={file.id} value={file.name}>{file.name}</option>
-                                    ))}
-                                  </select>
+                                  <div className="space-y-2">
+                                    <div className="text-xs text-gray-600 font-medium mb-1">选择上传文件（可多选）:</div>
+                                    {businessFiles.length === 0 ? (
+                                      <div className="text-xs text-gray-400 italic">暂无可用文件，请先在业务管理中上传文件</div>
+                                    ) : (
+                                      <div className="space-y-1 max-h-40 overflow-y-auto">
+                                        {businessFiles.map(file => {
+                                          const currentFiles = (() => {
+                                            const fp = step.action?.args?.file_path;
+                                            if (!fp) return [];
+                                            if (Array.isArray(fp)) return fp;
+                                            return [fp];
+                                          })();
+                                          const isChecked = currentFiles.includes(file.name);
+
+                                          return (
+                                            <label
+                                              key={file.id}
+                                              className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer hover:bg-gray-100 p-1 rounded"
+                                            >
+                                              <input
+                                                type="checkbox"
+                                                checked={isChecked}
+                                                onChange={(e) => {
+                                                  const currentFiles = (() => {
+                                                    const fp = step.action?.args?.file_path;
+                                                    if (!fp) return [];
+                                                    if (Array.isArray(fp)) return fp;
+                                                    return [fp];
+                                                  })();
+
+                                                  let newFiles: string[];
+                                                  if (e.target.checked) {
+                                                    newFiles = [...currentFiles, file.name];
+                                                  } else {
+                                                    newFiles = currentFiles.filter(f => f !== file.name);
+                                                  }
+
+                                                  // If only one file, store as string for backward compatibility
+                                                  // If multiple files, store as array
+                                                  const valueToStore = newFiles.length === 0 ? '' :
+                                                                      newFiles.length === 1 ? newFiles[0] :
+                                                                      newFiles;
+                                                  updateStepArg(index, 'file_path', valueToStore);
+                                                }}
+                                                className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600"
+                                              />
+                                              <span className="flex-1">{file.name}</span>
+                                            </label>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                    {(() => {
+                                      const fp = step.action?.args?.file_path;
+                                      const selectedCount = !fp ? 0 : Array.isArray(fp) ? fp.length : 1;
+                                      return selectedCount > 0 ? (
+                                        <div className="text-xs text-blue-600 font-medium pt-1 border-t border-gray-200">
+                                          已选择 {selectedCount} 个文件
+                                        </div>
+                                      ) : null;
+                                    })()}
+                                  </div>
                                 )}
                                 {step.step_type === 'verify' && (
                                   <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
@@ -1653,11 +1876,25 @@ export function TestCaseManager({
                       modalYamlError ? 'text-red-400' : 'text-emerald-300'
                     }`}
                     spellCheck={false}
-                    placeholder={`name: 用例名称
+                    placeholder={`# 格式1（推荐）：
+name: 用例名称
 login_required: false
+snapshot: global_before
+use_snapshot: global_before
 steps:
   - action: 点击按钮
-  - verify: 验证结果`}
+  - verify: 验证结果
+  - action: 上传文件
+    args:
+      file_path: ./file.pdf
+
+# 格式2（也支持）：
+- name: 用例名称
+  login_required: false
+  use_snapshot: global_before
+  steps:
+    - action: 点击按钮
+    - verify: 验证结果`}
                   />
                 </div>
               </div>

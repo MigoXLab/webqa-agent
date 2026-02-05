@@ -45,13 +45,16 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
 
   // Helper to toggle section collapse
   const toggleSection = (envId: string, section: string) => {
-    setCollapsedEnvSections(prev => ({
-      ...prev,
-      [envId]: {
-        ...prev[envId],
-        [section]: !prev[envId]?.[section]
-      }
-    }));
+    setCollapsedEnvSections(prev => {
+      const currentValue = prev[envId]?.[section] ?? true; // Get current value with default
+      return {
+        ...prev,
+        [envId]: {
+          ...prev[envId],
+          [section]: !currentValue // Toggle from current value
+        }
+      };
+    });
   };
 
   const isSectionCollapsed = (envId: string, section: string) => {
@@ -392,11 +395,14 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
                           onClick={() => toggleSection(env.id, 'ignore')}
                           className="w-full flex items-center justify-between p-3 text-left hover:bg-gray-50 transition-colors"
                         >
-                          <span className="text-sm font-medium text-gray-700">忽略规则</span>
+                          <div className="flex flex-col">
+                            <span className="text-sm font-medium text-gray-700">浏览器报错规则</span>
+                            <span className="text-xs text-gray-500 mt-0.5">过滤测试中不需要关注的网络请求和控制台错误</span>
+                          </div>
                           {isSectionCollapsed(env.id, 'ignore') ? (
-                            <ChevronDown className="w-4 h-4 text-gray-500" />
+                            <ChevronDown className="w-4 h-4 text-gray-500 flex-shrink-0" />
                           ) : (
-                            <ChevronUp className="w-4 h-4 text-gray-500" />
+                            <ChevronUp className="w-4 h-4 text-gray-500 flex-shrink-0" />
                           )}
                         </button>
                         {!isSectionCollapsed(env.id, 'ignore') && (
@@ -416,15 +422,13 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
                                     const network = [...(env.ignore_rules?.network || []), { pattern: '', type: 'domain' }];
                                     updateEnvironment(index, { ignore_rules: { ...env.ignore_rules, network } });
                                   }}
-                                  className="text-xs text-orange-600 hover:text-orange-700 hover:bg-orange-100 px-2 py-1 rounded-md flex items-center gap-1 font-medium transition-colors"
+                                  className="text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-100 px-2 py-1 rounded-md flex items-center gap-1 font-medium transition-colors"
                                 >
-                                  + 添加域名
+                                  + 添加规则
                                 </button>
                               </div>
                               {(env.ignore_rules?.network || []).length === 0 ? (
-                                <div className="text-center py-6 border-2 border-dashed border-orange-200 rounded-lg bg-white/60">
-                                  <p className="text-xs py-2 px-4 text-gray-500">暂无规则，点击"添加域名"开始配置</p>
-                                  {/* <p className="text-xs text-gray-400 mt-1">例如: .*\.google-analytics\.com.*</p> */}
+                                <div className="text-center py-6">
                                 </div>
                               ) : (
                                 <div className="space-y-2">
@@ -481,9 +485,7 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
                                 </button>
                               </div>
                               {(env.ignore_rules?.console || []).length === 0 ? (
-                                <div className="text-center py-6 border-2 border-dashed border-blue-200 rounded-lg bg-white/60">
-                                  <p className="text-xs py-2 px-4 text-gray-500">暂无规则，点击"添加规则"开始配置</p>
-                                  {/* <p className="text-xs text-gray-400 mt-1">支持文本包含或正则表达式匹配</p> */}
+                                <div className="text-center py-6">
                                 </div>
                               ) : (
                                 <div className="space-y-2">

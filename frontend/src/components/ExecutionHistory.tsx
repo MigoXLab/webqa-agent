@@ -132,7 +132,7 @@ export function ExecutionHistory({ businesses }: Props) {
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors text-sm font-medium"
               >
                 查看报告
-                <ExternalLink className="w-3.5 h-3.5" />
+                <ExternalLink className="w-3 h-3" />
               </button>
             )}
             <button
@@ -233,7 +233,8 @@ export function ExecutionHistory({ businesses }: Props) {
       {/* Executions Table */}
       {!loading && sortedExecutions.length > 0 && (
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-          <table className="w-full">
+          <div className="overflow-x-auto">
+            <table className="w-full">
             <thead>
               <tr className="bg-gray-50/50 border-b border-gray-200">
                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-32">
@@ -309,8 +310,8 @@ export function ExecutionHistory({ businesses }: Props) {
 
                   {/* Business & Environment */}
                   <td className="px-6 py-4">
-                    <div className="flex flex-col gap-1.5">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold w-fit ${getBusinessColor(exec.business_name)}`}>
+                    <div className="flex flex-col">
+                      <span className={`text-sm font-medium text-gray-900 ${getBusinessColor(exec.business_name)}`}>
                         {exec.business_name || '未知业务'}
                       </span>
                       {exec.environment_name && (
@@ -363,6 +364,7 @@ export function ExecutionHistory({ businesses }: Props) {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
@@ -452,9 +454,6 @@ export function ExecutionHistory({ businesses }: Props) {
         <div className="text-center py-16 bg-white rounded-lg border border-gray-200">
           <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
           <p className="text-gray-500 text-lg">暂无执行记录</p>
-          <p className="text-gray-400 text-sm mt-1">
-            {selectedBusinessId ? '该业务暂无执行记录' : '开始执行测试用例后将在此显示'}
-          </p>
         </div>
       )}
     </div>

@@ -83,6 +83,10 @@ export function ConfigImportExport({ business, testCases, onImport, onClose }: P
           } else if (trimmed.startsWith('login_required:') && currentCase && !inSteps) {
             const value = trimmed.replace('login_required:', '').trim().toLowerCase();
             currentCase.login_required = value === 'true';
+          } else if (trimmed.startsWith('snapshot:') && currentCase && !inSteps) {
+            currentCase.snapshot = trimmed.replace('snapshot:', '').trim();
+          } else if (trimmed.startsWith('use_snapshot:') && currentCase && !inSteps) {
+            currentCase.use_snapshot = trimmed.replace('use_snapshot:', '').trim();
           } else if (trimmed.startsWith('steps:') && currentCase) {
             inSteps = true;
             inArgs = false;
@@ -190,26 +194,67 @@ export function ConfigImportExport({ business, testCases, onImport, onClose }: P
       const result = await apiClient.importTestCases(business.id, importedContent);
 
       // Convert backend TestCase format to frontend format
-      const importedCases = result.cases.map(c => ({
-        id: c.id,
-        businessId: c.business_id,
-        name: c.name,
-        description: c.description || '',
-        login_required: c.login_required ?? false,
-        status: c.status as 'active' | 'draft' | 'disabled',
-        steps: c.steps.map((s, idx) => ({
-          id: crypto.randomUUID(),
-          order: idx + 1,
-          step_type: s.step_type,
-          action: s.step_type === 'action'
-            ? { description: s.description || '', args: s.args || {} }
-            : undefined,
-          verify: s.step_type === 'verify'
-            ? { assertion: s.assertion || '', args: s.args || {} }
-            : undefined,
-        })),
-        createdAt: c.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
-      })) as TestCase[];
+      const importedCases = result.cases.map(c => {
+        console.log('Importing case:', c.name, 'with snapshot:', c.snapshot, 'use_snapshot:', c.use_snapshot);
+
+        // Ensure steps is valid
+        const steps = Array.isArray(c.steps) ? c.steps : [];
+
+        return {
+          id: c.id,
+          businessId: c.business_id,
+          name: c.name,
+          description: c.description || '',
+          login_required: c.login_required ?? false,
+          snapshot: c.snapshot,
+          use_snapshot: c.use_snapshot,
+          status: (c.status || 'active') as 'active' | 'draft' | 'disabled',
+          steps: steps.map((s, idx) => {
+            // Handle malformed data where description/assertion might be objects
+            let description = '';
+            let assertion = '';
+            let args = s.args || {};
+
+            if (s.step_type === 'action') {
+              // If description is an object with nested structure, extract it
+              if (typeof s.description === 'object' && s.description !== null) {
+                const descObj = s.description as any;
+                description = descObj.description || JSON.stringify(s.description);
+                // Merge args if present in the nested object
+                if (descObj.args) {
+                  args = { ...args, ...descObj.args };
+                }
+              } else {
+                description = s.description || '';
+              }
+            } else if (s.step_type === 'verify') {
+              // If assertion is an object, extract it
+              if (typeof s.assertion === 'object' && s.assertion !== null) {
+                const assertObj = s.assertion as any;
+                assertion = assertObj.assertion || JSON.stringify(s.assertion);
+                if (assertObj.args) {
+                  args = { ...args, ...assertObj.args };
+                }
+              } else {
+                assertion = s.assertion || '';
+              }
+            }
+
+            return {
+              id: crypto.randomUUID(),
+              order: idx + 1,
+              step_type: s.step_type,
+              action: s.step_type === 'action'
+                ? { description, args }
+                : undefined,
+              verify: s.step_type === 'verify'
+                ? { assertion, args }
+                : undefined,
+            };
+          }),
+          createdAt: c.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
+        };
+      }) as TestCase[];
 
       onImport(importedCases);
       alert(`成功导入 ${result.imported_count} 个测试用例`);
@@ -231,7 +276,7 @@ export function ConfigImportExport({ business, testCases, onImport, onClose }: P
 
     yaml += 'llm_config:\n';
     yaml += '  api: openai\n';
-    yaml += '  model: gpt-4-mini-2024-07-18\n';
+    yaml += '  model: gpt-5-mini-2025-08-07\n';
     yaml += '  api_key: your_openai_api_key\n';
     yaml += '  base_url: https://api.openai.com/v1\n';
 
@@ -245,6 +290,12 @@ export function ConfigImportExport({ business, testCases, onImport, onClose }: P
     testCases.forEach((testCase) => {
       yaml += `  - name: ${testCase.name}\n`;
       yaml += `    login_required: ${testCase.login_required ?? false}\n`;
+      if (testCase.snapshot) {
+        yaml += `    snapshot: ${testCase.snapshot}\n`;
+      }
+      if (testCase.use_snapshot) {
+        yaml += `    use_snapshot: ${testCase.use_snapshot}\n`;
+      }
       yaml += '    steps:\n';
 
       testCase.steps.forEach((step) => {
@@ -370,9 +421,9 @@ export function ConfigImportExport({ business, testCases, onImport, onClose }: P
     login_required: true
     steps:
       - verify: Verify the page displays correctly
-      - action: Click the upload button
+      - action: Click the upload button and upload files
         args:
-          file_path: ./tests/img/test.jpeg
+          file_path: [./tests/img/test.jpeg, ./tests/file/bench.pdf]
       - verify: Verify upload success
         args:
           use_context: true`}
