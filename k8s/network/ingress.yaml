@@ -17,7 +17,6 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
     nginx.ingress.kubernetes.io/configuration-snippet: |
-      # MSE 通过这些 header 传递原始协议信息
       proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
       proxy_set_header X-Real-IP $remote_addr;

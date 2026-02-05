@@ -8,8 +8,8 @@ from app.config import get_settings
 from app.database import init_db
 from app.services.progress_cache import close_redis
 from app.services.scheduler import job_monitor
+# from app.services.task_scheduler import task_scheduler
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 
 # Configure logging
 logging.basicConfig(
@@ -32,11 +32,15 @@ async def lifespan(app: FastAPI):
     # Start Job Monitor
     job_monitor.start()
     
+    # # Start Task Scheduler
+    # await task_scheduler.start()
+    
     yield
 
     # Shutdown
     logger.info('Shutting down...')
     await job_monitor.stop()
+    # await task_scheduler.stop()
     await close_redis()
     logger.info('Redis connection closed')
 
@@ -49,14 +53,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
-    allow_methods=['*'],
-    allow_headers=['*'],
-)
+# CORS is not needed because:
+# - Production: Same-origin (frontend and backend under same domain via Nginx proxy)
+# - Local dev: Vite dev server proxies /api requests to backend (see frontend/vite.config.ts)
 
 # Include API routes
 app.include_router(api_router, prefix='/api/v1')

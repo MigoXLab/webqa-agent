@@ -71,9 +71,6 @@ class Settings(BaseSettings):
     REDIS_DB: int = 0
     PROGRESS_CACHE_TTL: int = 36000  # 进度缓存 TTL（秒），执行完成后仍可查看 10 小时
 
-    # CORS
-    CORS_ORIGINS: str = 'http://localhost:3000,http://localhost:5173'
-
     @property
     def database_url(self) -> str:
         """Get database URL, construct from components if not provided
@@ -101,11 +98,6 @@ class Settings(BaseSettings):
     def available_models(self) -> List[str]:
         """Get list of available models."""
         return [m.strip() for m in self.LLM_AVAILABLE_MODELS.split(',') if m.strip()]
-
-    @property
-    def cors_origins_list(self) -> List[str]:
-        """Get list of CORS origins."""
-        return [o.strip() for o in self.CORS_ORIGINS.split(',') if o.strip()]
 
     @property
     def is_kubernetes_mode(self) -> bool:

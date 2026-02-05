@@ -199,7 +199,6 @@ open http://localhost:8000/docs
 | `EXECUTION_MODE`      | 执行模式 (`local`/`kubernetes`) | `local`                                                       |
 | `JOB_TIMEOUT_SECONDS` | Job 超时时间(秒)                | `7200`                                                        |
 | `MAX_CONCURRENT_JOBS` | 最大并发 Job 数                 | `5`                                                           |
-| `CORS_ORIGINS`        | CORS 允许的源                   | `http://localhost:3000,http://localhost:5173`                 |
 
 ## 故障排除
 
