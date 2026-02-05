@@ -4,8 +4,8 @@ metadata:
   name: webqa-fe-ingress
   namespace: cloud-staging
   annotations:
-    # nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-    # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/proxy-body-size: "10g"
     nginx.ingress.kubernetes.io/proxy-buffering: "off"
     nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
@@ -13,9 +13,9 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "600"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      proxy_set_header Authorization $http_authorization;
-      proxy_set_header X-Authorization $http_x_authorization;
+    # nginx.ingress.kubernetes.io/configuration-snippet: |
+    #   proxy_set_header Authorization $http_authorization;
+    #   proxy_set_header X-Authorization $http_x_authorization;
 spec:
   ingressClassName: nginx
   rules:
@@ -29,7 +29,7 @@ spec:
             name: webqa-fe-svc
             port:
               number: 80
-  # tls:
-  #   - hosts:
-  #       - webqa.openxlab.org.cn
-  #     secretName: webqa.openxlab.org.cn
+  tls:
+    - hosts:
+        - webqa.openxlab.org.cn
+      secretName: webqa.openxlab.org.cn
