@@ -4,18 +4,26 @@ metadata:
   name: webqa-fe-ingress
   namespace: cloud-staging
   annotations:
-    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # 强制 HTTPS 重定向（暂时关闭，排查问题）
+    # nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # 大文件上传配置
     nginx.ingress.kubernetes.io/proxy-body-size: "10g"
     nginx.ingress.kubernetes.io/proxy-buffering: "off"
     nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
     nginx.ingress.kubernetes.io/client-body-buffer-size: "1m"
+    # 超时配置
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "600"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
-    # nginx.ingress.kubernetes.io/configuration-snippet: |
-    #   proxy_set_header Authorization $http_authorization;
-    #   proxy_set_header X-Authorization $http_x_authorization;
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      # MSE 通过这些 header 传递原始协议信息
+      proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header Host $host;
+      proxy_set_header Authorization $http_authorization;
+      proxy_set_header X-Authorization $http_x_authorization;
 spec:
   ingressClassName: nginx
   rules:
@@ -29,7 +37,8 @@ spec:
             name: webqa-fe-svc
             port:
               number: 80
-  tls:
-    - hosts:
-        - webqa.openxlab.org.cn
-      secretName: webqa.openxlab.org.cn
+  # TLS 配置（证书问题，临时注释）
+  # tls:
+  #   - hosts:
+  #       - webqa.openxlab.org.cn
+  #     secretName: webqa.openxlab.org.cn

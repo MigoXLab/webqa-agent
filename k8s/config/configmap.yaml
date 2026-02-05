@@ -37,8 +37,8 @@ data:
   SHARED_REPORTS_DIR: "reports"
   SHARED_LOGS_DIR: "logs"
 
-  # CORS
-  CORS_ORIGINS: "https://webqa.openxlab.org.cn,http://localhost:3000,http://localhost:5173"
+  # CORS（同域名部署不需要配置生产域名，仅保留本地开发）
+  CORS_ORIGINS: "http://localhost:3000,http://localhost:5173"
 
   # Backend Callback URL
   BACKEND_CALLBACK_URL: "http://webqa-be:8000"
