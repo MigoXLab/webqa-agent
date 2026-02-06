@@ -33,7 +33,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
@@ -240,9 +240,7 @@ class WebQAToolMetadata(BaseModel):
         )
     )
 
-    class Config:
-        """Pydantic configuration."""
-        extra = 'allow'  # Allow additional fields for future extension
+    model_config = ConfigDict(extra='allow')  # Allow additional fields for future extension
 
 
 # ============================================================================

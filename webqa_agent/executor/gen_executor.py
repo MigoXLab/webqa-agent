@@ -95,6 +95,9 @@ class GenExecutor:
 
             test_session.report_path = custom_report_dir
 
+            # Start session timing (CRITICAL: must be called before save_index_json)
+            test_session.start_session()
+
             # Configure screenshot saving
             ActionHandler.set_screenshot_config(
                 save_screenshots=self.config.report_config.save_screenshots
@@ -132,7 +135,11 @@ class GenExecutor:
             )
             test_session.llm_summary = llm_summary
 
-            # Final update of index.json
+            # Complete session BEFORE saving to ensure end_time is recorded
+            test_session.complete_session()
+            completed_session = test_session
+
+            # Final update of index.json (now includes end_time)
             save_index_json(
                 test_session=test_session,
                 report_dir=custom_report_dir,
@@ -144,14 +151,31 @@ class GenExecutor:
                 mode='gen'
             )
 
-            test_session.complete_session()
-            completed_session = test_session
-
         except BaseException as e:
             logger.error(f'Error in gen executor: {e}')
             run_error = e
 
         finally:
+            # Ensure session end_time is recorded even on exception
+            try:
+                if test_session and not test_session.end_time:
+                    test_session.complete_session()
+                    logger.info('Session end_time recorded in finally block')
+                    # Persist end_time to index.json on exception path
+                    if custom_report_dir:
+                        save_index_json(
+                            test_session=test_session,
+                            report_dir=custom_report_dir,
+                            result_count=result,
+                            llm_config=self.config.llm_config.model_dump(),
+                            browser_config=self.config.browser_config.model_dump(),
+                            report_lang=self.config.report_config.language,
+                            mode='gen'
+                        )
+                        logger.info('index.json updated with end_time in finally block')
+            except Exception as session_err:
+                logger.warning(f'Failed to complete session: {session_err}')
+
             # Cleanup browser session pool (CRITICAL)
             try:
                 if self.session_pool:

@@ -1539,6 +1539,26 @@ The screenshot shows the ENTIRE webpage from top to bottom, not just the visible
 {current_plan_json}
 - **Completed Test Execution Summary**:
 {completed_summary}
+
+### Execution Metrics Guide
+Each completed case may include detailed metrics to help with REPLAN decisions:
+- `metrics.total_steps`: Total number of steps executed
+- `metrics.passed_steps`: Steps that completed successfully
+- `metrics.failed_steps`: Steps that failed (use this to assess failure severity)
+- `metrics.warning_steps`: Steps with warnings
+- `metrics.total_actions`: Total browser actions performed
+- `failed_step_details`: Array of failed step information including:
+  - `step_id`: Which step failed
+  - `description`: What the step was trying to do
+  - `status`: The failure status
+  - `type`: Step type (action/verify/ux_verify)
+
+**REPLAN Decision Guidance**:
+- If `failed_steps > 0` with `type: 'action'`, consider REPLAN with alternative navigation paths
+- If `failed_steps > 0` with `type: 'verify'`, the feature may be broken - document and continue
+- High `passed_steps` ratio (>80%) suggests minor issues - likely CONTINUE
+- Low `passed_steps` ratio (<50%) suggests major issues - consider REPLAN or skip
+
 - **Current Application State**: (Referenced via attached screenshot){interactive_elements_section}
 
 ## Enhanced Coverage Analysis Criteria

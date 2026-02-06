@@ -227,12 +227,12 @@ async def run_tests(cfg, execution_mode, config_path: str = None, workers: int =
     if execution_mode == 'run':
         await execute_run_mode(config_path, workers=workers)
     else:  # gen mode
-        # Resolve workers: CLI > config > default (2)
-        w = workers if workers is not None else cfg.get('target', {}).get('max_concurrent_tests', 2)
+        # Resolve workers: CLI > config > default (4)
+        w = workers if workers is not None else cfg.get('target', {}).get('max_concurrent_tests', 4)
         try:
             workers = max(1, int(w))
         except (ValueError, TypeError):
-            workers = 2
+            workers = 4
         print('🎯 Mode: Gen Mode (AI-driven test generation)')
         await execute_gen_mode(cfg, workers=workers)
 
@@ -414,12 +414,12 @@ async def execute_run_mode(config_path: str, workers: int = None):
             if cfg.get('browser_config', {}).get('cookies'):
                 cfg['browser_config']['cookies'] = loaded_cookies
 
-    # Resolve workers: CLI > config > default (2)
-    w = workers if workers is not None else configs[0].get('target', {}).get('max_concurrent_tests', 2)
+    # Resolve workers: CLI > config > default (4)
+    w = workers if workers is not None else configs[0].get('target', {}).get('max_concurrent_tests', 4)
     try:
         workers = max(1, int(w))
     except (ValueError, TypeError):
-        workers = 2
+        workers = 4
     mode_info = f'parallel ({workers} workers)' if workers > 1 else 'serial'
     print(f'🎯 Mode: Run Mode ({mode_info})')
 
@@ -696,7 +696,7 @@ Documentation: https://github.com/MigoXLab/webqa-agent
         type=int,
         default=None,
         metavar='N',
-        help='Number of parallel workers. Priority: CLI arg > config max_concurrent_tests > default 2'
+        help='Number of parallel workers. Priority: CLI arg > config max_concurrent_tests > default 4'
     )
 
     # run command
@@ -715,7 +715,7 @@ Documentation: https://github.com/MigoXLab/webqa-agent
         type=int,
         default=None,
         metavar='N',
-        help='Number of parallel workers (1=serial, >1=parallel). Priority: CLI arg > config max_concurrent_tests > default 2'
+        help='Number of parallel workers (1=serial, >1=parallel). Priority: CLI arg > config max_concurrent_tests > default 4'
     )
     # ui command
     ui_parser = subparsers.add_parser(

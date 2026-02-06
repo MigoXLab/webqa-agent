@@ -9,7 +9,7 @@ import datetime
 import json
 import logging
 import re
-from typing import Union
+from typing import Any, Dict, List, Optional, Union
 
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
@@ -1390,24 +1390,62 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     intermediate_output
                 ) or _contains_failure_indicators(tool_output):
                     final_summary = f"FINAL_SUMMARY: Preamble action '{instruction_to_execute}' failed, cannot proceed with the test case. Error: {tool_output}"
+                    logging.error(f'Preamble action {i + 1} failed, aborting test case')
+                    # Ensure time data is recorded even on early failure
+                    case_recorder.finish_case(final_status='failed', final_summary=final_summary)
+                    recorded_case_data = case_recorder.get_case_data()
+                    # Extract metrics for consistent case_result structure
+                    metrics = recorded_case_data.get('metrics', {}) if recorded_case_data else {}
+                    failed_step_details = _extract_failed_step_details(recorded_case_data)
                     case_result = {
                         'case_name': case_name,
                         'final_summary': final_summary,
                         'status': 'failed',
+                        'failure_type': 'preamble_failure',
+                        'metrics': {
+                            'total_steps': metrics.get('total_steps', 0),
+                            'passed_steps': metrics.get('passed_steps', 0),
+                            'failed_steps': metrics.get('failed_steps', 0),
+                            'warning_steps': metrics.get('warning_steps', 0),
+                            'total_actions': metrics.get('total_actions', 0),
+                        },
+                        'failed_step_details': failed_step_details,
                     }
-                    logging.error(f'Preamble action {i + 1} failed, aborting test case')
-                    return {'case_result': case_result, 'current_case_steps': []}
+                    return {
+                        'case_result': case_result,
+                        'current_case_steps': [],
+                        'recorded_case': recorded_case_data,
+                    }
 
                 logging.debug(f'Preamble action {i + 1} completed successfully')
             except Exception as e:
                 logging.error(f'Exception during preamble action {i + 1}: {str(e)}')
                 final_summary = f"FINAL_SUMMARY: Preamble action '{instruction_to_execute}' raised exception: {str(e)}"
+                # Ensure time data is recorded even on exception
+                case_recorder.finish_case(final_status='failed', final_summary=final_summary)
+                recorded_case_data = case_recorder.get_case_data()
+                # Extract metrics for consistent case_result structure
+                metrics = recorded_case_data.get('metrics', {}) if recorded_case_data else {}
+                failed_step_details = _extract_failed_step_details(recorded_case_data)
                 case_result = {
                     'case_name': case_name,
                     'final_summary': final_summary,
                     'status': 'failed',
+                    'failure_type': 'preamble_exception',
+                    'metrics': {
+                        'total_steps': metrics.get('total_steps', 0),
+                        'passed_steps': metrics.get('passed_steps', 0),
+                        'failed_steps': metrics.get('failed_steps', 0),
+                        'warning_steps': metrics.get('warning_steps', 0),
+                        'total_actions': metrics.get('total_actions', 0),
+                    },
+                    'failed_step_details': failed_step_details,
                 }
-                return {'case_result': case_result, 'current_case_steps': []}
+                return {
+                    'case_result': case_result,
+                    'current_case_steps': [],
+                    'recorded_case': recorded_case_data,
+                }
 
         logging.debug('=== All Preamble Actions Completed Successfully ===')
 
@@ -2394,11 +2432,34 @@ Generate a brief summary without referencing specific execution details."""
         failure_type = _classify_failure_type(final_summary, failed_steps)
         logging.info(f"Test case '{case_name}' failed with type: {failure_type}")
 
+    logging.debug(f'=== Agent Worker Completed for {case_name}. ===')
+
+    # Finalize case recording with final status (this calculates metrics)
+    case_recorder.finish_case(final_status=status, final_summary=final_summary)
+
+    # Get recorded case data (contains metrics and step details)
+    recorded_case_data = case_recorder.get_case_data()
+
+    # Extract metrics and failed step details for reflection phase
+    # This enriches case_result without additional file I/O
+    metrics = recorded_case_data.get('metrics', {}) if recorded_case_data else {}
+    failed_step_details = _extract_failed_step_details(recorded_case_data)
+
+    # Build enriched case_result with detailed metrics for reflection phase
     case_result = {
         'case_name': case_name,
         'final_summary': final_summary,
         'status': status,
         'failure_type': failure_type,
+        # Enriched fields for better reflection/REPLAN decisions
+        'metrics': {
+            'total_steps': metrics.get('total_steps', 0),
+            'passed_steps': metrics.get('passed_steps', 0),
+            'failed_steps': metrics.get('failed_steps', 0),
+            'warning_steps': metrics.get('warning_steps', 0),
+            'total_actions': metrics.get('total_actions', 0),
+        },
+        'failed_step_details': failed_step_details,
     }
 
     # Include the modified case if dynamic steps were added
@@ -2406,17 +2467,10 @@ Generate a brief summary without referencing specific execution details."""
     if case_modified:
         result['modified_case'] = case
 
-    logging.debug(f'=== Agent Worker Completed for {case_name}. ===')
+    # Include recorded case data for detailed reporting
+    result['recorded_case'] = recorded_case_data
 
-    # Finalize case recording with final status
-    case_recorder.finish_case(final_status=status, final_summary=final_summary)
-
-    # Get recorded case data
-    result_with_case = dict(result)
-    recorded_case_data = case_recorder.get_case_data()
-    result_with_case['recorded_case'] = recorded_case_data
-
-    return result_with_case
+    return result
 
 
 def _is_objective_achieved(tool_output: str) -> tuple[bool, str]:
@@ -2540,6 +2594,45 @@ def _classify_failure_type(final_summary: str, failed_steps: list = None) -> str
         return 'critical'
 
     return 'recoverable'
+
+
+def _extract_failed_step_details(
+    recorded_data: Optional[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Extract detailed information about failed steps from recorded case data.
+
+    This provides detailed failure context for the reflection phase to make
+    better REPLAN decisions without requiring additional file I/O.
+
+    Args:
+        recorded_data: The recorded case data from CentralCaseRecorder.get_case_data()
+
+    Returns:
+        List of failed step details, each containing:
+        - step_id: Step identifier
+        - description: What the step was trying to do
+        - status: The failure status (failed/error/failure)
+        - type: Step type (action/verify/ux_verify)
+    """
+    if not recorded_data:
+        return []
+
+    steps = recorded_data.get('steps', [])
+    failed_details: List[Dict[str, Any]] = []
+
+    for step in steps:
+        status = (step.get('status') or '').lower()
+        if status in ('failed', 'error', 'failure'):
+            failed_details.append(
+                {
+                    'step_id': step.get('id'),
+                    'description': step.get('description', ''),
+                    'status': step.get('status'),
+                    'type': step.get('type', 'action'),
+                }
+            )
+
+    return failed_details
 
 
 def _is_navigation_instruction(instruction: str) -> bool:

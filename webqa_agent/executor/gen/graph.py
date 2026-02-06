@@ -62,7 +62,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
 
     # === Stage 0: Data Collection ===
     logging.info('Stage 0: Collecting full-page data...')
-    s = await sp.acquire(timeout=120.0)
+    s = await sp.acquire(timeout=300.0)
     try:
         await s.navigate_to(state['url'], cookies=state.get('cookies'))
         ui_tester = UITester(
@@ -335,7 +335,6 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             for case in test_cases:
                 case['status'] = 'pending'
                 case['completed_steps'] = []
-                case['test_context'] = {}
                 case['url'] = state['url']
                 case['case_id'] = (
                     await get_next_case_id()
@@ -457,7 +456,7 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                 failed = False
 
                 # 获取 session（阻塞直到有可用 session）
-                s = await sp.acquire(timeout=120.0)
+                s = await sp.acquire(timeout=300.0)
                 logging.debug(f"Worker {worker_id}: Acquired session for '{case_name}'")
 
                 await s.navigate_to(state['url'], cookies=state.get('cookies'))
@@ -487,9 +486,9 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                 lang = state.get('language', 'zh-CN')
                 default_text = '智能功能测试' if lang == 'zh-CN' else 'AI Function Test'
 
-                with Display.display(
+                with Display.display(  # pylint: disable=not-callable
                     f'{default_text} - {case_name}'
-                ):  # pylint: disable=not-callable
+                ):
                     logging.debug(f"Worker {worker_id}: Executing '{case_name}'")
 
                     # Execute test case via agent worker
@@ -557,8 +556,17 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
 
                     # 执行反思（非 skip_reflection 时）
                     if not skip_reflection:
+                        # Create a state copy with current case_result included
+                        # This ensures reflection has access to enriched metrics
+                        reflect_state = dict(state)
+                        if case_result:
+                            # Include current case result in completed_cases for reflection
+                            reflect_state['completed_cases'] = list(
+                                state.get('completed_cases', [])
+                            ) + [case_result]
+
                         reflect_result = await _do_reflection(
-                            ui_tester, dict(state), case_name
+                            ui_tester, reflect_state, case_name
                         )
 
                         # 处理 REPLAN 结果：将新 cases 加入队列
@@ -574,7 +582,6 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                                     for new_case in new_cases:
                                         new_case['status'] = 'pending'
                                         new_case['completed_steps'] = []
-                                        new_case['test_context'] = {}
                                         new_case['url'] = state['url']
                                         new_case['case_id'] = (
                                             await get_next_case_id()
@@ -712,9 +719,10 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                     # If queue is empty, close the session to free browser resources
                     # If queue has pending cases, release back to pool for reuse
                     if case_queue.qsize() == 0:
-                        await s.close()
+                        # Use keep_alive=False to close session AND release semaphore
+                        await sp.release(s, keep_alive=False)
                         logging.info(
-                            f"Worker {worker_id}: Closed session for '{case_name}' (no more pending cases)"
+                            f"Worker {worker_id}: Released and closed session for '{case_name}' (no more pending cases)"
                         )
                     else:
                         await sp.release(s, failed=failed)
