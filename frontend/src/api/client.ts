@@ -55,7 +55,7 @@ export interface Execution {
   business_name?: string;
   environment_id?: string;
   environment_name?: string;
-  trigger_type: 'manual' | 'scheduled';
+  trigger_type: 'manual' | 'scheduled' | 'debug';
   scheduled_task_id?: string;
   model: string;
   workers: number;
@@ -274,6 +274,7 @@ class APIClient {
     test_case_ids: string[];
     model?: string;
     workers?: number;
+    trigger_type?: 'manual' | 'debug';
   }): Promise<Execution> {
     return this.request<Execution>('/executions', {
       method: 'POST',

@@ -170,7 +170,7 @@ ______________________________________________________________________
 | id                | UUID          | 执行ID (PK)                                    |
 | business_id       | UUID          | 业务ID (FK)                                    |
 | environment_id    | UUID          | 环境ID (FK)                                    |
-| trigger_type      | VARCHAR(20)   | 触发类型: manual / scheduled                   |
+| trigger_type      | VARCHAR(20)   | 触发类型: manual / scheduled / debug           |
 | scheduled_task_id | UUID          | 关联的定时任务ID（可选）                       |
 | model             | VARCHAR(100)  | 使用的模型                                     |
 | workers           | INT           | 并发数                                         |
@@ -204,49 +204,49 @@ ______________________________________________________________________
 
 ### 2.1 接口总览
 
-| 模块             | 方法   | 路径                                   | 说明             |
-| ---------------- | ------ | -------------------------------------- | ---------------- |
-| **业务管理**     |        |                                        |                  |
-|                  | GET    | /api/v1/businesses                     | 获取业务列表     |
-|                  | POST   | /api/v1/businesses                     | 创建业务         |
-|                  | GET    | /api/v1/businesses/{id}                | 获取业务详情     |
-|                  | PUT    | /api/v1/businesses/{id}                | 更新业务         |
-|                  | DELETE | /api/v1/businesses/{id}                | 删除业务         |
-| **环境管理**     |        |                                        |                  |
-|                  | GET    | /api/v1/businesses/{id}/environments   | 获取环境列表     |
-|                  | POST   | /api/v1/environments                   | 创建环境         |
-|                  | GET    | /api/v1/environments/{id}              | 获取环境详情     |
-|                  | PUT    | /api/v1/environments/{id}              | 更新环境         |
-|                  | DELETE | /api/v1/environments/{id}              | 删除环境         |
-| **测试用例管理** |        |                                        |                  |
-|                  | GET    | /api/v1/businesses/{id}/cases          | 获取用例列表     |
-|                  | POST   | /api/v1/cases                          | 创建用例         |
-|                  | GET    | /api/v1/cases/{id}                     | 获取用例详情     |
-|                  | PUT    | /api/v1/cases/{id}                     | 更新用例         |
-|                  | DELETE | /api/v1/cases/{id}                     | 删除用例         |
-|                  | POST   | /api/v1/businesses/{id}/cases/import   | 导入YAML         |
-|                  | GET    | /api/v1/businesses/{id}/cases/export   | 导出YAML         |
-| **文件管理**     |        |                                        |                  |
-|                  | GET    | /api/v1/businesses/{id}/files          | 获取文件列表     |
-|                  | POST   | /api/v1/businesses/{id}/files          | 上传文件         |
-|                  | DELETE | /api/v1/files/{id}                     | 删除文件         |
-| **执行管理**     |        |                                        |                  |
-|                  | POST   | /api/v1/executions                     | 手动触发执行     |
-|                  | GET    | /api/v1/executions                     | 获取执行记录列表 |
-|                  | GET    | /api/v1/executions/{id}                | 获取执行详情     |
-|                  | GET    | /api/v1/executions/{id}/progress       | 获取执行实时进度 |
-| **定时任务管理** |        |                                        |                  |
-|                  | GET    | /api/v1/schedules                      | 获取定时任务列表 |
-|                  | POST   | /api/v1/schedules                      | 创建定时任务     |
-|                  | GET    | /api/v1/schedules/{id}                 | 获取定时任务详情 |
-|                  | PUT    | /api/v1/schedules/{id}                 | 更新定时任务     |
-|                  | DELETE | /api/v1/schedules/{id}                 | 删除定时任务     |
-|                  | POST   | /api/v1/schedules/{id}/toggle          | 启用/禁用        |
-| **配置**         |        |                                        |                  |
-|                  | GET    | /api/v1/config/models                  | 获取可用模型列表 |
-| **内部接口**     |        |                                        |                  |
-|                  | POST   | /api/internal/executions/{id}/progress | Agent 推送进度   |
-|                  | POST   | /api/internal/executions/{id}/complete | Agent 回调完成   |
+| 模块             | 方法   | 路径                                   | 说明                  |
+| ---------------- | ------ | -------------------------------------- | --------------------- |
+| **业务管理**     |        |                                        |                       |
+|                  | GET    | /api/v1/businesses                     | 获取业务列表          |
+|                  | POST   | /api/v1/businesses                     | 创建业务              |
+|                  | GET    | /api/v1/businesses/{id}                | 获取业务详情          |
+|                  | PUT    | /api/v1/businesses/{id}                | 更新业务              |
+|                  | DELETE | /api/v1/businesses/{id}                | 删除业务              |
+| **环境管理**     |        |                                        |                       |
+|                  | GET    | /api/v1/businesses/{id}/environments   | 获取环境列表          |
+|                  | POST   | /api/v1/environments                   | 创建环境              |
+|                  | GET    | /api/v1/environments/{id}              | 获取环境详情          |
+|                  | PUT    | /api/v1/environments/{id}              | 更新环境              |
+|                  | DELETE | /api/v1/environments/{id}              | 删除环境              |
+| **测试用例管理** |        |                                        |                       |
+|                  | GET    | /api/v1/businesses/{id}/cases          | 获取用例列表          |
+|                  | POST   | /api/v1/cases                          | 创建用例              |
+|                  | GET    | /api/v1/cases/{id}                     | 获取用例详情          |
+|                  | PUT    | /api/v1/cases/{id}                     | 更新用例              |
+|                  | DELETE | /api/v1/cases/{id}                     | 删除用例              |
+|                  | POST   | /api/v1/businesses/{id}/cases/import   | 导入YAML              |
+|                  | GET    | /api/v1/businesses/{id}/cases/export   | 导出YAML              |
+| **文件管理**     |        |                                        |                       |
+|                  | GET    | /api/v1/businesses/{id}/files          | 获取文件列表          |
+|                  | POST   | /api/v1/businesses/{id}/files          | 上传文件              |
+|                  | DELETE | /api/v1/files/{id}                     | 删除文件              |
+| **执行管理**     |        |                                        |                       |
+|                  | POST   | /api/v1/executions                     | 触发执行（手动/调试） |
+|                  | GET    | /api/v1/executions                     | 获取执行记录列表      |
+|                  | GET    | /api/v1/executions/{id}                | 获取执行详情          |
+|                  | GET    | /api/v1/executions/{id}/progress       | 获取执行实时进度      |
+| **定时任务管理** |        |                                        |                       |
+|                  | GET    | /api/v1/schedules                      | 获取定时任务列表      |
+|                  | POST   | /api/v1/schedules                      | 创建定时任务          |
+|                  | GET    | /api/v1/schedules/{id}                 | 获取定时任务详情      |
+|                  | PUT    | /api/v1/schedules/{id}                 | 更新定时任务          |
+|                  | DELETE | /api/v1/schedules/{id}                 | 删除定时任务          |
+|                  | POST   | /api/v1/schedules/{id}/toggle          | 启用/禁用             |
+| **配置**         |        |                                        |                       |
+|                  | GET    | /api/v1/config/models                  | 获取可用模型列表      |
+| **内部接口**     |        |                                        |                       |
+|                  | POST   | /api/internal/executions/{id}/progress | Agent 推送进度        |
+|                  | POST   | /api/internal/executions/{id}/complete | Agent 回调完成        |
 
 ______________________________________________________________________
 
@@ -305,11 +305,13 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-#### 2.2.2 手动触发执行
+#### 2.2.2 触发执行
 
 ##### POST /api/v1/executions
 
-**请求体**:
+支持手动执行和 Debug 调试两种模式，通过 `trigger_type` 字段区分。
+
+**请求体（手动执行 - 默认）**:
 
 ```json
 {
@@ -320,6 +322,28 @@ ______________________________________________________________________
   "workers": 2
 }
 ```
+
+**请求体（Debug 调试）**:
+
+```json
+{
+  "business_id": "uuid",
+  "environment_id": "uuid",
+  "test_case_ids": ["single-case-uuid"],
+  "model": "gpt-4o-mini",
+  "workers": 1,
+  "trigger_type": "debug"
+}
+```
+
+| 字段           | 类型     | 必填 | 默认值     | 说明                                    |
+| -------------- | -------- | ---- | ---------- | --------------------------------------- |
+| business_id    | UUID     | ✅   | -          | 业务 ID                                 |
+| environment_id | UUID     | ✅   | -          | 环境 ID                                 |
+| test_case_ids  | UUID\[\] | ✅   | -          | 测试用例 ID 列表（debug 模式只传 1 个） |
+| model          | string   | ❌   | 系统默认   | LLM 模型名称                            |
+| workers        | int      | ❌   | 1          | 并发数（debug 模式固定为 1）            |
+| trigger_type   | string   | ❌   | `"manual"` | 触发类型：`manual` / `debug`            |
 
 **响应**:
 
@@ -332,6 +356,13 @@ ______________________________________________________________________
   }
 }
 ```
+
+**Debug 模式说明**：
+
+- `trigger_type: "debug"` 的执行记录**不会出现在执行历史列表中**（API 默认过滤）
+- Debug 只传单个 case，`workers` 固定为 1
+- 前端通过 `GET /executions/{id}/progress` 轮询获取实时日志，展示在编辑页右侧面板
+- 调试完成后前端展示「查看报告」按钮
 
 ______________________________________________________________________
 
@@ -389,13 +420,17 @@ ______________________________________________________________________
 
 **查询参数**:
 
-| 参数名       | 类型   | 说明                     |
-| ------------ | ------ | ------------------------ |
-| business_id  | UUID   | 可选，按业务筛选         |
-| trigger_type | string | 可选，manual / scheduled |
-| status       | string | 可选，按状态筛选         |
-| limit        | int    | 可选，默认 50            |
-| offset       | int    | 可选，分页偏移           |
+| 参数名        | 类型   | 说明                                                              |
+| ------------- | ------ | ----------------------------------------------------------------- |
+| business_id   | UUID   | 可选，按业务筛选                                                  |
+| trigger_type  | string | 可选，`manual` / `scheduled` / `debug`                            |
+| status        | string | 可选，按状态筛选                                                  |
+| exclude_debug | bool   | 可选，默认 `true`。为 `true` 时自动排除 `trigger_type=debug` 记录 |
+| limit         | int    | 可选，默认 50                                                     |
+| offset        | int    | 可选，分页偏移                                                    |
+
+> **注意**：`exclude_debug` 默认为 `true`，即执行历史页面不展示 debug 调试记录。
+> 如果前端需要查询特定的 debug 执行（如编辑页面内的调试），应直接通过 `GET /executions/{id}` 获取。
 
 **响应**:
 
@@ -743,6 +778,50 @@ sequenceDiagram
     Note over FE: 停止轮询
 ```
 
+### 3.4 Debug 调试执行
+
+```mermaid
+sequenceDiagram
+    participant FE as Frontend (CaseEditorPage)
+    participant BE as Backend
+    participant DB as Database
+    participant Cache as 缓存(内存/Redis)
+    participant Agent as WebQA-Agent
+
+    Note over FE: 用户在编辑页点击「开始调试」
+    Note over FE: 弹出环境 + 模型选择
+
+    FE->>BE: POST /api/v1/executions
+    Note over FE,BE: {trigger_type: "debug", test_case_ids: [单个], workers: 1}
+
+    BE->>DB: 查询环境 + 用例
+    BE->>DB: 创建 execution (trigger_type=debug)
+    BE-->>FE: {execution_id, status: pending}
+
+    BE->>Agent: 启动 Agent (单个用例)
+
+    loop Agent 执行中 (每 1-2 秒)
+        Agent->>BE: POST /api/internal/.../progress
+        BE->>Cache: 存储进度
+    end
+
+    loop 前端轮询 (每 2 秒)
+        FE->>BE: GET /api/v1/executions/{id}/progress
+        BE->>Cache: 读取进度
+        BE-->>FE: {status, logs, completed, running}
+        FE->>FE: 更新右侧日志面板
+    end
+
+    Agent-->>BE: POST /api/internal/.../complete
+    BE->>DB: 更新 execution (status + result_count + oss_report_url)
+
+    FE->>BE: GET /api/v1/executions/{id}/progress
+    BE-->>FE: {status: completed}
+    Note over FE: 停止轮询，显示「查看报告」按钮
+
+    Note over FE: 执行历史页不展示此记录（exclude_debug=true）
+```
+
 ______________________________________________________________________
 
 ## 4. OSS 存储设计
@@ -808,6 +887,6 @@ cases:
 
 ______________________________________________________________________
 
-*文档版本: v1.2*
-*最后更新: 2026-02-05*
-*更新内容: 更新定时任务表结构为单环境配置，添加 Cron 验证接口，完善定时执行流程图*
+*文档版本: v1.3*
+*最后更新: 2026-02-06*
+*更新内容: 新增 Debug 调试触发类型（trigger_type=debug）、执行 API 支持 debug 模式、执行历史默认排除 debug 记录、Debug 时序图*

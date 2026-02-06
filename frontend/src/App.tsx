@@ -5,6 +5,7 @@ import { TestCaseManager } from './components/TestCaseManager';
 import { ScheduledTaskManager } from './components/ScheduledTaskManager';
 import { ExecutionHistory } from './components/ExecutionHistory';
 import { ExecutionDetail } from './components/ExecutionDetail';
+import { CaseEditorPage } from './components/CaseEditorPage';
 import { LayoutDashboard, History, Box, Loader2, Github } from 'lucide-react';
 import { apiClient, Business as APIBusiness, TestCase as APITestCase, Execution as APIExecution } from './api/client';
 
@@ -310,7 +311,9 @@ export default function App() {
   });
 
   // Determine current view from route
+  const isCaseEditor = /^\/business\/[^/]+\/case\//.test(location.pathname);
   const view = location.pathname === '/history' ? 'history' :
+               isCaseEditor ? 'case_editor' :
                location.pathname.startsWith('/business/') ? 'business_detail' :
                location.pathname.startsWith('/execution/') ? 'execution_detail' : 'businesses';
 
@@ -422,7 +425,7 @@ export default function App() {
               <Link
                 to="/"
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  view === 'businesses' || view === 'business_detail'
+                  view === 'businesses' || view === 'business_detail' || view === 'case_editor'
                     ? 'bg-gray-100 text-gray-900'
                     : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
                 }`}
@@ -477,7 +480,7 @@ export default function App() {
       )}
 
       {/* Main Content */}
-      <main className="flex-1 overflow-auto">
+      <main className={`flex-1 ${view === 'case_editor' ? 'overflow-hidden flex flex-col' : 'overflow-auto'}`}>
         <Routes>
           <Route path="/" element={
             <BusinessManager
@@ -499,6 +502,8 @@ export default function App() {
               availableModels={availableModels}
             />
           } />
+          <Route path="/business/:businessId/case/new" element={<CaseEditorPage />} />
+          <Route path="/business/:businessId/case/:caseId" element={<CaseEditorPage />} />
           <Route path="/history" element={
             <ExecutionHistory businesses={businesses} />
           } />

@@ -69,7 +69,7 @@ async def create_execution(
     data: ExecutionCreate,
     db: AsyncSession = Depends(get_db),
 ):
-    """Create and start a new execution (manual trigger)."""
+    """Create and start a new execution (manual or debug trigger)."""
     # Check concurrency limit
     can_run, msg = await can_start_execution(db)
     if not can_run:
@@ -111,13 +111,16 @@ async def create_execution(
                 detail={'code': 2003, 'message': f'用例 {case_id} 不存在'}
             )
 
+    # Debug mode: force workers=1
+    workers = 1 if data.trigger_type == 'debug' else data.workers
+
     # Create execution record
     execution = Execution(
         business_id=data.business_id,
         environment_id=data.environment_id,
-        trigger_type='manual',
+        trigger_type=data.trigger_type,
         model=data.model,
-        workers=data.workers,
+        workers=workers,
         test_case_ids=[str(cid) for cid in data.test_case_ids],
         status='pending',
     )
@@ -161,13 +164,22 @@ async def list_executions(
     business_id: Optional[UUID] = None,
     trigger_type: Optional[str] = None,
     status_filter: Optional[str] = None,
+    exclude_debug: bool = True,
     limit: int = 50,
     offset: int = 0,
 ):
-    """Get all executions with optional filters."""
+    """Get all executions with optional filters.
+
+    By default, debug executions are excluded (exclude_debug=true).
+    """
     # Build query
     query = select(Execution)
     count_query = select(func.count(Execution.id))
+
+    # Exclude debug executions by default
+    if exclude_debug and not trigger_type:
+        query = query.where(Execution.trigger_type != 'debug')
+        count_query = count_query.where(Execution.trigger_type != 'debug')
 
     # Apply filters
     if business_id:

@@ -10,12 +10,13 @@ settings = get_settings()
 
 
 class ExecutionCreate(BaseModel):
-    """Schema for creating an execution (manual trigger)."""
+    """Schema for creating an execution (manual or debug trigger)."""
     business_id: UUID
     environment_id: UUID
     test_case_ids: List[UUID] = Field(..., min_length=1)
     model: str = settings.LLM_DEFAULT_MODEL
     workers: int = Field(default=settings.DEFAULT_WORKERS, ge=1)
+    trigger_type: str = Field(default='manual', pattern='^(manual|debug)$')
 
     @field_validator('workers')
     @classmethod

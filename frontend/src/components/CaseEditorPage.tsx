@@ -1,0 +1,980 @@
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import {
+  ArrowLeft,
+  Save,
+  Loader2,
+  LayoutList,
+  Code,
+  AlertCircle,
+  Key,
+  Play,
+  Square,
+  ExternalLink,
+  Monitor,
+  FileText,
+} from 'lucide-react';
+import { apiClient, ExecutionProgress, TestCase as APITestCase } from '../api/client';
+import { TestCase, TestStep, Environment, BusinessFile } from '../App';
+import yaml from 'js-yaml';
+
+// ============================================================================
+// YAML Helpers (shared with TestCaseManager)
+// ============================================================================
+
+const validateYamlSyntax = (yamlText: string): { valid: boolean; error: string | null } => {
+  try {
+    yaml.load(yamlText);
+    return { valid: true, error: null };
+  } catch (err: any) {
+    const match = err.message?.match(/at line (\d+)/);
+    const lineInfo = match ? ` (第 ${match[1]} 行)` : '';
+    return { valid: false, error: `YAML 格式错误${lineInfo}: ${err.reason || err.message}` };
+  }
+};
+
+const convertArraysToFlowStyle = (yamlText: string): string => {
+  const lines = yamlText.split('\n');
+  const result: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const filePathMatch = line.match(/^(\s*)file_path:\s*$/);
+    if (filePathMatch) {
+      const baseIndent = filePathMatch[1].length;
+      const arrayIndent = baseIndent + 2;
+      const items: string[] = [];
+      let j = i + 1;
+      while (j < lines.length) {
+        const nextLine = lines[j];
+        const itemMatch = nextLine.match(new RegExp(`^\\s{${arrayIndent}}-\\s+(.+)$`));
+        if (itemMatch) { items.push(itemMatch[1].trim()); j++; } else break;
+      }
+      if (items.length > 0) {
+        result.push(`${filePathMatch[1]}file_path: [${items.join(', ')}]`);
+        i = j;
+        continue;
+      }
+    }
+    result.push(line);
+    i++;
+  }
+  return result.join('\n');
+};
+
+const formToYaml = (formData: Partial<TestCase>): string => {
+  const obj: any = { name: formData.name || '', login_required: formData.login_required ?? false };
+  if (formData.description) obj.description = formData.description;
+  if (formData.snapshot) obj.snapshot = formData.snapshot;
+  if (formData.use_snapshot) obj.use_snapshot = formData.use_snapshot;
+  obj.steps = formData.steps?.map(step => {
+    if (step.step_type === 'action') {
+      const s: any = { action: step.action?.description || '' };
+      if (step.action?.args && Object.keys(step.action.args).length > 0) {
+        const filteredArgs: Record<string, any> = {};
+        Object.entries(step.action.args).forEach(([k, v]) => {
+          if (v !== undefined && v !== null && v !== '') {
+            if (k === 'file_path' && typeof v === 'string' && v.includes(','))
+              filteredArgs[k] = v.split(',').map((x: string) => x.trim());
+            else filteredArgs[k] = v;
+          }
+        });
+        if (Object.keys(filteredArgs).length > 0) s.args = filteredArgs;
+      }
+      return s;
+    } else {
+      const s: any = { verify: step.verify?.assertion || '' };
+      if (step.verify?.args && Object.keys(step.verify.args).length > 0) {
+        const filteredArgs: Record<string, any> = {};
+        Object.entries(step.verify.args).forEach(([k, v]) => {
+          if (v !== undefined && v !== null && String(v) !== '') filteredArgs[k] = v;
+        });
+        if (Object.keys(filteredArgs).length > 0) s.args = filteredArgs;
+      }
+      return s;
+    }
+  }) || [];
+  const yamlText = yaml.dump([obj], { lineWidth: -1, noRefs: true });
+  return convertArraysToFlowStyle(yamlText);
+};
+
+const yamlToForm = (yamlText: string): { data: Partial<TestCase> | null; error: string | null } => {
+  const syntaxCheck = validateYamlSyntax(yamlText);
+  if (!syntaxCheck.valid) return { data: null, error: syntaxCheck.error };
+  try {
+    let parsed: any = yaml.load(yamlText);
+    if (!parsed || typeof parsed !== 'object') return { data: null, error: 'YAML 格式错误: 必须是一个对象或数组' };
+    if (Array.isArray(parsed)) {
+      if (parsed.length === 0) return { data: null, error: 'YAML 格式错误: 数组不能为空' };
+      if (parsed.length > 1) return { data: null, error: 'YAML 格式错误: 单个用例编辑器只能包含一个测试用例' };
+      parsed = parsed[0];
+    }
+    const result: Partial<TestCase> = {
+      name: parsed.name || '', description: parsed.description || '',
+      login_required: parsed.login_required ?? false,
+      snapshot: parsed.snapshot, use_snapshot: parsed.use_snapshot,
+      status: 'active', steps: [],
+    };
+    if (!Array.isArray(parsed.steps)) return { data: null, error: 'YAML 格式错误: steps 必须是一个列表' };
+    for (const rawStep of parsed.steps) {
+      if (!rawStep || typeof rawStep !== 'object') continue;
+      let step_type: 'action' | 'verify' | null = null;
+      let description: string | undefined;
+      let assertion: string | undefined;
+      let args: Record<string, any> | undefined;
+      if (rawStep.action !== undefined) { step_type = 'action'; description = String(rawStep.action); args = rawStep.args; }
+      else if (rawStep.verify !== undefined) { step_type = 'verify'; assertion = String(rawStep.verify); args = rawStep.args; }
+      if (!step_type) continue;
+      result.steps!.push({
+        id: crypto.randomUUID(), order: result.steps!.length + 1, step_type,
+        action: step_type === 'action' ? { description: description || '', args } : undefined,
+        verify: step_type === 'verify' ? { assertion: assertion || '', args } : undefined,
+      });
+    }
+    if (!result.name || result.name.trim() === '') return { data: null, error: '用例名称不能为空' };
+    const validSteps = result.steps!.filter(s =>
+      s.step_type === 'action' ? s.action?.description?.trim() : s.verify?.assertion?.trim()
+    );
+    if (validSteps.length === 0) return { data: null, error: '至少需要一个有效的测试步骤' };
+    result.steps = validSteps;
+    return { data: result, error: null };
+  } catch (err) {
+    return { data: null, error: 'YAML 解析失败: ' + (err as Error).message };
+  }
+};
+
+// Convert API TestCase to frontend TestCase
+function toFrontendTestCase(apiCase: APITestCase): TestCase {
+  return {
+    id: apiCase.id,
+    businessId: apiCase.business_id,
+    name: apiCase.name,
+    description: apiCase.description || '',
+    login_required: apiCase.login_required ?? false,
+    steps: (apiCase.steps || []).map((step, idx) => {
+      let description = '';
+      let assertion = '';
+      let args = step.args || {};
+      if (step.step_type === 'action') {
+        if (typeof step.description === 'object' && step.description !== null) {
+          const descObj = step.description as any;
+          description = descObj.description || JSON.stringify(step.description);
+          if (descObj.args) args = { ...args, ...descObj.args };
+        } else {
+          description = step.description || '';
+        }
+      } else {
+        assertion = step.assertion || '';
+      }
+      return {
+        id: crypto.randomUUID(), order: idx + 1, step_type: step.step_type,
+        action: step.step_type === 'action' ? { description, args } : undefined,
+        verify: step.step_type === 'verify' ? { assertion, args } : undefined,
+      };
+    }),
+    snapshot: apiCase.snapshot,
+    use_snapshot: apiCase.use_snapshot,
+    createdAt: (apiCase.created_at || new Date().toISOString()).split('T')[0],
+    status: (apiCase.status || 'active') as 'draft' | 'active' | 'disabled',
+  };
+}
+
+// ============================================================================
+// Types
+// ============================================================================
+
+type EditorTab = 'form' | 'yaml';
+
+type DebugState = 'idle' | 'configuring' | 'running' | 'completed' | 'failed';
+
+// ============================================================================
+// CaseEditorPage Component
+// ============================================================================
+
+export function CaseEditorPage() {
+  const { businessId, caseId } = useParams<{ businessId: string; caseId: string }>();
+  const navigate = useNavigate();
+  const isNewCase = caseId === 'new';
+
+  // ---- Loading state ----
+  const [pageLoading, setPageLoading] = useState(true);
+  const [business, setBusiness] = useState<{ id: string; name: string; environments: Environment[] } | null>(null);
+
+  // ---- Editor state ----
+  const [activeTab, setActiveTab] = useState<EditorTab>('form');
+  const [formData, setFormData] = useState<Partial<TestCase>>({
+    name: '', description: '', login_required: false, snapshot: '', use_snapshot: '', status: 'active',
+    steps: [{ id: crypto.randomUUID(), order: 1, step_type: 'action', action: { description: '' } }],
+  });
+  const [modalYaml, setModalYaml] = useState('');
+  const [modalYamlError, setModalYamlError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [expandedArgs, setExpandedArgs] = useState<Record<string, boolean>>({});
+  const [businessFiles, setBusinessFiles] = useState<BusinessFile[]>([]);
+
+  // ---- Unsaved changes state ----
+  const [isDirty, setIsDirty] = useState(false);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+
+  // ---- Debug state ----
+  const [debugState, setDebugState] = useState<DebugState>('idle');
+  const [debugEnvironmentId, setDebugEnvironmentId] = useState('');
+  const [debugModel, setDebugModel] = useState('');
+  const [debugExecutionId, setDebugExecutionId] = useState<string | null>(null);
+  const [debugProgress, setDebugProgress] = useState<ExecutionProgress | null>(null);
+  const [debugReportUrl, setDebugReportUrl] = useState<string | null>(null);
+  const [debugError, setDebugError] = useState<string | null>(null);
+  const [availableModels, setAvailableModels] = useState<{ models: string[]; default: string }>({ models: [], default: '' });
+  const pollTimerRef = useRef<number | null>(null);
+  const logEndRef = useRef<HTMLDivElement>(null);
+
+  // ---- Load business, case, models on mount ----
+  useEffect(() => {
+    if (!businessId) return;
+    const load = async () => {
+      try {
+        setPageLoading(true);
+        const [biz, models] = await Promise.all([
+          apiClient.getBusiness(businessId),
+          apiClient.getAvailableModels(),
+        ]);
+        setBusiness({
+          id: biz.id,
+          name: biz.name,
+          environments: (biz.environments || []).map(e => ({
+            id: e.id || '', name: e.name, url: e.url,
+            auth_type: e.auth_type || 'none',
+            sso_username: e.sso_username, sso_password: e.sso_password,
+            cookies: e.cookies, ignore_rules: e.ignore_rules, browser_config: e.browser_config,
+          })),
+        });
+        setAvailableModels(models);
+        setDebugModel(models.default);
+
+        // Set first environment as default
+        if (biz.environments && biz.environments.length > 0) {
+          setDebugEnvironmentId(biz.environments[0].id || '');
+        }
+
+        // Load test case data (edit mode)
+        if (!isNewCase && caseId) {
+          const apiCase = await apiClient.getTestCase(caseId);
+          const tc = toFrontendTestCase(apiCase);
+          const data: Partial<TestCase> = {
+            name: tc.name, description: tc.description, login_required: tc.login_required,
+            snapshot: tc.snapshot, use_snapshot: tc.use_snapshot, status: tc.status,
+            steps: tc.steps.length > 0 ? tc.steps : [{ id: crypto.randomUUID(), order: 1, step_type: 'action', action: { description: '' } }],
+          };
+          setFormData(data);
+          try { setModalYaml(formToYaml(data)); } catch {}
+        } else {
+          // New case — set YAML template
+          setModalYaml(`- name: ''\n  login_required: false\n  steps:\n    - action: ''`);
+        }
+
+        // Load business files
+        try {
+          const files = await apiClient.getFiles(businessId);
+          setBusinessFiles(files.items.map((f: any) => ({
+            id: f.id, name: f.name, size: f.size, type: f.type || f.mime_type,
+            uploadedAt: f.uploaded_at || f.created_at, url: f.url || f.oss_url,
+          })));
+        } catch {}
+      } catch (err) {
+        console.error('Failed to load data:', err);
+      } finally {
+        setPageLoading(false);
+      }
+    };
+    load();
+    // Cleanup polling on unmount
+    return () => { if (pollTimerRef.current) clearInterval(pollTimerRef.current); };
+  }, [businessId, caseId, isNewCase]);
+
+  // ---- Sync form to YAML ----
+  const updateFormData = useCallback((newData: Partial<TestCase>) => {
+    setFormData(newData);
+    setIsDirty(true);
+    try {
+      setModalYaml(formToYaml(newData));
+      setModalYamlError(null);
+    } catch (e) {
+      setModalYamlError('YAML 生成失败');
+    }
+  }, []);
+
+  // ---- Sync YAML to form ----
+  const handleYamlChange = useCallback((yamlStr: string) => {
+    setModalYaml(yamlStr);
+    setIsDirty(true);
+    const { data, error } = yamlToForm(yamlStr);
+    if (error) setModalYamlError(error);
+    else if (data) { setModalYamlError(null); setFormData(prev => ({ ...prev, ...data })); }
+  }, []);
+
+  // ---- Save ----
+  const handleSave = async () => {
+    if (saving) return;
+    setSaveError(null);
+    setSaving(true);
+    try {
+      // If on YAML tab, sync from YAML first
+      if (activeTab === 'yaml') {
+        const { data, error } = yamlToForm(modalYaml);
+        if (error) { setSaveError(error); setSaving(false); return; }
+        if (data) setFormData(prev => ({ ...prev, ...data }));
+      }
+
+      const dataToSave = activeTab === 'yaml' ? (() => { const r = yamlToForm(modalYaml); return r.data || formData; })() : formData;
+
+      const apiSteps = dataToSave.steps!.map(step => ({
+        step_type: step.step_type,
+        description: step.step_type === 'action' ? step.action?.description : undefined,
+        assertion: step.step_type === 'verify' ? step.verify?.assertion : undefined,
+        args: step.step_type === 'action' ? step.action?.args : step.verify?.args,
+      }));
+
+      if (isNewCase) {
+        const created = await apiClient.createTestCase({
+          business_id: businessId!,
+          name: dataToSave.name!,
+          description: dataToSave.description,
+          login_required: dataToSave.login_required ?? false,
+          snapshot: dataToSave.snapshot,
+          use_snapshot: dataToSave.use_snapshot,
+          steps: apiSteps,
+        });
+        // Navigate to the newly created case's editor page
+        navigate(`/business/${businessId}/case/${created.id}`, { replace: true });
+      } else {
+        await apiClient.updateTestCase(caseId!, {
+          name: dataToSave.name,
+          description: dataToSave.description,
+          login_required: dataToSave.login_required,
+          snapshot: dataToSave.snapshot,
+          use_snapshot: dataToSave.use_snapshot,
+          steps: apiSteps,
+        });
+      }
+      setSaveError(null);
+      setIsDirty(false);
+    } catch (err: any) {
+      setSaveError(err.message || '保存失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ---- Back navigation with unsaved changes check ----
+  const handleBack = () => {
+    if (isDirty) {
+      setShowLeaveConfirm(true);
+    } else {
+      navigate(`/business/${businessId}`);
+    }
+  };
+
+  const handleLeaveWithSave = async () => {
+    setShowLeaveConfirm(false);
+    await handleSave();
+    navigate(`/business/${businessId}`);
+  };
+
+  const handleLeaveWithoutSave = () => {
+    setShowLeaveConfirm(false);
+    navigate(`/business/${businessId}`);
+  };
+
+  // ---- Form step helpers ----
+  const addStep = () => {
+    const newOrder = formData.steps!.length + 1;
+    updateFormData({
+      ...formData,
+      steps: [...formData.steps!, { id: crypto.randomUUID(), order: newOrder, step_type: 'action', action: { description: '' } }],
+    });
+  };
+
+  const updateStepType = (index: number, newType: 'action' | 'verify') => {
+    const newSteps = [...formData.steps!];
+    if (newType === 'action') {
+      newSteps[index] = { ...newSteps[index], step_type: 'action', action: { description: newSteps[index].verify?.assertion || '' }, verify: undefined };
+    } else {
+      newSteps[index] = { ...newSteps[index], step_type: 'verify', verify: { assertion: newSteps[index].action?.description || '' }, action: undefined };
+    }
+    updateFormData({ ...formData, steps: newSteps });
+  };
+
+  const updateStepDescription = (index: number, value: string) => {
+    const newSteps = [...formData.steps!];
+    const step = newSteps[index];
+    if (step.step_type === 'action' && step.action) step.action.description = value;
+    else if (step.step_type === 'verify' && step.verify) step.verify.assertion = value;
+    updateFormData({ ...formData, steps: newSteps });
+  };
+
+  const updateStepArg = (index: number, argName: string, value: any) => {
+    const newSteps = [...formData.steps!];
+    const step = newSteps[index];
+    if (step.step_type === 'action' && step.action) {
+      if (!step.action.args) step.action.args = {};
+      if (value === '' || value === null) delete step.action.args[argName as keyof typeof step.action.args];
+      else (step.action.args as any)[argName] = value;
+    } else if (step.step_type === 'verify' && step.verify) {
+      if (!step.verify.args) step.verify.args = {};
+      if (value === '' || value === null) delete step.verify.args[argName as keyof typeof step.verify.args];
+      else (step.verify.args as any)[argName] = value;
+    }
+    updateFormData({ ...formData, steps: newSteps });
+  };
+
+  const removeStep = (index: number) => {
+    if (formData.steps!.length > 1) {
+      const newSteps = formData.steps!.filter((_, i) => i !== index);
+      newSteps.forEach((s, i) => { s.order = i + 1; });
+      updateFormData({ ...formData, steps: newSteps });
+    }
+  };
+
+  // ---- Debug ----
+  const startDebug = async () => {
+    if (!debugEnvironmentId || !debugModel) {
+      setDebugError('请选择环境和模型');
+      return;
+    }
+
+    // Must save before debugging
+    if (isNewCase) {
+      setDebugError('请先保存用例后再调试');
+      return;
+    }
+
+    setDebugState('running');
+    setDebugError(null);
+    setDebugProgress(null);
+    setDebugReportUrl(null);
+
+    try {
+      const exec = await apiClient.createExecution({
+        business_id: businessId!,
+        environment_id: debugEnvironmentId,
+        test_case_ids: [caseId!],
+        model: debugModel,
+        workers: 1,
+        trigger_type: 'debug',
+      });
+      setDebugExecutionId(exec.id);
+
+      // Start polling progress
+      const pollInterval = setInterval(async () => {
+        try {
+          const progress = await apiClient.getExecutionProgress(exec.id);
+          setDebugProgress(progress);
+
+          // Auto scroll logs
+          setTimeout(() => logEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+
+          if (['completed', 'failed', 'timeout', 'passed', 'warning'].includes(progress.status)) {
+            clearInterval(pollInterval);
+            pollTimerRef.current = null;
+
+            // Fetch final execution to get report URL
+            try {
+              const finalExec = await apiClient.getExecution(exec.id);
+              if (finalExec.oss_report_url) setDebugReportUrl(finalExec.oss_report_url);
+            } catch {}
+
+            setDebugState(progress.status === 'completed' || progress.status === 'passed' ? 'completed' : 'failed');
+          }
+        } catch (err) {
+          console.error('Progress poll error:', err);
+        }
+      }, 2000);
+
+      pollTimerRef.current = pollInterval as unknown as number;
+    } catch (err: any) {
+      setDebugError(err.message || '调试启动失败');
+      setDebugState('idle');
+    }
+  };
+
+  const stopDebug = () => {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+    setDebugState('idle');
+  };
+
+  // ---- Render ----
+  if (pageLoading) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-gray-50">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
+          <p className="text-gray-500 text-sm">加载中...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col bg-gray-50 flex-1 h-0">
+      {/* ===== Leave Confirmation Modal ===== */}
+      {showLeaveConfirm && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
+          onClick={() => setShowLeaveConfirm(false)}
+        >
+          <div
+            className="bg-white shadow-2xl"
+            style={{ width: 400, borderRadius: 16, padding: '28px 32px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-base font-semibold text-gray-900 mb-2">未保存的修改</h3>
+            <p className="text-sm text-gray-500 mb-6 leading-relaxed">当前用例有未保存的修改，是否保存后再离开？</p>
+            <div className="flex items-center justify-end gap-3">
+              <button
+                onClick={() => setShowLeaveConfirm(false)}
+                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+                style={{ borderRadius: 8 }}
+              >
+                取消
+              </button>
+              <button
+                onClick={handleLeaveWithoutSave}
+                className="px-4 py-2 border border-gray-200 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                style={{ borderRadius: 8 }}
+              >
+                不保存离开
+              </button>
+              <button
+                onClick={handleLeaveWithSave}
+                className="px-4 py-2 bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors"
+                style={{ borderRadius: 8 }}
+              >
+                保存并离开
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Header (consistent with TestCaseManager) ===== */}
+      <div className="flex-shrink-0 z-30">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-4 sm:pt-6 pb-0">
+          {/* Row 1: Back button — same position as TestCaseManager's "返回业务列表" */}
+          <div className="flex items-center gap-3 mb-4">
+            {business && (
+              <span className="text-sm font-medium text-gray-400">{business.name}</span>
+            )}
+            {business && <span className="text-gray-300">/</span>}
+            <button
+              onClick={handleBack}
+              className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
+            >
+              <ArrowLeft className="w-5 h-5" />
+              返回用例列表
+            </button>
+          </div>
+
+          {/* Row 2: Title + Save button on the same line */}
+          <div className="flex items-center justify-between gap-4 mb-4">
+            <h1 className="text-2xl font-bold text-gray-900">
+              {isNewCase ? '新建用例' : (formData.name || '编辑用例')}
+            </h1>
+            <div className="flex items-center gap-3 flex-shrink-0">
+              {saveError && (
+                <span className="text-xs text-red-500 flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" /> {saveError}
+                </span>
+              )}
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:opacity-50"
+              >
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ===== Main Content ===== */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-4 sm:pb-6 flex flex-col gap-4">
+          {/* ===== Two-column area (fixed height, scrollable) ===== */}
+          <div className="flex gap-4">
+            {/* ===== Left Panel: Editor (Tab: Form / YAML) ===== */}
+            <div className="flex-1 flex flex-col bg-white rounded-lg border border-gray-200 overflow-hidden min-w-0" style={{ height: 600, maxHeight: 600 }}>
+              {/* Tabs */}
+              <div className="flex items-center border-b border-gray-200 bg-white flex-shrink-0 px-4">
+                <button
+                  onClick={() => setActiveTab('form')}
+                  className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                    activeTab === 'form'
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  <LayoutList className="w-4 h-4" />
+                  表单编辑
+                </button>
+                <button
+                  onClick={() => setActiveTab('yaml')}
+                  className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                    activeTab === 'yaml'
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  <Code className="w-4 h-4" />
+                  YAML 编辑
+                  {modalYamlError ? (
+                    <span className="ml-1 text-xs text-red-500">✗</span>
+                  ) : (
+                    <span className="ml-1 text-xs text-green-500">✓</span>
+                  )}
+                </button>
+              </div>
+
+              {/* Tab Content — flex column so each mode fills & scrolls independently */}
+              <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                {activeTab === 'form' ? (
+                  /* ===== Form Mode ===== */
+                  <div className="flex-1 overflow-y-auto min-h-0 p-4 sm:p-6">
+                  <div className="space-y-4 max-w-2xl">
+                    {/* Name */}
+                    <div>
+                      <label className="block text-sm font-medium mb-1.5 text-gray-700">用例名称 *</label>
+                      <input
+                        type="text"
+                        required
+                        value={formData.name}
+                        onChange={(e) => updateFormData({ ...formData, name: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                        placeholder="例如：登录校验-登录按钮"
+                      />
+                    </div>
+
+                    {/* Login Required */}
+                    <label className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-gray-100">
+                      <input
+                        type="checkbox"
+                        checked={formData.login_required ?? false}
+                        onChange={(e) => updateFormData({ ...formData, login_required: e.target.checked })}
+                        className="w-4 h-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                      />
+                      <Key className="w-4 h-4 text-amber-500" />
+                      <span className="text-sm text-gray-700">需要登录</span>
+                    </label>
+
+                    {/* Snapshot */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-sm font-medium mb-1.5 text-gray-700">创建快照 (Snapshot)</label>
+                        <input
+                          type="text"
+                          value={formData.snapshot || ''}
+                          onChange={(e) => updateFormData({ ...formData, snapshot: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                          placeholder="例如：global_before"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-1.5 text-gray-700">使用快照 (Use Snapshot)</label>
+                        <input
+                          type="text"
+                          value={formData.use_snapshot || ''}
+                          onChange={(e) => updateFormData({ ...formData, use_snapshot: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                          placeholder="例如：global_before"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Steps */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="text-sm font-medium text-gray-700">测试步骤 *</label>
+                        <button type="button" onClick={addStep} className="text-xs text-blue-600 hover:text-blue-700 font-medium">
+                          + 添加步骤
+                        </button>
+                      </div>
+                      <div className="space-y-2">
+                        {formData.steps!.map((step, index) => (
+                          <div key={step.id} className="border border-gray-200 rounded-lg p-3 bg-white">
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="w-5 h-5 bg-blue-600 text-white rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0">
+                                {step.order}
+                              </span>
+                              <select
+                                value={step.step_type}
+                                onChange={(e) => updateStepType(index, e.target.value as 'action' | 'verify')}
+                                className={`px-2 py-0.5 rounded text-xs font-medium border-0 cursor-pointer ${
+                                  step.step_type === 'action' ? 'bg-green-100 text-green-700' : 'bg-purple-100 text-purple-700'
+                                }`}
+                              >
+                                <option value="action">Action</option>
+                                <option value="verify">Verify</option>
+                              </select>
+                              {formData.steps!.length > 1 && (
+                                <button type="button" onClick={() => removeStep(index)} className="ml-auto text-xs text-red-500 hover:text-red-700">
+                                  删除
+                                </button>
+                              )}
+                            </div>
+                            <textarea
+                              required
+                              value={step.step_type === 'action' ? step.action?.description || '' : step.verify?.assertion || ''}
+                              onChange={(e) => updateStepDescription(index, e.target.value)}
+                              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono resize-y"
+                              placeholder={step.step_type === 'action' ? '操作描述' : '验证条件'}
+                              rows={2}
+                            />
+                            <div className="mt-2 flex items-center gap-2 flex-wrap">
+                              <button
+                                type="button"
+                                onClick={() => setExpandedArgs(prev => ({ ...prev, [step.id]: !prev[step.id] }))}
+                                className={`text-xs px-2 py-1 rounded ${expandedArgs[step.id] ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                              >
+                                {expandedArgs[step.id] ? '▼ 参数' : '▶ 参数'}
+                              </button>
+                            </div>
+                            {expandedArgs[step.id] && (
+                              <div className="mt-2 bg-gray-50 rounded p-2">
+                                {step.step_type === 'action' && (
+                                  <div className="space-y-2">
+                                    <div className="text-xs text-gray-600 font-medium mb-1">选择上传文件（可多选）:</div>
+                                    {businessFiles.length === 0 ? (
+                                      <div className="text-xs text-gray-400 italic">暂无可用文件</div>
+                                    ) : (
+                                      <div className="space-y-1 max-h-40 overflow-y-auto">
+                                        {businessFiles.map(file => {
+                                          const currentFiles = (() => { const fp = step.action?.args?.file_path; if (!fp) return []; if (Array.isArray(fp)) return fp; return [fp]; })();
+                                          const isChecked = currentFiles.includes(file.name);
+                                          return (
+                                            <label key={file.id} className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer hover:bg-gray-100 p-1 rounded">
+                                              <input type="checkbox" checked={isChecked} onChange={(e) => {
+                                                const curr = (() => { const fp = step.action?.args?.file_path; if (!fp) return []; if (Array.isArray(fp)) return fp; return [fp]; })();
+                                                let newFiles: string[];
+                                                if (e.target.checked) newFiles = [...curr, file.name];
+                                                else newFiles = curr.filter((f: string) => f !== file.name);
+                                                const val = newFiles.length === 0 ? '' : newFiles.length === 1 ? newFiles[0] : newFiles;
+                                                updateStepArg(index, 'file_path', val);
+                                              }} className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600" />
+                                              <span className="flex-1">{file.name}</span>
+                                            </label>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                                {step.step_type === 'verify' && (
+                                  <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                                    <input type="checkbox" checked={step.verify?.args?.use_context || false} onChange={(e) => updateStepArg(index, 'use_context', e.target.checked)} className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600" />
+                                    使用上下文验证
+                                  </label>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  </div>
+                ) : (
+                  /* ===== YAML Mode ===== */
+                  <div className="flex-1 flex flex-col min-h-0 bg-slate-900">
+                    <div className="px-4 py-2 bg-slate-800 flex items-center justify-between flex-shrink-0">
+                      <div className="flex items-center gap-2">
+                        <Code className="w-4 h-4 text-emerald-400" />
+                        <span className="text-sm font-medium text-slate-200">YAML</span>
+                        {modalYamlError ? (
+                          <span className="text-xs text-red-400 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> 格式错误</span>
+                        ) : (
+                          <span className="text-xs text-emerald-400">✓ 有效</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex-1 min-h-0 p-4 overflow-y-auto">
+                      <textarea
+                        value={modalYaml}
+                        onChange={(e) => handleYamlChange(e.target.value)}
+                        className={`w-full h-full bg-transparent font-mono text-sm leading-relaxed focus:outline-none resize-none ${
+                          modalYamlError ? 'text-red-400' : 'text-emerald-300'
+                        }`}
+                        spellCheck={false}
+                        placeholder={`- name: 用例名称\n  login_required: false\n  steps:\n    - action: 点击按钮\n    - verify: 验证结果`}
+                      />
+                    </div>
+                    {modalYamlError && (
+                      <div className="px-4 py-2 bg-red-900/50 text-red-300 text-xs border-t border-red-800">
+                        {modalYamlError}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ===== Right Panel: Debug ===== */}
+            <div className="w-[400px] flex-shrink-0 flex flex-col bg-white rounded-lg border border-gray-200 overflow-hidden" style={{ height: 600, maxHeight: 600 }}>
+              {/* Debug Header + Config: env, model, button on same row */}
+              <div className="px-4 py-3 border-b border-gray-200 flex-shrink-0 space-y-3">
+                <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                  <Play className="w-4 h-4 text-green-600" />
+                  Debug 调试
+                </h3>
+                {/* Env + Model + Debug Button — all on one line */}
+                <div className="flex items-center gap-2">
+                  <select
+                    value={debugEnvironmentId}
+                    onChange={(e) => setDebugEnvironmentId(e.target.value)}
+                    disabled={debugState === 'running'}
+                    className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white disabled:bg-gray-100 disabled:cursor-not-allowed"
+                  >
+                    <option value="">选择环境</option>
+                    {business?.environments.map(env => (
+                      <option key={env.id} value={env.id}>{env.name}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={debugModel}
+                    onChange={(e) => setDebugModel(e.target.value)}
+                    disabled={debugState === 'running'}
+                    className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white disabled:bg-gray-100 disabled:cursor-not-allowed"
+                  >
+                    {availableModels.models.map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                  {debugState === 'running' ? (
+                    <button
+                      onClick={stopDebug}
+                      className="flex items-center justify-center gap-1.5 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium flex-shrink-0"
+                    >
+                      <Square className="w-4 h-4" />
+                      停止
+                    </button>
+                  ) : (
+                    <button
+                      onClick={startDebug}
+                      disabled={isNewCase || !debugEnvironmentId}
+                      className="flex items-center justify-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
+                    >
+                      <Play className="w-4 h-4" />
+                      调试
+                    </button>
+                  )}
+                </div>
+                {isNewCase && (
+                  <p className="text-xs text-amber-600">请先保存用例后再调试</p>
+                )}
+                {debugError && (
+                  <div className="text-xs text-red-600 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3 flex-shrink-0" /> {debugError}
+                  </div>
+                )}
+              </div>
+
+              {/* Debug Logs — scrollable, fixed height */}
+              <div className="flex flex-col overflow-hidden">
+                <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex items-center gap-2 flex-shrink-0">
+                  <FileText className="w-3.5 h-3.5 text-gray-500" />
+                  <span className="text-xs font-medium text-gray-600">实时执行日志</span>
+                  {debugState === 'running' && (
+                    <span className="ml-auto flex items-center gap-1 text-xs text-blue-600">
+                      <Loader2 className="w-3 h-3 animate-spin" /> 执行中
+                    </span>
+                  )}
+                  {debugState === 'completed' && (
+                    <span className="ml-auto text-xs text-green-600">✓ 调试完成</span>
+                  )}
+                  {debugState === 'failed' && (
+                    <span className="ml-auto text-xs text-red-600">✗ 调试失败</span>
+                  )}
+                </div>
+                <div className="overflow-y-auto bg-gray-900 p-3 font-mono text-xs leading-relaxed" style={{ height: '560px', maxHeight: '560px' }}>
+                  {debugProgress && debugProgress.logs.length > 0 ? (
+                    <>
+                      {debugProgress.logs.map((log, i) => (
+                        <div key={i} className="text-gray-300 whitespace-pre-wrap break-words py-0.5">
+                          {log}
+                        </div>
+                      ))}
+                      <div ref={logEndRef} />
+                    </>
+                  ) : (
+                    <div className="text-gray-500 text-center py-8">
+                      {debugState === 'running' ? '等待日志输出...' : '点击「调试」执行当前用例'}
+                    </div>
+                  )}
+                </div>
+
+                {/* Task progress info */}
+                {debugProgress && (debugProgress.completed.length > 0 || debugProgress.running.length > 0) && (
+                  <div className="px-3 py-2 bg-gray-800 border-t border-gray-700 flex-shrink-0">
+                    {debugProgress.running.map((task, i) => (
+                      <div key={i} className="text-xs text-blue-400 flex items-center gap-1.5">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        {task.name} ({task.elapsed?.toFixed(0)}s)
+                      </div>
+                    ))}
+                    {debugProgress.completed.map((task, i) => (
+                      <div key={i} className={`text-xs flex items-center gap-1.5 ${task.status === 'success' ? 'text-green-400' : 'text-red-400'}`}>
+                        {task.status === 'success' ? '✓' : '✗'} {task.name} ({task.duration?.toFixed(1)}s)
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* View Report Button */}
+              {debugReportUrl && (
+                <div className="px-4 py-3 border-t border-gray-200 flex-shrink-0">
+                  <button
+                    onClick={() => window.open(debugReportUrl, '_blank')}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    查看测试报告
+                  </button>
+                </div>
+              )}
+
+              {/* View Execution Detail */}
+              {debugExecutionId && debugState !== 'running' && debugState !== 'idle' && (
+                <div className="px-4 pb-3 flex-shrink-0">
+                  <button
+                    onClick={() => navigate(`/execution/${debugExecutionId}`)}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm"
+                  >
+                    <FileText className="w-4 h-4" />
+                    查看执行详情
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ===== Browser Monitor — full width below both panels ===== */}
+          <div className="flex-shrink-0">
+            <div className="bg-white rounded-lg border border-gray-200 p-4 flex items-center justify-center gap-4 opacity-50 cursor-not-allowed">
+              <Monitor className="w-6 h-6 text-gray-400" />
+              <div>
+                <span className="text-sm text-gray-500 font-medium">浏览器监控</span>
+                <span className="text-xs text-gray-400 ml-2">功能开发中，敬请期待</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

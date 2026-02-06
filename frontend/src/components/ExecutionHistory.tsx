@@ -242,17 +242,6 @@ export function ExecutionHistory({ businesses }: Props) {
                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-32">
                   任务ID
                 </th>
-                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-48">
-                  <button
-                    onClick={toggleSortOrder}
-                    className="flex items-center gap-1.5 hover:text-gray-900 transition-colors group text-xs font-semibold uppercase tracking-wider"
-                  >
-                    执行时间
-                    <span className="text-gray-400 group-hover:text-gray-600">
-                      {sortOrder === 'desc' ? '↓' : '↑'}
-                    </span>
-                  </button>
-                </th>
                 <th
                   className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors relative group"
                 >
@@ -302,6 +291,17 @@ export function ExecutionHistory({ businesses }: Props) {
                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   失败数
                 </th>
+                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-48">
+                  <button
+                    onClick={toggleSortOrder}
+                    className="flex items-center gap-1.5 hover:text-gray-900 transition-colors group text-xs font-semibold uppercase tracking-wider"
+                  >
+                    执行时间
+                    <span className="text-gray-400 group-hover:text-gray-600">
+                      {sortOrder === 'desc' ? '↓' : '↑'}
+                    </span>
+                  </button>
+                </th>
                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   操作 / 状态
                 </th>
@@ -315,18 +315,6 @@ export function ExecutionHistory({ businesses }: Props) {
                     <span className="font-mono text-sm text-gray-500 bg-gray-100 px-2 py-1 rounded group-hover:bg-gray-200 transition-colors" title={exec.id}>
                       {exec.id.slice(0, 8)}
                     </span>
-                  </td>
-
-                  {/* Execution Time */}
-                  <td className="px-6 py-4">
-                    <div className="flex flex-col">
-                      <span className="text-sm font-medium text-gray-900">
-                        {formatTime(exec.started_at || exec.created_at).split(' ')[0]}
-                      </span>
-                      <span className="text-xs text-gray-400">
-                        {formatTime(exec.started_at || exec.created_at).split(' ')[1]}
-                      </span>
-                    </div>
                   </td>
 
                   {/* Business & Environment */}
@@ -364,9 +352,9 @@ export function ExecutionHistory({ businesses }: Props) {
 
                   {/* Warning Count */}
                   <td className="px-6 py-4">
-                    {exec.result_count ? (
+                    {exec.result_count && (exec.result_count.warning || 0) > 0 ? (
                       <span className="text-sm font-semibold text-yellow-500">
-                        {exec.result_count.warning || 0}
+                        {exec.result_count.warning}
                       </span>
                     ) : (
                       <span className="text-gray-400">-</span>
@@ -375,13 +363,25 @@ export function ExecutionHistory({ businesses }: Props) {
 
                   {/* Failed Count */}
                   <td className="px-6 py-4">
-                    {exec.result_count ? (
+                    {exec.result_count && exec.result_count.failed > 0 ? (
                       <span className="text-sm font-semibold text-red-600 bg-red-50 px-2 py-1 rounded">
                         {exec.result_count.failed}
                       </span>
                     ) : (
                       <span className="text-gray-400">-</span>
                     )}
+                  </td>
+
+                  {/* Execution Time */}
+                  <td className="px-6 py-4">
+                    <div className="flex flex-col">
+                      <span className="text-sm font-medium text-gray-900">
+                        {formatTime(exec.started_at || exec.created_at).split(' ')[0]}
+                      </span>
+                      <span className="text-xs text-gray-400">
+                        {formatTime(exec.started_at || exec.created_at).split(' ')[1]}
+                      </span>
+                    </div>
                   </td>
 
                   {/* Actions / Status */}
@@ -482,6 +482,18 @@ export function ExecutionHistory({ businesses }: Props) {
         <div className="text-center py-16 bg-white rounded-lg border border-gray-200">
           <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
           <p className="text-gray-500 text-lg">暂无执行记录</p>
+          {(selectedBusinessId || selectedTriggerType) && (
+            <button
+              onClick={() => {
+                setSelectedBusinessId('');
+                setSelectedTriggerType('');
+                setCurrentPage(1);
+              }}
+              className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors text-sm font-medium"
+            >
+              查看全部记录
+            </button>
+          )}
         </div>
       )}
     </div>

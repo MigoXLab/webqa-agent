@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plus, PlayCircle, Edit, Trash2, FileText, Upload, Folder, Calendar, Settings, Loader2, LayoutList, Code, Key, AlertCircle, Check } from 'lucide-react';
 import { Business, TestCase, Environment, TestStep, BatchExecution, BusinessFile } from '../App';
 import { ConfigImportExport } from './ConfigImportExport';
@@ -452,6 +453,7 @@ export function TestCaseManager({
   setActiveTab,
   availableModels
 }: Props) {
+  const navigate = useNavigate();
   const [showModal, setShowModal] = useState(false);
   const [editingCase, setEditingCase] = useState<TestCase | null>(null);
   const [selectedCases, setSelectedCases] = useState<string[]>([]);
@@ -711,36 +713,8 @@ export function TestCaseManager({
   };
 
   const handleEdit = (testCase: TestCase) => {
-    setEditingCase(testCase);
-
-    // Ensure steps is an array and properly formatted
-    const steps = Array.isArray(testCase.steps) ? testCase.steps : [];
-    const validSteps = steps.map(step => ({
-      id: step.id || crypto.randomUUID(),
-      order: step.order || 0,
-      step_type: step.step_type,
-      action: step.step_type === 'action' ? {
-        description: step.action?.description || '',
-        args: step.action?.args || {}
-      } : undefined,
-      verify: step.step_type === 'verify' ? {
-        assertion: step.verify?.assertion || '',
-        args: step.verify?.args || {}
-      } : undefined,
-    }));
-
-    const newData: Partial<TestCase> = {
-      name: testCase.name || '',
-      description: testCase.description || '',
-      login_required: testCase.login_required ?? false,
-      snapshot: testCase.snapshot,
-      use_snapshot: testCase.use_snapshot,
-      status: testCase.status || 'active',
-      steps: validSteps,
-    };
-    updateFormData(newData);
-    setIsYamlEditing(false);
-    setShowModal(true);
+    // Navigate to the full-screen case editor page
+    navigate(`/business/${business.id}/case/${testCase.id}`);
   };
 
   // Handle YAML change in modal - sync to form
@@ -1255,10 +1229,7 @@ export function TestCaseManager({
                   环境管理
                 </button>
                 <button
-                  onClick={() => {
-                    resetForm();
-                    setShowModal(true);
-                  }}
+                  onClick={() => navigate(`/business/${business.id}/case/new`)}
                   className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
                 >
                   <Plus className="w-4 h-4" />
@@ -1370,10 +1341,7 @@ export function TestCaseManager({
                     <FileText className="w-12 h-12 text-gray-300 mx-auto mb-4" />
                     <p className="text-gray-500 mb-4">还没有测试用例</p>
                     <button
-                    onClick={() => {
-                      resetForm();
-                      setShowModal(true);
-                    }}
+                    onClick={() => navigate(`/business/${business.id}/case/new`)}
                     className="text-blue-600 hover:text-blue-700 font-medium"
                     >
                     创建第一个测试用例
