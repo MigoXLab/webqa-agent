@@ -123,7 +123,7 @@ class UITool(BaseTool):
         raise NotImplementedError('Use arun for asynchronous execution.')
 
     async def _arun(
-        self, action: str, target: str, value: str = None, description: str = None, clear_before_type: bool = False
+        self, action: str, target: str, value: Optional[str] = None, description: Optional[str] = None, clear_before_type: bool = False
     ) -> str:
         """Executes a UI action using the UITester and returns a formatted
         summary of the result."""
@@ -250,7 +250,7 @@ class UITool(BaseTool):
                     actions=actions,
                     status=step_status,
                     step_type='action',
-                    end_time=end_time.strftime('%Y-%m-%d %H:%M:%S')
+                    timestamp=end_time.strftime('%Y-%m-%dT%H:%M:%S')  # ISO 8601 format
                 )
                 logging.debug(f'Recorded action step to CentralCaseRecorder: {instruction[:60]}...')
 

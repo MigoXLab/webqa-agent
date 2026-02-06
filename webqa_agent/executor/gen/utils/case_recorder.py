@@ -20,15 +20,20 @@ class CentralCaseRecorder:
         self.current_case_steps: list[dict] = []
         self.step_counter: int = 0
 
-    def start_case(self, case_name: str, case_data: dict | None = None):
+    def start_case(self, case_name: str, case_data: dict | None = None) -> None:
         if self.current_case_data:
             # Auto-finish previous to avoid overlap
             self.finish_case(final_status='interrupted', final_summary='Interrupted by new case start')
 
+        # Extract case_id from case_data if available for top-level access
+        case_info = case_data or {}
+        case_id = case_info.get('case_id', '')
+
         self.current_case_data = {
             'name': case_name,
-            'start_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'case_info': case_data or {},
+            'case_id': case_id,  # Top-level for CaseJsonSynchronizer lookup
+            'start_time': datetime.now().strftime('%Y-%m-%dT%H:%M:%S'),  # ISO 8601 format
+            'case_info': case_info,
             'steps': [],
             'status': 'running',
             'report': [],
@@ -38,7 +43,7 @@ class CentralCaseRecorder:
 
     def add_step(self, *, description: str, screenshots: list | None = None, screenshots_paths: list | None = None, model_io: str | dict | None = None,
                  actions: list | None = None, status: str = 'passed', step_type: str = 'action',
-                 end_time: str | None = None):
+                 timestamp: str | None = None) -> None:
         """Add a step to the current case recording.
 
         Args:
@@ -49,7 +54,7 @@ class CentralCaseRecorder:
             actions: List of actions
             status: Step status ("passed", "failed", "warning")
             step_type: Type of step ("action", "verify", "ux_verify")
-            end_time: End time string, auto-generated if not provided
+            timestamp: Timestamp string (ISO 8601), auto-generated if not provided
         """
         if not self.current_case_data:
             # Create a default unnamed case if none started
@@ -59,7 +64,7 @@ class CentralCaseRecorder:
 
         screenshots = screenshots or []
         actions = actions or []
-        end_time = end_time or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        timestamp = timestamp or datetime.now().strftime('%Y-%m-%dT%H:%M:%S')  # ISO 8601 format
 
         # Normalize screenshots to dict format for storage
         normalized_screenshots = []
@@ -106,7 +111,7 @@ class CentralCaseRecorder:
             'modelIO': model_io_str,
             'actions': actions,
             'status': status,
-            'end_time': end_time,
+            'timestamp': timestamp,  # ISO 8601 format for CaseJsonSynchronizer
         }
 
         self.current_case_steps.append(step_entry)
@@ -137,7 +142,7 @@ class CentralCaseRecorder:
             'total_actions': total_actions,
         }
 
-    def finish_case(self, final_status: str = 'completed', final_summary: str | None = None):
+    def finish_case(self, final_status: str = 'completed', final_summary: str | None = None) -> None:
         if not self.current_case_data:
             return
 
@@ -148,9 +153,24 @@ class CentralCaseRecorder:
                 'issues': final_summary
             })
 
+        end_time = datetime.now()
+        end_time_str = end_time.strftime('%Y-%m-%dT%H:%M:%S')  # ISO 8601 format
+
+        # Calculate duration from start_time to end_time
+        duration_seconds = 0.0
+        start_time_str = self.current_case_data.get('start_time')
+        if start_time_str:
+            try:
+                start_time = datetime.strptime(start_time_str, '%Y-%m-%dT%H:%M:%S')  # ISO 8601 format
+                duration_seconds = round((end_time - start_time).total_seconds(), 2)
+            except ValueError:
+                # If parsing fails, duration remains 0
+                pass
+
         self.current_case_data.update(
             {
-                'end_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'end_time': end_time_str,
+                'duration': duration_seconds,
                 'status': final_status,
                 'final_summary': final_summary or '',
                 'metrics': self._build_metrics()
@@ -160,7 +180,7 @@ class CentralCaseRecorder:
     def get_case_data(self) -> dict | None:
         return self.current_case_data
 
-    def reset(self):
+    def reset(self) -> None:
         self.current_case_data = None
         self.current_case_steps = []
         self.step_counter = 0
