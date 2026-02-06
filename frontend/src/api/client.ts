@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+
 /**
  * API Client for WebQA Backend
  */
@@ -345,6 +347,109 @@ class APIClient {
   async deleteFile(businessId: string, filename: string): Promise<void> {
     await this.request(`/files/${businessId}/${filename}`, {
       method: 'DELETE',
+    });
+  }
+
+  // Scheduled Task APIs
+  async getScheduledTasks(params?: {
+    business_id?: string;
+    enabled?: boolean;
+    limit?: number;
+    offset?: number;
+  }): Promise<ListResponse<{
+    id: string;
+    business_id: string;
+    business_name?: string;
+    name: string;
+    description?: string;
+    environment_id: string;
+    environment_name?: string;
+    test_case_ids: string[];
+    model: string;
+    workers: number;
+    cron_expression: string;
+    enabled: boolean;
+    webhook_url?: string;
+    feishu_notify_user_id?: string;
+    last_run_at?: string;
+    next_run_at?: string;
+    created_at: string;
+    updated_at: string;
+  }>> {
+    const searchParams = new URLSearchParams();
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined) {
+          searchParams.append(key, String(value));
+        }
+      });
+    }
+    const query = searchParams.toString();
+    return this.request(`/schedules${query ? `?${query}` : ''}`);
+  }
+
+  async getScheduledTask(id: string) {
+    return this.request(`/schedules/${id}`);
+  }
+
+  async createScheduledTask(data: {
+    business_id: string;
+    name: string;
+    description?: string;
+    environment_id: string;
+    test_case_ids: string[];
+    model: string;
+    workers: number;
+    cron_expression: string;
+    enabled: boolean;
+    webhook_url?: string;
+    feishu_notify_user_id?: string | null;
+  }) {
+    return this.request('/schedules', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateScheduledTask(id: string, data: {
+    name?: string;
+    description?: string;
+    environment_id?: string;
+    test_case_ids?: string[];
+    model?: string;
+    workers?: number;
+    cron_expression?: string;
+    enabled?: boolean;
+    webhook_url?: string | null;
+    feishu_notify_user_id?: string | null;
+  }) {
+    return this.request(`/schedules/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteScheduledTask(id: string): Promise<void> {
+    await this.request(`/schedules/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async toggleScheduledTask(id: string, enabled: boolean) {
+    return this.request(`/schedules/${id}/toggle`, {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    });
+  }
+
+  async validateCron(cronExpression: string): Promise<{
+    is_valid: boolean;
+    error?: string;
+    next_run_times?: string[];
+  }> {
+    return this.request('/schedules/validate-cron', {
+      method: 'POST',
+      body: JSON.stringify({ cron_expression: cronExpression }),
     });
   }
 }

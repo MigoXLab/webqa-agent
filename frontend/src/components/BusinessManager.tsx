@@ -176,31 +176,33 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
 
   const renderModal = () => (
     <div className="fixed inset-0 flex items-center justify-center p-4 z-50" style={{ backgroundColor: 'rgba(0, 0, 0, 0.75)' }}>
-      <form onSubmit={handleSubmit} className="bg-white rounded-xl flex flex-col shadow-2xl overflow-hidden" style={{ width: '960px', maxWidth: '95vw', height: '600px', maxHeight: 'calc(100vh - 64px)' }}>
-        <div className="px-6 py-4 border-b border-gray-200 bg-white flex items-center justify-between flex-shrink-0">
-          <h2 className="text-lg font-bold text-gray-900">{editingBusiness ? '编辑业务' : '创建新业务'}</h2>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleCancel}
-              disabled={saving}
-              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium disabled:opacity-50"
-            >
-              关闭
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium flex items-center gap-2 disabled:opacity-50"
-            >
-              {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-              {editingBusiness ? '保存' : '创建'}
-            </button>
+      <form onSubmit={handleSubmit} className="bg-white rounded-lg flex flex-col shadow-2xl" style={{ width: '960px', maxWidth: '90vw', height: '600px', maxHeight: 'calc(100vh - 64px)' }}>
+        <div className="border border-gray-200 rounded-lg flex flex-col flex-1 min-h-0 overflow-hidden">
+          {/* Header */}
+          <div className="border-b border-gray-200 flex items-center justify-between flex-shrink-0" style={{ padding: '16px 28px' }}>
+            <h2 className="text-lg font-bold text-gray-900">{editingBusiness ? '编辑业务' : '创建新业务'}</h2>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleCancel}
+                disabled={saving}
+                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium disabled:opacity-50"
+              >
+                关闭
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium flex items-center gap-2 disabled:opacity-50"
+              >
+                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                {editingBusiness ? '保存' : '创建'}
+              </button>
+            </div>
           </div>
-        </div>
 
-        <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-          <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0">
+          {/* Content */}
+          <div className="flex-1 overflow-y-auto" style={{ padding: '24px 28px' }}>
             {error && (
               <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
                 {error}

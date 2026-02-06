@@ -1,22 +1,40 @@
-import React, { useState, useEffect } from 'react';
-import { TestCase, Environment } from '../App';
-import { Calendar, Trash2, Edit, Plus, Clock, X, CheckCircle2 } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Calendar, Trash2, Edit, Plus, Clock, CheckCircle2, XCircle, AlertCircle, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 import { apiClient } from '../api/client';
 
 export type ScheduledTask = {
   id: string;
-  businessId: string;
+  business_id: string;
+  business_name?: string;
   name: string;
-  configs: {
-    environmentId: string;
-    testCaseIds: string[];
-  }[];
+  description?: string;
+  environment_id: string;
+  environment_name?: string;
+  test_case_ids: string[];
   model: string;
   workers: number;
-  cronExpression: string;
+  cron_expression: string;
   enabled: boolean;
-  lastRunAt?: string;
-  nextRunAt?: string;
+  webhook_url?: string;
+  feishu_notify_user_id?: string;
+  last_run_at?: string;
+  next_run_at?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type Environment = {
+  id: string;
+  name: string;
+  url: string;
+};
+
+type TestCase = {
+  id: string;
+  name: string;
+  login_required?: boolean;
+  snapshot?: string;
+  use_snapshot?: string;
 };
 
 type Props = {
@@ -24,11 +42,12 @@ type Props = {
   businessName: string;
   environments: Environment[];
   testCases: TestCase[];
-  scheduledTasks: ScheduledTask[];
-  setScheduledTasks: (tasks: ScheduledTask[]) => void;
   showHeader?: boolean;
   showCreateButton?: boolean;
   availableModels: { models: string[], default: string };
+  onRefresh?: () => void;
+  openCreateModal?: boolean;
+  onCreateModalClose?: () => void;
 };
 
 export function ScheduledTaskManager({
@@ -36,19 +55,95 @@ export function ScheduledTaskManager({
   businessName,
   environments,
   testCases,
-  scheduledTasks,
-  setScheduledTasks,
   showHeader = true,
   showCreateButton = true,
-  availableModels
+  availableModels,
+  onRefresh,
+  openCreateModal,
+  onCreateModalClose,
 }: Props) {
   const [showModal, setShowModal] = useState(false);
   const [editingTask, setEditingTask] = useState<ScheduledTask | null>(null);
+  const [tasks, setTasks] = useState<ScheduledTask[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Filter tasks for this business
-  const businessTasks = scheduledTasks.filter(t => t.businessId === businessId);
+  // Cron validation state
+  const [cronValidation, setCronValidation] = useState<{
+    is_valid: boolean;
+    error?: string;
+    next_run_times?: string[];
+  } | null>(null);
+  const [validatingCron, setValidatingCron] = useState(false);
+  const [testCasesExpanded, setTestCasesExpanded] = useState(false);
 
-  // 弹窗打开时禁用背景滚动
+  // Form state
+  const [formData, setFormData] = useState<Partial<ScheduledTask>>({
+    name: '',
+    description: '',
+    environment_id: '',
+    test_case_ids: [],
+    model: availableModels.default,
+    workers: 2,
+    cron_expression: '0 8 * * *',
+    enabled: true,
+    webhook_url: '',
+    feishu_notify_user_id: '',
+  });
+
+  // React to external create modal trigger
+  useEffect(() => {
+    if (openCreateModal) {
+      resetForm();
+      setShowModal(true);
+    }
+  }, [openCreateModal]);
+
+  // Load tasks
+  useEffect(() => {
+    loadTasks();
+  }, [businessId]);
+
+  const loadTasks = async () => {
+    try {
+      setLoading(true);
+      const response = await apiClient.getScheduledTasks({ business_id: businessId });
+      setTasks(response.items || []);
+    } catch (err: any) {
+      console.error('Failed to load scheduled tasks:', err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Validate cron expression (only when modal is open)
+  useEffect(() => {
+    if (!showModal) return;
+
+    const validateCron = async () => {
+      if (!formData.cron_expression) {
+        setCronValidation(null);
+        return;
+      }
+
+      setValidatingCron(true);
+      try {
+        const result = await apiClient.validateCron(formData.cron_expression);
+        setCronValidation(result);
+      } catch (err) {
+        setCronValidation({ is_valid: false, error: '验证失败' });
+      } finally {
+        setValidatingCron(false);
+      }
+    };
+
+    const timer = setTimeout(validateCron, 500); // Debounce
+    return () => clearTimeout(timer);
+  }, [formData.cron_expression, showModal]);
+
+  // Lock body scroll when modal is open
   useEffect(() => {
     if (showModal) {
       document.body.style.overflow = 'hidden';
@@ -60,116 +155,188 @@ export function ScheduledTaskManager({
     };
   }, [showModal]);
 
-  // Form state - use default model from backend
-  const [formData, setFormData] = useState<Partial<ScheduledTask>>({
-    name: '',
-    configs: [],
-    model: availableModels.default,
-    workers: 1,
-    cronExpression: '0 8 * * *',
-    enabled: true,
-  });
-
-  // Update form model when availableModels changes
-  useEffect(() => {
-    if (!formData.model || !availableModels.models.includes(formData.model)) {
-      setFormData(prev => ({ ...prev, model: availableModels.default }));
-    }
-  }, [availableModels]);
-
-  // Update form default model when backend config loads
-  useEffect(() => {
-    if (defaultModel && !formData.model) {
-      setFormData(prev => ({ ...prev, model: defaultModel }));
-    }
-  }, [defaultModel]);
-
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (editingTask) {
-      setScheduledTasks(scheduledTasks.map(t => t.id === editingTask.id ? { ...t, ...formData, businessId } as ScheduledTask : t));
-    } else {
-      const newTask: ScheduledTask = {
-        ...formData as ScheduledTask,
-        businessId,
-        id: crypto.randomUUID(),
-      };
-      setScheduledTasks([...scheduledTasks, newTask]);
+
+    // Validation
+    if (!formData.name) {
+      setError('请输入任务名称');
+      return;
     }
-    setShowModal(false);
-    resetForm();
+    if (!formData.environment_id) {
+      setError('请选择执行环境');
+      return;
+    }
+    if (!formData.test_case_ids || formData.test_case_ids.length === 0) {
+      setError('请至少选择一个测试用例');
+      return;
+    }
+    if (!cronValidation?.is_valid) {
+      setError('Cron 表达式无效');
+      return;
+    }
+
+    setError(null);
+    setSaving(true);
+
+    try {
+      if (editingTask) {
+        // Update
+        await apiClient.updateScheduledTask(editingTask.id, {
+          name: formData.name,
+          description: formData.description,
+          environment_id: formData.environment_id,
+          test_case_ids: formData.test_case_ids,
+          model: formData.model,
+          workers: formData.workers,
+          cron_expression: formData.cron_expression,
+          enabled: formData.enabled,
+          webhook_url: formData.webhook_url || null,
+          feishu_notify_user_id: formData.feishu_notify_user_id || null,
+        });
+      } else {
+        // Create
+        await apiClient.createScheduledTask({
+          business_id: businessId,
+          name: formData.name!,
+          description: formData.description,
+          environment_id: formData.environment_id!,
+          test_case_ids: formData.test_case_ids!,
+          model: formData.model!,
+          workers: formData.workers!,
+          cron_expression: formData.cron_expression!,
+          enabled: formData.enabled!,
+          webhook_url: formData.webhook_url || undefined,
+          feishu_notify_user_id: formData.feishu_notify_user_id || undefined,
+        });
+      }
+
+      await loadTasks();
+      handleCloseModal();
+      onRefresh?.();
+    } catch (err: any) {
+      console.error('Failed to save task:', err);
+      setError(err.message || '保存失败');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const resetForm = () => {
     setFormData({
       name: '',
-      configs: [],
-      model: defaultModel || '',
-      workers: 1,
-      cronExpression: '0 8 * * *',
+      description: '',
+      environment_id: '',
+      test_case_ids: [],
+      model: availableModels.default,
+      workers: 2,
+      cron_expression: '0 8 * * *',
       enabled: true,
+      webhook_url: '',
+      feishu_notify_user_id: '',
     });
     setEditingTask(null);
+    setError(null);
+    setCronValidation(null);
+    setTestCasesExpanded(false);
+  };
+
+  const handleCloseModal = () => {
+    setShowModal(false);
+    resetForm();
+    onCreateModalClose?.();
   };
 
   const handleEdit = (task: ScheduledTask) => {
     setEditingTask(task);
-    setFormData(task);
+    setFormData({
+      name: task.name,
+      description: task.description,
+      environment_id: task.environment_id,
+      test_case_ids: task.test_case_ids,
+      model: task.model,
+      workers: task.workers,
+      cron_expression: task.cron_expression,
+      enabled: task.enabled,
+      webhook_url: task.webhook_url || '',
+      feishu_notify_user_id: task.feishu_notify_user_id || '',
+    });
+    setError(null);
     setShowModal(true);
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm('确定要删除这个定时任务吗？')) {
-      setScheduledTasks(scheduledTasks.filter(t => t.id !== id));
+  const handleDelete = async (id: string, name: string) => {
+    if (!confirm(`确定要删除定时任务"${name}"吗？`)) {
+      return;
+    }
+
+    try {
+      await apiClient.deleteScheduledTask(id);
+      await loadTasks();
+      onRefresh?.();
+    } catch (err: any) {
+      console.error('Failed to delete task:', err);
+      alert('删除失败: ' + err.message);
     }
   };
 
-  // Helpers for configs
-  const addConfig = () => {
-    const newConfigs = [...(formData.configs || [])];
-    newConfigs.push({ environmentId: '', testCaseIds: [] });
-    setFormData({ ...formData, configs: newConfigs });
+  const handleToggle = async (task: ScheduledTask) => {
+    try {
+      await apiClient.toggleScheduledTask(task.id, !task.enabled);
+      await loadTasks();
+      onRefresh?.();
+    } catch (err: any) {
+      console.error('Failed to toggle task:', err);
+      alert('切换失败: ' + err.message);
+    }
   };
 
-  const removeConfig = (index: number) => {
-    const newConfigs = [...(formData.configs || [])];
-    newConfigs.splice(index, 1);
-    setFormData({ ...formData, configs: newConfigs });
-  };
-
-  const updateConfigEnv = (index: number, envId: string) => {
-    const newConfigs = [...(formData.configs || [])];
-    newConfigs[index].environmentId = envId;
-    setFormData({ ...formData, configs: newConfigs });
-  };
-
-  const toggleConfigCase = (configIndex: number, caseId: string) => {
-    const newConfigs = [...(formData.configs || [])];
-    const currentIds = newConfigs[configIndex].testCaseIds;
+  const toggleTestCase = (caseId: string) => {
+    const currentIds = formData.test_case_ids || [];
     if (currentIds.includes(caseId)) {
-        newConfigs[configIndex].testCaseIds = currentIds.filter(id => id !== caseId);
+      setFormData({ ...formData, test_case_ids: currentIds.filter(id => id !== caseId) });
     } else {
-        newConfigs[configIndex].testCaseIds = [...currentIds, caseId];
+      setFormData({ ...formData, test_case_ids: [...currentIds, caseId] });
     }
-    setFormData({ ...formData, configs: newConfigs });
   };
 
   const getEnvName = (envId: string) => {
     const env = environments.find(e => e.id === envId);
-    return env?.name || '未选择';
+    return env?.name || '未知环境';
   };
+
+  const formatDateTime = (dateStr?: string) => {
+    if (!dateStr) return '-';
+    const date = new Date(dateStr);
+    return date.toLocaleString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="text-center">
+          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mb-2"></div>
+          <p className="text-gray-500 text-sm">加载定时任务...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
       {showHeader && (
         <div className="mb-6 sm:mb-8 flex justify-between items-center">
           <div>
-            <h2 className="text-lg font-semibold mb-1">定时任务</h2>
-            <p className="text-sm text-gray-500">管理 {businessName} 的自动执行任务</p>
+            <h2 className="text-lg font-semibold mb-1">管理 {businessName} 的自动执行任务</h2>
           </div>
           {showCreateButton && (
             <button
-              onClick={() => setShowModal(true)}
+              onClick={() => { resetForm(); setShowModal(true); }}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
             >
               <Plus className="w-4 h-4" />
@@ -179,9 +346,9 @@ export function ScheduledTaskManager({
         </div>
       )}
 
-      {/* Task List - 和测试用例列表样式一致 */}
+      {/* Task List */}
       <div className="space-y-4">
-        {businessTasks.map(task => (
+        {tasks.map(task => (
           <div
             key={task.id}
             className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6 hover:shadow-md transition-shadow"
@@ -193,21 +360,45 @@ export function ScheduledTaskManager({
                     {task.enabled ? (
                       <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
                     ) : (
-                      <X className="w-5 h-5 text-gray-400 flex-shrink-0" />
+                      <XCircle className="w-5 h-5 text-gray-400 flex-shrink-0" />
                     )}
                     <div className="min-w-0 flex-1">
                       <h3 className="mb-1 truncate font-semibold">{task.name}</h3>
+                      {task.description && (
+                        <p className="text-sm text-gray-500 mb-2">{task.description}</p>
+                      )}
                       <div className="flex flex-wrap items-center gap-3 text-sm text-gray-500">
                         <span className="flex items-center gap-1">
                           <Clock className="w-4 h-4" />
-                          {task.cronExpression}
+                          {task.cron_expression}
                         </span>
                         <span>模型: {task.model}</span>
                         <span>并发: {task.workers}</span>
+                        <span className="text-blue-600">📢 飞书通知{task.webhook_url ? '' : '（默认）'}</span>
                       </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
+                    <label
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium flex-shrink-0 cursor-pointer transition-colors border ${
+                        task.enabled
+                          ? 'bg-green-50 hover:bg-green-100 text-green-700 border-green-200'
+                          : 'bg-gray-50 hover:bg-gray-100 text-gray-600 border-gray-200'
+                      }`}
+                      title={task.enabled ? '点击禁用' : '点击启用'}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={task.enabled}
+                        onChange={() => handleToggle(task)}
+                        className={`w-4 h-3.5 rounded cursor-pointer ${
+                          task.enabled
+                            ? 'border-green-300 text-green-600 focus:ring-green-500'
+                            : 'border-gray-300 text-gray-400 focus:ring-gray-400'
+                        }`}
+                      />
+                      {task.enabled ? '已启用' : '已禁用'}
+                    </label>
                     <button
                       onClick={() => handleEdit(task)}
                       className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
@@ -216,7 +407,7 @@ export function ScheduledTaskManager({
                       <Edit className="w-4 h-4 text-gray-600" />
                     </button>
                     <button
-                      onClick={() => handleDelete(task.id)}
+                      onClick={() => handleDelete(task.id, task.name)}
                       className="p-2 hover:bg-red-50 rounded-lg transition-colors"
                       title="删除"
                     >
@@ -225,30 +416,25 @@ export function ScheduledTaskManager({
                   </div>
                 </div>
 
-                {/* 配置信息 - 和测试步骤展示样式一致 */}
+                {/* Task Info */}
                 <div className="bg-gray-50 rounded-lg p-3 sm:p-4">
-                  <div className="flex items-center gap-2 mb-3 text-sm text-gray-600">
-                    <Calendar className="w-4 h-4" />
-                    <span>执行配置 ({task.configs.length})</span>
-                  </div>
-                  <div className="space-y-2">
-                    {task.configs.slice(0, 3).map((config, idx) => (
-                      <div key={idx} className="flex items-center gap-3 text-sm">
-                        <span className="w-6 h-6 bg-white rounded-full border border-gray-200 flex items-center justify-center text-gray-600 flex-shrink-0 text-xs font-medium">
-                          {idx + 1}
-                        </span>
-                        <span className="text-gray-700 flex-shrink-0">{getEnvName(config.environmentId)}</span>
-                        <span className="text-gray-400 text-xs">({config.testCaseIds.length} 个用例)</span>
-                      </div>
-                    ))}
-                    {task.configs.length > 3 && (
-                      <p className="text-sm text-gray-500 pl-9">
-                        还有 {task.configs.length - 3} 个配置...
-                      </p>
-                    )}
-                    {task.configs.length === 0 && (
-                      <p className="text-sm text-gray-400">暂无执行配置</p>
-                    )}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <span className="text-gray-600">执行环境：</span>
+                      <span className="font-medium">{task.environment_name || getEnvName(task.environment_id)}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">测试用例：</span>
+                      <span className="font-medium">{task.test_case_ids.length} 个</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">上次执行：</span>
+                      <span className="font-medium">{formatDateTime(task.last_run_at)}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">下次执行：</span>
+                      <span className="font-medium text-blue-600">{formatDateTime(task.next_run_at)}</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -256,7 +442,7 @@ export function ScheduledTaskManager({
           </div>
         ))}
 
-        {businessTasks.length === 0 && (
+        {tasks.length === 0 && (
           <div className="text-center py-12 bg-white rounded-lg border border-gray-200 border-dashed">
             <Calendar className="w-12 h-12 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-500 mb-4">还没有定时任务</p>
@@ -270,22 +456,45 @@ export function ScheduledTaskManager({
         )}
       </div>
 
-      {/* Modal - 和其他弹窗样式一致 */}
+      {/* Modal */}
       {showModal && (
         <div className="fixed inset-0 flex items-center justify-center p-4 z-50" style={{ backgroundColor: 'rgba(0, 0, 0, 0.75)' }}>
-          <div className="bg-white w-full max-w-3xl rounded-lg flex flex-col shadow-2xl" style={{ maxHeight: 'calc(100vh - 64px)' }}>
-            <div className="p-4 sm:p-6 border-b border-gray-200 bg-white rounded-t-lg flex items-center justify-between flex-shrink-0">
-              <h2 className="text-xl font-bold text-gray-900">{editingTask ? '编辑任务' : '创建任务'}</h2>
-              <button
-                onClick={() => { setShowModal(false); resetForm(); }}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors text-gray-400 hover:text-gray-600"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+          <form onSubmit={handleSubmit} className="bg-white rounded-lg flex flex-col shadow-2xl" style={{ width: '960px', maxWidth: '90vw', maxHeight: 'calc(100vh - 64px)' }}>
+            <div className="border border-gray-200 rounded-lg flex flex-col flex-1 min-h-0 overflow-hidden">
+              {/* Header */}
+              <div className="border-b border-gray-200 flex-shrink-0" style={{ padding: '16px 28px' }}>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-bold text-gray-900">{editingTask ? '编辑定时任务' : '创建定时任务'}</h2>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleCloseModal}
+                      className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
+                      disabled={saving}
+                    >
+                      关闭
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={saving || !cronValidation?.is_valid}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                      {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                      {editingTask ? '保存' : '创建'}
+                    </button>
+                  </div>
+                </div>
+                {error && (
+                  <div className="mt-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                    <span>{error}</span>
+                  </div>
+                )}
+              </div>
 
-            <div className="p-4 sm:p-6 overflow-y-auto flex-1 min-h-0">
-              <div className="space-y-6">
+              {/* Content */}
+              <div className="flex-1 overflow-y-auto" style={{ padding: '24px 28px' }}>
+                <div className="space-y-6">
                 <div>
                   <label className="block text-sm font-medium mb-2 text-gray-700">任务名称 *</label>
                   <input
@@ -294,103 +503,97 @@ export function ScheduledTaskManager({
                     value={formData.name}
                     onChange={e => setFormData({...formData, name: e.target.value})}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="例如：每日全量回归"
+                    placeholder="例如：每日生产环境测试"
                   />
                 </div>
 
-                {/* Configs Section - 和测试步骤样式一致 */}
                 <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <label className="block text-sm font-medium text-gray-700">执行配置 *</label>
-                    <button
-                      type="button"
-                      onClick={addConfig}
-                      className="text-sm text-blue-600 hover:text-blue-700 flex items-center gap-1"
-                    >
-                      <Plus className="w-4 h-4" /> 添加配置
-                    </button>
-                  </div>
-
-                  {formData.configs?.length === 0 && (
-                    <div className="text-center py-8 bg-gray-50 rounded-lg border border-gray-200 border-dashed">
-                      <Calendar className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-                      <p className="text-sm text-gray-500">点击上方按钮添加执行配置</p>
-                    </div>
-                  )}
-
-                  <div className="space-y-3">
-                    {formData.configs?.map((config, index) => (
-                      <div key={index} className="border border-gray-200 rounded-lg p-3 sm:p-4 bg-gray-50/50">
-                        <div className="flex items-center gap-2 mb-3">
-                          <span className="w-6 h-6 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0">
-                            {index + 1}
-                          </span>
-                          {formData.configs!.length > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => removeConfig(index)}
-                              className="ml-auto text-xs text-red-600 hover:text-red-700 font-medium"
-                            >
-                              删除配置
-                            </button>
-                          )}
-                        </div>
-
-                        <div className="space-y-3">
-                          <div>
-                            <label className="block text-xs font-medium text-gray-500 mb-1">执行环境 *</label>
-                            <select
-                              required
-                              value={config.environmentId}
-                              onChange={e => updateConfigEnv(index, e.target.value)}
-                              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm bg-white"
-                            >
-                              <option value="">选择环境</option>
-                              {environments.map(env => (
-                                <option key={env.id} value={env.id}>{env.name} ({env.url})</option>
-                              ))}
-                            </select>
-                          </div>
-
-                          <div>
-                            <label className="block text-xs font-medium text-gray-500 mb-1">
-                              选择用例 ({config.testCaseIds.length} 已选)
-                            </label>
-                            <div className="max-h-32 overflow-y-auto border border-gray-200 rounded-lg bg-white p-2 space-y-1">
-                              {testCases.map(tc => (
-                                <label key={tc.id} className="flex items-center gap-2 text-sm hover:bg-gray-50 p-1.5 rounded cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    checked={config.testCaseIds.includes(tc.id)}
-                                    onChange={() => toggleConfigCase(index, tc.id)}
-                                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                                  />
-                                  <span className="truncate">{tc.name}</span>
-                                </label>
-                              ))}
-                              {testCases.length === 0 && (
-                                <p className="text-xs text-gray-400 text-center py-2">该业务下无测试用例</p>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+                  <label className="block text-sm font-medium mb-2 text-gray-700">执行环境 *</label>
+                  <select
+                    required
+                    value={formData.environment_id}
+                    onChange={e => setFormData({...formData, environment_id: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">选择环境</option>
+                    {environments.map(env => (
+                      <option key={env.id} value={env.id}>{env.name} ({env.url})</option>
                     ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm font-medium text-gray-700">
+                      选择测试用例 * ({formData.test_case_ids?.length || 0}/{testCases.length} 已选)
+                    </label>
+                    {testCases.length > 5 && (
+                      <button
+                        type="button"
+                        onClick={() => setTestCasesExpanded(!testCasesExpanded)}
+                        className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
+                      >
+                        {testCasesExpanded ? (
+                          <>收起 <ChevronUp className="w-3.5 h-3.5" /></>
+                        ) : (
+                          <>展开全部 <ChevronDown className="w-3.5 h-3.5" /></>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                  <div className={`${testCasesExpanded ? 'max-h-[400px]' : 'max-h-48'} overflow-y-auto border border-gray-200 rounded-lg bg-white p-3 space-y-1 transition-[max-height] duration-300`}>
+                    {testCases.length > 0 && (
+                      <label className="flex items-center gap-2 text-sm hover:bg-gray-50 px-2 py-1.5 rounded cursor-pointer border-b border-gray-100 pb-2 mb-1">
+                        <input
+                          type="checkbox"
+                          checked={formData.test_case_ids?.length === testCases.length}
+                          onChange={() => {
+                            const allSelected = formData.test_case_ids?.length === testCases.length;
+                            setFormData({
+                              ...formData,
+                              test_case_ids: allSelected ? [] : testCases.map(tc => tc.id),
+                            });
+                          }}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 flex-shrink-0"
+                        />
+                        <span className="font-medium text-gray-700">全选</span>
+                      </label>
+                    )}
+                    {testCases.map(tc => (
+                      <label key={tc.id} className="flex items-center gap-2 text-sm hover:bg-gray-50 px-2 py-1.5 rounded cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={formData.test_case_ids?.includes(tc.id) || false}
+                          onChange={() => toggleTestCase(tc.id)}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 flex-shrink-0"
+                        />
+                        <span className="truncate flex-1">{tc.name}</span>
+                        <span className="flex items-center gap-2 flex-shrink-0">
+                          {tc.login_required && (
+                            <span className="px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg text-xs font-medium border border-amber-200">
+                              需登录
+                            </span>
+                          )}
+                          {tc.snapshot && (
+                            <span className="px-3 py-1.5 bg-green-50 text-green-700 rounded-lg text-xs font-medium border border-green-200">
+                              📸 快照: {tc.snapshot}
+                            </span>
+                          )}
+                          {tc.use_snapshot && (
+                            <span className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-xs font-medium border border-blue-200">
+                              🔄 使用: {tc.use_snapshot}
+                            </span>
+                          )}
+                        </span>
+                      </label>
+                    ))}
+                    {testCases.length === 0 && (
+                      <p className="text-sm text-gray-400 text-center py-4">该业务下无测试用例</p>
+                    )}
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-gray-700">Cron 表达式</label>
-                    <input
-                      type="text"
-                      required
-                      value={formData.cronExpression}
-                      onChange={e => setFormData({...formData, cronExpression: e.target.value})}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="0 8 * * *"
-                    />
-                  </div>
                   <div>
                     <label className="block text-sm font-medium mb-2 text-gray-700">模型</label>
                     <select
@@ -403,6 +606,100 @@ export function ScheduledTaskManager({
                       ))}
                     </select>
                   </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-2 text-gray-700">并发数</label>
+                    <select
+                      value={formData.workers}
+                      onChange={e => setFormData({...formData, workers: parseInt(e.target.value)})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      {[1, 2, 3, 4, 5].map(n => (
+                        <option key={n} value={n}>{n}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2 text-gray-700">Cron 表达式 *</label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.cron_expression}
+                    onChange={e => setFormData({...formData, cron_expression: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="0 8 * * *"
+                  />
+
+                  {/* Cron Validation Status */}
+                  <div className="mt-2 flex items-center gap-2">
+                    {validatingCron && (
+                      <span className="text-sm text-gray-500">验证中...</span>
+                    )}
+                    {!validatingCron && cronValidation && (
+                      cronValidation.is_valid ? (
+                        <div className="flex items-center gap-2 text-green-600 text-sm">
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>有效的 Cron 表达式</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 text-red-600 text-sm">
+                          <XCircle className="w-4 h-4" />
+                          <span>{cronValidation.error || '无效的 Cron 表达式'}</span>
+                        </div>
+                      )
+                    )}
+                  </div>
+
+                  {/* Cron Examples */}
+                  <div className="mt-2 bg-gray-50 border border-gray-200 rounded-lg p-2">
+                    <p className="text-xs font-medium text-gray-500 mb-2">常用示例（格式：分 时 日 月 周）</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                      {[
+                        { expr: '0 8 * * *', desc: ' 每天 8:00' },
+                        { expr: '0 8-20/2 * * *', desc: ' 每天 8:00-20:00 每隔 2 小时' },
+                        { expr: '0 9 * * 1-5', desc: ' 工作日每天 9:00' },
+                        { expr: '*/30 9-17 * * 1-5', desc: ' 工作日 9:00-17:00 每 30 分钟' },
+                      ].map(item => (
+                        <button
+                          key={item.expr}
+                          type="button"
+                          onClick={() => setFormData({ ...formData, cron_expression: item.expr })}
+                          className="text-left text-xs px-2 py-1.5 rounded hover:bg-blue-50 hover:text-blue-600 transition-colors group"
+                        >
+                          <code className="text-blue-600 group-hover:text-blue-700 font-mono">{item.expr}</code>
+                          <span className="text-gray-500 ml-2">{item.desc}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2 text-gray-700">飞书通知配置</label>
+                  <div className="space-y-3 border border-gray-200 rounded-lg p-4 bg-gray-50">
+                    <div>
+                      <label className="block text-xs font-medium mb-1 text-gray-600">Webhook 地址</label>
+                      <input
+                        type="url"
+                        value={formData.webhook_url}
+                        onChange={e => setFormData({...formData, webhook_url: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-sm"
+                        placeholder="留空则使用系统默认飞书群"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium mb-1 text-gray-600">失败时 @通知人（飞书 open_id，多人用逗号分隔）</label>
+                      <input
+                        type="text"
+                        value={formData.feishu_notify_user_id}
+                        onChange={e => setFormData({...formData, feishu_notify_user_id: e.target.value})}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-sm"
+                        placeholder="例如: ou_xxxx, ou_yyyy"
+                      />
+                    </div>
+                    <p className="text-xs text-gray-400">Webhook 留空使用默认群；填写 open_id 可在失败时 @指定人，多人用逗号分隔</p>
+                  </div>
                 </div>
 
                 <div className="flex items-center">
@@ -413,28 +710,13 @@ export function ScheduledTaskManager({
                       onChange={e => setFormData({...formData, enabled: e.target.checked})}
                       className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                     />
-                    <span className="text-sm text-gray-700">启用任务</span>
+                    <span className="text-sm text-gray-700">创建后立即启用</span>
                   </label>
                 </div>
               </div>
+              </div>
             </div>
-
-            <div className="p-4 sm:p-6 border-t border-gray-200 bg-gray-50 rounded-b-lg flex justify-end gap-3 flex-shrink-0">
-              <button
-                type="button"
-                onClick={() => { setShowModal(false); resetForm(); }}
-                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-white transition-colors text-sm font-medium"
-              >
-                取消
-              </button>
-              <button
-                onClick={handleSubmit}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
-              >
-                {editingTask ? '保存' : '创建'}
-              </button>
-            </div>
-          </div>
+          </form>
         </div>
       )}
     </div>

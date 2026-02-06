@@ -12,6 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 if TYPE_CHECKING:
     from app.models.environment import Environment
     from app.models.execution import Execution
+    from app.models.scheduled_task import ScheduledTask
     from app.models.test_case import TestCase
 
 
@@ -46,6 +47,11 @@ class Business(Base):
     )
     executions: Mapped[List['Execution']] = relationship(
         'Execution',
+        back_populates='business',
+        cascade='all, delete-orphan'
+    )
+    scheduled_tasks: Mapped[List['ScheduledTask']] = relationship(
+        'ScheduledTask',
         back_populates='business',
         cascade='all, delete-orphan'
     )

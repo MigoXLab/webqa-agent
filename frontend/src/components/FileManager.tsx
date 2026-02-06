@@ -1,4 +1,4 @@
-import { Upload, Download, Trash2, File, FileText, Image, FileSpreadsheet, X, Loader2 } from 'lucide-react';
+import { Upload, Download, Trash2, File, FileText, Image, FileSpreadsheet, Loader2 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { BusinessFile } from '../App';
 import { apiClient } from '../api/client';
@@ -125,19 +125,24 @@ export function FileManager({ businessId, files, onFilesChange, onClose }: Props
   };
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center p-0 sm:p-4 z-50" style={{ backgroundColor: 'rgba(0, 0, 0, 0.75)' }}>
-      <div className="bg-white w-full h-full sm:h-auto sm:rounded-lg sm:max-w-4xl overflow-hidden flex flex-col max-h-screen sm:max-h-[90vh]">
-        <div className="p-4 sm:p-6 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white z-10">
-          <h2>文件管理</h2>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+    <div className="fixed inset-0 flex items-center justify-center p-4 z-50" style={{ backgroundColor: 'rgba(0, 0, 0, 0.75)' }}>
+      <div className="bg-white rounded-lg flex flex-col shadow-2xl" style={{ width: '960px', maxWidth: '90vw', maxHeight: 'calc(100vh - 64px)' }}>
+        <div className="border border-gray-200 rounded-lg flex flex-col flex-1 min-h-0 overflow-hidden">
+          {/* Header */}
+          <div className="border-b border-gray-200 flex-shrink-0" style={{ padding: '16px 28px' }}>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-900">文件管理</h2>
+              <button
+                onClick={onClose}
+                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
+              >
+                关闭
+              </button>
+            </div>
+          </div>
 
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+          {/* Content */}
+          <div className="flex-1 overflow-y-auto space-y-6" style={{ padding: '24px 28px' }}>
           {/* Upload Area */}
           <div
             onDragEnter={handleDrag}
@@ -225,14 +230,6 @@ export function FileManager({ businessId, files, onFilesChange, onClose }: Props
             )}
           </div>
         </div>
-
-        <div className="p-4 sm:p-6 border-t border-gray-200 flex justify-end sticky bottom-0 bg-white">
-          <button
-            onClick={onClose}
-            className="w-full sm:w-auto px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            完成
-          </button>
         </div>
       </div>
     </div>

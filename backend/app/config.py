@@ -1,8 +1,7 @@
 """Application configuration."""
-import os
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Literal, Optional
+from typing import List, Optional
 
 from pydantic_settings import BaseSettings
 
@@ -59,6 +58,10 @@ class Settings(BaseSettings):
 
     # Backend Callback URL (供 Agent Job 回调使用)
     BACKEND_CALLBACK_URL: str = 'http://localhost:8000'
+
+    # Feishu Webhook (默认飞书通知地址，定时任务未单独配置时使用)
+    DEFAULT_FEISHU_WEBHOOK_URL: str = 'https://open.feishu.cn/open-apis/bot/v2/hook/ea37e263-8e8b-4b9a-b98d-cd0b6ad4f4fc'
+    FEISHU_WEBHOOK_TIMEOUT_SECONDS: int = 10
 
     # Redis Configuration
     # 支持两种方式：

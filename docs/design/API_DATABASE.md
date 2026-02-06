@@ -124,34 +124,42 @@ ______________________________________________________________________
 
 #### 1.2.4 scheduled_tasks (定时任务表)
 
-| 字段名          | 类型         | 说明           |
-| --------------- | ------------ | -------------- |
-| id              | UUID         | 任务ID (PK)    |
-| business_id     | UUID         | 业务ID (FK)    |
-| name            | VARCHAR(100) | 任务名称       |
-| configs         | JSONB        | 多环境配置列表 |
-| model           | VARCHAR(100) | 使用的模型     |
-| workers         | INT          | 并发数         |
-| cron_expression | VARCHAR(100) | Cron表达式     |
-| enabled         | BOOLEAN      | 是否启用       |
-| last_run_at     | TIMESTAMP    | 上次执行时间   |
-| next_run_at     | TIMESTAMP    | 下次执行时间   |
-| created_at      | TIMESTAMP    | 创建时间       |
+| 字段名          | 类型         | 说明                     |
+| --------------- | ------------ | ------------------------ |
+| id              | UUID         | 任务ID (PK)              |
+| business_id     | UUID         | 业务ID (FK)              |
+| name            | VARCHAR(200) | 任务名称                 |
+| description     | TEXT         | 任务描述（可选）         |
+| environment_id  | UUID         | 环境ID (FK) - 单环境配置 |
+| test_case_ids   | JSONB        | 测试用例ID列表           |
+| model           | VARCHAR(100) | 使用的模型               |
+| workers         | INT          | 并发数（1-5）            |
+| cron_expression | VARCHAR(100) | Cron表达式               |
+| enabled         | BOOLEAN      | 是否启用                 |
+| last_run_at     | TIMESTAMP    | 上次执行时间             |
+| next_run_at     | TIMESTAMP    | 下次执行时间（UTC+8）    |
+| created_at      | TIMESTAMP    | 创建时间                 |
+| updated_at      | TIMESTAMP    | 更新时间                 |
 
-**configs 结构**（支持多环境）：
+**设计说明**：
+
+- **单环境配置**：每个定时任务配置一个环境 + 多个测试用例（简化版）
+- **test_case_ids 结构**：UUID 字符串数组
 
 ```json
-[
-  {
-    "environment_id": "uuid-网页1",
-    "test_case_ids": ["case-uuid-1", "case-uuid-2"]
-  },
-  {
-    "environment_id": "uuid-网页2",
-    "test_case_ids": ["case-uuid-3", "case-uuid-4"]
-  }
-]
+["case-uuid-1", "case-uuid-2", "case-uuid-3"]
 ```
+
+**Cron 表达式格式**：
+
+标准 5 字段格式：`分 时 日 月 周`
+
+示例：
+
+- `0 8 * * *` - 每天早上 8:00
+- `0 */2 * * *` - 每 2 小时
+- `0 9 * * 1-5` - 工作日每天 9:00
+- `*/30 9-17 * * 1-5` - 工作日 9:00-17:00 每 30 分钟
 
 ______________________________________________________________________
 
@@ -331,26 +339,45 @@ ______________________________________________________________________
 
 ##### POST /api/v1/schedules
 
-**请求体**:
+**请求体**（单环境配置）:
 
 ```json
 {
   "business_id": "uuid",
-  "name": "生产",
-  "configs": [
-    {
-      "environment_id": "uuid-网页1",
-      "test_case_ids": ["case1", "case2", "case3"]
-    },
-    {
-      "environment_id": "uuid-网页2",
-      "test_case_ids": ["case4", "case5"]
-    }
-  ],
+  "name": "每日生产环境测试",
+  "description": "每天早上 8 点执行生产环境的回归测试",
+  "environment_id": "uuid-环境1",
+  "test_case_ids": ["case-uuid-1", "case-uuid-2", "case-uuid-3"],
   "model": "gpt-4o-mini",
   "workers": 2,
   "cron_expression": "0 8 * * *",
   "enabled": true
+}
+```
+
+**响应**:
+
+```json
+{
+  "code": 0,
+  "data": {
+    "id": "uuid",
+    "business_id": "uuid",
+    "business_name": "业务名称",
+    "name": "每日生产环境测试",
+    "description": "每天早上 8 点执行生产环境的回归测试",
+    "environment_id": "uuid-环境1",
+    "environment_name": "生产环境",
+    "test_case_ids": ["case-uuid-1", "case-uuid-2", "case-uuid-3"],
+    "model": "gpt-4o-mini",
+    "workers": 2,
+    "cron_expression": "0 8 * * *",
+    "enabled": true,
+    "last_run_at": null,
+    "next_run_at": "2026-02-06T08:00:00+08:00",
+    "created_at": "2026-02-05T10:30:00+08:00",
+    "updated_at": "2026-02-05T10:30:00+08:00"
+  }
 }
 ```
 
@@ -539,7 +566,53 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-#### 2.2.8 获取可用模型列表
+#### 2.2.8 验证 Cron 表达式
+
+##### POST /api/v1/schedules/validate-cron
+
+**请求体**:
+
+```json
+{
+  "cron_expression": "0 8 * * *"
+}
+```
+
+**响应**（有效的 Cron）:
+
+```json
+{
+  "code": 0,
+  "data": {
+    "is_valid": true,
+    "error": null,
+    "next_run_times": [
+      "2026-02-06T08:00:00+08:00",
+      "2026-02-07T08:00:00+08:00",
+      "2026-02-08T08:00:00+08:00",
+      "2026-02-09T08:00:00+08:00",
+      "2026-02-10T08:00:00+08:00"
+    ]
+  }
+}
+```
+
+**响应**（无效的 Cron）:
+
+```json
+{
+  "code": 0,
+  "data": {
+    "is_valid": false,
+    "error": "Invalid cron expression format",
+    "next_run_times": null
+  }
+}
+```
+
+______________________________________________________________________
+
+#### 2.2.9 获取可用模型列表
 
 ##### GET /api/v1/config/models
 
@@ -600,35 +673,40 @@ sequenceDiagram
     BE-->>FE: {status, oss_report_url, result_count}
 ```
 
-### 3.2 定时执行（多环境）
+### 3.2 定时执行（单环境）
 
 ```mermaid
 sequenceDiagram
     participant Scheduler as APScheduler
     participant BE as Backend
     participant DB as Database
+    participant Queue as 任务队列
     participant Agent as WebQA-Agent
     participant OSS as 阿里云 OSS
 
-    Scheduler->>DB: 查询待执行任务
+    Note over Scheduler: Cron 触发
 
-    loop 每个定时任务
-        Scheduler->>DB: 读取 configs（多环境配置）
+    Scheduler->>DB: 查询定时任务配置
+    Scheduler->>DB: 查询环境配置
+    Scheduler->>DB: 查询【最新的】case 内容
 
-        loop 每个 config（环境 + cases）
-            Scheduler->>DB: 查询环境配置
-            Scheduler->>DB: 查询【最新的】case 内容
-            Scheduler->>DB: 创建 execution
+    Scheduler->>DB: 检查并发数量
 
-            Scheduler->>Agent: 启动执行
-            Agent-->>BE: 回调完成
-
-            BE->>OSS: 上传报告
-            BE->>DB: 更新 execution
-        end
-
-        Scheduler->>DB: 更新 scheduled_task.last_run_at
+    alt 并发数 < MAX_CONCURRENT_JOBS
+        Scheduler->>DB: 创建 execution
+        Scheduler->>Agent: 启动执行
+    else 并发数已满
+        Scheduler->>Queue: 添加到队列
+        Note over Queue: 等待空闲槽位
+        Queue->>DB: 定期检查（每5秒）
+        Queue->>DB: 创建 execution
+        Queue->>Agent: 启动执行
     end
+
+    Agent-->>BE: 回调完成
+    BE->>OSS: 上传报告
+    BE->>DB: 更新 execution
+    BE->>DB: 更新 scheduled_task.last_run_at
 ```
 
 ### 3.3 实时进度推送
@@ -730,6 +808,6 @@ cases:
 
 ______________________________________________________________________
 
-*文档版本: v1.1*
-*最后更新: 2026-01-28*
-*更新内容: 添加实时进度查询接口 (GET /progress) 和 Agent 进度推送接口 (POST /progress)*
+*文档版本: v1.2*
+*最后更新: 2026-02-05*
+*更新内容: 更新定时任务表结构为单环境配置，添加 Cron 验证接口，完善定时执行流程图*

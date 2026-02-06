@@ -40,6 +40,10 @@ data:
   # Backend Callback URL
   BACKEND_CALLBACK_URL: "http://webqa-be:8000"
 
+  # Feishu Webhook (定时任务执行完成后的默认飞书通知地址)
+  DEFAULT_FEISHU_WEBHOOK_URL: "https://open.feishu.cn/open-apis/bot/v2/hook/ea37e263-8e8b-4b9a-b98d-cd0b6ad4f4fc"
+  FEISHU_WEBHOOK_TIMEOUT_SECONDS: "10"
+
   # Kubernetes Job Configuration
   K8S_NAMESPACE: "cloud-staging"
   K8S_JOB_IMAGE: "eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/webqa-agent:latest"

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, Download, X, Loader2 } from 'lucide-react';
+import { Upload, Download, Loader2 } from 'lucide-react';
 import { TestCase, Business } from '../App';
 import { apiClient } from '../api/client';
 
@@ -339,44 +339,69 @@ export function ConfigImportExport({ business, testCases, onImport, onClose }: P
   };
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center p-0 sm:p-4 z-50" style={{ backgroundColor: 'rgba(0, 0, 0, 0.75)' }}>
-      <div className="bg-white w-full h-full sm:h-auto sm:rounded-lg sm:max-w-4xl overflow-hidden flex flex-col max-h-screen sm:max-h-[90vh]">
-        <div className="p-4 sm:p-6 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white z-10">
-          <h2>配置导入/导出</h2>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+    <div className="fixed inset-0 flex items-center justify-center p-4 z-50" style={{ backgroundColor: 'rgba(0, 0, 0, 0.75)' }}>
+      <div className="bg-white rounded-lg flex flex-col shadow-2xl" style={{ width: '960px', maxWidth: '90vw', maxHeight: 'calc(100vh - 64px)' }}>
+        <div className="border border-gray-200 rounded-lg flex flex-col flex-1 min-h-0 overflow-hidden">
+          {/* Header */}
+          <div className="border-b border-gray-200 flex-shrink-0" style={{ padding: '16px 28px' }}>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-900">配置导入/导出</h2>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={onClose}
+                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
+                >
+                  关闭
+                </button>
+                {activeTab === 'import' ? (
+                  <button
+                    onClick={handleImport}
+                    disabled={!importedContent || isLoading}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium flex items-center gap-2"
+                  >
+                    {isLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {isLoading ? '导入中...' : '导入'}
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleExport}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+                  >
+                    导出YAML文件
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
 
-        <div className="flex border-b border-gray-200">
-          <button
-            onClick={() => setActiveTab('import')}
-            className={`flex-1 px-4 sm:px-6 py-3 text-sm sm:text-base ${
-              activeTab === 'import'
-                ? 'border-b-2 border-blue-600 text-blue-600'
-                : 'text-gray-600 hover:text-gray-900'
-            }`}
-          >
-            <Upload className="w-4 h-4 sm:w-5 sm:h-5 inline mr-2" />
-            导入配置
-          </button>
-          <button
-            onClick={() => setActiveTab('export')}
-            className={`flex-1 px-4 sm:px-6 py-3 text-sm sm:text-base ${
-              activeTab === 'export'
-                ? 'border-b-2 border-blue-600 text-blue-600'
-                : 'text-gray-600 hover:text-gray-900'
-            }`}
-          >
-            <Download className="w-4 h-4 sm:w-5 sm:h-5 inline mr-2" />
-            导出配置
-          </button>
-        </div>
+          {/* Tabs */}
+          <div className="flex border-b border-gray-200">
+            <button
+              onClick={() => setActiveTab('import')}
+              className={`flex-1 px-4 sm:px-6 py-3 text-sm sm:text-base ${
+                activeTab === 'import'
+                  ? 'border-b-2 border-blue-600 text-blue-600'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              <Upload className="w-4 h-4 sm:w-5 sm:h-5 inline mr-2" />
+              导入配置
+            </button>
+            <button
+              onClick={() => setActiveTab('export')}
+              className={`flex-1 px-4 sm:px-6 py-3 text-sm sm:text-base ${
+                activeTab === 'export'
+                  ? 'border-b-2 border-blue-600 text-blue-600'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              <Download className="w-4 h-4 sm:w-5 sm:h-5 inline mr-2" />
+              导出配置
+            </button>
+          </div>
 
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+          {/* Content */}
+          <div className="flex-1 overflow-y-auto" style={{ padding: '24px 28px' }}>
           {activeTab === 'import' ? (
             <div className="space-y-4">
               <div>
@@ -451,36 +476,7 @@ export function ConfigImportExport({ business, testCases, onImport, onClose }: P
               </div>
             </div>
           )}
-        </div>
-
-        <div className="p-4 sm:p-6 border-t border-gray-200 flex flex-col-reverse sm:flex-row justify-end gap-3 sticky bottom-0 bg-white">
-          <button
-            onClick={onClose}
-            className="w-full sm:w-auto px-4 py-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-          >
-            取消
-          </button>
-          {activeTab === 'import' ? (
-            <button
-              onClick={handleImport}
-              disabled={!importedContent || isLoading}
-              className="w-full sm:w-auto px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  导入中...
-                </>
-              ) : '导入'}
-            </button>
-          ) : (
-            <button
-              onClick={handleExport}
-              className="w-full sm:w-auto px-4 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-            >
-              导出YAML文件
-            </button>
-          )}
+          </div>
         </div>
       </div>
     </div>

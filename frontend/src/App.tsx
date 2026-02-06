@@ -2,10 +2,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Routes, Route, Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { BusinessManager } from './components/BusinessManager';
 import { TestCaseManager } from './components/TestCaseManager';
-import { ScheduledTaskManager, ScheduledTask } from './components/ScheduledTaskManager';
+import { ScheduledTaskManager } from './components/ScheduledTaskManager';
 import { ExecutionHistory } from './components/ExecutionHistory';
 import { ExecutionDetail } from './components/ExecutionDetail';
-import { LayoutDashboard, History, Box, ChevronRight, Loader2, Github } from 'lucide-react';
+import { LayoutDashboard, History, Box, Loader2, Github } from 'lucide-react';
 import { apiClient, Business as APIBusiness, TestCase as APITestCase, Execution as APIExecution } from './api/client';
 
 // Re-export types for backward compatibility
@@ -222,8 +222,6 @@ function BusinessDetailWrapper({
   testCases,
   setTestCases,
   setBusinesses,
-  scheduledTasks,
-  setScheduledTasks,
   onBatchExecute,
   availableModels,
 }: {
@@ -231,8 +229,6 @@ function BusinessDetailWrapper({
   testCases: TestCase[];
   setTestCases: (cases: TestCase[] | ((prev: TestCase[]) => TestCase[])) => void;
   setBusinesses: (businesses: Business[]) => void;
-  scheduledTasks: ScheduledTask[];
-  setScheduledTasks: (tasks: ScheduledTask[]) => void;
   onBatchExecute: (execution: BatchExecution) => void;
   availableModels: { models: string[], default: string };
 }) {
@@ -291,8 +287,6 @@ function BusinessDetailWrapper({
             }}
             activeTab={activeTab}
             setActiveTab={setActiveTab}
-            scheduledTasks={scheduledTasks}
-            setScheduledTasks={setScheduledTasks}
             availableModels={availableModels}
           />
         )}
@@ -309,7 +303,6 @@ export default function App() {
 
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [testCases, setTestCases] = useState<TestCase[]>([]);
-  const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([]);
   const [executions, setExecutions] = useState<BatchExecution[]>([]);
   const [availableModels, setAvailableModels] = useState<{ models: string[], default: string }>({
     models: ['gpt-4o-mini'],
@@ -455,34 +448,16 @@ export default function App() {
             </nav>
           </div>
 
-          <div className="flex items-center justify-between flex-1">
-            {/* Breadcrumb / Context Info */}
-            <div className="flex-1">
-              {view === 'business_detail' && (() => {
-                const businessIdMatch = location.pathname.match(/^\/business\/([^/]+)/);
-                const businessId = businessIdMatch?.[1];
-                const business = businesses.find(b => b.id === businessId);
-                return business ? (
-                  <div className="flex items-center gap-2 text-sm text-gray-500">
-                    <span>业务管理</span>
-                    <ChevronRight className="w-4 h-4" />
-                    <span className="font-medium text-gray-900">{business.name}</span>
-                  </div>
-                ) : null;
-              })()}
-            </div>
-
-            <a
-              href="https://github.com/MigoXLab/webqa-agent"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-gray-500 hover:text-gray-900 transition-colors flex items-center gap-2"
-              title="View on GitHub"
-            >
-              <Github className="w-5 h-5" />
-              <span className="text-sm font-medium hidden sm:inline">GitHub Star ⭐</span>
-            </a>
-          </div>
+          <a
+            href="https://github.com/MigoXLab/webqa-agent"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-gray-500 hover:text-gray-900 transition-colors flex items-center gap-2"
+            title="View on GitHub"
+          >
+            <Github className="w-5 h-5" />
+            <span className="text-sm font-medium hidden sm:inline">GitHub Star ⭐</span>
+          </a>
         </div>
       </header>
 
@@ -520,8 +495,6 @@ export default function App() {
                 setBusinesses(newBusinesses);
                 loadBusinesses();
               }}
-              scheduledTasks={scheduledTasks}
-              setScheduledTasks={setScheduledTasks}
               onBatchExecute={handleBatchExecute}
               availableModels={availableModels}
             />

@@ -437,8 +437,6 @@ type Props = {
   onBusinessUpdate: (business: Business) => void;
   activeTab: 'cases' | 'schedules';
   setActiveTab: (tab: 'cases' | 'schedules') => void;
-  scheduledTasks?: ScheduledTask[];
-  setScheduledTasks?: (tasks: ScheduledTask[]) => void;
   availableModels: { models: string[], default: string };
 };
 
@@ -452,8 +450,6 @@ export function TestCaseManager({
   onBusinessUpdate,
   activeTab,
   setActiveTab,
-  scheduledTasks = [],
-  setScheduledTasks = () => {},
   availableModels
 }: Props) {
   const [showModal, setShowModal] = useState(false);
@@ -467,6 +463,9 @@ export function TestCaseManager({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [executing, setExecuting] = useState(false);
+
+  // Schedule create modal control
+  const [scheduleCreateOpen, setScheduleCreateOpen] = useState(false);
 
   // View mode: cards or yaml
   const [viewMode, setViewMode] = useState<'cards' | 'yaml'>('cards');
@@ -1194,9 +1193,10 @@ export function TestCaseManager({
               测试用例
             </button>
             <button
-              disabled
-              className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium text-gray-400 cursor-not-allowed opacity-50"
-              title="即将推出"
+              onClick={() => setActiveTab('schedules')}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                activeTab === 'schedules' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+              }`}
             >
               <Calendar className="w-4 h-4" />
               定时任务
@@ -1206,12 +1206,7 @@ export function TestCaseManager({
 
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="mb-2 text-2xl font-bold text-gray-900">
-              {activeTab === 'cases' ? business.name : '定时任务'}
-            </h1>
-            {activeTab === 'schedules' && (
-              <p className="text-gray-600">管理 {business.name} 的自动执行任务</p>
-            )}
+            <h1 className="mb-2 text-2xl font-bold text-gray-900">{business.name}</h1>
           </div>
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
             {activeTab === 'cases' && (
@@ -1273,7 +1268,7 @@ export function TestCaseManager({
             )}
             {activeTab === 'schedules' && (
               <button
-                onClick={() => setShowModal(true)}
+                onClick={() => setScheduleCreateOpen(true)}
                 className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
               >
                 <Plus className="w-4 h-4" />
@@ -1369,6 +1364,23 @@ export function TestCaseManager({
 
             {/* Cards View */}
             {viewMode === 'cards' && (
+              <>
+              {testCases.length === 0 && (
+                <div className="text-center py-12 bg-white rounded-lg border border-gray-200 border-dashed">
+                    <FileText className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+                    <p className="text-gray-500 mb-4">还没有测试用例</p>
+                    <button
+                    onClick={() => {
+                      resetForm();
+                      setShowModal(true);
+                    }}
+                    className="text-blue-600 hover:text-blue-700 font-medium"
+                    >
+                    创建第一个测试用例
+                    </button>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {testCases.filter(tc => tc && tc.id && tc.name).map((testCase) => {
                   // Defensive check: ensure steps is an array
@@ -1482,22 +1494,8 @@ export function TestCaseManager({
                   );
                 }).filter(Boolean)}
 
-                {testCases.length === 0 && (
-                <div className="text-center py-12 bg-white rounded-lg border border-gray-200 border-dashed">
-                    <FileText className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-                    <p className="text-gray-500 mb-4">还没有测试用例</p>
-                    <button
-                    onClick={() => {
-                      resetForm();
-                      setShowModal(true);
-                    }}
-                    className="text-blue-600 hover:text-blue-700 font-medium"
-                    >
-                    创建第一个测试用例
-                    </button>
-                </div>
-                )}
               </div>
+              </>
             )}
 
             {/* Global YAML View */}
@@ -1567,52 +1565,53 @@ export function TestCaseManager({
             businessName={business.name}
             environments={business.environments}
             testCases={testCases}
-            scheduledTasks={scheduledTasks}
-            setScheduledTasks={setScheduledTasks}
             showHeader={false}
             showCreateButton={false}
             availableModels={availableModels}
+            openCreateModal={scheduleCreateOpen}
+            onCreateModalClose={() => setScheduleCreateOpen(false)}
         />
       )}
 
       {/* TestCase Modal - Left-Right Split Layout */}
       {showModal && activeTab === 'cases' && (
         <div className="fixed inset-0 flex items-center justify-center p-4 z-50" style={{ backgroundColor: 'rgba(0, 0, 0, 0.75)' }}>
-          <div className="bg-white rounded-xl flex flex-col shadow-2xl overflow-hidden" style={{ width: '960px', maxWidth: '95vw', height: '600px', maxHeight: 'calc(100vh - 64px)' }}>
-            {/* Header */}
-            <div className="px-6 py-4 border-b border-gray-200 bg-white flex-shrink-0">
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-bold text-gray-900">{editingCase ? '编辑测试用例' : '创建测试用例'}</h2>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => {
-                      setShowModal(false);
-                      resetForm();
-                    }}
-                    className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
-                  >
-                    关闭
-                  </button>
-                  <button
-                    onClick={handleModalYamlSave}
-                    disabled={saving || !!modalYamlError}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {saving && <Loader2 className="w-4 h-4 animate-spin mr-2 inline-block" />}
-                    保存
-                  </button>
+          <div className="bg-white rounded-lg flex flex-col shadow-2xl" style={{ width: '960px', maxWidth: '90vw', height: '600px', maxHeight: 'calc(100vh - 64px)' }}>
+            <div className="border border-gray-200 rounded-lg flex flex-col flex-1 min-h-0 overflow-hidden">
+              {/* Header */}
+              <div className="border-b border-gray-200 flex-shrink-0" style={{ padding: '16px 28px' }}>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-bold text-gray-900">{editingCase ? '编辑测试用例' : '创建测试用例'}</h2>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setShowModal(false);
+                        resetForm();
+                      }}
+                      className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
+                    >
+                      关闭
+                    </button>
+                    <button
+                      onClick={handleModalYamlSave}
+                      disabled={saving || !!modalYamlError}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {saving && <Loader2 className="w-4 h-4 animate-spin mr-2 inline-block" />}
+                      保存
+                    </button>
+                  </div>
                 </div>
+                {error && (
+                  <div className="mt-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                    <span>{error}</span>
+                  </div>
+                )}
               </div>
-              {error && (
-                <div className="mt-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                  <span>{error}</span>
-                </div>
-              )}
-            </div>
 
-            {/* Main Content - Split View */}
-            <div className="flex flex-1 overflow-hidden">
+              {/* Main Content - Split View */}
+              <div className="flex flex-1 overflow-hidden">
               {/* Left Panel - Form Editor */}
               <div className="flex-1 flex flex-col border-r border-gray-200 bg-gray-50 overflow-hidden">
                 {/* Left Panel Header */}
@@ -1897,6 +1896,7 @@ steps:
     - verify: 验证结果`}
                   />
                 </div>
+              </div>
               </div>
             </div>
 

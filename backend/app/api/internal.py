@@ -9,9 +9,11 @@ from uuid import UUID
 from app.config import get_settings
 from app.database import AsyncSessionLocal
 from app.models import Execution
+from app.models.business import Business
+from app.models.scheduled_task import ScheduledTask
 from app.services.executor import upload_report_to_oss
-from app.services.progress_cache import (get_progress, refresh_progress_ttl,
-                                         set_progress)
+from app.services.feishu_notify import send_feishu_notification
+from app.services.progress_cache import refresh_progress_ttl, set_progress
 from app.utils.datetime_utils import now_with_tz
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -162,7 +164,7 @@ async def execution_complete(execution_id: str, request: ExecutionCompleteReques
                     # OSS 上传成功后，清理本地报告目录
                     cleanup_local_report(request.report_path)
                 else:
-                    logger.warning(f'[Internal] OSS 上传失败，保留本地报告目录')
+                    logger.warning('[Internal] OSS 上传失败，保留本地报告目录')
             else:
                 logger.warning(f'[Internal] 报告路径不存在或未提供: {request.report_path}')
 
@@ -170,6 +172,44 @@ async def execution_complete(execution_id: str, request: ExecutionCompleteReques
 
             # 刷新进度缓存 TTL（保留历史日志，TTL 过期后自动清理）
             await refresh_progress_ttl(execution_id)
+
+            # 飞书通知：如果是定时任务触发，发送结果通知
+            if execution.trigger_type == 'scheduled' and execution.scheduled_task_id:
+                try:
+                    # 查找关联的定时任务，获取 webhook_url
+                    task_result = await db.execute(
+                        select(ScheduledTask).where(ScheduledTask.id == execution.scheduled_task_id)
+                    )
+                    scheduled_task = task_result.scalar_one_or_none()
+
+                    # 优先使用任务级别的 webhook_url，没有则使用全局默认
+                    webhook_url = (
+                        (scheduled_task.webhook_url if scheduled_task else None)
+                        or settings.DEFAULT_FEISHU_WEBHOOK_URL
+                    )
+
+                    if webhook_url:
+                        # 获取业务名称
+                        biz_result = await db.execute(
+                            select(Business).where(Business.id == execution.business_id)
+                        )
+                        business = biz_result.scalar_one_or_none()
+                        business_name = business.name if business else '未知业务'
+
+                        # 异步发送通知（不阻塞回调响应）
+                        asyncio.create_task(
+                            send_feishu_notification(
+                                webhook_url=webhook_url,
+                                execution_id=execution_id,
+                                business_name=business_name,
+                                completed_at=execution.completed_at,
+                                result_count=request.result_count,
+                                oss_report_url=oss_url,
+                                feishu_notify_user_id=scheduled_task.feishu_notify_user_id if scheduled_task else None,
+                            )
+                        )
+                except Exception as notify_err:
+                    logger.warning(f'[Internal] 飞书通知发送失败（不影响主流程）: {notify_err}')
 
             return ExecutionCompleteResponse(
                 success=True,

@@ -1,5 +1,9 @@
 alembic==1.14.0
+# Scheduler
+apscheduler==3.10.4
 asyncpg==0.30.0
+croniter==2.0.1
+# FastAPI
 # FastAPI
 fastapi==0.115.6
 httpx==0.28.1

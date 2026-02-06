@@ -16,6 +16,7 @@ export function ExecutionHistory({ businesses }: Props) {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [selectedBusinessId, setSelectedBusinessId] = useState<string>('');
+  const [selectedTriggerType, setSelectedTriggerType] = useState<string>('');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
   // Pagination state
@@ -30,7 +31,7 @@ export function ExecutionHistory({ businesses }: Props) {
   // Load executions with adaptive polling
   useEffect(() => {
     loadExecutions(true); // Initial load with spinner
-  }, [selectedBusinessId, currentPage, pageSize]);
+  }, [selectedBusinessId, selectedTriggerType, currentPage, pageSize]);
 
   // Adaptive polling: faster when there are active executions
   useEffect(() => {
@@ -42,13 +43,14 @@ export function ExecutionHistory({ businesses }: Props) {
     }, interval);
 
     return () => clearInterval(timer);
-  }, [selectedBusinessId, hasActiveExecutions, currentPage, pageSize]);
+  }, [selectedBusinessId, selectedTriggerType, hasActiveExecutions, currentPage, pageSize]);
 
   const loadExecutions = async (showLoading = true) => {
     try {
       if (showLoading) setLoading(true);
       const response = await apiClient.getExecutions({
         business_id: selectedBusinessId || undefined,
+        trigger_type: selectedTriggerType || undefined,
         limit: pageSize,
         offset: (currentPage - 1) * pageSize,
       });
@@ -147,7 +149,7 @@ export function ExecutionHistory({ businesses }: Props) {
         return (
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-2 text-red-500 bg-red-50/50 px-3 py-1.5 rounded-lg w-fit">
-              <XCircle className="w-4 h-4" />
+              <XCircle className="w-3 h-3" />
               <span className="text-sm font-medium">执行失败</span>
             </div>
             <button
@@ -264,12 +266,31 @@ export function ExecutionHistory({ businesses }: Props) {
                       }}
                       className="cursor-pointer"
                     >
-                      <option>全部业务</option>
+                      <option value="">全部业务</option>
                       {businesses.map(b => (
                         <option key={b.id} value={b.id}>{b.name}</option>
                       ))}
                     </select>
                     <Filter className={`w-3 h-3 ${selectedBusinessId ? 'text-blue-600' : 'text-gray-400'} group-hover:text-gray-600`} />
+                  </div>
+                </th>
+                <th
+                  className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors relative group"
+                >
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={selectedTriggerType}
+                      onChange={(e) => {
+                        setSelectedTriggerType(e.target.value);
+                        setCurrentPage(1);
+                      }}
+                      className="cursor-pointer"
+                    >
+                      <option value="">触发方式</option>
+                      <option value="manual">手动触发</option>
+                      <option value="scheduled">定时触发</option>
+                    </select>
+                    <Filter className={`w-3 h-3 ${selectedTriggerType ? 'text-blue-600' : 'text-gray-400'} group-hover:text-gray-600`} />
                   </div>
                 </th>
                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
@@ -321,6 +342,13 @@ export function ExecutionHistory({ businesses }: Props) {
                         </div>
                       )}
                     </div>
+                  </td>
+
+                  {/* Trigger Type */}
+                  <td className="px-6 py-4">
+                    <span className="text-sm text-gray-600">
+                      {exec.trigger_type === 'scheduled' ? '定时触发' : '手动触发'}
+                    </span>
                   </td>
 
                   {/* Passed Count */}

@@ -6,9 +6,9 @@ from app.api import api_router
 from app.api.internal import router as internal_router
 from app.config import get_settings
 from app.database import init_db
+from app.services.job_monitor import job_monitor
 from app.services.progress_cache import close_redis
-from app.services.scheduler import job_monitor
-# from app.services.task_scheduler import task_scheduler
+from app.services.task_scheduler import task_scheduler
 from fastapi import FastAPI
 
 # Configure logging
@@ -31,16 +31,16 @@ async def lifespan(app: FastAPI):
 
     # Start Job Monitor
     job_monitor.start()
-    
-    # # Start Task Scheduler
-    # await task_scheduler.start()
-    
+
+    # Start Task Scheduler
+    await task_scheduler.start()
+
     yield
 
     # Shutdown
     logger.info('Shutting down...')
     await job_monitor.stop()
-    # await task_scheduler.stop()
+    await task_scheduler.stop()
     await close_redis()
     logger.info('Redis connection closed')
 
