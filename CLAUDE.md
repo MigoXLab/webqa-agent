@@ -193,9 +193,9 @@ webqa-agent ui                                    # Launch Gradio web interface
 # Browser Setup
 uv run playwright install chromium                # Install browser
 
-# Code Quality
-black webqa_agent/ tests/                         # Format code
-isort webqa_agent/ tests/                         # Sort imports
+# Code Quality (use pre-commit, not individual tools)
+pre-commit run --files <files>                    # Check/fix specific files
+pre-commit run --all-files                        # Check/fix all files
 ```
 
 ### Key File Locations

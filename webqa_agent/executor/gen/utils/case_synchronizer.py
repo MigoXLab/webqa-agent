@@ -34,7 +34,26 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List
 
+import yaml
+
 logger = logging.getLogger(__name__)
+
+
+class _IndentedYamlDumper(yaml.Dumper):
+    """Custom YAML dumper that indents list items under their parent key.
+
+    Produces readable output matching config_run.yaml style:
+        cases:
+          - name: Test_Login
+            steps:
+              - action: Click login button
+              - verify: Check page title
+
+    Instead of the default PyYAML style where list items are not indented.
+    """
+
+    def increase_indent(self, flow: bool = False, indentless: bool = False) -> None:
+        return super().increase_indent(flow, False)
 
 
 class CaseJsonSynchronizer:
@@ -83,7 +102,7 @@ class CaseJsonSynchronizer:
 
         Updates cases.json with:
         - final status (passed/failed/warning)
-        - completed_steps list
+        - execution_steps list
         - execution metadata (start_time, end_time, duration)
 
         Example:
@@ -101,7 +120,7 @@ class CaseJsonSynchronizer:
                 "name": "Verify_Login",
                 "status": "passed",  # ✅ Updated
                 "steps": [...],
-                "completed_steps": [  # ✅ Added
+                "execution_steps": [  # ✅ Added
                     {"description": "Click login", "status": "passed"}
                 ],
                 "start_time": "2026-01-29T17:28:17",  # ✅ Added
@@ -144,6 +163,9 @@ class CaseJsonSynchronizer:
 
         # Write back to cases.json
         self._write_cases_json(updated_cases)
+
+        # Generate run-mode compatible YAML alongside cases.json
+        self._write_cases_yaml(updated_cases)
 
         logger.info(
             f'Synchronized {sync_count}/{len(test_cases)} case results to {self.cases_json_path}'
@@ -202,10 +224,9 @@ class CaseJsonSynchronizer:
 
         Updates:
             - status: Final execution status (passed/failed/warning)
-            - completed_steps: List of executed step summaries (legacy)
-            - executed_steps: Detailed execution steps (P3 enhancement)
-            - planned_steps: Original planned steps (preserved)
-            - step_expansion_ratio: Ratio of executed to planned steps
+            - execution_steps: List of executed step summaries
+            - planned_steps: Original planned steps (from case_recorder, before adaptive recovery)
+            - step_expansion_ratio: Ratio of execution to planned steps
             - start_time: Execution start timestamp
             - end_time: Execution end timestamp
             - duration: Execution duration in seconds
@@ -213,43 +234,37 @@ class CaseJsonSynchronizer:
         # Update status (most critical field)
         updated_case['status'] = recorded.get('status', 'pending')
 
-        # P3 Enhancement: Preserve original planned steps
-        # Store original steps as 'planned_steps' before overwriting
-        if 'steps' in updated_case and 'planned_steps' not in updated_case:
+        # Use original_planned_steps from case_recorder (captured before adaptive recovery)
+        # Falls back to current steps if original not available (backward compatibility)
+        original_planned = recorded.get('original_planned_steps')
+        if original_planned is not None:
+            updated_case['planned_steps'] = original_planned
+        elif 'steps' in updated_case and 'planned_steps' not in updated_case:
             updated_case['planned_steps'] = updated_case['steps']
 
-        # P3 Enhancement: Extract detailed executed steps
-        executed_steps = self._extract_executed_steps(recorded)
-        updated_case['executed_steps'] = executed_steps
+        # Extract step summaries from recorded execution data
+        execution_steps = self._extract_step_summaries(recorded)
+        updated_case['execution_steps'] = execution_steps
 
-        # Legacy field for backward compatibility
-        updated_case['completed_steps'] = self._extract_step_summaries(recorded)
-
-        # P3 Enhancement: Calculate step expansion ratio
+        # Calculate step expansion ratio (execution vs planned)
         # This helps identify cases where UI Agent generated many sub-steps
         planned_count = len(updated_case.get('planned_steps', []))
-        executed_count = len(executed_steps)
+        execution_count = len(execution_steps)
         if planned_count > 0:
-            updated_case['step_expansion_ratio'] = round(executed_count / planned_count, 2)
+            updated_case['step_expansion_ratio'] = round(execution_count / planned_count, 2)
         else:
             updated_case['step_expansion_ratio'] = 1.0
 
         # Add execution metadata
-        if 'start_time' in recorded:
-            updated_case['start_time'] = recorded['start_time']
-
-        if 'end_time' in recorded:
-            updated_case['end_time'] = recorded['end_time']
-
-        if 'duration' in recorded:
-            updated_case['duration'] = recorded['duration']
+        for field in ('start_time', 'end_time', 'duration'):
+            if field in recorded:
+                updated_case[field] = recorded[field]
 
         # Optionally add error information for failed cases
         if recorded.get('status') == 'failed':
-            if 'error' in recorded:
-                updated_case['error'] = recorded['error']
-            if 'failure_type' in recorded:
-                updated_case['failure_type'] = recorded['failure_type']
+            for field in ('error', 'failure_type'):
+                if field in recorded:
+                    updated_case[field] = recorded[field]
 
     def _extract_step_summaries(self, recorded_case: Dict) -> List[Dict]:
         """Extract step summaries from recorded case.
@@ -290,74 +305,109 @@ class CaseJsonSynchronizer:
             if step.get('description')  # Filter out steps without description
         ]
 
-    def _extract_executed_steps(self, recorded_case: Dict) -> List[Dict]:
-        """Extract detailed executed steps from recorded case (P3 enhancement).
+    def _generate_run_mode_steps(self, execution_steps: List[Dict]) -> List[Dict[str, str]]:
+        """Generate run-mode compatible step list from execution steps.
 
-        This method extracts more detailed execution step information compared to
-        _extract_step_summaries(), including screenshots and truncated model I/O.
+        Parses step descriptions (prefixed with 'action:', 'verify:', 'ux_verify:')
+        into structured dicts matching config_run.yaml format. Steps from custom tools
+        (unknown prefixes or no prefix) are mapped to 'custom:' type.
 
         Args:
-            recorded_case: Recorded execution result with steps
+            execution_steps: List of execution step dicts with 'description' field
 
         Returns:
-            List of detailed step dicts with:
-            - description: Step description
-            - status: Step status (passed/failed/warning)
-            - timestamp: Execution timestamp
-            - screenshot: First screenshot URL if available
-            - step_type: Type of step (action/verify/ux_verify/etc)
+            List of single-key dicts like:
+            [{"action": "Click button"}, {"verify": "Check result"}, {"custom": "..."}]
 
         Example:
-            Input: recorded_case['steps'] = [
-                {
-                    'description': 'Click login button',
-                    'status': 'passed',
-                    'timestamp': '2026-01-29T17:28:20',
-                    'screenshots': ['path/to/screenshot1.png', 'path/to/screenshot2.png'],
-                    'step_type': 'action',
-                    'model_io': '...'  # Long JSON string
-                }
+            Input: [
+                {"description": "action: Click login button", "status": "passed"},
+                {"description": "verify: Dashboard is visible", "status": "passed"},
+                {"description": "lighthouse: Run performance audit", "status": "passed"},
             ]
-
             Output: [
-                {
-                    'description': 'Click login button',
-                    'status': 'passed',
-                    'timestamp': '2026-01-29T17:28:20',
-                    'screenshot': 'path/to/screenshot1.png',
-                    'step_type': 'action'
-                }
+                {"action": "Click login button"},
+                {"verify": "Dashboard is visible"},
+                {"custom": "lighthouse: Run performance audit"},
             ]
-
-        Note:
-            - Excludes heavy fields like full model_io to keep cases.json manageable
-            - Preserves first screenshot for visual reference
         """
-        steps = recorded_case.get('steps', [])
+        run_steps: List[Dict[str, str]] = []
+        known_prefixes = ('action', 'verify', 'ux_verify')
 
-        executed_steps = []
-        for step in steps:
-            if not step.get('description'):
-                continue  # Skip steps without description
+        for step in execution_steps:
+            desc = step.get('description', '')
+            if not desc:
+                continue
 
-            executed_step = {
-                'description': step.get('description'),
-                'status': step.get('status'),
-                'timestamp': step.get('timestamp'),
-            }
+            # Parse "prefix: content" format from recorder descriptions
+            if ': ' in desc:
+                prefix, content = desc.split(': ', 1)
+                prefix_lower = prefix.strip().lower()
+                if prefix_lower in known_prefixes:
+                    run_steps.append({prefix_lower: content})
+                    continue
 
-            # Add step_type if available (action, verify, ux_verify, custom_tool, etc.)
-            if 'step_type' in step:
-                executed_step['step_type'] = step['step_type']
+            # All other steps (custom tools, no prefix) → custom type
+            run_steps.append({'custom': desc})
 
-            # Include first screenshot for visual reference
-            screenshots = step.get('screenshots', [])
-            if screenshots and len(screenshots) > 0:
-                executed_step['screenshot'] = screenshots[0]
+        return run_steps
 
-            executed_steps.append(executed_step)
+    def _write_cases_yaml(self, updated_cases: List[Dict]) -> None:
+        """Generate run-mode compatible YAML file alongside cases.json.
 
-        return executed_steps
+        Converts execution results into config_run.yaml format that users
+        can directly copy-paste for re-running test cases.
+
+        Args:
+            updated_cases: Synced test cases with execution_steps populated
+
+        Output file: cases.yaml in the same directory as cases.json
+        """
+        yaml_path = self.cases_json_path.parent / 'cases.yaml'
+
+        cases_yaml: List[Dict[str, Any]] = []
+        for case in updated_cases:
+            execution_steps = case.get('execution_steps', [])
+            if not execution_steps:
+                continue
+
+            run_steps = self._generate_run_mode_steps(execution_steps)
+            if not run_steps:
+                continue
+
+            cases_yaml.append({
+                'name': case.get('name', case.get('case_id', 'unknown')),
+                'steps': run_steps,
+            })
+
+        if not cases_yaml:
+            logger.debug('No executed cases to write to cases.yaml')
+            return
+
+        try:
+            # Ensure parent directory exists (defensive; _write_cases_json usually creates it first)
+            yaml_path.parent.mkdir(parents=True, exist_ok=True)
+
+            yaml_data: Dict[str, Any] = {'cases': cases_yaml}
+
+            with open(yaml_path, 'w', encoding='utf-8') as f:
+                yaml.dump(
+                    yaml_data,
+                    f,
+                    Dumper=_IndentedYamlDumper,
+                    default_flow_style=False,
+                    allow_unicode=True,
+                    sort_keys=False,  # Preserve insertion order: name before steps
+                )
+
+            logger.info(f'Generated run-mode YAML: {yaml_path} ({len(cases_yaml)} cases)')
+
+        except Exception as e:
+            # YAML is a convenience feature for run-mode copy-paste; don't fail the sync
+            logger.warning(
+                f'Failed to write cases.yaml to {yaml_path}: {e}. '
+                f'JSON sync completed successfully.'
+            )
 
     def _write_cases_json(self, cases: List[Dict]) -> None:
         """Write updated cases to JSON file.

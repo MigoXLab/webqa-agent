@@ -5,6 +5,7 @@ The agent worker is responsible for executing a single test case.
 """
 
 import asyncio
+import copy
 import datetime
 import json
 import logging
@@ -1107,8 +1108,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     # Expose recorder to UITester so it can record action/verify steps automatically
     ui_tester_instance.central_case_recorder = case_recorder
 
-    # Note: case tracking is managed by execute_single_case node via start_case/finish_case
-    # No need to set test name here as it's already handled
+    # Deep-copy original steps BEFORE any execution or adaptive recovery
+    # case_steps[i] = new_steps[0] modifies the list in-place, corrupting the original plan
+    original_planned_steps = copy.deepcopy(case.get('steps', []))
 
     system_prompt_string = get_execute_system_prompt(case)
     logging.debug(
@@ -1394,6 +1396,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     # Ensure time data is recorded even on early failure
                     case_recorder.finish_case(final_status='failed', final_summary=final_summary)
                     recorded_case_data = case_recorder.get_case_data()
+                    if recorded_case_data is not None:
+                        recorded_case_data['original_planned_steps'] = original_planned_steps
                     # Extract metrics for consistent case_result structure
                     metrics = recorded_case_data.get('metrics', {}) if recorded_case_data else {}
                     failed_step_details = _extract_failed_step_details(recorded_case_data)
@@ -1424,6 +1428,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 # Ensure time data is recorded even on exception
                 case_recorder.finish_case(final_status='failed', final_summary=final_summary)
                 recorded_case_data = case_recorder.get_case_data()
+                if recorded_case_data is not None:
+                    recorded_case_data['original_planned_steps'] = original_planned_steps
                 # Extract metrics for consistent case_result structure
                 metrics = recorded_case_data.get('metrics', {}) if recorded_case_data else {}
                 failed_step_details = _extract_failed_step_details(recorded_case_data)
@@ -2439,6 +2445,11 @@ Generate a brief summary without referencing specific execution details."""
 
     # Get recorded case data (contains metrics and step details)
     recorded_case_data = case_recorder.get_case_data()
+
+    # Attach original planned steps (before adaptive recovery modifications)
+    # This allows case_synchronizer to correctly populate planned_steps
+    if recorded_case_data is not None:
+        recorded_case_data['original_planned_steps'] = original_planned_steps
 
     # Extract metrics and failed step details for reflection phase
     # This enriches case_result without additional file I/O
