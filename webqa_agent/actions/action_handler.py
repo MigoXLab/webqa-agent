@@ -213,7 +213,7 @@ class ActionHandler:
 
         await self.page.goto(url=url, wait_until='domcontentloaded', timeout=60000)
         try:
-            await self.page.wait_for_load_state('networkidle', timeout=60000)
+            await self.page.wait_for_load_state('networkidle', timeout=15000)
         except Exception as e:
             logging.warning(f'Wait for networkidle timed out: {e}. Proceeding since domcontentloaded is complete.')
 
@@ -1771,6 +1771,11 @@ class ActionHandler:
     ) -> bytes:
         """Get page screenshot (binary) and save to disk.
 
+        Includes a fallback strategy for cluster/container stability:
+          1. Normal screenshot with requested settings.
+          2. If full_page times out, retry viewport-only (smaller surface).
+          3. Last resort: inject CSS to override web fonts, then viewport screenshot.
+
         Args:
             page: page object
             full_page: whether to capture the whole page
@@ -1785,36 +1790,61 @@ class ActionHandler:
             The method always returns the screenshot bytes for base64 encoding.
         """
         try:
-            # Shortened and more lenient load state check
-            # Note: page.screenshot() already waits for fonts and basic rendering internally
-            try:
-                await page.wait_for_load_state('domcontentloaded', timeout=10000)
-            except Exception as e:
-                logging.debug(f'Load state check: {e}; proceeding with screenshot')
+            await page.wait_for_load_state('domcontentloaded', timeout=10000)
+        except Exception as e:
+            logging.debug(f'Load state check: {e}; proceeding with screenshot')
 
+        screenshot_options = {
+            'full_page': full_page,
+            'timeout': timeout,
+            'animations': 'disabled',
+            'caret': 'hide',
+        }
+        if file_path:
+            screenshot_options['path'] = file_path
+
+        # ── Attempt 1: normal screenshot ──
+        try:
             logging.debug(f'Taking screenshot (full_page={full_page}, timeout={timeout}ms)')
-
-            # Prepare screenshot options with Playwright best practices
-            screenshot_options = {
-                'full_page': full_page,
-                'timeout': timeout,
-                'animations': 'disabled',  # Skip waiting for CSS animations/transitions (Playwright 1.25+)
-                'caret': 'hide',  # Hide text input cursor for cleaner screenshots
-            }
-
-            # Save to disk if file_path is provided
-            if file_path:
-                screenshot_options['path'] = file_path
-                logging.debug(f'Screenshot will be saved to: {file_path}')
-
-            # Capture screenshot with optimized options
             screenshot: bytes = await page.screenshot(**screenshot_options)
-
             logging.debug(f'Screenshot captured successfully ({len(screenshot)} bytes)')
             return screenshot
-
         except Exception as e:
             logging.warning(f'Page screenshot attempt failed: {e}; trying fallback capture')
+
+        # ── Attempt 2: viewport-only fallback (only when full_page failed) ──
+        if full_page:
+            try:
+                logging.info('Screenshot fallback: retrying with viewport-only')
+                screenshot_options['full_page'] = False
+                screenshot_options['timeout'] = min(timeout, 30000)
+                screenshot = await page.screenshot(**screenshot_options)
+                logging.debug(f'Viewport-only fallback succeeded ({len(screenshot)} bytes)')
+                return screenshot
+            except Exception as e:
+                logging.warning(f'Viewport-only fallback failed: {e}')
+
+        # ── Attempt 3: force-disable web fonts via CSS, then viewport screenshot ──
+        try:
+            logging.info('Screenshot fallback: disabling web fonts via CSS injection')
+            await page.evaluate('''() => {
+                const s = document.createElement("style");
+                s.id = "__webqa_no_fonts";
+                s.textContent = "* { font-family: Arial, Helvetica, sans-serif !important; }";
+                document.head.appendChild(s);
+            }''')
+            screenshot_options['full_page'] = False
+            screenshot_options['timeout'] = min(timeout, 30000)
+            screenshot = await page.screenshot(**screenshot_options)
+            await page.evaluate('document.getElementById("__webqa_no_fonts")?.remove()')
+            logging.debug(f'No-fonts fallback succeeded ({len(screenshot)} bytes)')
+            return screenshot
+        except Exception as e:
+            logging.warning(f'No-fonts fallback failed: {e}')
+            try:
+                await page.evaluate('document.getElementById("__webqa_no_fonts")?.remove()')
+            except Exception:
+                pass
             raise
 
     async def go_back(self) -> bool:

@@ -117,8 +117,15 @@ class CaseRunner:
                 logging.info(f"{icon['lock']} Starting fixture case: '{case_name}' ({completed_count + 1}/{total_cases})")
                 session = await session_pool.acquire(browser_config=browser_cfg, timeout=120.0)
 
+                # Per-case timeout: env > case _config > default 20 minutes
+                default_timeout = int(os.getenv('WEBQA_CASE_TIMEOUT', '1200'))
+                case_timeout = case.get('_config', {}).get('case_timeout', default_timeout)
+
                 with Display.display(case_name):  # pylint: disable=not-callable
-                    case_result, raw_monitoring_data = await self.execute_single_case(session=session, case=case, case_index=idx)
+                    case_result, raw_monitoring_data = await asyncio.wait_for(
+                        self.execute_single_case(session=session, case=case, case_index=idx),
+                        timeout=case_timeout
+                    )
 
                 async with results_lock:
                     results.append(case_result)
@@ -141,6 +148,26 @@ class CaseRunner:
                         logging.info(f"{icon['check']} Saved persistent snapshot to '{snapshot_id}' for '{case_name}'")
                     except Exception as e:
                         logging.warning(f"Failed to save snapshot for '{case_name}': {e}")
+
+            except asyncio.TimeoutError:
+                logging.error(f"Fixture case '{case_name}' timed out after {case_timeout}s")
+                async with results_lock:
+                    completed_count += 1
+                    results.append(SubTestResult(
+                        sub_test_id=case_id,
+                        name=case_name,
+                        status=TestStatus.FAILED,
+                        metrics={'total_steps': 0, 'passed_steps': 0, 'failed_steps': 0},
+                        steps=[],
+                        messages={},
+                        start_time=datetime.now().isoformat(),
+                        end_time=datetime.now().isoformat(),
+                        final_summary=f'Case timed out after {case_timeout} seconds',
+                        report=[],
+                    ))
+                if session:
+                    await session_pool.release(session, failed=True)
+                    session = None
 
             except Exception as e:
                 logging.error(f"Exception in fixture case '{case_name}': {e}", exc_info=True)
@@ -225,8 +252,15 @@ class CaseRunner:
                         session = await session_pool.acquire(browser_config=browser_cfg, timeout=120.0)
                         current_config_key = new_config_key
 
+                    # Per-case timeout: env > case _config > default 20 minutes
+                    default_timeout = int(os.getenv('WEBQA_CASE_TIMEOUT', '1200'))
+                    case_timeout = case.get('_config', {}).get('case_timeout', default_timeout)
+
                     with Display.display(case_name):  # pylint: disable=not-callable
-                        case_result, raw_monitoring_data = await self.execute_single_case(session=session, case=case, case_index=idx)
+                        case_result, raw_monitoring_data = await asyncio.wait_for(
+                            self.execute_single_case(session=session, case=case, case_index=idx),
+                            timeout=case_timeout
+                        )
 
                     async with results_lock:
                         results.append(case_result)
@@ -234,6 +268,29 @@ class CaseRunner:
 
                     status_icon = icon['check'] if case_result.status == TestStatus.PASSED else icon['cross']
                     logging.info(f"{status_icon} Worker {worker_id}: '{case_name}' - {case_result.status} ({completed_count}/{total_cases})")
+
+                except asyncio.TimeoutError:
+                    logging.error(f"Worker {worker_id}: Case '{case_name}' timed out after {case_timeout}s")
+                    async with results_lock:
+                        completed_count += 1
+                        results.append(SubTestResult(
+                            sub_test_id=case_id,
+                            name=case_name,
+                            status=TestStatus.FAILED,
+                            metrics={'total_steps': 0, 'passed_steps': 0, 'failed_steps': 0},
+                            steps=[],
+                            messages={},
+                            start_time=datetime.now().isoformat(),
+                            end_time=datetime.now().isoformat(),
+                            final_summary=f'Case timed out after {case_timeout} seconds',
+                            report=[],
+                        ))
+                    case_result = None
+                    raw_monitoring_data = None
+                    if session:
+                        await session_pool.release(session, failed=True, keep_alive=False)
+                        session = None
+                        current_config_key = None
 
                 except Exception as e:
                     logging.error(f"Worker {worker_id}: Exception in '{case_name}': {e}", exc_info=True)
@@ -267,12 +324,6 @@ class CaseRunner:
                         case_config = case.get('_config', {})
                         self._save_case_result(case_result, case_name, idx, raw_monitoring_data=raw_monitoring_data, case_config=case_config)
                         self._clear_case_screenshots(case_result)
-
-                    # Release session on failure (cleanup handled in execute_single_case)
-                    if session and case_result is not None and case_result.status == TestStatus.FAILED:
-                        await session_pool.release(session, failed=True, keep_alive=False)
-                        session = None
-                        current_config_key = None
 
                     case_queue.task_done()
             if session:
@@ -317,18 +368,16 @@ class CaseRunner:
         cookies = case_config.get('cookies') or self.test_specific_config.get('cookies')
         ignore_rules = case_config.get('ignore_rules') or self.test_specific_config.get('ignore_rules', {})
 
-        # Check if using snapshot (skip navigation for snapshot cases)
         use_snapshot = case.get('use_snapshot')
 
-        # Initialize tester (navigation will be skipped if use_snapshot is True)
+        # Always navigate first; snapshot state is applied after
         tester = await self._initialize_tester(
             session, case_name,
-            url=url if not use_snapshot else None,  # Pass None to skip navigation
-            cookies=cookies,
+            url=url,
+            cookies=cookies if not use_snapshot else None,
             ignore_rules=ignore_rules
         )
 
-        # Load fixture state for snapshot cases (includes navigated page state)
         if use_snapshot:
             await self._load_fixture_state(session, case, case_config)
 
@@ -431,7 +480,10 @@ class CaseRunner:
 
             # Reload page to apply storage
             await page.reload(wait_until='domcontentloaded')
-            await page.wait_for_load_state('networkidle', timeout=60000)
+            try:
+                await page.wait_for_load_state('networkidle', timeout=15000)
+            except Exception:
+                logging.debug(f"networkidle timed out after snapshot reload for '{snapshot_name}', proceeding")
             await asyncio.sleep(1)
             logging.info(f"Reloaded page to apply snapshot '{snapshot_name}' state")
 
@@ -478,7 +530,7 @@ class CaseRunner:
             await tester.start_session(url=_url, cookies=_cookies)
         else:
             # No navigation needed (snapshot will load page state)
-            logging.debug("Skipping navigation for snapshot case")
+            logging.debug('Skipping navigation for snapshot case')
         return tester
 
     async def _end_session(self, tester) -> Dict[str, Any]:

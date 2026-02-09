@@ -229,7 +229,13 @@ class _BrowserSession:
 
         try:
             await self._page.goto(url, **kwargs)
-            await self._page.wait_for_load_state('networkidle', timeout=60000)
+            # networkidle is unreliable for SPAs with persistent connections
+            # (WebSocket, SSE, analytics heartbeats).  Use a short timeout to
+            # avoid wasting 60 s on every navigation in cluster environments.
+            try:
+                await self._page.wait_for_load_state('networkidle', timeout=15000)
+            except Exception:
+                logging.debug('networkidle not reached within 15 s; proceeding (domcontentloaded is sufficient)')
             is_blank = await self._page.evaluate(
                 '!document.body || document.body.innerText.trim().length === 0'
             )
@@ -244,6 +250,14 @@ class _BrowserSession:
         self._check_state()
         return self._page.url, await self._page.title()
 
+    @staticmethod
+    async def _abort_route(route) -> None:
+        """Abort an intercepted route.
+
+        Must be async for Playwright's async API.
+        """
+        await route.abort()
+
     async def _initialize_local_browser(self, cfg: Dict[str, Any]) -> None:
         """Initialize local browser via Playwright launch."""
         self._playwright = await async_playwright().start()
@@ -257,6 +271,7 @@ class _BrowserSession:
                 '--force-device-scale-factor=1',
                 f'--window-size={cfg["viewport"]["width"]},{cfg["viewport"]["height"]}',
                 '--block-new-web-contents',
+                '--font-render-hinting=none',
             ],
         )
         self._context = await self._browser.new_context(
@@ -264,6 +279,14 @@ class _BrowserSession:
             device_scale_factor=1,
             locale=cfg.get('language', 'en-US'),
         )
+
+        # ── Cluster stability: intercept external font requests ──
+        abort = self._abort_route
+        for pattern in ('**/*.woff', '**/*.woff2', '**/*.ttf', '**/*.otf', '**/*.eot'):
+            await self._context.route(pattern, abort)
+        await self._context.route('**fonts.googleapis.com/**', abort)
+        await self._context.route('**fonts.gstatic.com/**', abort)
+        logging.debug(f'[Session {self.session_id}] External font requests will be aborted for cluster stability')
 
     async def _initialize_cloud_browser(self, cfg: Dict[str, Any]) -> None:
         """Initialize cloud browser via AgentBay CDP connection.
@@ -277,12 +300,8 @@ class _BrowserSession:
         6. browser.contexts[0] - use existing context (avoid cloud profile issues)
         """
         try:
-            from agentbay import (
-                AgentBay,
-                CreateSessionParams,
-                BrowserOption,
-                BrowserViewport,
-            )
+            from agentbay import (AgentBay, BrowserOption, BrowserViewport,
+                                  CreateSessionParams)
         except ImportError as e:
             raise RuntimeError(
                 'AgentBay SDK not installed. Run: pip install wuying-agentbay-sdk'
