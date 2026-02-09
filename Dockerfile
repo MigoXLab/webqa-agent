@@ -4,6 +4,9 @@ FROM eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/webqa-agent:latest
 # 设置工作目录
 WORKDIR /app
 
+# 避免 Playwright 截图时等待字体加载导致超时
+ENV PW_TEST_SCREENSHOT_NO_FONTS_READY=1
+
 # 复制项目代码（Agent 需要运行 backend.run_webqa）
 COPY webqa_agent/ /app/webqa_agent/
 COPY backend/ /app/backend/

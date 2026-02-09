@@ -194,7 +194,7 @@ type DebugState = 'idle' | 'configuring' | 'running' | 'completed' | 'failed';
 export function CaseEditorPage() {
   const { businessId, caseId } = useParams<{ businessId: string; caseId: string }>();
   const navigate = useNavigate();
-  const isNewCase = caseId === 'new';
+  const isNewCase = !caseId || caseId === 'new';
 
   // ---- Loading state ----
   const [pageLoading, setPageLoading] = useState(true);
@@ -483,7 +483,7 @@ export function CaseEditorPage() {
           const statusLower = progress.status?.toLowerCase() || '';
           const finishedStatuses = ['completed', 'failed', 'timeout', 'passed', 'warning', 'success', 'error'];
           const isFinished = finishedStatuses.some(s => statusLower.includes(s));
-          
+
           if (isFinished) {
             console.log('[Debug] ✅ Execution finished with status:', progress.status);
             clearInterval(pollInterval);
@@ -500,7 +500,7 @@ export function CaseEditorPage() {
                 status: finalExec.status,
                 oss_report_url: finalExec.oss_report_url,
               });
-              
+
               if (finalExec.oss_report_url) {
                 console.log('[Debug] ✅ Setting report URL:', finalExec.oss_report_url);
                 setDebugReportUrl(finalExec.oss_report_url);
@@ -535,7 +535,7 @@ export function CaseEditorPage() {
       clearInterval(pollTimerRef.current);
       pollTimerRef.current = null;
     }
-    
+
     // Try to fetch final execution status when manually stopped
     if (debugExecutionId) {
       try {
@@ -881,30 +881,30 @@ export function CaseEditorPage() {
             </div>
 
             {/* ===== Right Panel: Debug ===== */}
-            <div 
-              className="flex-shrink-0 flex flex-col bg-white rounded-lg border border-gray-200" 
-              style={{ 
-                width: '400px', 
-                minWidth: '400px', 
-                maxWidth: '400px', 
-                height: 800, 
-                maxHeight: 800, 
+            <div
+              className="flex-shrink-0 flex flex-col bg-white rounded-lg border border-gray-200"
+              style={{
+                width: '400px',
+                minWidth: '400px',
+                maxWidth: '400px',
+                height: 800,
+                maxHeight: 800,
                 overflow: 'hidden',
                 boxSizing: 'border-box'
               }}
             >
               {/* Debug Header + Config: env, model, button on same row */}
-              <div 
-                className="px-4 py-3 border-b border-gray-200 flex-shrink-0 space-y-3" 
-                style={{ 
-                  width: '100%', 
+              <div
+                className="px-4 py-3 border-b border-gray-200 flex-shrink-0 space-y-3"
+                style={{
+                  width: '100%',
                   minWidth: 0,
-                  maxWidth: '100%', 
+                  maxWidth: '100%',
                   overflow: 'hidden',
                   boxSizing: 'border-box'
                 }}
               >
-                <h3 
+                <h3
                   className="text-sm font-semibold text-gray-900 flex items-center gap-2"
                   style={{ width: '100%', minWidth: 0, overflow: 'hidden' }}
                 >
@@ -959,34 +959,34 @@ export function CaseEditorPage() {
                   <p className="text-xs text-amber-600" style={{ width: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>请先保存用例后再调试</p>
                 )}
                 {debugError && (
-                  <div 
+                  <div
                     className="text-xs text-red-600 flex items-center gap-1"
                     style={{ width: '100%', minWidth: 0, overflow: 'hidden' }}
                   >
-                    <AlertCircle className="w-3 h-3 flex-shrink-0" /> 
+                    <AlertCircle className="w-3 h-3 flex-shrink-0" />
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{debugError}</span>
                   </div>
                 )}
               </div>
 
               {/* Debug log + status area */}
-              <div 
-                className="flex-1 flex flex-col" 
-                style={{ 
-                  width: '100%', 
+              <div
+                className="flex-1 flex flex-col"
+                style={{
+                  width: '100%',
                   minWidth: 0,
-                  maxWidth: '100%', 
+                  maxWidth: '100%',
                   minHeight: 0,
                   overflow: 'hidden',
                   boxSizing: 'border-box'
                 }}
               >
-                <div 
+                <div
                   className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex items-center gap-2 flex-shrink-0"
-                  style={{ 
-                    width: '100%', 
+                  style={{
+                    width: '100%',
                     minWidth: 0,
-                    maxWidth: '100%', 
+                    maxWidth: '100%',
                     overflow: 'hidden',
                     boxSizing: 'border-box'
                   }}
@@ -1005,10 +1005,10 @@ export function CaseEditorPage() {
                     <span className="ml-auto text-xs text-red-600 font-medium flex-shrink-0">✗ 失败</span>
                   )}
                 </div>
-                <div 
-                  ref={logContainerRef} 
-                  className="flex-1 bg-gray-900 font-mono text-xs text-green-400 leading-relaxed" 
-                  style={{ 
+                <div
+                  ref={logContainerRef}
+                  className="flex-1 bg-gray-900 font-mono text-xs text-green-400 leading-relaxed"
+                  style={{
                     width: '100%',
                     minWidth: 0,
                     maxWidth: '100%',
@@ -1023,9 +1023,9 @@ export function CaseEditorPage() {
                 >
                   {debugProgress && debugProgress.logs.length > 0 ? (
                     debugProgress.logs.map((log, i) => (
-                      <div 
-                        key={i} 
-                        style={{ 
+                      <div
+                        key={i}
+                        style={{
                           whiteSpace: 'pre-wrap',
                           wordBreak: 'break-all',
                           overflowWrap: 'break-word',
@@ -1048,15 +1048,15 @@ export function CaseEditorPage() {
 
                 {/* Task progress info (running state) */}
                 {debugProgress && debugProgress.running.length > 0 && (
-                  <div 
-                    className="px-3 py-2 bg-gray-800 border-t border-gray-700 flex-shrink-0" 
+                  <div
+                    className="px-3 py-2 bg-gray-800 border-t border-gray-700 flex-shrink-0"
                     style={{ width: '100%', maxWidth: '100%', overflow: 'hidden', boxSizing: 'border-box' }}
                   >
                     {debugProgress.running.map((task, i) => (
-                      <div 
-                        key={i} 
+                      <div
+                        key={i}
                         className="text-xs text-blue-400 flex items-center gap-1.5"
-                        style={{ 
+                        style={{
                           width: '100%',
                           maxWidth: '100%',
                           overflow: 'hidden',
@@ -1086,7 +1086,7 @@ export function CaseEditorPage() {
                   });
                 }
                 return shouldShowButton ? (
-                  <div 
+                  <div
                     className="px-4 py-2.5 border-t border-gray-200 flex-shrink-0 flex justify-end"
                     style={{ width: '100%', maxWidth: '100%', overflow: 'hidden', boxSizing: 'border-box' }}
                   >
@@ -1106,7 +1106,7 @@ export function CaseEditorPage() {
           {/* ===== Browser Monitor — compact bar below panels ===== */}
           <div className="flex-shrink-0 bg-white rounded-lg border border-gray-200 px-4 py-2 flex items-center justify-center gap-3 opacity-50">
             <Monitor className="w-4 h-4 text-gray-400" />
-            <span className="text-xs text-gray-400">浏览器监控 · 功能开发中</span>
+            <span className="text-xs text-gray-400">浏览器回放 · 功能开发中</span>
           </div>
         </div>
       </div>

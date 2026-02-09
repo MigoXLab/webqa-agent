@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     MAX_CONCURRENT_JOBS: int = 5     # 系统同时执行的 Job 数量上限
     DEFAULT_WORKERS: int = 1         # 单个 Job 内部的默认并行 Case 数
     MAX_WORKERS: int = 5             # 单个 Job 内部的最大并行 Case 数
+    WEBQA_CASE_TIMEOUT: int = 1200   # 单个 Case 超时（秒），默认 20 分钟
 
     # Execution Mode: "local" / "docker" / "kubernetes"
     # - local: 启动子进程运行 Agent（本地开发）

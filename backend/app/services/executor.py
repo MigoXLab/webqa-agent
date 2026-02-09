@@ -9,9 +9,6 @@ import asyncio
 import json
 import logging
 import os
-import subprocess
-import tempfile
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
@@ -38,9 +35,9 @@ def generate_sso_cookies(username: str, password: str, env: str = 'prod') -> Tup
         logger.info(f'[SSO] 生成 cookies: username={username}, env={env}')
         token, cookie_json = get_sso_token_sync(username, password, env)
         cookies = json.loads(cookie_json)
-        logger.info(f'[SSO] Cookies 生成成功')
+        logger.info('[SSO] Cookies 生成成功')
         return token, cookies
-    except Exception as e:
+    except Exception:
         logger.exception(f'[SSO] Cookies 生成失败: username={username}, env={env}')
         raise
 
@@ -76,7 +73,7 @@ def upload_report_to_oss(report_dir: str, execution_id: str) -> Optional[str]:
 
         return list(uploaded_files.values())[0]
 
-    except Exception as e:
+    except Exception:
         logger.exception(f'[OSS] 上传失败: report_dir={report_dir}, execution_id={execution_id}')
         return None
 
@@ -199,6 +196,7 @@ async def _start_agent_subprocess(execution_id: str):
             env['BACKEND_CALLBACK_URL'] = settings.BACKEND_CALLBACK_URL
             env['OPENAI_API_KEY'] = settings.LLM_API_KEY
             env['OPENAI_BASE_URL'] = settings.LLM_BASE_URL
+            env['WEBQA_CASE_TIMEOUT'] = str(settings.WEBQA_CASE_TIMEOUT)
 
             # 静默模式：输出直接打印到终端（方便 K8s Job 查看 kubectl logs）
             # 不写入日志文件，减少 I/O
@@ -410,6 +408,7 @@ async def _create_k8s_job(
         ),
         spec=client.V1JobSpec(
             ttl_seconds_after_finished=36000,
+            active_deadline_seconds=settings.JOB_TIMEOUT_SECONDS,
             backoff_limit=0,
             template=client.V1PodTemplateSpec(
                 metadata=client.V1ObjectMeta(
@@ -440,6 +439,7 @@ async def _create_k8s_job(
                                 client.V1EnvVar(name='BACKEND_CALLBACK_URL', value=settings.BACKEND_CALLBACK_URL),
                                 client.V1EnvVar(name='OPENAI_API_KEY', value=settings.LLM_API_KEY),
                                 client.V1EnvVar(name='OPENAI_BASE_URL', value=settings.LLM_BASE_URL),
+                                client.V1EnvVar(name='WEBQA_CASE_TIMEOUT', value=str(settings.WEBQA_CASE_TIMEOUT)),
                             ],
                             resources=client.V1ResourceRequirements(
                                 # Chromium rendering + screenshots are CPU/memory intensive.
@@ -652,6 +652,6 @@ def _build_agent_configs(
         if fixed_ignore_rules:
             config_no_auth['ignore_rules'] = fixed_ignore_rules
         configs.append(config_no_auth)
-        logger.info(f'[Config] 不需要登录的 cases 配置完成（无 cookies）')
+        logger.info('[Config] 不需要登录的 cases 配置完成（无 cookies）')
 
     return configs
