@@ -227,7 +227,7 @@ export function CaseEditorPage() {
   const [debugError, setDebugError] = useState<string | null>(null);
   const [availableModels, setAvailableModels] = useState<{ models: string[]; default: string }>({ models: [], default: '' });
   const pollTimerRef = useRef<number | null>(null);
-  const logEndRef = useRef<HTMLDivElement>(null);
+  const logContainerRef = useRef<HTMLDivElement>(null);
 
   // ---- Load business, case, models on mount ----
   useEffect(() => {
@@ -469,25 +469,57 @@ export function CaseEditorPage() {
       const pollInterval = setInterval(async () => {
         try {
           const progress = await apiClient.getExecutionProgress(exec.id);
+          console.log('[Debug] Progress status:', progress.status, 'Logs:', progress.logs?.length || 0);
           setDebugProgress(progress);
 
-          // Auto scroll logs
-          setTimeout(() => logEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+          // Auto scroll logs — only scroll the log container, not the page
+          setTimeout(() => {
+            if (logContainerRef.current) {
+              logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+            }
+          }, 100);
 
-          if (['completed', 'failed', 'timeout', 'passed', 'warning'].includes(progress.status)) {
+          // Check if execution is finished (case-insensitive)
+          const statusLower = progress.status?.toLowerCase() || '';
+          const finishedStatuses = ['completed', 'failed', 'timeout', 'passed', 'warning', 'success', 'error'];
+          const isFinished = finishedStatuses.some(s => statusLower.includes(s));
+          
+          if (isFinished) {
+            console.log('[Debug] ✅ Execution finished with status:', progress.status);
             clearInterval(pollInterval);
             pollTimerRef.current = null;
+
+            // Wait a bit to ensure backend has saved everything
+            await new Promise(resolve => setTimeout(resolve, 500));
 
             // Fetch final execution to get report URL
             try {
               const finalExec = await apiClient.getExecution(exec.id);
-              if (finalExec.oss_report_url) setDebugReportUrl(finalExec.oss_report_url);
-            } catch {}
+              console.log('[Debug] Final execution:', {
+                id: finalExec.id,
+                status: finalExec.status,
+                oss_report_url: finalExec.oss_report_url,
+              });
+              
+              if (finalExec.oss_report_url) {
+                console.log('[Debug] ✅ Setting report URL:', finalExec.oss_report_url);
+                setDebugReportUrl(finalExec.oss_report_url);
+              } else {
+                console.warn('[Debug] ⚠️ No oss_report_url in final execution');
+              }
+            } catch (err) {
+              console.error('[Debug] ❌ Failed to fetch final execution:', err);
+            }
 
-            setDebugState(progress.status === 'completed' || progress.status === 'passed' ? 'completed' : 'failed');
+            // Set final state
+            const successStatuses = ['completed', 'passed', 'success'];
+            const isSuccess = successStatuses.some(s => statusLower.includes(s));
+            const finalState = isSuccess ? 'completed' : 'failed';
+            console.log('[Debug] ✅ Setting debug state to:', finalState);
+            setDebugState(finalState);
           }
         } catch (err) {
-          console.error('Progress poll error:', err);
+          console.error('[Debug] ❌ Progress poll error:', err);
         }
       }, 2000);
 
@@ -498,12 +530,37 @@ export function CaseEditorPage() {
     }
   };
 
-  const stopDebug = () => {
+  const stopDebug = async () => {
     if (pollTimerRef.current) {
       clearInterval(pollTimerRef.current);
       pollTimerRef.current = null;
     }
-    setDebugState('idle');
+    
+    // Try to fetch final execution status when manually stopped
+    if (debugExecutionId) {
+      try {
+        const finalExec = await apiClient.getExecution(debugExecutionId);
+        console.log('[Debug] Manual stop - Final execution:', finalExec);
+        if (finalExec.oss_report_url) {
+          setDebugReportUrl(finalExec.oss_report_url);
+        }
+        // Set state based on actual status
+        const successStatuses = ['completed', 'passed', 'success'];
+        const statusLower = finalExec.status?.toLowerCase() || '';
+        if (successStatuses.some(s => statusLower.includes(s))) {
+          setDebugState('completed');
+        } else if (['failed', 'error', 'timeout'].some(s => statusLower.includes(s))) {
+          setDebugState('failed');
+        } else {
+          setDebugState('idle');
+        }
+      } catch (err) {
+        console.error('[Debug] Failed to fetch final execution on stop:', err);
+        setDebugState('idle');
+      }
+    } else {
+      setDebugState('idle');
+    }
   };
 
   // ---- Render ----
@@ -607,9 +664,9 @@ export function CaseEditorPage() {
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-4 sm:pb-6 flex flex-col gap-4">
           {/* ===== Two-column area (fixed height, scrollable) ===== */}
-          <div className="flex gap-4">
+          <div className="flex gap-4" style={{ overflow: 'hidden', width: '100%' }}>
             {/* ===== Left Panel: Editor (Tab: Form / YAML) ===== */}
-            <div className="flex-1 flex flex-col bg-white rounded-lg border border-gray-200 overflow-hidden min-w-0" style={{ height: 600, maxHeight: 600 }}>
+            <div className="flex-1 flex flex-col bg-white rounded-lg border border-gray-200" style={{ height: 800, maxHeight: 800, minWidth: 0, overflow: 'hidden' }}>
               {/* Tabs */}
               <div className="flex items-center border-b border-gray-200 bg-white flex-shrink-0 px-4">
                 <button
@@ -824,20 +881,44 @@ export function CaseEditorPage() {
             </div>
 
             {/* ===== Right Panel: Debug ===== */}
-            <div className="w-[400px] flex-shrink-0 flex flex-col bg-white rounded-lg border border-gray-200 overflow-hidden" style={{ height: 600, maxHeight: 600 }}>
+            <div 
+              className="flex-shrink-0 flex flex-col bg-white rounded-lg border border-gray-200" 
+              style={{ 
+                width: '400px', 
+                minWidth: '400px', 
+                maxWidth: '400px', 
+                height: 800, 
+                maxHeight: 800, 
+                overflow: 'hidden',
+                boxSizing: 'border-box'
+              }}
+            >
               {/* Debug Header + Config: env, model, button on same row */}
-              <div className="px-4 py-3 border-b border-gray-200 flex-shrink-0 space-y-3">
-                <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                  <Play className="w-4 h-4 text-green-600" />
-                  Debug 调试
+              <div 
+                className="px-4 py-3 border-b border-gray-200 flex-shrink-0 space-y-3" 
+                style={{ 
+                  width: '100%', 
+                  minWidth: 0,
+                  maxWidth: '100%', 
+                  overflow: 'hidden',
+                  boxSizing: 'border-box'
+                }}
+              >
+                <h3 
+                  className="text-sm font-semibold text-gray-900 flex items-center gap-2"
+                  style={{ width: '100%', minWidth: 0, overflow: 'hidden' }}
+                >
+                  <Play className="w-4 h-4 text-green-600 flex-shrink-0" />
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Debug 调试</span>
                 </h3>
                 {/* Env + Model + Debug Button — all on one line */}
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2" style={{ width: '100%', minWidth: 0, maxWidth: '100%', overflow: 'hidden' }}>
                   <select
                     value={debugEnvironmentId}
                     onChange={(e) => setDebugEnvironmentId(e.target.value)}
                     disabled={debugState === 'running'}
-                    className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white disabled:bg-gray-100 disabled:cursor-not-allowed"
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white disabled:bg-gray-100 disabled:cursor-not-allowed"
+                    style={{ minWidth: 0, maxWidth: '100%' }}
                   >
                     <option value="">选择环境</option>
                     {business?.environments.map(env => (
@@ -848,7 +929,8 @@ export function CaseEditorPage() {
                     value={debugModel}
                     onChange={(e) => setDebugModel(e.target.value)}
                     disabled={debugState === 'running'}
-                    className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white disabled:bg-gray-100 disabled:cursor-not-allowed"
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white disabled:bg-gray-100 disabled:cursor-not-allowed"
+                    style={{ minWidth: 0, maxWidth: '100%' }}
                   >
                     {availableModels.models.map(m => (
                       <option key={m} value={m}>{m}</option>
@@ -874,104 +956,157 @@ export function CaseEditorPage() {
                   )}
                 </div>
                 {isNewCase && (
-                  <p className="text-xs text-amber-600">请先保存用例后再调试</p>
+                  <p className="text-xs text-amber-600" style={{ width: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>请先保存用例后再调试</p>
                 )}
                 {debugError && (
-                  <div className="text-xs text-red-600 flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3 flex-shrink-0" /> {debugError}
+                  <div 
+                    className="text-xs text-red-600 flex items-center gap-1"
+                    style={{ width: '100%', minWidth: 0, overflow: 'hidden' }}
+                  >
+                    <AlertCircle className="w-3 h-3 flex-shrink-0" /> 
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{debugError}</span>
                   </div>
                 )}
               </div>
 
-              {/* Debug Logs — scrollable, fixed height */}
-              <div className="flex flex-col overflow-hidden">
-                <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex items-center gap-2 flex-shrink-0">
-                  <FileText className="w-3.5 h-3.5 text-gray-500" />
-                  <span className="text-xs font-medium text-gray-600">实时执行日志</span>
+              {/* Debug log + status area */}
+              <div 
+                className="flex-1 flex flex-col" 
+                style={{ 
+                  width: '100%', 
+                  minWidth: 0,
+                  maxWidth: '100%', 
+                  minHeight: 0,
+                  overflow: 'hidden',
+                  boxSizing: 'border-box'
+                }}
+              >
+                <div 
+                  className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex items-center gap-2 flex-shrink-0"
+                  style={{ 
+                    width: '100%', 
+                    minWidth: 0,
+                    maxWidth: '100%', 
+                    overflow: 'hidden',
+                    boxSizing: 'border-box'
+                  }}
+                >
+                  <FileText className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
+                  <span className="text-xs font-medium text-gray-600" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>执行日志</span>
                   {debugState === 'running' && (
-                    <span className="ml-auto flex items-center gap-1 text-xs text-blue-600">
+                    <span className="ml-auto flex items-center gap-1 text-xs text-blue-600 flex-shrink-0">
                       <Loader2 className="w-3 h-3 animate-spin" /> 执行中
                     </span>
                   )}
                   {debugState === 'completed' && (
-                    <span className="ml-auto text-xs text-green-600">✓ 调试完成</span>
+                    <span className="ml-auto text-xs text-green-600 font-medium flex-shrink-0">✓ 完成</span>
                   )}
                   {debugState === 'failed' && (
-                    <span className="ml-auto text-xs text-red-600">✗ 调试失败</span>
+                    <span className="ml-auto text-xs text-red-600 font-medium flex-shrink-0">✗ 失败</span>
                   )}
                 </div>
-                <div className="overflow-y-auto bg-gray-900 p-3 font-mono text-xs leading-relaxed" style={{ height: '560px', maxHeight: '560px' }}>
+                <div 
+                  ref={logContainerRef} 
+                  className="flex-1 bg-gray-900 font-mono text-xs text-green-400 leading-relaxed" 
+                  style={{ 
+                    width: '100%',
+                    minWidth: 0,
+                    maxWidth: '100%',
+                    minHeight: 0,
+                    padding: '1rem',
+                    overflowY: 'auto',
+                    overflowX: 'hidden',
+                    overflowWrap: 'break-word',
+                    wordBreak: 'break-word',
+                    boxSizing: 'border-box',
+                  }}
+                >
                   {debugProgress && debugProgress.logs.length > 0 ? (
-                    <>
-                      {debugProgress.logs.map((log, i) => (
-                        <div key={i} className="text-gray-300 whitespace-pre-wrap break-words py-0.5">
-                          {log}
-                        </div>
-                      ))}
-                      <div ref={logEndRef} />
-                    </>
+                    debugProgress.logs.map((log, i) => (
+                      <div 
+                        key={i} 
+                        style={{ 
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-all',
+                          overflowWrap: 'break-word',
+                          width: '100%',
+                          minWidth: 0,
+                          maxWidth: '100%',
+                          boxSizing: 'border-box',
+                          overflow: 'hidden',
+                        }}
+                      >
+                        {log}
+                      </div>
+                    ))
                   ) : (
-                    <div className="text-gray-500 text-center py-8">
+                    <div className="text-green-500 text-center py-8">
                       {debugState === 'running' ? '等待日志输出...' : '点击「调试」执行当前用例'}
                     </div>
                   )}
                 </div>
 
-                {/* Task progress info */}
-                {debugProgress && (debugProgress.completed.length > 0 || debugProgress.running.length > 0) && (
-                  <div className="px-3 py-2 bg-gray-800 border-t border-gray-700 flex-shrink-0">
+                {/* Task progress info (running state) */}
+                {debugProgress && debugProgress.running.length > 0 && (
+                  <div 
+                    className="px-3 py-2 bg-gray-800 border-t border-gray-700 flex-shrink-0" 
+                    style={{ width: '100%', maxWidth: '100%', overflow: 'hidden', boxSizing: 'border-box' }}
+                  >
                     {debugProgress.running.map((task, i) => (
-                      <div key={i} className="text-xs text-blue-400 flex items-center gap-1.5">
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                        {task.name} ({task.elapsed?.toFixed(0)}s)
-                      </div>
-                    ))}
-                    {debugProgress.completed.map((task, i) => (
-                      <div key={i} className={`text-xs flex items-center gap-1.5 ${task.status === 'success' ? 'text-green-400' : 'text-red-400'}`}>
-                        {task.status === 'success' ? '✓' : '✗'} {task.name} ({task.duration?.toFixed(1)}s)
+                      <div 
+                        key={i} 
+                        className="text-xs text-blue-400 flex items-center gap-1.5"
+                        style={{ 
+                          width: '100%',
+                          maxWidth: '100%',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {task.name} ({task.elapsed?.toFixed(0)}s)
+                        </span>
                       </div>
                     ))}
                   </div>
                 )}
               </div>
 
-              {/* View Report Button */}
-              {debugReportUrl && (
-                <div className="px-4 py-3 border-t border-gray-200 flex-shrink-0">
-                  <button
-                    onClick={() => window.open(debugReportUrl, '_blank')}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+              {/* View Report Button — compact, only after debug ends */}
+              {(() => {
+                // Debug render logic
+                const shouldShowButton = debugReportUrl && (debugState === 'completed' || debugState === 'failed');
+                if (debugExecutionId && !shouldShowButton) {
+                  console.log('[Debug] Report button not shown:', {
+                    debugReportUrl: !!debugReportUrl,
+                    debugState,
+                    shouldShow: shouldShowButton
+                  });
+                }
+                return shouldShowButton ? (
+                  <div 
+                    className="px-4 py-2.5 border-t border-gray-200 flex-shrink-0 flex justify-end"
+                    style={{ width: '100%', maxWidth: '100%', overflow: 'hidden', boxSizing: 'border-box' }}
                   >
-                    <ExternalLink className="w-4 h-4" />
-                    查看测试报告
-                  </button>
-                </div>
-              )}
-
-              {/* View Execution Detail */}
-              {debugExecutionId && debugState !== 'running' && debugState !== 'idle' && (
-                <div className="px-4 pb-3 flex-shrink-0">
-                  <button
-                    onClick={() => navigate(`/execution/${debugExecutionId}`)}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm"
-                  >
-                    <FileText className="w-4 h-4" />
-                    查看执行详情
-                  </button>
-                </div>
-              )}
+                    <button
+                      onClick={() => window.open(debugReportUrl, '_blank')}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors text-sm font-medium"
+                    >
+                      查看报告
+                      <ExternalLink className="w-3 h-3" />
+                    </button>
+                  </div>
+                ) : null;
+              })()}
             </div>
           </div>
 
-          {/* ===== Browser Monitor — full width below both panels ===== */}
-          <div className="flex-shrink-0">
-            <div className="bg-white rounded-lg border border-gray-200 p-4 flex items-center justify-center gap-4 opacity-50 cursor-not-allowed">
-              <Monitor className="w-6 h-6 text-gray-400" />
-              <div>
-                <span className="text-sm text-gray-500 font-medium">浏览器监控</span>
-                <span className="text-xs text-gray-400 ml-2">功能开发中，敬请期待</span>
-              </div>
-            </div>
+          {/* ===== Browser Monitor — compact bar below panels ===== */}
+          <div className="flex-shrink-0 bg-white rounded-lg border border-gray-200 px-4 py-2 flex items-center justify-center gap-3 opacity-50">
+            <Monitor className="w-4 h-4 text-gray-400" />
+            <span className="text-xs text-gray-400">浏览器监控 · 功能开发中</span>
           </div>
         </div>
       </div>
