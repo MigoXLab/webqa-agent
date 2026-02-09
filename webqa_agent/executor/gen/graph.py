@@ -334,7 +334,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
 
             for case in test_cases:
                 case['status'] = 'pending'
-                case['completed_steps'] = []
+                case['execution_steps'] = []
                 case['url'] = state['url']
                 case['case_id'] = (
                     await get_next_case_id()
@@ -581,7 +581,7 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                                     # 为新 cases 添加元数据
                                     for new_case in new_cases:
                                         new_case['status'] = 'pending'
-                                        new_case['completed_steps'] = []
+                                        new_case['execution_steps'] = []
                                         new_case['url'] = state['url']
                                         new_case['case_id'] = (
                                             await get_next_case_id()

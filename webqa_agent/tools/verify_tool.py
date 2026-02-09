@@ -120,7 +120,7 @@ class UIAssertTool(BaseTool):
 
                 # Record the verify step
                 recorder.add_step(
-                    description=f'Verify: {assertion}',
+                    description=f'verify: {assertion}',
                     screenshots=screenshots,
                     screenshots_paths=screenshots_paths,
                     model_io=model_io,

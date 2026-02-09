@@ -197,13 +197,14 @@ class UITool(BaseTool):
                 if value:
                     action_phrase += f" with value '{value}'"
 
-        if not description:
-            instruction_parts.append(action_phrase)
-        else:
-            instruction_parts.append(action_phrase)
+        instruction_parts.append(action_phrase)
 
         instruction = ' - '.join(instruction_parts)
         logging.debug(f'Built instruction for UITester: {instruction}')
+
+        # For recording, prefer the user-provided description (cleaner, typically single language)
+        # The full instruction (description + action_phrase) is used for UI Agent execution
+        record_description = description or action_phrase
 
         try:
             logging.debug(f'Executing UI action: {instruction}')
@@ -241,9 +242,9 @@ class UITool(BaseTool):
                 step_status = execution_steps.get('status', 'passed')
                 model_io = execution_steps.get('modelIO', '')
 
-                # Record the action step
+                # Record the action step (use clean description for reports/YAML)
                 recorder.add_step(
-                    description=instruction,
+                    description=f'action: {record_description}',
                     screenshots=screenshots,
                     screenshots_paths=screenshots_paths,
                     model_io=model_io,
