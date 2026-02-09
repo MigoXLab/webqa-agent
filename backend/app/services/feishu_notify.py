@@ -43,6 +43,8 @@ def _build_card(
     result_count: Optional[Dict[str, Any]],
     oss_report_url: Optional[str] = None,
     feishu_notify_user_ids: Optional[str] = None,
+    environment_name: Optional[str] = None,
+    task_name: Optional[str] = None,
 ) -> dict:
     """Build Feishu interactive card message.
 
@@ -53,6 +55,8 @@ def _build_card(
         result_count: { total, passed, failed, warning }
         oss_report_url: Optional OSS report URL
         feishu_notify_user_ids: Comma-separated Feishu open_ids to @mention when failed > 0
+        environment_name: Optional execution environment name
+        task_name: Optional scheduled task name
     """
     passed = result_count.get('passed', 0) if result_count else 0
     failed = result_count.get('failed', 0) if result_count else 0
@@ -68,11 +72,14 @@ def _build_card(
     # Card title: 执行业务：XX ✅ 测试通过 / ❌ 测试不通过
     header_title = f'执行业务：{business_name} {result_emoji}'
 
-    # Build detail content: 任务ID + 执行完成时间
-    detail_content = (
-        f'**任务ID：** {execution_id[:8]}\n'
-        f'**执行完成时间：** {completion_time}'
-    )
+    # Build detail content: 任务ID + 执行环境 + 任务名称(如有) + 执行完成时间
+    detail_lines = [f'**任务ID：** {execution_id[:8]}']
+    if environment_name:
+        detail_lines.append(f'**执行环境：** {environment_name}')
+    if task_name:
+        detail_lines.append(f'**任务名称：** {task_name}')
+    detail_lines.append(f'**执行完成时间：** {completion_time}')
+    detail_content = '\n'.join(detail_lines)
 
     # Build counts content
     counts_content = (
@@ -164,6 +171,8 @@ async def send_feishu_notification(
     result_count: Optional[Dict[str, Any]],
     oss_report_url: Optional[str] = None,
     feishu_notify_user_id: Optional[str] = None,
+    environment_name: Optional[str] = None,
+    task_name: Optional[str] = None,
 ) -> bool:
     """Send execution result notification to Feishu group via webhook.
 
@@ -175,6 +184,8 @@ async def send_feishu_notification(
         result_count: { total, passed, failed, warning }
         oss_report_url: Optional OSS report URL
         feishu_notify_user_id: Comma-separated Feishu open_ids to @mention when failed > 0
+        environment_name: Optional execution environment name
+        task_name: Optional scheduled task name
 
     Returns:
         True if notification was sent successfully, False otherwise
@@ -190,6 +201,8 @@ async def send_feishu_notification(
             result_count=result_count,
             oss_report_url=oss_report_url,
             feishu_notify_user_ids=feishu_notify_user_id,
+            environment_name=environment_name,
+            task_name=task_name,
         )
 
         logger.info(f'[Feishu] Sending notification for execution {execution_id} to {webhook_url[:50]}...')

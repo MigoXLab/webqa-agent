@@ -10,6 +10,7 @@ from app.config import get_settings
 from app.database import AsyncSessionLocal
 from app.models import Execution
 from app.models.business import Business
+from app.models.environment import Environment
 from app.models.scheduled_task import ScheduledTask
 from app.services.executor import upload_report_to_oss
 from app.services.feishu_notify import send_feishu_notification
@@ -196,6 +197,18 @@ async def execution_complete(execution_id: str, request: ExecutionCompleteReques
                         business = biz_result.scalar_one_or_none()
                         business_name = business.name if business else '未知业务'
 
+                        # 获取执行环境名称
+                        environment_name = None
+                        if execution.environment_id:
+                            env_result = await db.execute(
+                                select(Environment).where(Environment.id == execution.environment_id)
+                            )
+                            env = env_result.scalar_one_or_none()
+                            environment_name = env.name if env else None
+
+                        # 获取任务名称（如有）
+                        task_name = scheduled_task.name if scheduled_task else None
+
                         # 异步发送通知（不阻塞回调响应）
                         asyncio.create_task(
                             send_feishu_notification(
@@ -206,6 +219,8 @@ async def execution_complete(execution_id: str, request: ExecutionCompleteReques
                                 result_count=request.result_count,
                                 oss_report_url=oss_url,
                                 feishu_notify_user_id=scheduled_task.feishu_notify_user_id if scheduled_task else None,
+                                environment_name=environment_name,
+                                task_name=task_name,
                             )
                         )
                 except Exception as notify_err:

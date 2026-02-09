@@ -1,11 +1,15 @@
 """Scheduled tasks API endpoints."""
+import asyncio
 import logging
 from typing import Optional
 from uuid import UUID
 
+from app.config import get_settings
 from app.database import get_db
-from app.models import Business, Environment, ScheduledTask, TestCase
+from app.models import (Business, Environment, Execution, ScheduledTask,
+                        TestCase)
 from app.schemas.common import APIResponse
+from app.schemas.execution import ExecutionResponse
 from app.schemas.scheduled_task import (CronValidationRequest,
                                         CronValidationResponse,
                                         ScheduledTaskCreate,
@@ -13,6 +17,7 @@ from app.schemas.scheduled_task import (CronValidationRequest,
                                         ScheduledTaskResponse,
                                         ScheduledTaskToggleRequest,
                                         ScheduledTaskUpdate)
+from app.services.executor import run_execution
 from app.services.task_scheduler import task_scheduler
 from app.utils.cron_utils import (get_next_run_time, get_next_run_times,
                                   validate_cron_expression)
@@ -414,6 +419,91 @@ async def toggle_scheduled_task(
     )
 
     logger.info(f'[API] Toggled scheduled task: {task.name} ({task.id}) enabled={task.enabled}')
+    return APIResponse(data=response)
+
+
+@router.post('/schedules/{task_id}/trigger', response_model=APIResponse[ExecutionResponse])
+async def trigger_scheduled_task(
+    task_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Manually trigger a scheduled task to execute immediately.
+
+    Creates an execution using the task's configuration (environment, test
+    cases, model, workers) with trigger_type='scheduled' and scheduled_task_id
+    set, so that Feishu notifications fire as usual upon completion.
+    """
+    settings = get_settings()
+
+    # Load task
+    result = await db.execute(
+        select(ScheduledTask).where(ScheduledTask.id == task_id)
+    )
+    task = result.scalar_one_or_none()
+    if not task:
+        raise HTTPException(status_code=404, detail='Scheduled task not found')
+
+    # Check concurrency limit
+    running_result = await db.execute(
+        select(func.count(Execution.id)).where(
+            Execution.status.in_(['pending', 'running'])
+        )
+    )
+    running_count = running_result.scalar() or 0
+    if running_count >= settings.MAX_CONCURRENT_JOBS:
+        raise HTTPException(
+            status_code=429,
+            detail=f'系统繁忙，当前有 {running_count} 个任务在执行，最大并发数为 {settings.MAX_CONCURRENT_JOBS}'
+        )
+
+    # Create execution record using task's configuration
+    execution = Execution(
+        business_id=task.business_id,
+        environment_id=task.environment_id,
+        trigger_type='scheduled',
+        scheduled_task_id=task.id,
+        model=task.model,
+        workers=task.workers,
+        test_case_ids=[str(case_id) for case_id in task.test_case_ids],
+        status='pending',
+    )
+    db.add(execution)
+    await db.commit()
+    await db.refresh(execution)
+
+    execution_id = str(execution.id)
+
+    # Trigger execution in background
+    asyncio.create_task(run_execution(execution_id))
+
+    logger.info(f'[API] Manually triggered scheduled task: {task.name} ({task.id}), execution={execution_id}')
+
+    # Build response with names
+    business_result = await db.execute(
+        select(Business).where(Business.id == task.business_id)
+    )
+    business = business_result.scalar_one_or_none()
+
+    env_result = await db.execute(
+        select(Environment).where(Environment.id == task.environment_id)
+    )
+    environment = env_result.scalar_one_or_none()
+
+    response = ExecutionResponse(
+        id=execution.id,
+        business_id=execution.business_id,
+        business_name=business.name if business else None,
+        environment_id=execution.environment_id,
+        environment_name=environment.name if environment else None,
+        trigger_type=execution.trigger_type,
+        scheduled_task_id=execution.scheduled_task_id,
+        model=execution.model,
+        workers=execution.workers,
+        test_case_ids=execution.test_case_ids,
+        status=execution.status,
+        created_at=execution.created_at,
+    )
+
     return APIResponse(data=response)
 
 

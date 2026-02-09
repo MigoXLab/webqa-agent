@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Calendar, Trash2, Edit, Plus, Clock, CheckCircle2, XCircle, AlertCircle, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Calendar, Trash2, Edit, Plus, Clock, CheckCircle2, XCircle, AlertCircle, Loader2, ChevronDown, ChevronUp, Play } from 'lucide-react';
 import { apiClient } from '../api/client';
 
 export type ScheduledTask = {
@@ -68,6 +68,8 @@ export function ScheduledTaskManager({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [triggeringTaskId, setTriggeringTaskId] = useState<string | null>(null);
+  const [triggerResult, setTriggerResult] = useState<{ taskId: string; success: boolean } | null>(null);
 
   // Cron validation state
   const [cronValidation, setCronValidation] = useState<{
@@ -291,6 +293,23 @@ export function ScheduledTaskManager({
     }
   };
 
+  const handleTrigger = async (task: ScheduledTask) => {
+    setTriggeringTaskId(task.id);
+    setTriggerResult(null);
+    try {
+      await apiClient.triggerScheduledTask(task.id);
+      setTriggerResult({ taskId: task.id, success: true });
+      onRefresh?.();
+    } catch (err: any) {
+      console.error('Failed to trigger task:', err);
+      setTriggerResult({ taskId: task.id, success: false });
+    } finally {
+      setTriggeringTaskId(null);
+      // 2 秒后清除结果提示
+      setTimeout(() => setTriggerResult(null), 2000);
+    }
+  };
+
   const toggleTestCase = (caseId: string) => {
     const currentIds = formData.test_case_ids || [];
     if (currentIds.includes(caseId)) {
@@ -379,6 +398,33 @@ export function ScheduledTaskManager({
                     </div>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={() => handleTrigger(task)}
+                      disabled={triggeringTaskId === task.id}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:cursor-not-allowed border ${
+                        triggerResult?.taskId === task.id
+                          ? triggerResult.success
+                            ? 'bg-green-50 text-green-700 border-green-200'
+                            : 'bg-red-50 text-red-700 border-red-200'
+                          : 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200 disabled:opacity-50'
+                      }`}
+                      title="立即执行"
+                    >
+                      {triggeringTaskId === task.id ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : triggerResult?.taskId === task.id ? (
+                        triggerResult.success ? (
+                          <CheckCircle2 className="w-3 h-3" />
+                        ) : (
+                          <XCircle className="w-3 h-3" />
+                        )
+                      ) : (
+                        <Play className="w-3 h-3" />
+                      )}
+                      {triggerResult?.taskId === task.id
+                        ? triggerResult.success ? '已触发' : '失败'
+                        : '执行'}
+                    </button>
                     <label
                       className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium flex-shrink-0 cursor-pointer transition-colors border ${
                         task.enabled

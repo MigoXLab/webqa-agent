@@ -443,6 +443,12 @@ class APIClient {
     });
   }
 
+  async triggerScheduledTask(id: string): Promise<Execution> {
+    return this.request<Execution>(`/schedules/${id}/trigger`, {
+      method: 'POST',
+    });
+  }
+
   async validateCron(cronExpression: string): Promise<{
     is_valid: boolean;
     error?: string;

@@ -2,15 +2,12 @@ FROM eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/python:3.11-slim
 
 WORKDIR /app
 
-# 复制整个项目（包含 backend 和 webqa_agent）
+# 后端只需要 backend/ 代码和自己的依赖
+# webqa_agent/ 由 Agent 镜像 (Dockerfile) 独立构建，后端不需要
 COPY backend/ /app/backend/
-COPY webqa_agent/ /app/webqa_agent/
-COPY requirements.txt /app/
-COPY package.json /app/
 
-# 安装 Python 依赖
-RUN pip install --no-cache-dir -r /app/requirements.txt && \
-    pip install --no-cache-dir -r /app/backend/requirements.txt
+# 只安装后端依赖（不含 langchain 等 agent 依赖）
+RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 
 # 设置 PYTHONPATH 以便正确导入 backend 和 webqa_agent 模块
 ENV PYTHONPATH=/app:/app/backend
