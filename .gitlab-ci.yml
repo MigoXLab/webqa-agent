@@ -165,10 +165,10 @@ deploy-be-prod:
   image: eng-center-registry.cn-shanghai.cr.aliyuncs.com/public/dtzar/helm-kubectl
   script:
     - echo "Deploying webqa-be"
-    - echo "kubeconfig path:" "$kubeconfig_prod_public_webqa"
-    - test -f "$kubeconfig_prod_public_webqa" && echo "kubeconfig file exists" || echo "ERROR kubeconfig file NOT found"
+    # - echo "kubeconfig path:" "$kubeconfig_prod_public_webqa"
+    # - test -f "$kubeconfig_prod_public_webqa" && echo "kubeconfig file exists" || echo "ERROR kubeconfig file NOT found"
     # Apply Dependencies (ConfigMap, Secret, PVC, RBAC)
-    - kubectl --kubeconfig "$kubeconfig_prod_public_webqa" apply -f k8s/config/configmap.yaml
+    # - kubectl --kubeconfig "$kubeconfig_prod_public_webqa" apply -f k8s/config/configmap.yaml
     # - kubectl --kubeconfig "$kubeconfig_prod_public_webqa" apply -f k8s/config/secret.yaml
     # - kubectl --kubeconfig "$kubeconfig_prod_public_webqa" apply -f k8s/storage/pvc.yaml
     # - kubectl --kubeconfig "$kubeconfig_prod_public_webqa" apply -f k8s/rbac.yaml
@@ -191,7 +191,7 @@ deploy-fe-prod:
     - echo "Deploying webqa-fe"
     # Deploy Frontend
     - cd k8s/workloads
-    # - sed -i "s/_tag/$CI_COMMIT_SHORT_SHA/g" frontend-deployment.yaml
+    - sed -i "s/_tag/$CI_COMMIT_SHORT_SHA/g" frontend-deployment.yaml
     - kubectl --kubeconfig "$kubeconfig_prod_public_webqa" apply -f frontend-deployment.yaml
     # Apply Ingress
     # - cd ../network
