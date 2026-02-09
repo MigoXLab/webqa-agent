@@ -442,13 +442,21 @@ async def _create_k8s_job(
                                 client.V1EnvVar(name='OPENAI_BASE_URL', value=settings.LLM_BASE_URL),
                             ],
                             resources=client.V1ResourceRequirements(
-                                requests={'cpu': '500m', 'memory': '1Gi'},
+                                # Chromium rendering + screenshots are CPU/memory intensive.
+                                # Previous 500m/1Gi caused frequent screenshot timeouts.
+                                requests={'cpu': '1', 'memory': '2Gi'},
                                 limits={'cpu': '2', 'memory': '4Gi'},
                             ),
                             volume_mounts=[
                                 client.V1VolumeMount(
                                     name='shared-storage',
                                     mount_path='/shared',
+                                ),
+                                # Chromium uses /dev/shm for shared memory; the K8s
+                                # default of 64 MB causes renderer crashes / hangs.
+                                client.V1VolumeMount(
+                                    name='dshm',
+                                    mount_path='/dev/shm',
                                 ),
                             ],
                         ),
@@ -458,6 +466,14 @@ async def _create_k8s_job(
                             name='shared-storage',
                             persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
                                 claim_name=k8s_pvc_name,
+                            ),
+                        ),
+                        # Provide 2 Gi of shared memory for Chromium's renderer
+                        client.V1Volume(
+                            name='dshm',
+                            empty_dir=client.V1EmptyDirVolumeSource(
+                                medium='Memory',
+                                size_limit='2Gi',
                             ),
                         ),
                     ],

@@ -1,12 +1,11 @@
 """Execution API routes."""
 import asyncio
 import logging
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 from uuid import UUID
 
 from app.config import get_settings
-from app.database import AsyncSessionLocal, get_db
+from app.database import get_db
 from app.models import Business, Environment, Execution, TestCase
 from app.schemas.common import APIResponse
 from app.schemas.execution import (ExecutionCreate, ExecutionListResponse,
@@ -15,7 +14,7 @@ from app.services.executor import run_execution
 from app.services.progress_cache import get_progress
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
