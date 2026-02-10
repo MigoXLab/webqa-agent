@@ -11,7 +11,7 @@ from app.schemas.test_case import (TestCaseCreate, TestCaseExport,
                                    TestCaseImport, TestCaseResponse,
                                    TestCaseUpdate)
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
@@ -46,6 +46,13 @@ async def create_test_case(
             step_dict['args'] = step.args
         steps.append(step_dict)
 
+    # Calculate sort_order: max existing + 1
+    max_order_result = await db.execute(
+        select(func.coalesce(func.max(TestCase.sort_order), 0))
+        .where(TestCase.business_id == data.business_id)
+    )
+    next_order = max_order_result.scalar() + 1
+
     test_case = TestCase(
         business_id=data.business_id,
         name=data.name,
@@ -55,6 +62,7 @@ async def create_test_case(
         snapshot=data.snapshot,
         use_snapshot=data.use_snapshot,
         status=data.status,
+        sort_order=next_order,
     )
     db.add(test_case)
     await db.commit()
@@ -127,6 +135,8 @@ async def update_test_case(
         test_case.use_snapshot = data.use_snapshot
     if data.status is not None:
         test_case.status = data.status
+    if data.sort_order is not None:
+        test_case.sort_order = data.sort_order
 
     await db.commit()
     await db.refresh(test_case)
@@ -181,8 +191,15 @@ async def import_cases_from_yaml(
             detail={'code': 1002, 'message': "YAML格式错误: 缺少 'cases' 字段"}
         )
 
+    # Get current max sort_order for this business
+    max_order_result = await db.execute(
+        select(func.coalesce(func.max(TestCase.sort_order), 0))
+        .where(TestCase.business_id == business_id)
+    )
+    current_max_order = max_order_result.scalar()
+
     imported_cases = []
-    for case_data in data['cases']:
+    for idx, case_data in enumerate(data['cases']):
         # Parse steps
         steps = []
         for step in case_data.get('steps', []):
@@ -212,6 +229,7 @@ async def import_cases_from_yaml(
             snapshot=case_data.get('snapshot'),
             use_snapshot=case_data.get('use_snapshot'),
             status='active',
+            sort_order=current_max_order + idx + 1,
         )
         db.add(test_case)
         imported_cases.append(test_case)
@@ -311,7 +329,7 @@ async def export_test_cases(
     result = await db.execute(
         select(TestCase)
         .where(TestCase.business_id == business_id)
-        .order_by(TestCase.created_at.desc())
+        .order_by(TestCase.sort_order.asc(), TestCase.created_at.asc())
     )
     cases = result.scalars().all()
 

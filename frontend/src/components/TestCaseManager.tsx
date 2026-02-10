@@ -1003,38 +1003,31 @@ export function TestCaseManager({
     try {
       const parsedCases = parseGlobalYaml(globalYaml, business.id);
 
-      // Identify changes
-      const casesToCreate: TestCase[] = [];
-      const casesToUpdate: TestCase[] = [];
-      const casesToDelete: string[] = [];
-
+      // Build maps for diffing
       const currentMap = new Map(testCases.map(tc => [tc.name, tc]));
       const newMap = new Map(parsedCases.map(tc => [tc.name, tc]));
 
-      for (const newCase of parsedCases) {
-        const existing = currentMap.get(newCase.name);
-        if (existing) {
-          casesToUpdate.push({ ...newCase, id: existing.id, createdAt: existing.createdAt });
-        } else {
-          casesToCreate.push(newCase);
-        }
-      }
-
+      // Find cases to delete (in old but not in new)
+      const casesToDelete: string[] = [];
       for (const oldCase of testCases) {
         if (!newMap.has(oldCase.name)) {
           casesToDelete.push(oldCase.id);
         }
       }
 
-      // 1. Delete
+      // 1. Delete removed cases
       for (const id of casesToDelete) {
         await apiClient.deleteTestCase(id);
       }
 
+      // 2. Process all cases in YAML order, passing sort_order
       const newTestCasesList: TestCase[] = [];
 
-      // 2. Update - use API response
-      for (const tc of casesToUpdate) {
+      for (let i = 0; i < parsedCases.length; i++) {
+        const tc = parsedCases[i];
+        const sortOrder = i + 1; // 1-based sort_order matching YAML position
+        const existing = currentMap.get(tc.name);
+
         const apiSteps = tc.steps.map(step => ({
           step_type: step.step_type,
           description: step.step_type === 'action' ? step.action?.description : undefined,
@@ -1042,25 +1035,45 @@ export function TestCaseManager({
           args: step.step_type === 'action' ? step.action?.args : step.verify?.args,
         }));
 
-        const updatedApiCase = await apiClient.updateTestCase(tc.id, {
-          name: tc.name,
-          description: tc.description,
-          login_required: tc.login_required,
-          snapshot: tc.snapshot,
-          use_snapshot: tc.use_snapshot,
-          steps: apiSteps,
-        });
+        let apiCase;
+        if (existing) {
+          // Update existing case with sort_order
+          apiCase = await apiClient.updateTestCase(existing.id, {
+            name: tc.name,
+            description: tc.description,
+            login_required: tc.login_required,
+            snapshot: tc.snapshot,
+            use_snapshot: tc.use_snapshot,
+            steps: apiSteps,
+            sort_order: sortOrder,
+          });
+        } else {
+          // Create new case (sort_order auto-calculated by backend, but we update it right after)
+          apiCase = await apiClient.createTestCase({
+            business_id: tc.businessId,
+            name: tc.name,
+            description: tc.description,
+            login_required: tc.login_required,
+            snapshot: tc.snapshot,
+            use_snapshot: tc.use_snapshot,
+            steps: apiSteps,
+          });
+          // Update sort_order to match YAML position
+          apiCase = await apiClient.updateTestCase(apiCase.id, {
+            sort_order: sortOrder,
+          });
+        }
 
         // Convert API response to frontend format
         newTestCasesList.push({
-          id: updatedApiCase.id,
-          businessId: updatedApiCase.business_id,
-          name: updatedApiCase.name,
-          description: updatedApiCase.description || '',
-          login_required: updatedApiCase.login_required ?? false,
-          snapshot: updatedApiCase.snapshot,
-          use_snapshot: updatedApiCase.use_snapshot,
-          steps: updatedApiCase.steps.map((step, idx) => ({
+          id: apiCase.id,
+          businessId: apiCase.business_id,
+          name: apiCase.name,
+          description: apiCase.description || '',
+          login_required: apiCase.login_required ?? false,
+          snapshot: apiCase.snapshot,
+          use_snapshot: apiCase.use_snapshot,
+          steps: apiCase.steps.map((step, idx) => ({
             id: crypto.randomUUID(),
             order: idx + 1,
             step_type: step.step_type as 'action' | 'verify',
@@ -1073,54 +1086,8 @@ export function TestCaseManager({
               args: step.args,
             } : undefined,
           })),
-          createdAt: updatedApiCase.created_at.split('T')[0],
-          status: updatedApiCase.status as 'draft' | 'active' | 'disabled',
-        });
-      }
-
-      // 3. Create - use API response
-      for (const tc of casesToCreate) {
-        const apiSteps = tc.steps.map(step => ({
-          step_type: step.step_type,
-          description: step.step_type === 'action' ? step.action?.description : undefined,
-          assertion: step.step_type === 'verify' ? step.verify?.assertion : undefined,
-          args: step.step_type === 'action' ? step.action?.args : step.verify?.args,
-        }));
-
-        const createdApiCase = await apiClient.createTestCase({
-          business_id: tc.businessId,
-          name: tc.name,
-          description: tc.description,
-          login_required: tc.login_required,
-          snapshot: tc.snapshot,
-          use_snapshot: tc.use_snapshot,
-          steps: apiSteps,
-        });
-
-        // Convert API response to frontend format
-        newTestCasesList.push({
-          id: createdApiCase.id,
-          businessId: createdApiCase.business_id,
-          name: createdApiCase.name,
-          description: createdApiCase.description || '',
-          login_required: createdApiCase.login_required ?? false,
-          snapshot: createdApiCase.snapshot,
-          use_snapshot: createdApiCase.use_snapshot,
-          steps: createdApiCase.steps.map((step, idx) => ({
-            id: crypto.randomUUID(),
-            order: idx + 1,
-            step_type: step.step_type as 'action' | 'verify',
-            action: step.step_type === 'action' ? {
-              description: step.description || '',
-              args: step.args,
-            } : undefined,
-            verify: step.step_type === 'verify' ? {
-              assertion: step.assertion || '',
-              args: step.args,
-            } : undefined,
-          })),
-          createdAt: createdApiCase.created_at.split('T')[0],
-          status: createdApiCase.status as 'draft' | 'active' | 'disabled',
+          createdAt: apiCase.created_at.split('T')[0],
+          status: apiCase.status as 'draft' | 'active' | 'disabled',
         });
       }
 

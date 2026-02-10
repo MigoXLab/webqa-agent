@@ -1,5 +1,5 @@
 """Business API routes."""
-from typing import List, Optional
+from typing import Optional
 from uuid import UUID
 
 from app.database import get_db
@@ -258,7 +258,7 @@ async def list_business_cases(
     query = select(TestCase).where(TestCase.business_id == business_id)
     if status_filter:
         query = query.where(TestCase.status == status_filter)
-    query = query.order_by(TestCase.created_at.desc())
+    query = query.order_by(TestCase.sort_order.asc(), TestCase.created_at.asc())
 
     result = await db.execute(query)
     cases = result.scalars().all()

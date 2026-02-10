@@ -46,6 +46,7 @@ export interface TestCase {
   snapshot?: string;
   use_snapshot?: string;
   status: 'active' | 'draft' | 'disabled';
+  sort_order?: number;
   created_at: string;
 }
 

@@ -45,6 +45,7 @@ class TestCaseUpdate(BaseModel):
     snapshot: Optional[str] = None
     use_snapshot: Optional[str] = None
     status: Optional[str] = Field(None, pattern='^(active|draft|disabled)$')
+    sort_order: Optional[int] = None
 
 
 class TestCaseResponse(BaseModel):
@@ -58,6 +59,7 @@ class TestCaseResponse(BaseModel):
     snapshot: Optional[str] = None
     use_snapshot: Optional[str] = None
     status: str
+    sort_order: int = 0
     created_at: datetime
 
     class Config:

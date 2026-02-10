@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from app.database import Base
 from app.utils.datetime_utils import now_with_tz
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -49,6 +49,13 @@ class TestCase(Base):
     # Snapshot configuration (optional)
     snapshot: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     use_snapshot: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
+    # Explicit sort order for user-defined ordering
+    sort_order: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False
+    )
 
     # Status: active / draft / disabled
     status: Mapped[str] = mapped_column(

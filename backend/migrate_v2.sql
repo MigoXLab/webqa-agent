@@ -1,7 +1,7 @@
 -- ============================================================
 -- migrate_v2.sql
 -- 增量迁移脚本：基于 init.sql (v1) 升级到 v2
--- 包含 alembic 版本: 002, 003, 004, 005
+-- 包含 alembic 版本: 002, 003, 004, 005, 006
 -- ============================================================
 
 BEGIN;
@@ -42,6 +42,22 @@ ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS webhook_url VARCHAR(500);
 ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS feishu_notify_user_id VARCHAR(500);
 
 -- ============================================================
+-- 006: test_cases 新增 sort_order 列 (显式排序字段)
+-- ============================================================
+ALTER TABLE test_cases ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0;
+
+-- 回填: 按 created_at 顺序为每个 business 下的用例分配 sort_order
+UPDATE test_cases
+SET sort_order = sub.rn
+FROM (
+    SELECT id, ROW_NUMBER() OVER (
+        PARTITION BY business_id ORDER BY created_at ASC
+    ) AS rn
+    FROM test_cases
+) AS sub
+WHERE test_cases.id = sub.id;
+
+-- ============================================================
 -- 写入 alembic_version 标记, 方便后续继续用 alembic 管理迁移
 -- ============================================================
 CREATE TABLE IF NOT EXISTS alembic_version (
@@ -49,6 +65,6 @@ CREATE TABLE IF NOT EXISTS alembic_version (
     CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)
 );
 DELETE FROM alembic_version;
-INSERT INTO alembic_version (version_num) VALUES ('005_widen_feishu_notify_user_id');
+INSERT INTO alembic_version (version_num) VALUES ('006_add_sort_order_to_test_cases');
 
 COMMIT;
