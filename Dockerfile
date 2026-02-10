@@ -4,6 +4,8 @@ FROM eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/webqa-agent:latest
 # 设置工作目录
 WORKDIR /app
 
+ENV PYTHONUNBUFFERED=1
+
 # 避免 Playwright 截图时等待字体加载导致超时
 ENV PW_TEST_SCREENSHOT_NO_FONTS_READY=1
 

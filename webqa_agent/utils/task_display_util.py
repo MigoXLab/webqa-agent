@@ -62,6 +62,27 @@ def remove_ansi_escape_sequences(text: str) -> str:
     return ansi_escape.sub('', text)
 
 
+class _TeeStream:
+    """Stream that writes to both a StringIO buffer and stderr.
+
+    Used in no_terminal_ui mode so that:
+    - Logs are captured in memory for progress API (get_progress())
+    - Logs are also written to stderr for kubectl logs / container output
+    """
+
+    def __init__(self, buffer: StringIO, stream=None):
+        self.buffer = buffer
+        self.stream = stream or sys.stderr
+
+    def write(self, data):
+        self.buffer.write(data)
+        self.stream.write(data)
+
+    def flush(self):
+        self.buffer.flush()
+        self.stream.flush()
+
+
 class Display:
     """Singleton facade for the display system.
 
@@ -160,12 +181,20 @@ class _Display:
         This allows logs to be captured in memory for:
         - Terminal UI rendering (when no_terminal_ui=False)
         - API progress export via get_progress() (when no_terminal_ui=True)
+
+        In no_terminal_ui mode, a TeeStream is used so logs are both captured
+        in memory (for progress API) and written to stderr (for kubectl logs).
         """
         self.logger_handlers.clear()
 
+        if self.no_terminal_ui:
+            target_stream = _TeeStream(self.captured_output, sys.stderr)
+        else:
+            target_stream = self.captured_output
+
         for handler in self.logger.handlers:
             if isinstance(handler, logging.StreamHandler) and handler.name == 'stream':
-                handler.setStream(self.captured_output)
+                handler.setStream(target_stream)
                 self.logger_handlers.append(handler)
 
     async def stop(self):
