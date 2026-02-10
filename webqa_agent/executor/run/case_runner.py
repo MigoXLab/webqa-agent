@@ -118,7 +118,7 @@ class CaseRunner:
                 session = await session_pool.acquire(browser_config=browser_cfg, timeout=120.0)
 
                 # Per-case timeout: env > case _config > default 20 minutes
-                default_timeout = int(os.getenv('WEBQA_CASE_TIMEOUT', '1200'))
+                default_timeout = int(os.getenv('WEBQA_CASE_TIMEOUT', '2400'))
                 case_timeout = case.get('_config', {}).get('case_timeout', default_timeout)
 
                 with Display.display(case_name):  # pylint: disable=not-callable
@@ -253,7 +253,7 @@ class CaseRunner:
                         current_config_key = new_config_key
 
                     # Per-case timeout: env > case _config > default 20 minutes
-                    default_timeout = int(os.getenv('WEBQA_CASE_TIMEOUT', '1200'))
+                    default_timeout = int(os.getenv('WEBQA_CASE_TIMEOUT', '2400'))
                     case_timeout = case.get('_config', {}).get('case_timeout', default_timeout)
 
                     with Display.display(case_name):  # pylint: disable=not-callable

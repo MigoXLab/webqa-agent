@@ -443,8 +443,7 @@ async def _create_k8s_job(
                             ],
                             resources=client.V1ResourceRequirements(
                                 # Chromium rendering + screenshots are CPU/memory intensive.
-                                # Previous 500m/1Gi caused frequent screenshot timeouts.
-                                requests={'cpu': '1', 'memory': '2Gi'},
+                                requests={'cpu': '1', 'memory': '3Gi'},
                                 limits={'cpu': '2', 'memory': '4Gi'},
                             ),
                             volume_mounts=[
@@ -468,12 +467,12 @@ async def _create_k8s_job(
                                 claim_name=k8s_pvc_name,
                             ),
                         ),
-                        # Provide 2 Gi of shared memory for Chromium's renderer
+
                         client.V1Volume(
                             name='dshm',
                             empty_dir=client.V1EmptyDirVolumeSource(
                                 medium='Memory',
-                                size_limit='2Gi',
+                                size_limit='256Mi',
                             ),
                         ),
                     ],
