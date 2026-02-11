@@ -13,7 +13,7 @@ data:
   REDIS_HOST: "eng-redis-prod.redis.rds.aliyuncs.com"
   REDIS_PORT: "6379"
   REDIS_DB: "0"
-  PROGRESS_CACHE_TTL: "36000"
+  PROGRESS_CACHE_TTL: "43200"
   REDIS_MAX_CONNECTIONS: "50"
   PROGRESS_MAX_LOGS: "1000"
 
@@ -49,3 +49,9 @@ data:
   K8S_JOB_IMAGE: "eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/webqa-agent:latest"
   K8S_PVC_NAME: "webqa-pvc"
   K8S_JOB_SERVICE_ACCOUNT: "webqa-agent-sa"
+
+  # Kubernetes Job Resource Limits
+  K8S_JOB_CPU_REQUEST: "0.5"
+  K8S_JOB_CPU_LIMIT: "2"
+  K8S_JOB_MEMORY_REQUEST: "1Gi"
+  K8S_JOB_MEMORY_LIMIT: "4Gi"

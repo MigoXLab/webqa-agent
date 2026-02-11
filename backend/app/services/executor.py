@@ -366,6 +366,12 @@ async def _create_k8s_job(
     k8s_pvc_name = os.getenv('K8S_PVC_NAME', 'webqa-pvc')
     k8s_sa_name = os.getenv('K8S_JOB_SERVICE_ACCOUNT', 'webqa-agent-sa')
 
+    # K8s Job 资源配置 (Chromium rendering + screenshots are CPU/memory intensive)
+    k8s_cpu_request = os.getenv('K8S_JOB_CPU_REQUEST', '0.5')
+    k8s_cpu_limit = os.getenv('K8S_JOB_CPU_LIMIT', '2')
+    k8s_memory_request = os.getenv('K8S_JOB_MEMORY_REQUEST', '1Gi')
+    k8s_memory_limit = os.getenv('K8S_JOB_MEMORY_LIMIT', '4Gi')
+
     # 获取认证 cookies
     cookies = None
     if environment.auth_type == 'sso' and environment.sso_username:
@@ -407,7 +413,7 @@ async def _create_k8s_job(
             },
         ),
         spec=client.V1JobSpec(
-            ttl_seconds_after_finished=36000,
+            ttl_seconds_after_finished=7200,
             active_deadline_seconds=settings.JOB_TIMEOUT_SECONDS,
             backoff_limit=0,
             template=client.V1PodTemplateSpec(
@@ -442,9 +448,8 @@ async def _create_k8s_job(
                                 client.V1EnvVar(name='WEBQA_CASE_TIMEOUT', value=str(settings.WEBQA_CASE_TIMEOUT)),
                             ],
                             resources=client.V1ResourceRequirements(
-                                # Chromium rendering + screenshots are CPU/memory intensive.
-                                requests={'cpu': '1', 'memory': '3Gi'},
-                                limits={'cpu': '2', 'memory': '4Gi'},
+                                requests={'cpu': k8s_cpu_request, 'memory': k8s_memory_request},
+                                limits={'cpu': k8s_cpu_limit, 'memory': k8s_memory_limit},
                             ),
                             volume_mounts=[
                                 client.V1VolumeMount(
@@ -619,7 +624,7 @@ def _build_agent_configs(
         browser_config_with_auth = {**base_browser_config}
         if cookies:
             browser_config_with_auth['cookies'] = cookies
-            logger.info(f'[Config] 需要登录的 cases 已添加 cookies')
+            logger.info('[Config] 需要登录的 cases 已添加 cookies')
         else:
             logger.warning(f'[Config] 有 {len(login_cases)} 个 case 需要登录，但环境未配置认证')
 

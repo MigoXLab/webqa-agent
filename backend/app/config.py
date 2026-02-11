@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     REDIS_PORT: int = 6379
     REDIS_PASSWORD: str = ''
     REDIS_DB: int = 0
-    PROGRESS_CACHE_TTL: int = 36000  # 进度缓存 TTL（秒），执行完成后仍可查看 10 小时
+    PROGRESS_CACHE_TTL: int = 43200  # 进度缓存 TTL（秒），执行完成后仍可查看 12 小时
 
     @property
     def database_url(self) -> str:
