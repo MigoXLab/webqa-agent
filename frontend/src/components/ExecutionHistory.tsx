@@ -192,13 +192,16 @@ export function ExecutionHistory({ businesses }: Props) {
         );
       case 'running':
         return (
-          <button
-            onClick={() => navigate(`/execution/${exec.id}`)}
-            className="flex items-center gap-2 text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors"
-          >
-            <Loader2 className="w-4 h-4 animate-spin" />
-            <span className="text-sm font-medium">查看进度</span>
-          </button>
+          <div className="flex flex-col items-start gap-1">
+            <button
+              onClick={() => navigate(`/execution/${exec.id}`)}
+              className="flex items-center gap-2 text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors"
+            >
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span className="text-sm font-medium">查看进度</span>
+            </button>
+            <span className="text-xs text-gray-400 pl-1">点击查看实时执行日志</span>
+          </div>
         );
       case 'pending':
         return (

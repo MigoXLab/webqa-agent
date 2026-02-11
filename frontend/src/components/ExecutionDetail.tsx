@@ -8,7 +8,9 @@ import {
   Clock,
   AlertTriangle,
   ExternalLink,
-  RefreshCw
+  RefreshCw,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 import { apiClient, ExecutionProgress, Execution } from '../api/client';
 
@@ -23,6 +25,19 @@ export function ExecutionDetail() {
 
   // Calculate running time
   const [runningTime, setRunningTime] = useState<string>('');
+  // Fullscreen log toggle
+  const [isLogFullscreen, setIsLogFullscreen] = useState(false);
+
+  // Escape key to exit fullscreen
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isLogFullscreen) {
+        setIsLogFullscreen(false);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isLogFullscreen]);
 
   // Load execution details and progress
   const loadData = useCallback(async (showLoading = false) => {
@@ -198,7 +213,7 @@ export function ExecutionDetail() {
               className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
             >
               <ArrowLeft className="w-5 h-5" />
-              <span>返回</span>
+              <span>返回执行列表</span>
             </button>
             <div className="h-6 w-px bg-gray-300" />
             <h1 className="text-xl font-semibold text-gray-900">
@@ -358,11 +373,32 @@ export function ExecutionDetail() {
 
             {/* Logs */}
             {progress?.logs && progress.logs.length > 0 && (
-              <div className="p-6">
-                <div className="bg-gray-900 rounded-lg overflow-hidden">
+              <div className={
+                isLogFullscreen
+                  ? "fixed inset-0 z-50 bg-gray-900 flex flex-col"
+                  : "p-6"
+              }>
+                <div className={
+                  isLogFullscreen
+                    ? "flex-1 flex flex-col overflow-hidden"
+                    : "bg-gray-900 rounded-lg overflow-hidden"
+                }>
+                  {/* Log toolbar */}
+                  <div className={`flex items-center justify-between px-4 py-2 ${isLogFullscreen ? 'bg-gray-800 border-b border-gray-700' : ''}`}>
+                    <span className="text-xs text-gray-400 font-medium">
+                      日志
+                    </span>
+                    <button
+                      onClick={() => setIsLogFullscreen(!isLogFullscreen)}
+                      className="p-1.5 rounded hover:bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
+                      title={isLogFullscreen ? '退出全屏' : '全屏显示'}
+                    >
+                      {isLogFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                    </button>
+                  </div>
                   <div
                     className="overflow-y-auto p-4"
-                    style={{ height: '500px', maxHeight: '500px' }}
+                    style={isLogFullscreen ? { flex: 1 } : { height: '500px', maxHeight: '500px' }}
                   >
                     <pre className="text-xs text-green-400 font-mono whitespace-pre-wrap leading-relaxed break-all">
                       {progress.logs.join('\n')}

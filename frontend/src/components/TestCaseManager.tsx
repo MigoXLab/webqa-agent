@@ -1338,36 +1338,36 @@ export function TestCaseManager({
 
                     <div className="flex-1 min-w-0">
                         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-3">
-                        <div className="flex items-center gap-3 min-w-0">
-                            <label
-                              className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 rounded-lg text-xs font-medium flex-shrink-0 cursor-pointer transition-colors border border-amber-200"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={testCase.login_required ?? false}
-                                onChange={(e) => {
-                                  e.stopPropagation();
-                                  handleToggleLoginRequired(testCase, e as any);
-                                }}
-                                className="w-4 h-3.5 rounded border-amber-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
-                              />
-                              需登录
-                            </label>
-                            {testCase.snapshot && (
-                              <span className="px-3 py-1.5 bg-green-50 text-green-700 rounded-lg text-xs font-medium flex-shrink-0 border border-green-200">
-                                📸 快照: {testCase.snapshot}
-                              </span>
-                            )}
-                            {testCase.use_snapshot && (
-                              <span className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-xs font-medium flex-shrink-0 border border-blue-200">
-                                🔄 使用: {testCase.use_snapshot}
-                              </span>
-                            )}
-                            <div className="min-w-0 flex-1">
+                        <div className="min-w-0 flex-1">
                             <h3 className="mb-1 truncate font-semibold">{testCase.name}</h3>
                             {testCase.description && (
                               <p className="text-sm text-gray-600 line-clamp-2">{testCase.description}</p>
                             )}
+                            <div className="flex items-center gap-2 mt-2 flex-wrap">
+                              <label
+                                className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 rounded-lg text-xs font-medium flex-shrink-0 cursor-pointer transition-colors border border-amber-200"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={testCase.login_required ?? false}
+                                  onChange={(e) => {
+                                    e.stopPropagation();
+                                    handleToggleLoginRequired(testCase, e as any);
+                                  }}
+                                  className="w-4 h-3.5 rounded border-amber-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                                />
+                                需登录
+                              </label>
+                              {testCase.snapshot && (
+                                <span className="px-3 py-1.5 bg-green-50 text-green-700 rounded-lg text-xs font-medium flex-shrink-0 border border-green-200">
+                                  📸 快照: {testCase.snapshot}
+                                </span>
+                              )}
+                              {testCase.use_snapshot && (
+                                <span className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-xs font-medium flex-shrink-0 border border-blue-200">
+                                  🔄 使用: {testCase.use_snapshot}
+                                </span>
+                              )}
                             </div>
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0">
