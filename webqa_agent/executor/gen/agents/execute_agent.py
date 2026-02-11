@@ -1225,6 +1225,10 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         f'{provider.capitalize()} reasoning_effort set to {reasoning_effort} based on effort={effort}'
                     )
 
+    # Add request timeout to prevent indefinite hangs during concurrent execution
+    cfg_timeout = llm_config.get('timeout', 360)
+    logging.debug(f'LLM request timeout set to {cfg_timeout}s')
+
     # Instantiate appropriate LangChain chat model
     if provider == 'anthropic':
         if not LANGCHAIN_ANTHROPIC_AVAILABLE:
@@ -1232,10 +1236,12 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 f"Model '{model_name}' requires 'langchain-anthropic' package. "
                 'Install with: pip install langchain-anthropic'
             )
+        llm_kwargs['default_request_timeout'] = cfg_timeout
         llm = ChatAnthropic(**llm_kwargs)
         logging.debug('Using ChatAnthropic for LangChain integration')
     else:
         # OpenAI and Gemini models use ChatOpenAI (via OpenAI SDK)
+        llm_kwargs['timeout'] = cfg_timeout
         llm = ChatOpenAI(**llm_kwargs)
         logging.debug(
             f'Using ChatOpenAI for LangChain integration (provider: {provider})'

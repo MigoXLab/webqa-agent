@@ -99,6 +99,303 @@ class LighthouseMetricsTest:
 
         return result
 
+    @staticmethod
+    def _find_lighthouse_path() -> str:
+        """Find the lighthouse npm package and return its core module path.
+
+        Searches multiple locations for node_modules/lighthouse, including
+        cwd, project root, ancestor directories, NODE_PATH, and home dir.
+
+        Returns:
+            str: Path to lighthouse core/index.js (with forward slashes)
+
+        Raises:
+            Exception: If lighthouse package is not found
+        """
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+        logging.debug(f'Project root: {project_root}')
+
+        possible_locations = [
+            os.getcwd(),
+            project_root,
+        ]
+
+        # Add ancestor directories (farthest to nearest, up to 3 levels)
+        ancestor = project_root
+        ancestors = []
+        for _ in range(3):
+            ancestor = os.path.dirname(ancestor)
+            ancestors.append(ancestor)
+        possible_locations.extend(reversed(ancestors))
+
+        possible_locations.append(os.path.expanduser('~'))
+
+        # NODE_PATH takes highest priority
+        node_path = os.environ.get('NODE_PATH')
+        if node_path:
+            possible_locations.insert(0, node_path)
+
+        for location in possible_locations:
+            lighthouse_path = os.path.join(location, 'node_modules', 'lighthouse')
+            if os.path.exists(lighthouse_path):
+                logging.debug(f'Found lighthouse at: {lighthouse_path}')
+                return os.path.join(lighthouse_path, 'core/index.js').replace('\\', '/')
+
+        error_message = (
+            'Lighthouse npm package not found. '
+            "Please run 'npm install lighthouse' in your project directory."
+        )
+        logging.error(error_message)
+        raise Exception(error_message)
+
+    @staticmethod
+    def _build_lighthouse_js(lighthouse_core_path: str, url: str, viewport: dict) -> str:
+        """Build the JavaScript source that launches Chrome and runs
+        Lighthouse.
+
+        Args:
+            lighthouse_core_path: Absolute path to lighthouse core/index.js
+            url: Target URL to audit
+            viewport: Dict with 'width' and 'height' keys
+
+        Returns:
+            str: Complete ES module JavaScript source code
+        """
+        return f"""
+import {{ pathToFileURL }} from 'url';
+import {{ execSync, spawn }} from 'child_process';
+import {{ existsSync, mkdtempSync, rmSync }} from 'fs';
+import {{ tmpdir }} from 'os';
+import {{ join }} from 'path';
+import net from 'net';
+
+function getPort() {{
+    return new Promise((resolve, reject) => {{
+        const server = net.createServer();
+        server.listen(0, '127.0.0.1', () => {{
+            const port = server.address().port;
+            server.close(() => resolve(port));
+        }});
+        server.on('error', reject);
+    }});
+}}
+
+function waitForPort(port, timeout = 15000) {{
+    const start = Date.now();
+    return new Promise((resolve, reject) => {{
+        function tryConnect() {{
+            if (Date.now() - start > timeout) {{
+                return reject(new Error(`Chrome did not start within ${{timeout}}ms`));
+            }}
+            const socket = net.createConnection({{ port, host: '127.0.0.1' }});
+            socket.on('connect', () => {{
+                socket.destroy();
+                resolve();
+            }});
+            socket.on('error', () => {{
+                setTimeout(tryConnect, 100);
+            }});
+        }}
+        tryConnect();
+    }});
+}}
+
+function findChrome() {{
+    // 1. Check CHROME_PATH env var (set by Python from Playwright)
+    let chromePath = process.env.CHROME_PATH;
+    if (chromePath && existsSync(chromePath)) return chromePath;
+
+    console.error('CHROME_PATH not set or invalid, searching for Chrome...');
+
+    // 2. Search Playwright chromium in user cache
+    const homeDir = process.env.HOME || process.env.USERPROFILE;
+    const findDirs = [
+        homeDir ? `${{homeDir}}/.cache/ms-playwright` : null,
+        '/ms-playwright',  // Docker system-level
+    ].filter(Boolean);
+
+    for (const dir of findDirs) {{
+        try {{
+            const found = execSync(
+                `find ${{dir}} -name chrome -type f -executable 2>/dev/null | head -1`,
+                {{ encoding: 'utf8' }}
+            ).trim();
+            if (found && existsSync(found)) {{
+                console.error(`Found Chrome: ${{found}}`);
+                return found;
+            }}
+        }} catch (e) {{}}
+    }}
+
+    // 3. Fallback: well-known system paths
+    const systemPaths = [
+        '/usr/bin/google-chrome',
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/chromium-browser',
+        '/usr/bin/chromium',
+        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    ];
+    for (const p of systemPaths) {{
+        if (existsSync(p)) {{
+            console.error(`Found Chrome at: ${{p}}`);
+            return p;
+        }}
+    }}
+
+    return null;
+}}
+
+async function runLighthouse() {{
+    let chromeProcess;
+    let userDataDir;
+    let chromeKilled = false;
+    try {{
+        const lhUrl = pathToFileURL('{lighthouse_core_path}').href;
+        const lighthouse = await import(lhUrl);
+
+        const chromePath = findChrome();
+        if (!chromePath) {{
+            throw new Error('Chrome/Chromium not found. Set CHROME_PATH or install via: npx playwright install chromium');
+        }}
+
+        const port = await getPort();
+        userDataDir = mkdtempSync(join(tmpdir(), 'lighthouse-'));
+
+        console.error(`Launching Chrome on port ${{port}} with profile ${{userDataDir}}`);
+        chromeProcess = spawn(chromePath, [
+            '--headless',
+            '--no-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            `--remote-debugging-port=${{port}}`,
+            `--user-data-dir=${{userDataDir}}`,
+            'about:blank',
+        ], {{ stdio: ['pipe', 'pipe', 'pipe'] }});
+
+        // Detect spawn failure or premature Chrome exit via a rejecting promise
+        const chromeExit = new Promise((_, reject) => {{
+            chromeProcess.on('error', (err) => {{
+                reject(new Error(`Failed to launch Chrome: ${{err.message}}`));
+            }});
+            chromeProcess.on('exit', (code, signal) => {{
+                if (chromeKilled) return;
+                if (code !== null && code !== 0) {{
+                    reject(new Error(`Chrome exited with code ${{code}}`));
+                }} else if (signal) {{
+                    reject(new Error(`Chrome killed by signal ${{signal}}`));
+                }}
+            }});
+        }});
+
+        await Promise.race([waitForPort(port, 30000), chromeExit]);
+        console.error('Chrome ready, running Lighthouse...');
+
+        const result = await lighthouse.default('{url}', {{
+            port,
+            onlyCategories: ['performance', 'accessibility', 'best-practices', 'seo'],
+            output: 'json',
+            logLevel: 'info',
+            formFactor: 'desktop',
+            throttlingMethod: 'devtools',
+            throttling: {{
+                requestLatencyMs: 0,
+                downloadThroughputKbps: 0,
+                uploadThroughputKbps: 0,
+                cpuSlowdownMultiplier: 1,
+            }},
+            emulatedUserAgent: false,
+            screenEmulation: {{
+                mobile: false,
+                width: {viewport['width']},
+                height: {viewport['height']},
+                deviceScaleFactor: 1,
+                disabled: false,
+            }},
+        }});
+
+        console.log(JSON.stringify(result.lhr));
+    }} catch (error) {{
+        console.error('Error running Lighthouse:', error);
+        process.exitCode = 1;
+    }} finally {{
+        chromeKilled = true;
+        if (chromeProcess) {{
+            chromeProcess.kill('SIGTERM');
+            await new Promise((resolve) => {{
+                chromeProcess.on('close', resolve);
+                setTimeout(() => {{
+                    try {{ chromeProcess.kill('SIGKILL'); }} catch (e) {{}}
+                    resolve();
+                }}, 5000);
+            }});
+        }}
+        if (userDataDir) {{
+            try {{
+                rmSync(userDataDir, {{ recursive: true, force: true, maxRetries: 3, retryDelay: 500 }});
+            }} catch (e) {{
+                console.error('Failed to clean up temp profile:', userDataDir, e.message);
+            }}
+        }}
+    }}
+}}
+
+runLighthouse();
+"""
+
+    @staticmethod
+    def _parse_lighthouse_output(stdout_data: str, stderr_data: bytes) -> dict:
+        """Parse Lighthouse JSON output from stdout.
+
+        Args:
+            stdout_data: Decoded stdout from the Node.js process
+            stderr_data: Raw stderr bytes (for error context)
+
+        Returns:
+            dict: Parsed Lighthouse report JSON
+
+        Raises:
+            Exception: If JSON parsing fails or no JSON found
+        """
+        logging.debug(f'Lighthouse stdout: {stdout_data}')
+
+        json_start = stdout_data.find('{')
+        if json_start >= 0:
+            try:
+                return json.loads(stdout_data[json_start:])
+            except json.JSONDecodeError as e:
+                logging.error(f'Failed to parse JSON output: {e}')
+                logging.error(f'JSON snippet: {stdout_data[json_start:json_start + 100]}...')
+                raise Exception(f'Invalid JSON output from Lighthouse: {e}')
+
+        logging.error(f'No JSON data found in output. Starts with: {stdout_data[:100]}')
+        if not stdout_data and stderr_data:
+            logging.error(f'Stderr: {stderr_data.decode()}')
+        raise Exception('No JSON data found in the output. Lighthouse may have failed to generate a report.')
+
+    @staticmethod
+    def _check_execution_error(stderr_output: str) -> None:
+        """Raise a descriptive exception based on Lighthouse stderr output.
+
+        Args:
+            stderr_output: Decoded stderr from the failed Node.js process
+
+        Raises:
+            Exception: With a message tailored to the specific error type
+        """
+        logging.error(f'Lighthouse execution failed: {stderr_output}')
+
+        if "Cannot find package 'lighthouse'" in stderr_output or (
+            'Cannot find module' in stderr_output and 'lighthouse' in stderr_output
+        ):
+            raise Exception('Lighthouse npm package is not installed. Please run: npm install lighthouse')
+
+        if 'ERR_REQUIRE_ESM' in stderr_output or 'Cannot use import statement' in stderr_output:
+            raise Exception(
+                'ES Module error: Make sure Node.js properly handles ES modules. Try upgrading Node.js version.'
+            )
+
+        raise Exception(f'Failed to run Lighthouse: {stderr_output}')
+
     async def run_lighthouse(self, url, viewport=None):
         """Run Lighthouse using Node.js and return the metrics.
 
@@ -109,301 +406,48 @@ class LighthouseMetricsTest:
         Returns:
             dict: Performance metrics
         """
-        # Get project root directory
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
-        logging.debug(f'{project_root}')
-
-        # Use the provided viewport or default value
         if viewport is None:
             viewport = {'width': 1280, 'height': 900}
 
-        # Try multiple locations to find node_modules
-        possible_locations = [
-            # 1. Try current working directory
-            os.getcwd(),
-            # 2. Try project root directory
-            project_root,
-            # 3. Workspace root directory (three levels up)
-            os.path.abspath(os.path.join(project_root, '../../../')),
-            # 4. Workspace root directory (two levels up)
-            os.path.abspath(os.path.join(project_root, '../../')),
-            # 5. Workspace root directory (one level up)
-            os.path.abspath(os.path.join(project_root, '../')),
-            # 6. User home directory
-            os.path.expanduser('~'),
-        ]
+        lighthouse_core_path = self._find_lighthouse_path()
+        js_source = self._build_lighthouse_js(lighthouse_core_path, url, viewport)
 
-        # If NODE_PATH environment variable exists, add it too
-        if os.environ.get('NODE_PATH'):
-            possible_locations.insert(0, os.environ.get('NODE_PATH'))
+        # Get Playwright chromium path to pass as CHROME_PATH env var
+        chrome_path = await self._get_playwright_chromium_path()
+        if chrome_path:
+            logging.info(f'Using Playwright chromium at: {chrome_path}')
+        else:
+            logging.warning('Could not find Playwright chromium, will use default Chrome search')
 
-        # Find node_modules directory and required packages
-        node_modules_path = None
-        chrome_launcher_path = None
-        lighthouse_path = None
+        env = os.environ.copy()
+        if chrome_path:
+            env['CHROME_PATH'] = chrome_path
 
-        for location in possible_locations:
-            test_node_modules = os.path.join(location, 'node_modules')
-            test_chrome_launcher = os.path.join(test_node_modules, 'chrome-launcher')
-            test_lighthouse = os.path.join(test_node_modules, 'lighthouse')
-
-            if os.path.exists(test_node_modules):
-                node_modules_path = test_node_modules
-                logging.debug(f'Found node_modules at: {node_modules_path}')
-
-                if os.path.exists(test_chrome_launcher) and os.path.exists(test_lighthouse):
-                    chrome_launcher_path = test_chrome_launcher
-                    lighthouse_path = test_lighthouse
-                    logging.debug(f'Found required packages at: {node_modules_path}')
-                    break
-
-        # Only try to check global npm packages when not found locally
-        logging.debug(f'chrome_launcher_path: {chrome_launcher_path}')
-        logging.debug(f'lighthouse_path: {lighthouse_path}')
-
-        # If still cannot find required packages, throw error
-        if not node_modules_path:
-            error_message = "Could not find node_modules directory in any of these locations. Please run 'npm install' in your project directory or install packages globally with 'npm install -g chrome-launcher lighthouse'."
-            logging.error(error_message)
-            raise Exception(error_message)
-
-        if not chrome_launcher_path:
-            error_message = f"chrome-launcher module not found in {node_modules_path}. Please run 'npm install chrome-launcher' in your project directory."
-            logging.error(error_message)
-            raise Exception(error_message)
-
-        if not lighthouse_path:
-            error_message = f"lighthouse module not found in {node_modules_path}. Please run 'npm install lighthouse' in your project directory."
-            logging.error(error_message)
-            raise Exception(error_message)
-
-        # Adjust paths for correct import
-        chrome_launcher_index_path = os.path.join(chrome_launcher_path, 'dist/index.js').replace('\\', '/')
-        lighthouse_core_path = os.path.join(lighthouse_path, 'core/index.js').replace('\\', '/')
-
-        # Create a temporary directory for reports
         with tempfile.TemporaryDirectory() as temp_dir:
-            # Create a temporary JavaScript file to run Lighthouse
             js_file_path = os.path.join(temp_dir, 'run_lighthouse.mjs')
-
             with open(js_file_path, 'w') as f:
-                f.write(
-                    f"""
-                    import {{ pathToFileURL }} from 'url';
-                    import {{ execSync }} from 'child_process';
-                    import {{ existsSync }} from 'fs';
-
-                    // Hybrid module that works with both ESM and CommonJS
-                async function runLighthouse() {{
-                    let chrome;
-                    try {{
-                        const chromeUrl = pathToFileURL('{chrome_launcher_index_path}').href;
-                        const lhUrl     = pathToFileURL('{lighthouse_core_path}').href;
-
-                        // Use dynamic imports for ES modules
-                        const chromeLauncher = await import(chromeUrl);
-                        const lighthouse = await import(lhUrl);
-
-                        let chromePath = process.env.CHROME_PATH;
-
-                        if (!chromePath || !existsSync(chromePath)) {{
-                            console.log('CHROME_PATH not set or invalid, searching for Chrome...');
-
-                            const possiblePaths = [
-                                '/ms-playwright/chromium-*/chrome-linux/chrome',
-                                '/usr/bin/google-chrome',
-                                '/usr/bin/google-chrome-stable',
-                                '/usr/bin/chromium-browser',
-                                '/usr/bin/chromium',
-                                '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
-                            ];
-
-                            // Try to find Playwright chromium in user cache directory
-                            try {{
-                                const homeDir = process.env.HOME || process.env.USERPROFILE;
-                                if (homeDir) {{
-                                    const findResult = execSync(`find ${{homeDir}}/.cache/ms-playwright -name chrome -type f -executable 2>/dev/null | head -1`, {{encoding: 'utf8'}}).trim();
-                                    if (findResult && existsSync(findResult)) {{
-                                        chromePath = findResult;
-                                        console.log(`Found Playwright Chrome in user cache: ${{chromePath}}`);
-                                    }}
-                                }}
-                            }} catch (e) {{
-                                console.log('User cache search failed, trying system paths...');
-                            }}
-
-                            // Fallback to system-level Playwright
-                            if (!chromePath || !existsSync(chromePath)) {{
-                                try {{
-                                    const findResult = execSync('find /ms-playwright -name chrome -type f -executable 2>/dev/null | head -1', {{encoding: 'utf8'}}).trim();
-                                    if (findResult && existsSync(findResult)) {{
-                                        chromePath = findResult;
-                                        console.log(`Found Chrome via find command: ${{chromePath}}`);
-                                    }}
-                                }} catch (e) {{
-                                    console.log('Find command failed, trying predefined paths...');
-                                }}
-                            }}
-
-                            if (!chromePath || !existsSync(chromePath)) {{
-                                for (const path of possiblePaths) {{
-                                    if (path.includes('*')) {{
-                                        try {{
-                                            const expandedPath = execSync(`ls ${{path}} 2>/dev/null | head -1`, {{encoding: 'utf8'}}).trim();
-                                            if (expandedPath && existsSync(expandedPath)) {{
-                                                chromePath = expandedPath;
-                                                console.log(`Found Chrome via wildcard: ${{chromePath}}`);
-                                                break;
-                                            }}
-                                        }} catch (e) {{
-                                        }}
-                                    }} else if (existsSync(path)) {{
-                                        chromePath = path;
-                                        console.log(`Found Chrome at predefined path: ${{chromePath}}`);
-                                        break;
-                                    }}
-                                }}
-                            }}
-                        }}
-
-                        const launchOptions = {{
-                            chromeFlags: ['--headless', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
-                        }};
-
-                        if (chromePath && existsSync(chromePath)) {{
-                            console.log(`Using Chrome at path: ${{chromePath}}`);
-                            launchOptions.chromePath = chromePath;
-                        }} else {{
-                            console.log('Chrome path not found, using default launcher behavior');
-                        }}
-
-                        // Launch Chrome using the imported module
-                        chrome = await chromeLauncher.launch(launchOptions);
-
-                        const options = {{
-                            port: chrome.port,
-                            onlyCategories: ['performance', 'accessibility', 'best-practices', 'seo'],
-                            output: 'json',
-                            logLevel: 'info',
-                            formFactor: 'desktop',
-                            throttlingMethod: 'devtools',
-                            throttling: {{
-                                requestLatencyMs: 0,
-                                downloadThroughputKbps: 0,
-                                uploadThroughputKbps: 0,
-                                cpuSlowdownMultiplier: 1,
-                            }},
-                            emulatedUserAgent: false,
-                            screenEmulation: {{
-                                mobile: false,
-                                width: {viewport['width']},
-                                height: {viewport['height']},
-                                deviceScaleFactor: 1,
-                                disabled: false
-                            }}
-                        }};
-
-                        // 运行Lighthouse using the imported module
-                        const result = await lighthouse.default('{url}', options);
-
-                        console.log(JSON.stringify(result.lhr));
-                    }} catch (error) {{
-                        console.error('Error running Lighthouse:', error);
-                        process.exit(1);
-                    }} finally {{
-                        if (chrome) {{
-                            await chrome.kill();
-                        }}
-                    }}
-                }}
-
-                runLighthouse();
-                """
-                )
+                f.write(js_source)
 
             try:
-                # Get Playwright chromium path
-                chrome_path = await self._get_playwright_chromium_path()
-                if chrome_path:
-                    logging.info(f'Using Playwright chromium at: {chrome_path}')
-                else:
-                    logging.warning('Could not find Playwright chromium, will use default Chrome search')
-
-                # Prepare environment variables with Chrome path
-                env = os.environ.copy()
-                if chrome_path:
-                    env['CHROME_PATH'] = chrome_path
-
-                # Run the Node.js script
                 logging.debug('Running Lighthouse via Node.js')
                 process = await asyncio.create_subprocess_exec(
                     'node', js_file_path,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    env=env
+                    env=env,
                 )
-
                 stdout, stderr = await process.communicate()
 
                 if process.returncode != 0:
-                    stderr_output = stderr.decode()
-                    logging.error(f'Lighthouse execution failed: {stderr_output}')
+                    self._check_execution_error(stderr.decode())
 
-                    # Check if it's a module missing error
-                    if (
-                        "Cannot find package 'lighthouse'" in stderr_output
-                        or 'Cannot find module' in stderr_output
-                        and 'lighthouse' in stderr_output
-                    ):
-                        raise Exception('Lighthouse npm package is not installed. Please run: npm install lighthouse')
-                    elif (
-                        "Cannot find package 'chrome-launcher'" in stderr_output
-                        or 'Cannot find module' in stderr_output
-                        and 'chrome-launcher' in stderr_output
-                    ):
-                        raise Exception(
-                            'Chrome-launcher npm package is not installed. Please run: npm install chrome-launcher'
-                        )
-                    elif 'ERR_REQUIRE_ESM' in stderr_output or 'Cannot use import statement' in stderr_output:
-                        raise Exception(
-                            'ES Module error: Make sure Node.js properly handles ES modules. Try upgrading Node.js version.'
-                        )
-                    else:
-                        raise Exception(f'Failed to run Lighthouse: {stderr_output}')
-
-                # Parse JSON data directly from stdout
-                stdout_data = stdout.decode()
-
-                # Log complete output for debugging
-                logging.debug(f'Lighthouse stdout: {stdout_data}')
-
-                # Find start and end of JSON string
-                json_start = stdout_data.find('{')
-                if json_start >= 0:
-                    try:
-                        report_data = json.loads(stdout_data[json_start:])
-                        # 提取AI优化的性能指标
-                        return self.extract_ai_optimized_performance_data(report_data)
-                    except json.JSONDecodeError as e:
-                        logging.error(f'Failed to parse JSON output: {e}')
-                        logging.error(f'JSON snippet: {stdout_data[json_start:json_start + 100]}...')
-                        raise Exception(f'Invalid JSON output from Lighthouse: {e}')
-                else:
-                    # Provide more detailed error information
-                    logging.error(f'No JSON data found in the output. Output starts with: {stdout_data[:100]}')
-                    if not stdout_data:
-                        logging.error('Lighthouse returned no output')
-                        if stderr:
-                            stderr_output = stderr.decode()
-                            logging.error(f'Stderr: {stderr_output}')
-                    raise Exception(
-                        'No JSON data found in the output. Lighthouse may have failed to generate a report.'
-                    )
+                report_data = self._parse_lighthouse_output(stdout.decode(), stderr)
+                return self.extract_ai_optimized_performance_data(report_data)
 
             except FileNotFoundError:
-                logging.error('Node.js or required NPM modules not found')
+                logging.error('Node.js not found')
                 raise Exception(
-                    'Make sure Node.js is installed and required NPM modules (lighthouse, chrome-launcher) are installed globally or locally'
+                    'Make sure Node.js is installed and lighthouse npm package is available (npm install lighthouse)'
                 )
 
     def extract_ai_optimized_performance_data(self, lhr):
@@ -416,11 +460,8 @@ class LighthouseMetricsTest:
             dict: Simplified performance metrics with scores and recommendations
         """
 
-        # Get all audit category data
         categories = lhr.get('categories', {})
         performance_category = categories.get('performance', {})
-        accessibility_category = categories.get('accessibility', {})
-        best_practices_category = categories.get('best-practices', {})
         seo_category = categories.get('seo', {})
         audits = lhr.get('audits', {})
 
@@ -433,12 +474,7 @@ class LighthouseMetricsTest:
             raise Exception('Lighthouse execution failed: Performance score is N/A or missing')
 
         # ====== Performance Analysis ======
-        # 1. Overall score and metrics
-        performance_score = (
-            round(performance_category.get('score', 0) * 100) if performance_category.get('score') is not None else 0
-        )
-
-        # 2. Audit statistics
+        # 1. Audit statistics
         performance_audit_refs = performance_category.get('auditRefs', [])
         audit_counts = {'failed': 0, 'passed': 0, 'manual': 0, 'informative': 0, 'not_applicable': 0}
 
@@ -572,19 +608,15 @@ class LighthouseMetricsTest:
         )
 
         # 8. Summarize scores for each category
+        score_categories = {
+            'performance': performance_category,
+            'accessibility': categories.get('accessibility', {}),
+            'best_practices': categories.get('best-practices', {}),
+            'seo': categories.get('seo', {}),
+        }
         category_scores = {
-            'performance': performance_score,
-            'accessibility': (
-                round(accessibility_category.get('score', 0) * 100)
-                if accessibility_category.get('score') is not None
-                else 0
-            ),
-            'best_practices': (
-                round(best_practices_category.get('score', 0) * 100)
-                if best_practices_category.get('score') is not None
-                else 0
-            ),
-            'seo': round(seo_category.get('score', 0) * 100) if seo_category.get('score') is not None else 0,
+            name: round(cat.get('score', 0) * 100) if cat.get('score') is not None else 0
+            for name, cat in score_categories.items()
         }
 
         # 9.1 Four category scores
@@ -646,56 +678,36 @@ class LighthouseMetricsTest:
     @staticmethod
     def _extract_seo_issue_details(audit_id, details):
         """Extract specific details of SEO issues."""
+        # Simple issue type mappings (no extra data needed)
+        SIMPLE_ISSUE_TYPES = {
+            'document-title': 'Missing or poor document title',
+            'meta-description': 'Missing or poor meta description',
+            'hreflang': 'Hreflang issues',
+            'canonical': 'Canonical link issues',
+            'robots-txt': 'Robots.txt issues',
+            'structured-data': 'Structured data issues',
+        }
+
         extracted_details = {}
+        items = details.get('items', [])
 
-        # Extract relevant information based on different SEO audit types
-        if audit_id == 'document-title':
-            # Page title issue
-            extracted_details['issue_type'] = 'Missing or poor document title'
+        if audit_id in SIMPLE_ISSUE_TYPES:
+            extracted_details['issue_type'] = SIMPLE_ISSUE_TYPES[audit_id]
 
-        elif audit_id == 'meta-description':
-            # Meta description issue
-            extracted_details['issue_type'] = 'Missing or poor meta description'
+        elif audit_id == 'link-text' and items:
+            extracted_details['issue_type'] = 'Poor link text'
+            extracted_details['problematic_links'] = [item.get('text', '') for item in items[:5]]
 
-        elif audit_id == 'link-text':
-            # Link text issue
-            if details.get('items'):
-                extracted_details['issue_type'] = 'Poor link text'
-                extracted_details['problematic_links'] = [
-                    item.get('text', '') for item in details.get('items', [])[:5]
-                ]  # 最多显示5个
+        elif audit_id == 'image-alt' and items:
+            extracted_details['issue_type'] = 'Missing image alt attributes'
+            extracted_details['images_count'] = len(items)
 
-        elif audit_id == 'image-alt':
-            # Image alt attribute issue
-            if details.get('items'):
-                extracted_details['issue_type'] = 'Missing image alt attributes'
-                extracted_details['images_count'] = len(details.get('items', []))
+        elif audit_id == 'crawlable-anchors' and items:
+            extracted_details['issue_type'] = 'Non-crawlable links'
+            extracted_details['links_count'] = len(items)
 
-        elif audit_id == 'hreflang':
-            # Hreflang issue
-            extracted_details['issue_type'] = 'Hreflang issues'
-
-        elif audit_id == 'canonical':
-            # Canonical tag issue
-            extracted_details['issue_type'] = 'Canonical link issues'
-
-        elif audit_id == 'robots-txt':
-            # Robots.txt issue
-            extracted_details['issue_type'] = 'Robots.txt issues'
-
-        elif audit_id == 'structured-data':
-            # Structured data issue
-            extracted_details['issue_type'] = 'Structured data issues'
-
-        elif audit_id == 'crawlable-anchors':
-            # Crawlable anchor issue
-            if details.get('items'):
-                extracted_details['issue_type'] = 'Non-crawlable links'
-                extracted_details['links_count'] = len(details.get('items', []))
-
-        # If there are general headings or items, also extract some basic information
-        if details.get('headings') and details.get('items'):
-            extracted_details['items_count'] = len(details.get('items', []))
+        if details.get('headings') and items:
+            extracted_details['items_count'] = len(items)
 
         return extracted_details
 
