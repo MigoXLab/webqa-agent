@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
@@ -148,6 +149,9 @@ class _BrowserSession:
                 logging.info(f'[Session {self.session_id}] Single-tab enforcement ENABLED (layered coordination)')
             else:
                 logging.debug(f'[Session {self.session_id}] Tab interception DISABLED (multi-tab allowed)')
+
+            # Cursor overlay: always inject visual cursor
+            await self._inject_cursor_overlay()
 
             # Create page AFTER init scripts are registered
             self._page = await self._context.new_page()
@@ -318,6 +322,16 @@ class _BrowserSession:
                 window.__webqa_session_init_active = true;  // Indicates session.py has initialized
             })();
         """)
+
+    async def _inject_cursor_overlay(self):
+        """Inject visual cursor overlay via init script.
+
+        Reads cursor_overlay.js and registers it so the fake cursor
+        is present on every page navigation.
+        """
+        js_path = Path(__file__).resolve().parent.parent / 'crawler' / 'js' / 'cursor_overlay.js'
+        cursor_js = js_path.read_text(encoding='utf-8')
+        await self._context.add_init_script(cursor_js)
 
     async def _setup_tab_interception_listeners(self):
         """

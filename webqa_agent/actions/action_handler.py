@@ -148,6 +148,29 @@ class ActionHandler:
         """Get current active page."""
         return self.page
 
+    async def _animate_cursor(self, x: float, y: float) -> None:
+        """Move visual cursor overlay to (x, y).
+
+        No-op if cursor overlay is not injected (uses optional chaining).
+        page.evaluate awaits the JS Promise from __webqa_cursor_move,
+        so no hard sleep needed for the move animation.
+        """
+        try:
+            await self.page.evaluate(f'window.__webqa_cursor_move?.({x}, {y})')
+        except Exception:
+            pass
+
+    async def _animate_cursor_click(self) -> None:
+        """Play click ripple effect at current cursor position.
+
+        Should be called AFTER the real click so the visual feedback
+        aligns with the actual page response.
+        """
+        try:
+            await self.page.evaluate('window.__webqa_cursor_click?.()')
+        except Exception:
+            pass
+
     def _get_frame_for_element(self, element: dict) -> Page | Frame:
         """Get the correct frame context for an element.
 
@@ -1228,7 +1251,9 @@ class ActionHandler:
 
             if coords:
                 viewport_x, viewport_y = coords
+                await self._animate_cursor(viewport_x, viewport_y)
                 await page.mouse.click(viewport_x, viewport_y)
+                await self._animate_cursor_click()
                 return True
             else:
                 return False
@@ -1293,6 +1318,7 @@ class ActionHandler:
 
             if coords:
                 viewport_x, viewport_y = coords
+                await self._animate_cursor(viewport_x, viewport_y)
                 await page.mouse.move(viewport_x, viewport_y)
                 await asyncio.sleep(0.5)
                 return True
@@ -1805,6 +1831,8 @@ class ActionHandler:
                 logging.debug(f'Screenshot will be saved to: {file_path}')
 
             # Capture screenshot with optimized options
+            # Note: cursor overlay stays visible — it's small (32px) and doesn't
+            # affect LLM analysis. Hiding/showing it caused visible blinking.
             screenshot: bytes = await page.screenshot(**screenshot_options)
 
             logging.debug(f'Screenshot captured successfully ({len(screenshot)} bytes)')
@@ -2754,6 +2782,7 @@ class ActionHandler:
             logging.debug(f'Drag action: source document=({source_x}, {source_y}) -> viewport=({viewport_source_x}, {viewport_source_y}), target document=({target_x}, {target_y}) -> viewport=({viewport_target_x}, {viewport_target_y})')
 
             # move to start position
+            await self._animate_cursor(viewport_source_x, viewport_source_y)
             await self.page.mouse.move(viewport_source_x, viewport_source_y)
             await asyncio.sleep(0.1)
 
@@ -2762,6 +2791,7 @@ class ActionHandler:
             await asyncio.sleep(0.1)
 
             # drag to target position
+            await self._animate_cursor(viewport_target_x, viewport_target_y)
             await self.page.mouse.move(viewport_target_x, viewport_target_y)
             await asyncio.sleep(0.1)
 
@@ -2812,6 +2842,7 @@ class ActionHandler:
                     )
 
             logging.info(f'Mouse move: document=({target_x}, {target_y}) -> viewport=({viewport_x}, {viewport_y})')
+            await self._animate_cursor(viewport_x, viewport_y)
             await self.page.mouse.move(viewport_x, viewport_y)
             await asyncio.sleep(0.1)
             return True
