@@ -1274,13 +1274,17 @@ class UITester:
         except Exception as e:
             logging.warning(f'UITester.end_session error during cleanup: {e}')
 
-        # # 2. Close LLM API client (critical for preventing connection leaks)
-        # try:
-        #     if self.llm:
-        #         await self.llm.close()
-        #         logging.debug('LLM API client closed')
-        # except Exception as e:
-        #     logging.warning(f'Failed to close LLM client: {e}')
+        # 2. Close LLM API client (releases httpx connections)
+        try:
+            if self.llm:
+                await asyncio.wait_for(self.llm.close(), timeout=5.0)
+                logging.debug('LLM API client closed')
+        except asyncio.TimeoutError:
+            logging.warning('LLM client close timed out after 5s, skipping')
+        except Exception as e:
+            logging.warning(f'Failed to close LLM client: {e}')
+        finally:
+            self.llm = None
 
         # 3. Clear references to browser objects
         self.page = None

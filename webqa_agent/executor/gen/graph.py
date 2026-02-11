@@ -32,6 +32,14 @@ from webqa_agent.utils.reporting_utils import save_test_result_json
 
 _completed_case_count = 0  # 全局已完成 case 计数
 
+
+def _write_json_sync(filepath: str, data: Any) -> None:
+    """Synchronous JSON write, intended to be called via
+    asyncio.to_thread()."""
+    with open(filepath, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+
 # Case ID 生成器（协程安全）
 _case_id_counter = 0
 _case_id_lock = asyncio.Lock()
@@ -453,6 +461,7 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                 )
 
                 s = None
+                ui_tester = None
                 failed = False
 
                 # 获取 session（阻塞直到有可用 session）
@@ -622,15 +631,9 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                                         cases_path = os.path.join(
                                             report_dir, 'cases.json'
                                         )
-                                        with open(
-                                            cases_path, 'w', encoding='utf-8'
-                                        ) as f:
-                                            json.dump(
-                                                all_test_cases,
-                                                f,
-                                                ensure_ascii=False,
-                                                indent=4,
-                                            )
+                                        await asyncio.to_thread(
+                                            _write_json_sync, cases_path, list(all_test_cases)
+                                        )
                                         logging.debug(
                                             f'Saved updated test cases with replanned cases to {cases_path}'
                                         )
@@ -661,7 +664,8 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                             if isinstance(recorded_case, dict):
                                 recorded_case['sub_test_id'] = case_id
 
-                            save_test_result_json(
+                            await asyncio.to_thread(
+                                save_test_result_json,
                                 test_result=recorded_case,
                                 report_dir=report_dir,
                                 index=case_idx,
@@ -712,6 +716,19 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                 # 重置日志上下文
                 test_id_var.reset(token)
                 screenshot_prefix_var.reset(prefix_token)
+
+                # Cleanup UITester resources (LLM client, browser listeners, etc.)
+                if ui_tester:
+                    try:
+                        await asyncio.wait_for(ui_tester.cleanup(), timeout=10.0)
+                    except asyncio.TimeoutError:
+                        logging.warning(
+                            f'Worker {worker_id}: UITester cleanup timed out after 10s'
+                        )
+                    except Exception as cleanup_err:
+                        logging.warning(
+                            f'Worker {worker_id}: UITester cleanup failed: {cleanup_err}'
+                        )
 
                 # Release or close session based on remaining work
                 if s:

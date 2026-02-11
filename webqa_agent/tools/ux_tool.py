@@ -57,6 +57,7 @@ class UIUXViewportTool(BaseTool):
         if not self.ui_tester_instance:
             return '[FAILURE] Error: UITester instance not provided for UX collection.'
 
+        llm_client = None
         try:
             logging.debug(f'Executing UX verification: {assertion}')
 
@@ -214,6 +215,7 @@ class UIUXViewportTool(BaseTool):
             compact = json.dumps(result_payload, ensure_ascii=False, separators=(',', ':'))
 
             # Optionally record this as a ux_verify step into a central recorder if present
+            has_issues = False
             recorder: CentralCaseRecorder | None = self.case_recorder
             if recorder:
                 all_issues_summary = []
@@ -367,6 +369,12 @@ class UIUXViewportTool(BaseTool):
         except Exception as e:
             logging.error(f'Error collecting UX viewport context: {str(e)}')
             return f'[FAILURE] Unexpected error during UX collection: {str(e)}'
+        finally:
+            if llm_client:
+                try:
+                    await llm_client.close()
+                except Exception:
+                    pass
 
     def _build_layout_prompt(self, user_case: str, id_map: dict, screenshot_count: int = 0) -> str:
         structured_info = ''

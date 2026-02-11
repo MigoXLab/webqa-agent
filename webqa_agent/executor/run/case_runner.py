@@ -265,7 +265,10 @@ class CaseRunner:
 
                     if case_result is not None:
                         case_config = case.get('_config', {})
-                        self._save_case_result(case_result, case_name, idx, raw_monitoring_data=raw_monitoring_data, case_config=case_config)
+                        await asyncio.to_thread(
+                            self._save_case_result, case_result, case_name, idx,
+                            raw_monitoring_data=raw_monitoring_data, case_config=case_config,
+                        )
                         self._clear_case_screenshots(case_result)
 
                     # Release session on failure (cleanup handled in execute_single_case)
