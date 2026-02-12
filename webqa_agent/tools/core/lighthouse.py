@@ -14,8 +14,8 @@ class LighthouseMetricsTest:
     def __init__(self, report_config: dict = None):
         self.language = report_config.get('language', 'zh-CN') if report_config else 'zh-CN'
         self.localized_strings = {
-            'zh-CN': i18n.get_lang_data('zh-CN').get('testers', {}).get('performance', {}),
-            'en-US': i18n.get_lang_data('en-US').get('testers', {}).get('performance', {}),
+            'zh-CN': i18n.get_lang_data('zh-CN').get('tools', {}).get('performance', {}),
+            'en-US': i18n.get_lang_data('en-US').get('tools', {}).get('performance', {}),
         }
 
     def _get_text(self, key: str) -> str:

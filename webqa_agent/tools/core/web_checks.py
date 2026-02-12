@@ -19,8 +19,8 @@ class WebAccessibilityTest:
     def __init__(self, report_config: dict = None):
         self.language = report_config.get('language', 'zh-CN') if report_config else 'zh-CN'
         self.localized_strings = {
-            'zh-CN': i18n.get_lang_data('zh-CN').get('testers', {}).get('basic', {}),
-            'en-US': i18n.get_lang_data('en-US').get('testers', {}).get('basic', {}),
+            'zh-CN': i18n.get_lang_data('zh-CN').get('tools', {}).get('basic', {}),
+            'en-US': i18n.get_lang_data('en-US').get('tools', {}).get('basic', {}),
         }
 
     def _get_text(self, key: str) -> str:
@@ -178,8 +178,8 @@ class PageButtonTest:
     def __init__(self, report_config: dict = None):
         self.language = report_config.get('language', 'zh-CN') if report_config else 'zh-CN'
         self.localized_strings = {
-            'zh-CN': i18n.get_lang_data('zh-CN').get('testers', {}).get('basic', {}),
-            'en-US': i18n.get_lang_data('en-US').get('testers', {}).get('basic', {}),
+            'zh-CN': i18n.get_lang_data('zh-CN').get('tools', {}).get('basic', {}),
+            'en-US': i18n.get_lang_data('en-US').get('tools', {}).get('basic', {}),
         }
 
     def _get_text(self, key: str) -> str:
@@ -187,7 +187,8 @@ class PageButtonTest:
         return self.localized_strings.get(self.language, {}).get(key, key)
 
     async def run(self, url: str, page: Page, clickable_elements: dict, **kwargs) -> SubTestResult:
-        """Run page button test using ActionHandler for enhanced error handling.
+        """Run page button test using ActionHandler for enhanced error
+        handling.
 
         Args:
             url: target url
@@ -204,7 +205,8 @@ class PageButtonTest:
         with Display.display(self._get_text('basic_test_display') + result.name):  # pylint: disable=not-callable
             try:
                 status = TestStatus.PASSED
-                from webqa_agent.actions.action_handler import ActionHandler, action_context_var
+                from webqa_agent.actions.action_handler import (
+                    ActionHandler, action_context_var)
 
                 # Initialize ActionHandler with element buffer
                 action_handler = ActionHandler()
@@ -287,7 +289,7 @@ class PageButtonTest:
                                 status = TestStatus.FAILED
 
                                 logging.warning(
-                                    f"Click failed for element {highlight_id}: "
+                                    f'Click failed for element {highlight_id}: '
                                     f"type={error_details.get('error_type')}, "
                                     f"reason={error_details.get('error_reason')}"
                                 )

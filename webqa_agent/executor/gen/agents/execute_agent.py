@@ -1226,7 +1226,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     )
 
     # Add request timeout to prevent indefinite hangs during concurrent execution
-    cfg_timeout = llm_config.get('timeout', 360)
+    cfg_timeout = llm_config.get('timeout') or 360
     logging.debug(f'LLM request timeout set to {cfg_timeout}s')
 
     # Instantiate appropriate LangChain chat model
