@@ -368,8 +368,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
                 report_dir = _resolve_report_dir(state)
                 os.makedirs(report_dir, exist_ok=True)
                 cases_path = os.path.join(report_dir, 'cases.json')
-                with open(cases_path, 'w', encoding='utf-8') as f:
-                    json.dump(test_cases, f, ensure_ascii=False, indent=4)
+                await asyncio.to_thread(_write_json_sync, cases_path, test_cases)
                 logging.debug(f'Successfully saved initial test cases to {cases_path}')
             except Exception as e:
                 logging.error(f'Failed to save initial test cases to file: {e}')
@@ -385,6 +384,15 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             )
             return {'test_cases': []}
     finally:
+        # Cleanup UITester resources (LLM client, browser listeners)
+        if ui_tester:
+            try:
+                await asyncio.wait_for(ui_tester.cleanup(), timeout=10.0)
+            except asyncio.TimeoutError:
+                logging.warning('UITester cleanup timed out after 10s in plan_test_cases')
+            except Exception as cleanup_err:
+                logging.warning(f'UITester cleanup failed in plan_test_cases: {cleanup_err}')
+
         # Release session back to pool after planning is complete
         if s and sp:
             await sp.release(s)
@@ -396,8 +404,9 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
 async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
     """使用 asyncio worker pool 模式并发执行所有 test cases，实现真正的动态补位。"""
     # 重置全局计数（每次新的测试运行从0开始）
-    global _completed_case_count
+    global _completed_case_count, _case_id_counter
     _completed_case_count = 0
+    _case_id_counter = 0
 
     # 支持 generate_only 模式：仅生成测试用例，不执行
     if state.get('generate_only'):
@@ -540,14 +549,26 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                             f"Worker {worker_id}: Case '{case_name}' timed out (30 minutes)"
                         )
                         failed = True
+                        now_str = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
                         case_result = {
                             'case_name': case_name,
                             'status': 'failed',
                             'failure_type': 'timeout',
                             'reason': 'Case execution timed out after 30 minutes',
                         }
+                        timeout_recorded = {
+                            'name': case_name,
+                            'case_id': case_id,
+                            'status': 'failed',
+                            'steps': [],
+                            'final_summary': 'Case timed out after 30 minutes',
+                            'start_time': now_str,
+                            'end_time': now_str,
+                        }
                         async with results_lock:
                             completed_cases.append(case_result)
+                            recorded_cases.append(timeout_recorded)
+                            _completed_case_count += 1
                         continue
 
                     # 处理执行结果
@@ -787,7 +808,7 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
         # Only sync if cases.json exists and we have recorded cases
         if cases_json_path.exists() and recorded_cases:
             synchronizer = CaseJsonSynchronizer(cases_json_path)
-            synchronizer.sync_cases(all_test_cases, recorded_cases)
+            await asyncio.to_thread(synchronizer.sync_cases, all_test_cases, recorded_cases)
             logging.info(
                 f'Synchronized {len(recorded_cases)} execution results to cases.json'
             )
