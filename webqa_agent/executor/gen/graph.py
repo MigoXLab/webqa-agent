@@ -71,6 +71,10 @@ def _resolve_report_dir(state: Dict[str, Any]) -> str:
 
 async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any]]]:
     """Analyzes the initial page and generates test cases."""
+    # 重置 case_id 计数器（每次新的测试运行从 case_1 开始）
+    global _case_id_counter
+    _case_id_counter = 0
+
     ui_tester = None
     s = None  # session
     sp = state.get('session_pool', None)
@@ -403,10 +407,9 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
 
 async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
     """使用 asyncio worker pool 模式并发执行所有 test cases，实现真正的动态补位。"""
-    # 重置全局计数（每次新的测试运行从0开始）
-    global _completed_case_count, _case_id_counter
+    # 重置 progress 计数（每次新的测试运行从0开始）
+    global _completed_case_count
     _completed_case_count = 0
-    _case_id_counter = 0
 
     # 支持 generate_only 模式：仅生成测试用例，不执行
     if state.get('generate_only'):
