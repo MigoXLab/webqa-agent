@@ -161,6 +161,9 @@ class LighthouseMetricsTest:
         Returns:
             str: Complete ES module JavaScript source code
         """
+        # JSON-encode URL to safely escape special characters (quotes, backslashes)
+        # json.dumps produces a quoted string like '"https://example.com"'
+        safe_url = json.dumps(url)
         return f"""
 import {{ pathToFileURL }} from 'url';
 import {{ execSync, spawn }} from 'child_process';
@@ -290,7 +293,7 @@ async function runLighthouse() {{
         await Promise.race([waitForPort(port, 30000), chromeExit]);
         console.error('Chrome ready, running Lighthouse...');
 
-        const result = await lighthouse.default('{url}', {{
+        const result = await lighthouse.default({safe_url}, {{
             port,
             onlyCategories: ['performance', 'accessibility', 'best-practices', 'seo'],
             output: 'json',
@@ -436,7 +439,17 @@ runLighthouse();
                     stderr=asyncio.subprocess.PIPE,
                     env=env,
                 )
-                stdout, stderr = await process.communicate()
+                try:
+                    stdout, stderr = await asyncio.wait_for(
+                        process.communicate(), timeout=300  # 5 minute timeout
+                    )
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
+                    raise Exception(
+                        'Lighthouse execution timed out after 5 minutes. '
+                        'The target page may be unresponsive or Lighthouse is stuck.'
+                    )
 
                 if process.returncode != 0:
                     self._check_execution_error(stderr.decode())
