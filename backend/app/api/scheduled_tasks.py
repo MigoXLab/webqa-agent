@@ -430,8 +430,10 @@ async def trigger_scheduled_task(
     """Manually trigger a scheduled task to execute immediately.
 
     Creates an execution using the task's configuration (environment, test
-    cases, model, workers) with trigger_type='scheduled' and scheduled_task_id
-    set, so that Feishu notifications fire as usual upon completion.
+    cases, model, workers) with trigger_type='manual' and scheduled_task_id
+    set. Feishu notifications will fire upon completion: default group always,
+    custom webhook group regardless of pass/fail (unlike cron which only sends
+    to custom group on failure).
     """
     settings = get_settings()
 
@@ -457,10 +459,11 @@ async def trigger_scheduled_task(
         )
 
     # Create execution record using task's configuration
+    # trigger_type='manual' 用于区分手动触发和定时触发
     execution = Execution(
         business_id=task.business_id,
         environment_id=task.environment_id,
-        trigger_type='scheduled',
+        trigger_type='manual',
         scheduled_task_id=task.id,
         model=task.model,
         workers=task.workers,

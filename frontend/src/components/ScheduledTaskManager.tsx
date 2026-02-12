@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Calendar, Trash2, Edit, Plus, Clock, CheckCircle2, XCircle, AlertCircle, Loader2, ChevronDown, ChevronUp, Play } from 'lucide-react';
+import { Calendar, Trash2, Edit, Plus, Clock, CheckCircle2, XCircle, AlertCircle, Loader2, ChevronDown, ChevronUp, Play, RefreshCw } from 'lucide-react';
 import { apiClient } from '../api/client';
 
 export type ScheduledTask = {
@@ -71,6 +71,11 @@ export function ScheduledTaskManager({
   const [triggeringTaskId, setTriggeringTaskId] = useState<string | null>(null);
   const [triggerResult, setTriggerResult] = useState<{ taskId: string; success: boolean } | null>(null);
 
+  // Local environments & test cases state (synced from API when modal opens)
+  const [localEnvironments, setLocalEnvironments] = useState<Environment[]>(environments);
+  const [localTestCases, setLocalTestCases] = useState<TestCase[]>(testCases);
+  const [refreshingData, setRefreshingData] = useState(false);
+
   // Cron validation state
   const [cronValidation, setCronValidation] = useState<{
     is_valid: boolean;
@@ -79,6 +84,7 @@ export function ScheduledTaskManager({
   } | null>(null);
   const [validatingCron, setValidatingCron] = useState(false);
   const [testCasesExpanded, setTestCasesExpanded] = useState(false);
+  const [feishuConfigExpanded, setFeishuConfigExpanded] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState<Partial<ScheduledTask>>({
@@ -94,11 +100,59 @@ export function ScheduledTaskManager({
     feishu_notify_user_id: '',
   });
 
+  // Keep local state in sync when props change
+  useEffect(() => {
+    setLocalEnvironments(environments);
+  }, [environments]);
+
+  useEffect(() => {
+    setLocalTestCases(testCases);
+  }, [testCases]);
+
+  // Refresh environments and test cases from API
+  const refreshModalData = async () => {
+    setRefreshingData(true);
+    try {
+      const [business, casesResponse] = await Promise.all([
+        apiClient.getBusiness(businessId),
+        apiClient.getTestCases(businessId),
+      ]);
+      setLocalEnvironments(
+        (business.environments || []).map(env => ({
+          id: env.id || crypto.randomUUID(),
+          name: env.name || 'Unknown Environment',
+          url: env.url || '',
+        }))
+      );
+      setLocalTestCases(
+        (casesResponse.items || []).map(tc => ({
+          id: tc.id,
+          name: tc.name,
+          login_required: tc.login_required,
+          snapshot: tc.snapshot,
+          use_snapshot: tc.use_snapshot,
+        }))
+      );
+    } catch (err) {
+      console.error('Failed to refresh modal data:', err);
+    } finally {
+      setRefreshingData(false);
+    }
+  };
+
+  // Open create modal with data refresh
+  const openCreateModalWithRefresh = () => {
+    resetForm();
+    setShowModal(true);
+    refreshModalData();
+  };
+
   // React to external create modal trigger
   useEffect(() => {
     if (openCreateModal) {
       resetForm();
       setShowModal(true);
+      refreshModalData();
     }
   }, [openCreateModal]);
 
@@ -241,6 +295,7 @@ export function ScheduledTaskManager({
     setError(null);
     setCronValidation(null);
     setTestCasesExpanded(false);
+    setFeishuConfigExpanded(false);
   };
 
   const handleCloseModal = () => {
@@ -263,8 +318,11 @@ export function ScheduledTaskManager({
       webhook_url: task.webhook_url || '',
       feishu_notify_user_id: task.feishu_notify_user_id || '',
     });
+    // Auto-expand feishu config if task already has notification settings
+    setFeishuConfigExpanded(!!(task.webhook_url || task.feishu_notify_user_id));
     setError(null);
     setShowModal(true);
+    refreshModalData();
   };
 
   const handleDelete = async (id: string, name: string) => {
@@ -320,7 +378,7 @@ export function ScheduledTaskManager({
   };
 
   const getEnvName = (envId: string) => {
-    const env = environments.find(e => e.id === envId);
+    const env = localEnvironments.find(e => e.id === envId) || environments.find(e => e.id === envId);
     return env?.name || '未知环境';
   };
 
@@ -355,7 +413,7 @@ export function ScheduledTaskManager({
           </div>
           {showCreateButton && (
             <button
-              onClick={() => { resetForm(); setShowModal(true); }}
+              onClick={openCreateModalWithRefresh}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
             >
               <Plus className="w-4 h-4" />
@@ -393,7 +451,7 @@ export function ScheduledTaskManager({
                         </span>
                         <span>模型: {task.model}</span>
                         <span>并发: {task.workers}</span>
-                        <span className="text-blue-600">📢 飞书通知{task.webhook_url ? '' : '（默认）'}</span>
+                        <span className="text-blue-600">📢 飞书通知{task.webhook_url ? '（默认+自定义群）' : '（默认群）'}</span>
                       </div>
                     </div>
                   </div>
@@ -408,7 +466,7 @@ export function ScheduledTaskManager({
                             : 'bg-red-50 text-red-700 border-red-200'
                           : 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200 disabled:opacity-50'
                       }`}
-                      title="立即执行"
+                      title={`立即执行${task.webhook_url ? '，完成后将通知到默认群和自定义飞书群' : '，完成后将通知到默认飞书群'}`}
                     >
                       {triggeringTaskId === task.id ? (
                         <Loader2 className="w-3 h-3 animate-spin" />
@@ -493,7 +551,7 @@ export function ScheduledTaskManager({
             <Calendar className="w-12 h-12 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-500 mb-4">还没有定时任务</p>
             <button
-              onClick={() => setShowModal(true)}
+              onClick={openCreateModalWithRefresh}
               className="text-blue-600 hover:text-blue-700 font-medium"
             >
               创建第一个定时任务
@@ -562,7 +620,7 @@ export function ScheduledTaskManager({
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">选择环境</option>
-                    {environments.map(env => (
+                    {localEnvironments.map(env => (
                       <option key={env.id} value={env.id}>{env.name} ({env.url})</option>
                     ))}
                   </select>
@@ -571,9 +629,9 @@ export function ScheduledTaskManager({
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <label className="block text-sm font-medium text-gray-700">
-                      选择测试用例 * ({formData.test_case_ids?.length || 0}/{testCases.length} 已选)
+                      选择测试用例 * ({formData.test_case_ids?.length || 0}/{localTestCases.length} 已选)
                     </label>
-                    {testCases.length > 5 && (
+                    {localTestCases.length > 5 && (
                       <button
                         type="button"
                         onClick={() => setTestCasesExpanded(!testCasesExpanded)}
@@ -588,16 +646,16 @@ export function ScheduledTaskManager({
                     )}
                   </div>
                   <div className={`${testCasesExpanded ? 'max-h-[400px]' : 'max-h-48'} overflow-y-auto border border-gray-200 rounded-lg bg-white p-3 space-y-1 transition-[max-height] duration-300`}>
-                    {testCases.length > 0 && (
+                    {localTestCases.length > 0 && (
                       <label className="flex items-center gap-2 text-sm hover:bg-gray-50 px-2 py-1.5 rounded cursor-pointer border-b border-gray-100 pb-2 mb-1">
                         <input
                           type="checkbox"
-                          checked={formData.test_case_ids?.length === testCases.length}
+                          checked={formData.test_case_ids?.length === localTestCases.length}
                           onChange={() => {
-                            const allSelected = formData.test_case_ids?.length === testCases.length;
+                            const allSelected = formData.test_case_ids?.length === localTestCases.length;
                             setFormData({
                               ...formData,
-                              test_case_ids: allSelected ? [] : testCases.map(tc => tc.id),
+                              test_case_ids: allSelected ? [] : localTestCases.map(tc => tc.id),
                             });
                           }}
                           className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 flex-shrink-0"
@@ -605,7 +663,7 @@ export function ScheduledTaskManager({
                         <span className="font-medium text-gray-700">全选</span>
                       </label>
                     )}
-                    {testCases.map(tc => (
+                    {localTestCases.map(tc => (
                       <label key={tc.id} className="flex items-center gap-2 text-sm hover:bg-gray-50 px-2 py-1.5 rounded cursor-pointer">
                         <input
                           type="checkbox"
@@ -633,10 +691,19 @@ export function ScheduledTaskManager({
                         </span>
                       </label>
                     ))}
-                    {testCases.length === 0 && (
+                    {localTestCases.length === 0 && (
                       <p className="text-sm text-gray-400 text-center py-4">该业务下无测试用例</p>
                     )}
                   </div>
+                  <button
+                    type="button"
+                    onClick={refreshModalData}
+                    disabled={refreshingData}
+                    className="mt-2 flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 font-medium cursor-pointer transition-colors disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${refreshingData ? 'animate-spin' : ''}`} />
+                    {refreshingData ? '同步中...' : '点击同步最新环境和用例'}
+                  </button>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -722,30 +789,42 @@ export function ScheduledTaskManager({
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium mb-2 text-gray-700">飞书通知配置</label>
-                  <div className="space-y-3 border border-gray-200 rounded-lg p-4 bg-gray-50">
-                    <div>
-                      <label className="block text-xs font-medium mb-1 text-gray-600">Webhook 地址</label>
-                      <input
-                        type="url"
-                        value={formData.webhook_url}
-                        onChange={e => setFormData({...formData, webhook_url: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-sm"
-                        placeholder="留空则使用系统默认飞书群"
-                      />
+                  <button
+                    type="button"
+                    onClick={() => setFeishuConfigExpanded(!feishuConfigExpanded)}
+                    className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-blue-600 transition-colors"
+                  >
+                    飞书通知配置
+                    {feishuConfigExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                    {(formData.webhook_url || formData.feishu_notify_user_id) && (
+                      <span className="text-xs text-blue-600 font-normal">（已配置）</span>
+                    )}
+                  </button>
+                  {feishuConfigExpanded && (
+                    <div className="mt-2 space-y-3 border border-gray-200 rounded-lg p-4 bg-gray-50">
+                      <div>
+                        <label className="block text-xs font-medium mb-1 text-gray-600">失败时通知的飞书群: 填写飞书机器人 Webhook 地址</label>
+                        <input
+                          type="url"
+                          value={formData.webhook_url}
+                          onChange={e => setFormData({...formData, webhook_url: e.target.value})}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-sm"
+                          placeholder="留空则仅发送到系统默认群"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium mb-1 text-gray-600">失败时 @通知人: 填写飞书 open_id，多人用逗号分隔</label>
+                        <input
+                          type="text"
+                          value={formData.feishu_notify_user_id}
+                          onChange={e => setFormData({...formData, feishu_notify_user_id: e.target.value})}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-sm"
+                          placeholder="例如: ou_xxxx, ou_yyyy"
+                        />
+                      </div>
+                      <p className="text-xs text-gray-400">注: 手动执行任务不管成功或失败都会发送通知到自定义飞书群</p>
                     </div>
-                    <div>
-                      <label className="block text-xs font-medium mb-1 text-gray-600">失败时 @通知人（飞书 open_id，多人用逗号分隔）</label>
-                      <input
-                        type="text"
-                        value={formData.feishu_notify_user_id}
-                        onChange={e => setFormData({...formData, feishu_notify_user_id: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-sm"
-                        placeholder="例如: ou_xxxx, ou_yyyy"
-                      />
-                    </div>
-                    <p className="text-xs text-gray-400">Webhook 留空使用默认群；填写 open_id 可在失败时 @指定人，多人用逗号分隔</p>
-                  </div>
+                  )}
                 </div>
 
                 <div className="flex items-center">

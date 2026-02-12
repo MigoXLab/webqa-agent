@@ -174,8 +174,8 @@ async def execution_complete(execution_id: str, request: ExecutionCompleteReques
             # 刷新进度缓存 TTL（保留历史日志，TTL 过期后自动清理）
             await refresh_progress_ttl(execution_id)
 
-            # 飞书通知：如果是定时任务触发，发送结果通知
-            if execution.trigger_type == 'scheduled' and execution.scheduled_task_id:
+            # 飞书通知：如果是定时任务触发（含手动触发），发送结果通知
+            if execution.scheduled_task_id:
                 try:
                     # 查找关联的定时任务，获取 webhook_url
                     task_result = await db.execute(
@@ -183,13 +183,12 @@ async def execution_complete(execution_id: str, request: ExecutionCompleteReques
                     )
                     scheduled_task = task_result.scalar_one_or_none()
 
-                    # 优先使用任务级别的 webhook_url，没有则使用全局默认
-                    webhook_url = (
-                        (scheduled_task.webhook_url if scheduled_task else None)
-                        or settings.DEFAULT_FEISHU_WEBHOOK_URL
-                    )
+                    # 获取默认 webhook 和任务级别 webhook
+                    default_webhook = settings.DEFAULT_FEISHU_WEBHOOK_URL
+                    task_webhook = scheduled_task.webhook_url if scheduled_task else None
+                    feishu_user_ids = scheduled_task.feishu_notify_user_id if scheduled_task else None
 
-                    if webhook_url:
+                    if default_webhook or task_webhook:
                         # 获取业务名称
                         biz_result = await db.execute(
                             select(Business).where(Business.id == execution.business_id)
@@ -209,20 +208,37 @@ async def execution_complete(execution_id: str, request: ExecutionCompleteReques
                         # 获取任务名称（如有）
                         task_name = scheduled_task.name if scheduled_task else None
 
-                        # 异步发送通知（不阻塞回调响应）
-                        asyncio.create_task(
-                            send_feishu_notification(
-                                webhook_url=webhook_url,
-                                execution_id=execution_id,
-                                business_name=business_name,
-                                completed_at=execution.completed_at,
-                                result_count=request.result_count,
-                                oss_report_url=oss_url,
-                                feishu_notify_user_id=scheduled_task.feishu_notify_user_id if scheduled_task else None,
-                                environment_name=environment_name,
-                                task_name=task_name,
-                            )
+                        notification_kwargs = dict(
+                            execution_id=execution_id,
+                            business_name=business_name,
+                            completed_at=execution.completed_at,
+                            result_count=request.result_count,
+                            oss_report_url=oss_url,
+                            feishu_notify_user_id=feishu_user_ids,
+                            environment_name=environment_name,
+                            task_name=task_name,
                         )
+
+                        # 1. 默认群始终发送通知
+                        if default_webhook:
+                            asyncio.create_task(
+                                send_feishu_notification(
+                                    webhook_url=default_webhook,
+                                    **notification_kwargs,
+                                )
+                            )
+
+                        # 2. 用户自定义 webhook 群：失败时发送，手动触发也发送
+                        #    （仅当自定义 webhook 与默认不同时发送，避免重复）
+                        failed_count = (request.result_count or {}).get('failed', 0)
+                        is_manual = execution.trigger_type != 'scheduled'
+                        if task_webhook and task_webhook != default_webhook and (failed_count > 0 or is_manual):
+                            asyncio.create_task(
+                                send_feishu_notification(
+                                    webhook_url=task_webhook,
+                                    **notification_kwargs,
+                                )
+                            )
                 except Exception as notify_err:
                     logger.warning(f'[Internal] 飞书通知发送失败（不影响主流程）: {notify_err}')
 
