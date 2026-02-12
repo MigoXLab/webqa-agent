@@ -25,7 +25,7 @@ from webqa_agent.prompts.test_planning_prompts import (
     get_element_filtering_system_prompt, get_element_filtering_user_prompt,
     get_planning_prompt, get_reflection_prompt)
 from webqa_agent.tools.core.ui_driver import UITester
-from webqa_agent.utils import Display
+from webqa_agent.utils import Display, i18n
 from webqa_agent.utils.get_log import test_id_var
 from webqa_agent.utils.log_icon import icon
 from webqa_agent.utils.reporting_utils import save_test_result_json
@@ -51,6 +51,22 @@ async def get_next_case_id() -> str:
     async with _case_id_lock:
         _case_id_counter += 1
         return f'case_{_case_id_counter}'
+
+
+def _resolve_report_dir(state: Dict[str, Any]) -> str:
+    """Resolve report directory from state config or environment fallback.
+
+    Args:
+        state: Graph state containing report_config
+
+    Returns:
+        Resolved report directory path
+    """
+    report_dir = state.get('report_config', {}).get('report_dir')
+    if not report_dir:
+        timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP')
+        report_dir = os.path.join('reports', f'test_{timestamp}')
+    return report_dir
 
 
 async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any]]]:
@@ -349,11 +365,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
                 )  # 为 graph 生成的 case 添加递增 ID
 
             try:
-                timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP')
-                report_dir = state.get('report_config').get('report_dir')
-                if not report_dir:
-                    timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP')
-                    report_dir = os.path.join('reports', f'test_{timestamp}')
+                report_dir = _resolve_report_dir(state)
                 os.makedirs(report_dir, exist_ok=True)
                 cases_path = os.path.join(report_dir, 'cases.json')
                 with open(cases_path, 'w', encoding='utf-8') as f:
@@ -444,8 +456,8 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                 '_is_replanned', False
             )  # 标记是否为 replan 生成的 case
 
-            # 设置日志上下文（case_id + case_name 组合，方便 grep 和识别）
-            log_context = f'AI Function Test | {case_id}'
+            # 设置日志上下文（case_id 用于 grep 和识别）
+            log_context = f'Gen | {case_id}'
             token = test_id_var.set(log_context)
 
             # Set screenshot prefix to avoid filename collisions in parallel execution
@@ -493,10 +505,10 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                 ui_tester.last_action_context = None
 
                 lang = state.get('language', 'zh-CN')
-                default_text = '智能功能测试' if lang == 'zh-CN' else 'AI Function Test'
+                display_prefix = i18n.t(lang, 'tools.ai_function.display_text', 'Gen Mode')
 
                 with Display.display(  # pylint: disable=not-callable
-                    f'{default_text} - {case_name}'
+                    f'{display_prefix} - {case_name}'
                 ):
                     logging.debug(f"Worker {worker_id}: Executing '{case_name}'")
 
@@ -615,18 +627,7 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
 
                                     # 保存更新后的 cases.json
                                     try:
-                                        timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP')
-                                        # report_dir = os.path.join('reports', f'test_{timestamp}')
-                                        report_dir = state.get('report_config').get(
-                                            'report_dir'
-                                        )
-                                        if not report_dir:
-                                            timestamp = os.getenv(
-                                                'WEBQA_REPORT_TIMESTAMP'
-                                            )
-                                            report_dir = os.path.join(
-                                                'reports', f'test_{timestamp}'
-                                            )
+                                        report_dir = _resolve_report_dir(state)
                                         os.makedirs(report_dir, exist_ok=True)
                                         cases_path = os.path.join(
                                             report_dir, 'cases.json'
@@ -649,10 +650,7 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
 
                     # 保存 case 结果
                     try:
-                        report_dir = state.get('report_config', {}).get('report_dir')
-                        if not report_dir:
-                            timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP')
-                            report_dir = os.path.join('reports', f'test_{timestamp}')
+                        report_dir = _resolve_report_dir(state)
 
                         # 从 case_id 提取索引
                         try:
@@ -782,10 +780,7 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
             CaseJsonSynchronizer
 
         # Get report directory
-        report_dir = state.get('report_config', {}).get('report_dir')
-        if not report_dir:
-            timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP')
-            report_dir = os.path.join('reports', f'test_{timestamp}')
+        report_dir = _resolve_report_dir(state)
 
         cases_json_path = Path(report_dir) / 'cases.json'
 

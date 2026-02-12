@@ -13,7 +13,7 @@ from webqa_agent.data import (ParallelTestSession, SubTestReport,
                               SubTestResult, SubTestScreenshot, SubTestStep,
                               TestCategory, TestResult, TestStatus)
 from webqa_agent.executor.result_aggregator import ResultAggregator
-from webqa_agent.utils import Display
+from webqa_agent.utils import Display, i18n
 from webqa_agent.utils.get_log import GetLog
 from webqa_agent.utils.log_icon import icon
 from webqa_agent.utils.reporting_utils import save_index_json
@@ -245,14 +245,6 @@ class GenExecutor:
             result
         )
 
-    def _get_enabled_custom_tools(self) -> List[str]:
-        """Get list of enabled custom tool step_types from config.
-
-        Returns:
-            List of custom tool step_types (e.g., ['lighthouse', 'nuclei', 'traverse_clickable_elements'])
-        """
-        return self.config.custom_tools.enabled
-
     async def _run_langgraph_workflow(self) -> TestResult:
         """Run LangGraph workflow for AI test generation.
 
@@ -262,7 +254,7 @@ class GenExecutor:
         from webqa_agent.executor.gen.graph import app
 
         # Get enabled custom tools
-        enabled_custom_tools = self._get_enabled_custom_tools()
+        enabled_custom_tools = self.config.custom_tools.enabled
 
         # Build state for LangGraph
         initial_state = {
@@ -313,9 +305,10 @@ class GenExecutor:
         sub_tests = self._convert_recorded_cases_to_sub_tests(recorded_cases, graph_case_status_map)
 
         # Create TestResult
+        lang = self.config.report_config.language
         test_result = TestResult(
             test_id=str(uuid.uuid4()),
-            test_name='AI Function Test',
+            test_name=i18n.t(lang, 'tools.ai_function.display_text', 'Gen Mode'),
             category=TestCategory.FUNCTION,
             sub_tests=sub_tests
         )
@@ -369,7 +362,7 @@ class GenExecutor:
         """
         sub_tests = []
 
-        for i, recorded_case in enumerate(recorded_cases):
+        for recorded_case in recorded_cases:
             case_name = recorded_case.get(
                 'name',
                 f"Unnamed test case - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"

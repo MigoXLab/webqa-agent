@@ -14,9 +14,9 @@
     "llm_prompt_main": "You are an experienced software testing analyst. Please read the following sub-test information and extract [Issue Content], [Issue Count], and [Severity]:\n1) If status = pass, return JSON {\"issue_count\": 0}.\n2) If status != pass, judge based on the specific content of report, metrics, or final_summary:\n   - Extract the most critical one-sentence issue description as issues\n   - Count issue quantity as issue_count (if unable to count accurately, default to 1)\n   - Severity assessment: First check if severity is already marked in the report (like high/medium/low, critical/major/minor, etc.), if so, follow directly; if not clearly marked in report, judge based on issue impact: high (serious impact on functionality/performance), medium (moderate impact), low (minor issues/warnings)\n3) You cannot output any other content or code blocks, only output unified JSON: {\"issue_count\": <number>, \"issues\": \"one-sentence English issue description\", \"severity\": \"high|medium|low\"}.",
     "llm_prompt_test_info": "Sub-test information: "
   },
-  "testers": {
+  "tools": {
     "basic": {
-      "basic_test_display": "Basic Function Test - ",
+      "basic_test_display": "Web Check - ",
       "accessibility_check": "Accessibility_Check",
       "main_link_check": "Main Link Check",
       "sub_link_check": "Sub Link Check",
@@ -108,7 +108,11 @@
       "no_details": "No further details"
     },
     "ai_function": {
-        "intelligent_function_test": "Intelligent Function Test"
+      "display_text": "Gen Mode"
+    },
+    "run_mode": {
+      "display_text": "Run Mode",
+      "test_name": "Run Mode"
     }
   },
   "common": {

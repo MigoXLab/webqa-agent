@@ -96,9 +96,11 @@ def validate_and_build_llm_config(cfg):
     max_tokens = llm_cfg_raw.get('max_tokens')
     reasoning = llm_cfg_raw.get('reasoning')
     text_cfg = llm_cfg_raw.get('text')
+    timeout = llm_cfg_raw.get('timeout')
 
     # Validate required fields
-    if not api_key or api_key == 'your_openai_api_key' or api_key == 'your_anthropic_api_key' or api_key == 'your_gemini_api_key':
+    placeholder_keys = {'your_openai_api_key', 'your_anthropic_api_key', 'your_gemini_api_key'}
+    if not api_key or api_key in placeholder_keys:
         raise ValueError('❌ LLM API Key not configured!')
 
     if not base_url:
@@ -122,6 +124,8 @@ def validate_and_build_llm_config(cfg):
         llm_config['reasoning'] = reasoning
     if text_cfg is not None:
         llm_config['text'] = text_cfg
+    if timeout is not None:
+        llm_config['timeout'] = timeout
 
     # Display configuration (masked)
     api_key_masked = f'{api_key[:8]}...{api_key[-4:]}' if len(api_key) > 12 else '***'
@@ -343,7 +347,7 @@ async def execute_gen_mode(cfg, workers: int = 1):
     )
 
     # Display configuration
-    print('📋 Tests enabled: Function Test (AI-driven)')
+    print('📋 Tests enabled: Gen Mode')
     if custom_tools_enabled:
         print(f'🔧 Custom tools: {", ".join(custom_tools_enabled)}')
 
@@ -377,9 +381,6 @@ async def execute_run_mode(config_path: str, workers: int = None):
         config_path: Path to config file or folder
         workers: Workers value from CLI (None if not specified)
     """
-    from webqa_agent.config_models.base_config import (BrowserConfig,
-                                                       LLMConfig, LogConfig,
-                                                       ReportConfig)
     from webqa_agent.config_models.run_config import RunConfig
     from webqa_agent.executor.run_executor import RunExecutor
 
@@ -472,7 +473,6 @@ async def execute_run_mode(config_path: str, workers: int = None):
 
     except Exception as e:
         print(f'\n❌ Test execution failed: {e}', file=sys.stderr)
-        import traceback
         traceback.print_exc()
         sys.exit(1)
 
