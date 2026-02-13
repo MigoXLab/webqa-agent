@@ -555,6 +555,7 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                         now_str = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
                         case_result = {
                             'case_name': case_name,
+                            'case_id': case_id,
                             'status': 'failed',
                             'failure_type': 'timeout',
                             'reason': 'Case execution timed out after 30 minutes',
@@ -576,6 +577,8 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
 
                     # 处理执行结果
                     case_result = result.get('case_result')
+                    if case_result and 'case_id' not in case_result:
+                        case_result['case_id'] = case_id
                     modified_case = result.get('modified_case')
                     recorded_case = result.get('recorded_case')
 
@@ -727,6 +730,7 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                     completed_cases.append(
                         {
                             'case_name': case_name,
+                            'case_id': case_id,
                             'status': 'failed',
                             'failure_type': 'unexpected_error',
                             'reason': f'Unexpected error: {str(e)}',

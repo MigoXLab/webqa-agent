@@ -1409,6 +1409,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     failed_step_details = _extract_failed_step_details(recorded_case_data)
                     case_result = {
                         'case_name': case_name,
+                        'case_id': case.get('case_id', ''),
                         'final_summary': final_summary,
                         'status': 'failed',
                         'failure_type': 'preamble_failure',
@@ -1441,6 +1442,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 failed_step_details = _extract_failed_step_details(recorded_case_data)
                 case_result = {
                     'case_name': case_name,
+                    'case_id': case.get('case_id', ''),
                     'final_summary': final_summary,
                     'status': 'failed',
                     'failure_type': 'preamble_exception',
@@ -2465,6 +2467,7 @@ Generate a brief summary without referencing specific execution details."""
     # Build enriched case_result with detailed metrics for reflection phase
     case_result = {
         'case_name': case_name,
+        'case_id': case.get('case_id', ''),
         'final_summary': final_summary,
         'status': status,
         'failure_type': failure_type,
