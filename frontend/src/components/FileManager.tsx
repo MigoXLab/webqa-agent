@@ -149,23 +149,22 @@ export function FileManager({ businessId, files, onFilesChange, onClose }: Props
             onDragLeave={handleDrag}
             onDragOver={handleDrag}
             onDrop={handleDrop}
-            className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+            className={`border-2 border-dashed rounded-lg p-4 text-center transition-colors ${
               dragActive
                 ? 'border-blue-500 bg-blue-50'
                 : 'border-gray-300 hover:border-gray-400'
             } ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             {uploading ? (
-              <div className="flex flex-col items-center gap-2">
-                <Loader2 className="w-12 h-12 text-blue-600 animate-spin" />
-                <p className="text-gray-600">正在上传...</p>
+              <div className="flex items-center justify-center gap-2">
+                <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
+                <p className="text-sm text-gray-600">正在上传...</p>
               </div>
             ) : (
-              <>
-                <p className="text-gray-600 mb-2">拖拽文件到此处，或点击上传</p>
-                <p className="text-sm text-gray-500 mb-4">支持所有文件类型</p>
-                <label className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors cursor-pointer">
-                  <Upload className="w-5 h-5" />
+              <div className="flex items-center justify-center gap-3">
+                <p className="text-sm text-gray-500">拖拽文件到此处，或</p>
+                <label className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors cursor-pointer text-sm">
+                  <Upload className="w-4 h-4" />
                   选择文件
                   <input
                     type="file"
@@ -175,7 +174,7 @@ export function FileManager({ businessId, files, onFilesChange, onClose }: Props
                     disabled={uploading}
                   />
                 </label>
-              </>
+              </div>
             )}
           </div>
 

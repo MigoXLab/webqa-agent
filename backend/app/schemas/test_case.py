@@ -31,6 +31,7 @@ class TestCaseCreate(BaseModel):
     description: Optional[str] = None
     login_required: bool = False
     steps: List[TestStep] = Field(..., min_length=1)
+    version: Optional[str] = Field(None, max_length=50)
     snapshot: Optional[str] = None
     use_snapshot: Optional[str] = None
     status: str = Field(default='active', pattern='^(active|draft|disabled)$')
@@ -42,6 +43,7 @@ class TestCaseUpdate(BaseModel):
     description: Optional[str] = None
     login_required: Optional[bool] = None
     steps: Optional[List[TestStep]] = None
+    version: Optional[str] = Field(None, max_length=50)
     snapshot: Optional[str] = None
     use_snapshot: Optional[str] = None
     status: Optional[str] = Field(None, pattern='^(active|draft|disabled)$')
@@ -56,6 +58,7 @@ class TestCaseResponse(BaseModel):
     description: Optional[str] = None
     login_required: bool
     steps: List[Dict[str, Any]]
+    version: Optional[str] = None
     snapshot: Optional[str] = None
     use_snapshot: Optional[str] = None
     status: str
@@ -85,6 +88,7 @@ class YAMLTestCase(BaseModel):
     name: str
     login_required: Optional[bool] = False
     steps: List[YAMLTestStep]
+    version: Optional[str] = None
     snapshot: Optional[str] = None
     use_snapshot: Optional[str] = None
 

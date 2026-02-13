@@ -370,11 +370,15 @@ export function ScheduledTaskManager({
 
   const toggleTestCase = (caseId: string) => {
     const currentIds = formData.test_case_ids || [];
+    let newIds: string[];
     if (currentIds.includes(caseId)) {
-      setFormData({ ...formData, test_case_ids: currentIds.filter(id => id !== caseId) });
+      newIds = currentIds.filter(id => id !== caseId);
     } else {
-      setFormData({ ...formData, test_case_ids: [...currentIds, caseId] });
+      newIds = [...currentIds, caseId];
     }
+    const orderMap = new Map<string, number>(localTestCases.map((tc, idx) => [tc.id, idx]));
+    newIds.sort((a, b) => (orderMap.get(a) ?? Infinity) - (orderMap.get(b) ?? Infinity));
+    setFormData({ ...formData, test_case_ids: newIds });
   };
 
   const getEnvName = (envId: string) => {
@@ -501,7 +505,7 @@ export function ScheduledTaskManager({
                             : 'border-gray-300 text-gray-400 focus:ring-gray-400'
                         }`}
                       />
-                      {task.enabled ? '已启用' : '已禁用'}
+                      {task.enabled ? '启用定时任务' : '禁用定时任务'}
                     </label>
                     <button
                       onClick={() => handleEdit(task)}
@@ -568,7 +572,7 @@ export function ScheduledTaskManager({
               {/* Header */}
               <div className="border-b border-gray-200 flex-shrink-0" style={{ padding: '16px 28px' }}>
                 <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-bold text-gray-900">{editingTask ? '编辑定时任务' : '创建定时任务'}</h2>
+                  <h2 className="text-lg font-bold text-gray-900">{editingTask ? '编辑任务' : '创建任务'}</h2>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"

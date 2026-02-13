@@ -67,6 +67,7 @@ const convertArraysToFlowStyle = (yamlText: string): string => {
 const formToYaml = (formData: Partial<TestCase>): string => {
   const obj: any = { name: formData.name || '', login_required: formData.login_required ?? false };
   if (formData.description) obj.description = formData.description;
+  if (formData.version) obj.version = formData.version;
   if (formData.snapshot) obj.snapshot = formData.snapshot;
   if (formData.use_snapshot) obj.use_snapshot = formData.use_snapshot;
   obj.steps = formData.steps?.map(step => {
@@ -114,6 +115,7 @@ const yamlToForm = (yamlText: string): { data: Partial<TestCase> | null; error: 
     const result: Partial<TestCase> = {
       name: parsed.name || '', description: parsed.description || '',
       login_required: parsed.login_required ?? false,
+      version: parsed.version,
       snapshot: parsed.snapshot, use_snapshot: parsed.use_snapshot,
       status: 'active', steps: [],
     };
@@ -174,6 +176,7 @@ function toFrontendTestCase(apiCase: APITestCase): TestCase {
         verify: step.step_type === 'verify' ? { assertion, args } : undefined,
       };
     }),
+    version: apiCase.version,
     snapshot: apiCase.snapshot,
     use_snapshot: apiCase.use_snapshot,
     createdAt: (apiCase.created_at || new Date().toISOString()).split('T')[0],
@@ -205,7 +208,7 @@ export function CaseEditorPage() {
   // ---- Editor state ----
   const [activeTab, setActiveTab] = useState<EditorTab>('form');
   const [formData, setFormData] = useState<Partial<TestCase>>({
-    name: '', description: '', login_required: false, snapshot: '', use_snapshot: '', status: 'active',
+    name: '', description: '', login_required: false, version: '', snapshot: '', use_snapshot: '', status: 'active',
     steps: [{ id: crypto.randomUUID(), order: 1, step_type: 'action', action: { description: '' } }],
   });
   const [modalYaml, setModalYaml] = useState('');
@@ -277,7 +280,7 @@ export function CaseEditorPage() {
           const tc = toFrontendTestCase(apiCase);
           const data: Partial<TestCase> = {
             name: tc.name, description: tc.description, login_required: tc.login_required,
-            snapshot: tc.snapshot, use_snapshot: tc.use_snapshot, status: tc.status,
+            version: tc.version, snapshot: tc.snapshot, use_snapshot: tc.use_snapshot, status: tc.status,
             steps: tc.steps.length > 0 ? tc.steps : [{ id: crypto.randomUUID(), order: 1, step_type: 'action', action: { description: '' } }],
           };
           setFormData(data);
@@ -355,6 +358,7 @@ export function CaseEditorPage() {
           name: dataToSave.name!,
           description: dataToSave.description,
           login_required: dataToSave.login_required ?? false,
+          version: dataToSave.version || undefined,
           snapshot: dataToSave.snapshot,
           use_snapshot: dataToSave.use_snapshot,
           steps: apiSteps,
@@ -366,6 +370,7 @@ export function CaseEditorPage() {
           name: dataToSave.name,
           description: dataToSave.description,
           login_required: dataToSave.login_required,
+          version: dataToSave.version,
           snapshot: dataToSave.snapshot,
           use_snapshot: dataToSave.use_snapshot,
           steps: apiSteps,
@@ -742,6 +747,18 @@ export function CaseEditorPage() {
                       <Key className="w-4 h-4 text-amber-500" />
                       <span className="text-sm text-gray-700">需要登录</span>
                     </label>
+
+                    {/* Version */}
+                    <div>
+                      <label className="block text-sm font-medium mb-1.5 text-gray-700">用例版本</label>
+                      <input
+                        type="text"
+                        value={formData.version || ''}
+                        onChange={(e) => updateFormData({ ...formData, version: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                        placeholder="例如：v1.0、迭代2"
+                      />
+                    </div>
 
                     {/* Snapshot */}
                     <div className="grid grid-cols-2 gap-3">

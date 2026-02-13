@@ -9,9 +9,10 @@ type Props = {
   onSelectBusiness: (business: Business) => void;
   initialEditId?: string;
   onClose?: () => void;
+  inline?: boolean;
 };
 
-export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, initialEditId, onClose }: Props) {
+export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, initialEditId, onClose, inline = false }: Props) {
   const [showModal, setShowModal] = useState(!!initialEditId);
   const [editingBusiness, setEditingBusiness] = useState<Business | null>(
     initialEditId ? businesses.find(b => b.id === initialEditId) || null : null
@@ -22,6 +23,7 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (inline) return;
     if (showModal) {
       document.body.style.overflow = 'hidden';
     } else {
@@ -30,7 +32,7 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
     return () => {
       document.body.style.overflow = '';
     };
-  }, [showModal]);
+  }, [showModal, inline]);
 
   const [formData, setFormData] = useState<{
     name: string;
@@ -105,9 +107,13 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
       // Trigger parent to reload
       setBusinesses([...businesses]);
 
-      setShowModal(false);
-      resetForm();
-      if (onClose) onClose();
+      if (inline) {
+        // Inline mode: keep form populated, no modal to close
+      } else {
+        setShowModal(false);
+        resetForm();
+        if (onClose) onClose();
+      }
     } catch (err: any) {
       setError(err.message || '保存失败');
     } finally {
@@ -174,35 +180,35 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
     }
   };
 
-  const renderModal = () => (
-    <div className="fixed inset-0 flex items-center justify-center p-4 z-50" style={{ backgroundColor: 'rgba(0, 0, 0, 0.75)' }}>
-      <form onSubmit={handleSubmit} className="bg-white rounded-lg flex flex-col shadow-2xl" style={{ width: '960px', maxWidth: '90vw', height: '600px', maxHeight: 'calc(100vh - 64px)' }}>
-        <div className="border border-gray-200 rounded-lg flex flex-col flex-1 min-h-0 overflow-hidden">
-          {/* Header */}
-          <div className="border-b border-gray-200 flex items-center justify-between flex-shrink-0" style={{ padding: '16px 28px' }}>
-            <h2 className="text-lg font-bold text-gray-900">{editingBusiness ? '编辑业务' : '创建新业务'}</h2>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleCancel}
-                disabled={saving}
-                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium disabled:opacity-50"
-              >
-                关闭
-              </button>
-              <button
-                type="submit"
-                disabled={saving}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium flex items-center gap-2 disabled:opacity-50"
-              >
-                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-                {editingBusiness ? '保存' : '创建'}
-              </button>
-            </div>
+  const renderFormContent = () => (
+    <>
+      {/* Header */}
+      {!inline && (
+        <div className="border-b border-gray-200 flex items-center justify-between flex-shrink-0" style={{ padding: '16px 28px' }}>
+          <h2 className="text-lg font-bold text-gray-900">{editingBusiness ? '编辑业务' : '创建新业务'}</h2>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleCancel}
+              disabled={saving}
+              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium disabled:opacity-50"
+            >
+              关闭
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium flex items-center gap-2 disabled:opacity-50"
+            >
+              {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+              {editingBusiness ? '保存' : '创建'}
+            </button>
           </div>
+        </div>
+      )}
 
-          {/* Content */}
-          <div className="flex-1 overflow-y-auto" style={{ padding: '24px 28px' }}>
+      {/* Content */}
+      <div className={`flex-1 overflow-y-auto ${inline ? 'p-0' : ''}`} style={inline ? undefined : { padding: '24px 28px' }}>
             {error && (
               <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
                 {error}
@@ -226,7 +232,7 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <label className="block text-sm text-gray-700">
-                    环境配置 *
+                    环境设置 *
                   </label>
                   <button
                     type="button"
@@ -543,10 +549,37 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
               </div>
             </div>
           </div>
+    </>
+  );
+
+  const renderModal = () => (
+    <div className="fixed inset-0 flex items-center justify-center p-4 z-50" style={{ backgroundColor: 'rgba(0, 0, 0, 0.75)' }}>
+      <form onSubmit={handleSubmit} className="bg-white rounded-lg flex flex-col shadow-2xl" style={{ width: '960px', maxWidth: '90vw', height: '600px', maxHeight: 'calc(100vh - 64px)' }}>
+        <div className="border border-gray-200 rounded-lg flex flex-col flex-1 min-h-0 overflow-hidden">
+          {renderFormContent()}
         </div>
       </form>
     </div>
   );
+
+  if (inline && initialEditId) {
+    return (
+      <form onSubmit={handleSubmit}>
+        {renderFormContent()}
+        {/* Inline save button */}
+        <div className="flex justify-end mt-4">
+          <button
+            type="submit"
+            disabled={saving}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium flex items-center gap-2 disabled:opacity-50"
+          >
+            {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+            保存
+          </button>
+        </div>
+      </form>
+    );
+  }
 
   if (initialEditId) {
     return <>{showModal && renderModal()}</>;

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, PlayCircle, Edit, Trash2, FileText, Upload, Folder, Calendar, Settings, Loader2, LayoutList, Code, Key, AlertCircle, Check } from 'lucide-react';
+import { ArrowLeft, Plus, PlayCircle, Edit, Trash2, FileText, Download, Calendar, Settings, Loader2, LayoutList, Code, Key, AlertCircle, Check, Search, X } from 'lucide-react';
 import { Business, TestCase, Environment, TestStep, BatchExecution, BusinessFile } from '../App';
 import { ConfigImportExport } from './ConfigImportExport';
 import { FileManager } from './FileManager';
@@ -252,6 +252,10 @@ const testCasesToYaml = (cases: TestCase[]): string => {
         caseObj.description = tc.description;
       }
 
+      if (tc.version) {
+        caseObj.version = tc.version;
+      }
+
       if (tc.snapshot) {
         caseObj.snapshot = tc.snapshot;
       }
@@ -410,6 +414,7 @@ const parseGlobalYaml = (yamlText: string, businessId: string): TestCase[] => {
         name: name,
         description: rawCase.description || '',
         login_required: rawCase.login_required ?? false,
+        version: rawCase.version,
         snapshot: rawCase.snapshot,
         use_snapshot: rawCase.use_snapshot,
         status: rawCase.status || 'active',
@@ -436,8 +441,8 @@ type Props = {
   onDebug: (testCase: TestCase, environment: Environment) => void;
   onBatchExecute: (execution: BatchExecution) => void;
   onBusinessUpdate: (business: Business) => void;
-  activeTab: 'cases' | 'schedules';
-  setActiveTab: (tab: 'cases' | 'schedules') => void;
+  activeTab: 'cases' | 'schedules' | 'settings';
+  setActiveTab: (tab: 'cases' | 'schedules' | 'settings') => void;
   availableModels: { models: string[], default: string };
 };
 
@@ -459,8 +464,6 @@ export function TestCaseManager({
   const [selectedCases, setSelectedCases] = useState<string[]>([]);
   const [selectedEnv, setSelectedEnv] = useState<string>('');
   const [showConfigModal, setShowConfigModal] = useState(false);
-  const [showFileManager, setShowFileManager] = useState(false);
-  const [showBusinessEdit, setShowBusinessEdit] = useState(false);
   const [expandedArgs, setExpandedArgs] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -483,6 +486,13 @@ export function TestCaseManager({
   const [selectedModel, setSelectedModel] = useState<string>(availableModels.default);
   const [workers, setWorkers] = useState<number>(1);
   const [businessFiles, setBusinessFiles] = useState<BusinessFile[]>([]);
+
+  // Filter & search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterLogin, setFilterLogin] = useState<'all' | 'required' | 'not_required'>('all');
+  const [filterSnapshot, setFilterSnapshot] = useState<'all' | 'has_snapshot' | 'use_snapshot' | 'none'>('all');
+  const [filterVersion, setFilterVersion] = useState<string>('all');
+  const [batchDeleting, setBatchDeleting] = useState(false);
 
   // Fetch business files
   useEffect(() => {
@@ -507,7 +517,7 @@ export function TestCaseManager({
 
   // 弹窗打开时禁用背景滚动
   useEffect(() => {
-    if (showModal || showConfigModal || showFileManager || showBusinessEdit) {
+    if (showModal || showConfigModal) {
       document.body.style.overflow = 'hidden';
     } else {
       document.body.style.overflow = '';
@@ -515,7 +525,7 @@ export function TestCaseManager({
     return () => {
       document.body.style.overflow = '';
     };
-  }, [showModal, showConfigModal, showFileManager, showBusinessEdit]);
+  }, [showModal, showConfigModal]);
 
   const [formData, setFormData] = useState<Partial<TestCase>>({
     name: '',
@@ -553,6 +563,55 @@ export function TestCaseManager({
       setGlobalYamlError(null);
     }
   }, [viewMode, testCases]);
+
+  // Compute available versions for filter dropdown
+  const availableVersions = Array.from(new Set(
+    testCases.map(tc => tc.version).filter((v): v is string => !!v)
+  )).sort();
+
+  // Apply search + filters to test cases
+  const filteredTestCases = testCases.filter(tc => {
+    if (!tc || !tc.id || !tc.name) return false;
+    // Search by name
+    if (searchQuery && !tc.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+    // Login filter
+    if (filterLogin === 'required' && !tc.login_required) return false;
+    if (filterLogin === 'not_required' && tc.login_required) return false;
+    // Snapshot filter
+    if (filterSnapshot === 'has_snapshot' && !tc.snapshot) return false;
+    if (filterSnapshot === 'use_snapshot' && !tc.use_snapshot) return false;
+    if (filterSnapshot === 'none' && (tc.snapshot || tc.use_snapshot)) return false;
+    // Version filter
+    if (filterVersion !== 'all' && (tc.version || '') !== filterVersion) return false;
+    return true;
+  });
+
+  // Check if any filter is active
+  const hasActiveFilters = searchQuery !== '' || filterLogin !== 'all' || filterSnapshot !== 'all' || filterVersion !== 'all';
+  const clearAllFilters = useCallback(() => {
+    setSearchQuery('');
+    setFilterLogin('all');
+    setFilterSnapshot('all');
+    setFilterVersion('all');
+  }, []);
+
+  // Batch delete handler
+  const handleBatchDelete = async () => {
+    if (selectedCases.length === 0) return;
+    if (!confirm(`确定要删除选中的 ${selectedCases.length} 个用例吗？此操作不可撤销。`)) return;
+    setBatchDeleting(true);
+    try {
+      for (const id of selectedCases) {
+        await apiClient.deleteTestCase(id);
+      }
+      setTestCases(testCases.filter(tc => !selectedCases.includes(tc.id)));
+      setSelectedCases([]);
+    } catch (err: any) {
+      alert('批量删除失败: ' + (err.message || '未知错误'));
+    } finally {
+      setBatchDeleting(false);
+    }
+  };
 
   const saveTestCase = async (data: Partial<TestCase>) => {
     // Prevent multiple simultaneous saves
@@ -1042,6 +1101,7 @@ export function TestCaseManager({
             name: tc.name,
             description: tc.description,
             login_required: tc.login_required,
+            version: tc.version,
             snapshot: tc.snapshot,
             use_snapshot: tc.use_snapshot,
             steps: apiSteps,
@@ -1054,6 +1114,7 @@ export function TestCaseManager({
             name: tc.name,
             description: tc.description,
             login_required: tc.login_required,
+            version: tc.version,
             snapshot: tc.snapshot,
             use_snapshot: tc.use_snapshot,
             steps: apiSteps,
@@ -1071,6 +1132,7 @@ export function TestCaseManager({
           name: apiCase.name,
           description: apiCase.description || '',
           login_required: apiCase.login_required ?? false,
+          version: apiCase.version,
           snapshot: apiCase.snapshot,
           use_snapshot: apiCase.use_snapshot,
           steps: apiCase.steps.map((step, idx) => ({
@@ -1113,21 +1175,30 @@ export function TestCaseManager({
 
   return (
     <div className="min-h-screen px-4 sm:px-6 py-4 sm:py-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="mb-6 sm:mb-8">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
-          <button
-            onClick={onBack}
-            className="flex items-center gap-2 text-gray-600 hover:text-gray-900"
-          >
-            <ArrowLeft className="w-5 h-5" />
-            返回业务列表
-          </button>
-          <div className="flex bg-gray-100 p-1 rounded-lg">
+      {/* Layer 1: Navigation + Page Tabs */}
+      <div className="mb-4">
+        <div className="flex items-center justify-between border-b border-gray-200">
+          {/* Left: Breadcrumb */}
+          <div className="flex items-center gap-2 pb-2.5">
+            <button
+              onClick={onBack}
+              className="flex items-center gap-1.5 text-gray-500 hover:text-gray-900 transition-colors text-sm"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              返回
+            </button>
+            <span className="text-gray-300">/</span>
+            <h1 className="text-base font-bold text-gray-900">{business.name}</h1>
+          </div>
+
+          {/* Right: Tabs + Management */}
+          <div className="flex items-center">
             <button
               onClick={() => setActiveTab('cases')}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
-                activeTab === 'cases' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'cases'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
             >
               <FileText className="w-4 h-4" />
@@ -1135,170 +1206,259 @@ export function TestCaseManager({
             </button>
             <button
               onClick={() => setActiveTab('schedules')}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
-                activeTab === 'schedules' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'schedules'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
             >
               <Calendar className="w-4 h-4" />
-              定时任务
+              任务配置
             </button>
-          </div>
-        </div>
-
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h1 className="mb-2 text-2xl font-bold text-gray-900">{business.name}</h1>
-          </div>
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-            {activeTab === 'cases' && (
-              <>
-                {/* View Mode Toggle */}
-                <div className="flex bg-gray-100 p-1 rounded-lg">
-                  <button
-                    onClick={() => setViewMode('cards')}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
-                      viewMode === 'cards' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
-                    }`}
-                  >
-                    <LayoutList className="w-4 h-4" />
-                    卡片
-                  </button>
-                  <button
-                    onClick={() => setViewMode('yaml')}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
-                      viewMode === 'yaml' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
-                    }`}
-                  >
-                    <Code className="w-4 h-4" />
-                    YAML
-                  </button>
-                </div>
-
-                <button
-                  onClick={() => setShowConfigModal(true)}
-                  className="flex items-center justify-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-sm"
-                >
-                  <Upload className="w-4 h-4" />
-                  导入/导出 YAML
-                </button>
-                <button
-                  onClick={() => setShowFileManager(true)}
-                  className="flex items-center justify-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-sm"
-                >
-                  <Folder className="w-4 h-4" />
-                  文件管理
-                </button>
-                <button
-                  onClick={() => setShowBusinessEdit(true)}
-                  className="flex items-center justify-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-sm"
-                >
-                  <Settings className="w-4 h-4" />
-                  环境管理
-                </button>
-                <button
-                  onClick={() => navigate(`/business/${business.id}/case/new`)}
-                  className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
-                >
-                  <Plus className="w-4 h-4" />
-                  创建用例
-                </button>
-              </>
-            )}
-            {activeTab === 'schedules' && (
-              <button
-                onClick={() => setScheduleCreateOpen(true)}
-                className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
-              >
-                <Plus className="w-4 h-4" />
-                创建任务
-              </button>
-            )}
+            <div className="w-px h-5 bg-gray-200 mx-1" />
+            <button
+              onClick={() => setActiveTab('settings')}
+              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'settings'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              <Settings className="w-4 h-4" />
+              设置
+            </button>
           </div>
         </div>
       </div>
 
-      {activeTab === 'cases' ? (
+      {activeTab === 'cases' && (
         <>
-            {/* Batch Actions */}
-            {testCases.length > 0 && viewMode === 'cards' && (
-                <div className="bg-white rounded-lg border border-gray-200 p-4 mb-6">
-                <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-4 lg:justify-start">
-                    <div className="flex items-center gap-2 flex-shrink-0 w-[200px]">
+          {/* Layer 2: Search/Filter + Management Actions */}
+          <div className="mb-3">
+            <div className="flex items-center gap-3">
+              {/* View Mode Toggle */}
+              <div className="flex bg-gray-100 p-1 rounded-lg flex-shrink-0">
+                <button
+                  onClick={() => setViewMode('cards')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                    viewMode === 'cards' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  <LayoutList className="w-4 h-4" />
+                  卡片
+                </button>
+                <button
+                  onClick={() => setViewMode('yaml')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                    viewMode === 'yaml' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  <Code className="w-4 h-4" />
+                  YAML
+                </button>
+              </div>
+
+              {/* Search + Filters: only in cards mode with test cases */}
+              {viewMode === 'cards' && testCases.length > 0 && (
+                <>
+                  {/* Search */}
+                  <div className="relative w-[200px] flex-shrink-0">
+                    <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
-                        type="checkbox"
-                        checked={selectedCases.length === testCases.length}
-                        onChange={(e) => {
-                        if (e.target.checked) {
-                            setSelectedCases(testCases.map(tc => tc.id));
-                        } else {
-                            setSelectedCases([]);
-                        }
-                        }}
-                        className="w-4 h-4 rounded border-gray-300 flex-shrink-0"
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="搜索用例名称..."
+                      className="w-full pl-9 pr-7 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                     />
-                    <span className="text-sm text-gray-600 whitespace-nowrap">
-                        已选择 <span className="font-mono inline-block w-[20px] text-center">{selectedCases.length}</span> / <span className="font-mono inline-block w-[20px] text-center">{testCases.length}</span> 个用例
+                    {searchQuery && (
+                      <button
+                        onClick={() => setSearchQuery('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Filters with active state highlight */}
+                  <select
+                    value={filterLogin}
+                    onChange={(e) => setFilterLogin(e.target.value as any)}
+                    className={`px-3 py-1.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm flex-shrink-0 cursor-pointer ${
+                      filterLogin !== 'all' ? 'border-blue-400 text-blue-600 bg-blue-50' : 'border-gray-300 text-gray-600'
+                    }`}
+                  >
+                    <option value="all">登录</option>
+                    <option value="required">需登录</option>
+                    <option value="not_required">不需登录</option>
+                  </select>
+
+                  <select
+                    value={filterSnapshot}
+                    onChange={(e) => setFilterSnapshot(e.target.value as any)}
+                    className={`px-3 py-1.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm flex-shrink-0 cursor-pointer ${
+                      filterSnapshot !== 'all' ? 'border-blue-400 text-blue-600 bg-blue-50' : 'border-gray-300 text-gray-600'
+                    }`}
+                  >
+                    <option value="all">快照</option>
+                    <option value="has_snapshot">有快照</option>
+                    <option value="use_snapshot">使用快照</option>
+                    <option value="none">无快照</option>
+                  </select>
+
+                  <select
+                    value={filterVersion}
+                    onChange={(e) => setFilterVersion(e.target.value)}
+                    className={`px-3 py-1.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm flex-shrink-0 cursor-pointer ${
+                      filterVersion !== 'all' ? 'border-blue-400 text-blue-600 bg-blue-50' : 'border-gray-300 text-gray-600'
+                    }`}
+                  >
+                    <option value="all">版本</option>
+                    <option value="">未设置</option>
+                    {availableVersions.map(v => (
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                  </select>
+
+                  {/* Match count + clear filters */}
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <span className="text-xs text-gray-500 whitespace-nowrap tabular-nums">
+                      {filteredTestCases.length}/{testCases.length}
                     </span>
-                    </div>
+                    {hasActiveFilters && (
+                      <button
+                        onClick={clearAllFilters}
+                        className="p-0.5 text-gray-400 hover:text-gray-600 rounded transition-colors"
+                        title="清除筛选"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
 
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-shrink-0">
-                    <label className="text-sm text-gray-600 sm:whitespace-nowrap flex-shrink-0">执行环境：</label>
-                    <select
-                        value={selectedEnv}
-                        onChange={(e) => setSelectedEnv(e.target.value)}
-                        className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm w-full sm:w-auto"
-                    >
-                        <option value="">请选择环境</option>
-                        {business.environments.map(env => (
-                        <option key={env.id} value={env.id}>
-                            {env.name}
-                        </option>
-                        ))}
-                    </select>
-                    </div>
+              {/* Spacer */}
+              <div className="flex-1" />
 
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-shrink-0">
-                    <label className="text-sm text-gray-600 sm:whitespace-nowrap flex-shrink-0">执行并发数：</label>
-                    <select
-                        value={workers}
-                        onChange={(e) => setWorkers(parseInt(e.target.value))}
-                        className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm w-full sm:w-auto"
-                    >
-                        {[1, 2, 3, 4, 5].map(n => (
-                        <option key={n} value={n}>
-                            {n}
-                        </option>
-                        ))}
-                    </select>
-                    </div>
+              {/* Import/Export YAML - only in yaml mode */}
+              {viewMode === 'yaml' && (
+                <button
+                  onClick={() => setShowConfigModal(true)}
+                  className="flex items-center gap-2 px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-sm flex-shrink-0"
+                >
+                  <Download className="w-4 h-4 text-gray-500" />
+                  导入/导出 YAML
+                </button>
+              )}
 
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-shrink-0">
-                    <label className="text-sm text-gray-600 sm:whitespace-nowrap flex-shrink-0">模型：</label>
-                    <select
-                        value={selectedModel}
-                        onChange={(e) => setSelectedModel(e.target.value)}
-                        className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm w-full sm:w-auto"
-                    >
-                        {availableModels.models.map(model => (
-                        <option key={model} value={model}>
-                            {model}
-                        </option>
-                        ))}
-                    </select>
-                    </div>
+              {/* Create button - only in cards mode */}
+              {viewMode === 'cards' && (
+                <button
+                  onClick={() => navigate(`/business/${business.id}/case/new`)}
+                  className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium flex-shrink-0"
+                >
+                  <Plus className="w-4 h-4" />
+                  创建用例
+                </button>
+              )}
+            </div>
+          </div>
 
-                    <button
-                    onClick={handleBatchRun}
-                    disabled={selectedCases.length === 0 || !selectedEnv || executing}
-                    className="flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm flex-shrink-0"
-                    title={!selectedEnv ? '请先选择执行环境' : selectedCases.length === 0 ? '请先选择测试用例' : ''}
-                    >
-                    {executing ? <Loader2 className="w-5 h-5 animate-spin" /> : <PlayCircle className="w-5 h-5" />}
-                    {executing ? '执行中...' : '执行'}
-                    </button>
-                </div>
-                </div>
-            )}
+          {/* Layer 3: Selection + Execution */}
+          {testCases.length > 0 && viewMode === 'cards' && (
+            <div className="bg-white rounded-lg border border-gray-200 px-4 py-2.5 mb-3">
+              <div className="flex items-center gap-3">
+                {/* Select all */}
+                <label className="flex items-center gap-2 flex-shrink-0 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={filteredTestCases.length > 0 && filteredTestCases.every(tc => selectedCases.includes(tc.id))}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedCases(prev => {
+                          const filteredIds = new Set(filteredTestCases.map(tc => tc.id));
+                          const merged = new Set([...prev, ...filteredIds]);
+                          return Array.from(merged);
+                        });
+                      } else {
+                        setSelectedCases(prev => {
+                          const filteredIds = new Set(filteredTestCases.map(tc => tc.id));
+                          return prev.filter(id => !filteredIds.has(id));
+                        });
+                      }
+                    }}
+                    className="w-4 h-4 rounded border-gray-300"
+                  />
+                  <span className="text-sm text-gray-600">全选</span>
+                </label>
+
+                {/* Selection count - fixed width to prevent layout shift */}
+                <span className="text-sm text-gray-500 min-w-[110px]">
+                  {selectedCases.length > 0 ? `已选 ${selectedCases.length} 个用例` : '未选择用例'}
+                </span>
+
+                {/* Batch delete */}
+                {selectedCases.length > 0 && (
+                  <button
+                    onClick={handleBatchDelete}
+                    disabled={batchDeleting}
+                    className="flex items-center gap-1 px-2 py-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors text-xs flex-shrink-0"
+                    title={`删除选中的 ${selectedCases.length} 个用例`}
+                  >
+                    {batchDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                    <span>删除({selectedCases.length})</span>
+                  </button>
+                )}
+
+                {/* Spacer */}
+                <div className="flex-1" />
+
+                {/* Execute section */}
+                <select
+                  value={selectedEnv}
+                  onChange={(e) => setSelectedEnv(e.target.value)}
+                  className="px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm flex-shrink-0 bg-gray-50"
+                >
+                  <option value="">选择环境</option>
+                  {business.environments.map(env => (
+                    <option key={env.id} value={env.id}>{env.name}</option>
+                  ))}
+                </select>
+
+                <select
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  className="px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm flex-shrink-0 bg-gray-50 max-w-[180px]"
+                >
+                  {availableModels.models.map(model => (
+                    <option key={model} value={model}>{model}</option>
+                  ))}
+                </select>
+
+                <select
+                  value={workers}
+                  onChange={(e) => setWorkers(parseInt(e.target.value))}
+                  className="px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm flex-shrink-0 bg-gray-50"
+                >
+                  {[1, 2, 3, 4, 5].map(n => (
+                    <option key={n} value={n}>并发 {n}</option>
+                  ))}
+                </select>
+
+                <button
+                  onClick={handleBatchRun}
+                  disabled={selectedCases.length === 0 || !selectedEnv || executing}
+                  className="flex items-center gap-1.5 px-5 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm font-medium flex-shrink-0"
+                  title={!selectedEnv ? '请先选择执行环境' : selectedCases.length === 0 ? '请先选择测试用例' : ''}
+                >
+                  {executing ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlayCircle className="w-4 h-4" />}
+                  {executing ? '执行中...' : `执行`}
+                </button>
+              </div>
+            </div>
+          )}
 
             {/* Cards View */}
             {viewMode === 'cards' && (
@@ -1316,8 +1476,14 @@ export function TestCaseManager({
                 </div>
               )}
 
+              {testCases.length > 0 && filteredTestCases.length === 0 && (
+                <div className="text-center py-8 bg-white rounded-lg border border-gray-200 border-dashed">
+                    <p className="text-gray-500">没有符合筛选条件的用例</p>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {testCases.filter(tc => tc && tc.id && tc.name).map((testCase) => {
+                {filteredTestCases.map((testCase) => {
                   // Defensive check: ensure steps is an array
                   if (!Array.isArray(testCase.steps)) {
                     console.error('Invalid testCase.steps:', testCase);
@@ -1366,6 +1532,11 @@ export function TestCaseManager({
                               {testCase.use_snapshot && (
                                 <span className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-xs font-medium flex-shrink-0 border border-blue-200">
                                   🔄 使用: {testCase.use_snapshot}
+                                </span>
+                              )}
+                              {testCase.version && (
+                                <span className="px-3 py-1.5 bg-purple-50 text-purple-700 rounded-lg text-xs font-medium flex-shrink-0 border border-purple-200">
+                                  🏷️ {testCase.version}
                                 </span>
                               )}
                             </div>
@@ -1494,7 +1665,19 @@ export function TestCaseManager({
               </div>
             )}
         </>
-      ) : (
+      )}
+
+      {activeTab === 'schedules' && (
+        <>
+        <div className="flex justify-end mb-4">
+          <button
+            onClick={() => setScheduleCreateOpen(true)}
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+          >
+            <Plus className="w-4 h-4" />
+            创建任务
+          </button>
+        </div>
         <ScheduledTaskManager
             businessId={business.id}
             businessName={business.name}
@@ -1506,6 +1689,42 @@ export function TestCaseManager({
             openCreateModal={scheduleCreateOpen}
             onCreateModalClose={() => setScheduleCreateOpen(false)}
         />
+        </>
+      )}
+
+      {activeTab === 'settings' && (
+        <div className="space-y-4">
+          {/* 环境配置 */}
+          <div className="bg-white rounded-lg border border-gray-200">
+            <div style={{ padding: '24px 28px' }}>
+              <BusinessManager
+                businesses={[business]}
+                setBusinesses={(updatedList) => {
+                  onBusinessUpdate(updatedList[0]);
+                }}
+                onSelectBusiness={() => {}}
+                initialEditId={business.id}
+                inline={true}
+              />
+            </div>
+          </div>
+
+          {/* 文件管理 */}
+          <div className="bg-white rounded-lg border border-gray-200">
+            <div style={{ padding: '24px 28px' }}>
+              <h3 className="text-sm text-gray-700 mb-3">文件管理</h3>
+              <FileManager
+                businessId={business.id}
+                files={businessFiles}
+                onFilesChange={(files) => {
+                  setBusinessFiles(files);
+                  onBusinessUpdate({ ...business, files });
+                }}
+                inline={true}
+              />
+            </div>
+          </div>
+        </div>
       )}
 
       {/* TestCase Modal - Left-Right Split Layout */}
@@ -1849,33 +2068,7 @@ steps:
         />
       )}
 
-      {/* File Manager Modal */}
-      {showFileManager && (
-        <FileManager
-          businessId={business.id}
-          files={businessFiles}
-          onFilesChange={(files) => {
-            setBusinessFiles(files);
-            // Also notify parent if needed, but since we use local state for dropdown, this is enough
-            onBusinessUpdate({ ...business, files });
-          }}
-          onClose={() => setShowFileManager(false)}
-        />
-      )}
-
-      {/* Business Edit Modal */}
-      {showBusinessEdit && (
-        <BusinessManager
-            businesses={[business]}
-            setBusinesses={(updatedList) => {
-                onBusinessUpdate(updatedList[0]);
-                setShowBusinessEdit(false);
-            }}
-            onSelectBusiness={() => {}}
-            initialEditId={business.id}
-            onClose={() => setShowBusinessEdit(false)}
-        />
-      )}
+      
     </div>
   );
 }

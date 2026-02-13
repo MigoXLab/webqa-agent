@@ -43,6 +43,7 @@ export interface TestCase {
   description?: string;
   login_required: boolean;
   steps: TestStep[];
+  version?: string;
   snapshot?: string;
   use_snapshot?: string;
   status: 'active' | 'draft' | 'disabled';
@@ -197,6 +198,7 @@ class APIClient {
     description?: string;
     login_required?: boolean;
     steps: TestStep[];
+    version?: string;
     snapshot?: string;
     use_snapshot?: string;
     status?: string;

@@ -46,6 +46,9 @@ class TestCase(Base):
         default=list
     )
 
+    # User-defined version label (optional)
+    version: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+
     # Snapshot configuration (optional)
     snapshot: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     use_snapshot: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)

@@ -59,6 +59,7 @@ async def create_test_case(
         description=data.description,
         login_required=data.login_required,
         steps=steps,
+        version=data.version,
         snapshot=data.snapshot,
         use_snapshot=data.use_snapshot,
         status=data.status,
@@ -129,6 +130,8 @@ async def update_test_case(
                 step_dict['args'] = step.args
             steps.append(step_dict)
         test_case.steps = steps
+    if data.version is not None:
+        test_case.version = data.version
     if data.snapshot is not None:
         test_case.snapshot = data.snapshot
     if data.use_snapshot is not None:
@@ -226,6 +229,7 @@ async def import_cases_from_yaml(
             description=case_data.get('description'),
             login_required=case_data.get('login_required', False),
             steps=steps,
+            version=case_data.get('version'),
             snapshot=case_data.get('snapshot'),
             use_snapshot=case_data.get('use_snapshot'),
             status='active',
@@ -255,6 +259,8 @@ def export_cases_to_yaml(cases: List[TestCase]) -> str:
             'steps': [],
         }
 
+        if case.version:
+            case_dict['version'] = case.version
         if case.snapshot:
             case_dict['snapshot'] = case.snapshot
         if case.use_snapshot:
