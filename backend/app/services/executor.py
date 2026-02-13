@@ -78,7 +78,7 @@ def upload_report_to_oss(report_dir: str, execution_id: str) -> Optional[str]:
         return None
 
 
-async def run_execution(execution_id: str):
+async def run_execution(execution_id: str, case_data: Optional[Dict[str, Any]] = None):
     """执行测试任务（入口函数）。
 
     根据 EXECUTION_MODE 配置选择启动方式：
@@ -86,21 +86,50 @@ async def run_execution(execution_id: str):
     - kubernetes: 创建 K8s Job
 
     所有模式统一通过回调 API 接收结果。
+
+    Args:
+        execution_id: 执行记录 ID
+        case_data: Debug 模式下前端直传的 case 数据，不存 DB。
+            格式: {case_id_str: {login_required: bool, name: str, steps: [...], ...}}
     """
     mode = settings.EXECUTION_MODE.lower()
 
     if mode == 'kubernetes':
-        await _start_agent_k8s(execution_id)
+        await _start_agent_k8s(execution_id, case_data=case_data)
     else:
         # local 模式（默认）
-        await _start_agent_subprocess(execution_id)
+        await _start_agent_subprocess(execution_id, case_data=case_data)
 
 
 # =============================================================================
 # LOCAL MODE: 启动子进程
 # =============================================================================
 
-async def _start_agent_subprocess(execution_id: str):
+def _build_cases_from_request(
+    case_data: Dict[str, Any],
+    business_id: Optional[UUID] = None,
+) -> list:
+    """直接从前端传入的 case 数据构建 case 对象列表，不查 DB。"""
+    from types import SimpleNamespace
+
+    cases = []
+    for tc_id_str, data in case_data.items():
+        case = SimpleNamespace(
+            id=UUID(tc_id_str),
+            business_id=business_id,
+            name=data.get('name', 'Draft Case'),
+            login_required=data.get('login_required', False),
+            steps=data.get('steps', []),
+            snapshot=data.get('snapshot'),
+            use_snapshot=data.get('use_snapshot'),
+        )
+        cases.append(case)
+        logger.info(f'[Config] Built case from frontend data: {tc_id_str}, '
+                    f'name={case.name}, login_required={case.login_required}')
+    return cases
+
+
+async def _start_agent_subprocess(execution_id: str, case_data: Optional[Dict[str, Any]] = None):
     """Local 模式：启动子进程运行 Agent。"""
     async with AsyncSessionLocal() as db:
         try:
@@ -120,6 +149,23 @@ async def _start_agent_subprocess(execution_id: str):
                 logger.error(f'[Local] 获取执行数据失败: execution_id={execution_id}, error={error}')
                 execution.status = 'failed'
                 execution.error_message = error
+                execution.completed_at = now_with_tz()
+                await db.commit()
+                return
+
+            # Debug 模式：前端传入的 case 用前端数据，其余（如 snapshot 依赖）用 DB 数据
+            if case_data:
+                frontend_cases = _build_cases_from_request(
+                    case_data, business_id=execution.business_id
+                )
+                # 合并：前端数据优先，DB 数据补充，按 test_case_ids 顺序排列
+                case_map = {str(tc.id): tc for tc in test_cases}
+                case_map.update({str(tc.id): tc for tc in frontend_cases})
+                test_cases = [case_map[cid] for cid in execution.test_case_ids if cid in case_map]
+
+            if not test_cases:
+                execution.status = 'failed'
+                execution.error_message = '没有可执行的测试用例'
                 execution.completed_at = now_with_tz()
                 await db.commit()
                 return
@@ -286,7 +332,7 @@ async def _start_agent_subprocess(execution_id: str):
 # KUBERNETES MODE: 创建 K8s Job
 # =============================================================================
 
-async def _start_agent_k8s(execution_id: str):
+async def _start_agent_k8s(execution_id: str, case_data: Optional[Dict[str, Any]] = None):
     """Kubernetes 模式：创建 K8s Job 运行 Agent。"""
     async with AsyncSessionLocal() as db:
         try:
@@ -305,6 +351,22 @@ async def _start_agent_k8s(execution_id: str):
                 logger.error(f'[K8s] 获取执行数据失败: execution_id={execution_id}, error={error}')
                 execution.status = 'failed'
                 execution.error_message = error
+                execution.completed_at = now_with_tz()
+                await db.commit()
+                return
+
+            # Debug 模式：前端传入的 case 用前端数据，其余（如 snapshot 依赖）用 DB 数据
+            if case_data:
+                frontend_cases = _build_cases_from_request(
+                    case_data, business_id=execution.business_id
+                )
+                case_map = {str(tc.id): tc for tc in test_cases}
+                case_map.update({str(tc.id): tc for tc in frontend_cases})
+                test_cases = [case_map[cid] for cid in execution.test_case_ids if cid in case_map]
+
+            if not test_cases:
+                execution.status = 'failed'
+                execution.error_message = '没有可执行的测试用例'
                 execution.completed_at = now_with_tz()
                 await db.commit()
                 return
@@ -516,9 +578,8 @@ async def _fetch_execution_data(
         if case:
             test_cases.append(case)
 
-    if not test_cases:
-        return None, None, '没有找到测试用例'
-
+    # Don't error on empty test_cases here — draft cases from case_overrides
+    # will be added later by _apply_case_overrides in the caller
     return environment, test_cases, None
 
 

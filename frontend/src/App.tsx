@@ -55,6 +55,7 @@ export type TestCase = {
   description: string;
   login_required: boolean;
   steps: TestStep[];
+  version?: string;
   snapshot?: string;
   use_snapshot?: string;
   createdAt: string;
@@ -119,7 +120,7 @@ export type BatchExecution = {
   results: ExecutionResult[];
 };
 
-type BusinessTab = 'cases' | 'schedules';
+type BusinessTab = 'cases' | 'schedules' | 'settings';
 
 // Convert API types to frontend types
 function toFrontendBusiness(apiBusiness: APIBusiness): Business {
@@ -195,6 +196,7 @@ function toFrontendTestCase(apiCase: APITestCase): TestCase {
         } : undefined,
       };
     }),
+    version: apiCase.version,
     snapshot: apiCase.snapshot,
     use_snapshot: apiCase.use_snapshot,
     createdAt: (apiCase.created_at || new Date().toISOString()).split('T')[0],
@@ -259,38 +261,20 @@ function BusinessDetailWrapper({
   return (
     <div className="max-w-7xl mx-auto">
       <div className="py-4">
-        {activeTab === 'cases' && (
-          <TestCaseManager
-            business={business}
-            testCases={testCases.filter(tc => tc.businessId === business.id)}
-            setTestCases={setTestCases}
-            onBack={() => navigate('/')}
-            onDebug={() => {}}
-            onBatchExecute={onBatchExecute}
-            onBusinessUpdate={(updated) => {
-              setBusinesses(businesses.map(b => b.id === updated.id ? updated : b));
-            }}
-            activeTab={activeTab}
-            setActiveTab={setActiveTab}
-            availableModels={availableModels}
-          />
-        )}
-        {activeTab === 'schedules' && (
-          <TestCaseManager
-            business={business}
-            testCases={testCases.filter(tc => tc.businessId === business.id)}
-            setTestCases={setTestCases}
-            onBack={() => navigate('/')}
-            onDebug={() => {}}
-            onBatchExecute={onBatchExecute}
-            onBusinessUpdate={(updated) => {
-              setBusinesses(businesses.map(b => b.id === updated.id ? updated : b));
-            }}
-            activeTab={activeTab}
-            setActiveTab={setActiveTab}
-            availableModels={availableModels}
-          />
-        )}
+        <TestCaseManager
+          business={business}
+          testCases={testCases.filter(tc => tc.businessId === business.id)}
+          setTestCases={setTestCases}
+          onBack={() => navigate('/')}
+          onDebug={() => {}}
+          onBatchExecute={onBatchExecute}
+          onBusinessUpdate={(updated) => {
+            setBusinesses(businesses.map(b => b.id === updated.id ? updated : b));
+          }}
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          availableModels={availableModels}
+        />
       </div>
     </div>
   );

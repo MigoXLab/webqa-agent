@@ -15,7 +15,29 @@ import {
   FileText,
   Maximize2,
   Minimize2,
+  ChevronDown,
+  ChevronRight,
+  Settings2,
+  GripVertical,
+  Trash2,
 } from 'lucide-react';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { apiClient, ExecutionProgress, TestCase as APITestCase } from '../api/client';
 import { TestCase, TestStep, Environment, BusinessFile } from '../App';
 import yaml from 'js-yaml';
@@ -193,6 +215,138 @@ type EditorTab = 'form' | 'yaml';
 type DebugState = 'idle' | 'configuring' | 'running' | 'completed' | 'failed';
 
 // ============================================================================
+// Sortable Step Item (drag-and-drop)
+// ============================================================================
+
+function SortableStepItem({
+  step,
+  index,
+  stepsCount,
+  expandedArgs,
+  setExpandedArgs,
+  updateStepType,
+  updateStepDescription,
+  updateStepArg,
+  removeStep,
+  businessFiles,
+}: {
+  step: TestStep;
+  index: number;
+  stepsCount: number;
+  expandedArgs: Record<string, boolean>;
+  setExpandedArgs: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  updateStepType: (index: number, newType: 'action' | 'verify') => void;
+  updateStepDescription: (index: number, value: string) => void;
+  updateStepArg: (index: number, argName: string, value: any) => void;
+  removeStep: (index: number) => void;
+  businessFiles: BusinessFile[];
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: step.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 10 : undefined,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="border border-gray-200 rounded-lg p-3 bg-white">
+      <div className="flex items-center gap-2 mb-2">
+        <button
+          type="button"
+          className="cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 flex-shrink-0 touch-none"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="w-4 h-4" />
+        </button>
+        <span className="w-6 h-6 bg-white rounded-full border border-gray-200 flex items-center justify-center text-gray-600 flex-shrink-0 text-xs font-medium">
+          {index + 1}
+        </span>
+        <select
+          value={step.step_type}
+          onChange={(e) => updateStepType(index, e.target.value as 'action' | 'verify')}
+          className={`px-2 py-0.5 rounded text-xs font-medium border-0 cursor-pointer ${
+            step.step_type === 'action' ? 'bg-green-100 text-green-700' : 'bg-purple-100 text-purple-700'
+          }`}
+        >
+          <option value="action">Action</option>
+          <option value="verify">Verify</option>
+        </select>
+        {stepsCount > 1 && (
+          <button type="button" onClick={() => removeStep(index)} className="ml-auto p-1.5 hover:bg-red-50 rounded-lg transition-colors" title="删除步骤">
+            <Trash2 className="w-4 h-4 text-red-600" />
+          </button>
+        )}
+      </div>
+      <textarea
+        required
+        value={step.step_type === 'action' ? step.action?.description || '' : step.verify?.assertion || ''}
+        onChange={(e) => updateStepDescription(index, e.target.value)}
+        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono resize-y"
+        placeholder={step.step_type === 'action' ? '操作描述' : '验证条件'}
+        rows={2}
+      />
+      <div className="mt-2 flex items-center gap-2 flex-wrap">
+        <button
+          type="button"
+          onClick={() => setExpandedArgs(prev => ({ ...prev, [step.id]: !prev[step.id] }))}
+          className={`text-xs px-2 py-1 rounded ${expandedArgs[step.id] ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+        >
+          {expandedArgs[step.id] ? '▼ 参数' : '▶ 参数'}
+        </button>
+      </div>
+      {expandedArgs[step.id] && (
+        <div className="mt-2 bg-gray-50 rounded p-2">
+          {step.step_type === 'action' && (
+            <div className="space-y-2">
+              <div className="text-xs text-gray-600 font-medium mb-1">选择上传文件（可多选）:</div>
+              {businessFiles.length === 0 ? (
+                <div className="text-xs text-gray-400 italic">暂无可用文件</div>
+              ) : (
+                <div className="space-y-1 max-h-40 overflow-y-auto">
+                  {businessFiles.map(file => {
+                    const currentFiles = (() => { const fp = step.action?.args?.file_path; if (!fp) return []; if (Array.isArray(fp)) return fp; return [fp]; })();
+                    const isChecked = currentFiles.includes(file.name);
+                    return (
+                      <label key={file.id} className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer hover:bg-gray-100 p-1 rounded">
+                        <input type="checkbox" checked={isChecked} onChange={(e) => {
+                          const curr = (() => { const fp = step.action?.args?.file_path; if (!fp) return []; if (Array.isArray(fp)) return fp; return [fp]; })();
+                          let newFiles: string[];
+                          if (e.target.checked) newFiles = [...curr, file.name];
+                          else newFiles = curr.filter((f: string) => f !== file.name);
+                          const val = newFiles.length === 0 ? '' : newFiles.length === 1 ? newFiles[0] : newFiles;
+                          updateStepArg(index, 'file_path', val);
+                        }} className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600" />
+                        <span className="flex-1">{file.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+          {step.step_type === 'verify' && (
+            <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+              <input type="checkbox" checked={step.verify?.args?.use_context || false} onChange={(e) => updateStepArg(index, 'use_context', e.target.checked)} className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600" />
+              使用上下文验证
+            </label>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
 // CaseEditorPage Component
 // ============================================================================
 
@@ -217,6 +371,7 @@ export function CaseEditorPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [expandedArgs, setExpandedArgs] = useState<Record<string, boolean>>({});
   const [businessFiles, setBusinessFiles] = useState<BusinessFile[]>([]);
+  const [settingsExpanded, setSettingsExpanded] = useState(false);
 
   // ---- Unsaved changes state ----
   const [isDirty, setIsDirty] = useState(false);
@@ -230,6 +385,7 @@ export function CaseEditorPage() {
   const [debugProgress, setDebugProgress] = useState<ExecutionProgress | null>(null);
   const [debugReportUrl, setDebugReportUrl] = useState<string | null>(null);
   const [debugError, setDebugError] = useState<string | null>(null);
+  const [debugInfo, setDebugInfo] = useState<string | null>(null);
   const [availableModels, setAvailableModels] = useState<{ models: string[]; default: string }>({ models: [], default: '' });
   const [isLogFullscreen, setIsLogFullscreen] = useState(false);
   const pollTimerRef = useRef<number | null>(null);
@@ -455,6 +611,23 @@ export function CaseEditorPage() {
     }
   };
 
+  // ---- Drag-and-drop sensors ----
+  const stepSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const handleStepDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = formData.steps!.findIndex(s => s.id === active.id);
+    const newIndex = formData.steps!.findIndex(s => s.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const newSteps = arrayMove([...formData.steps!], oldIndex, newIndex);
+    newSteps.forEach((s: TestStep, i: number) => { s.order = i + 1; });
+    updateFormData({ ...formData, steps: newSteps });
+  };
+
   // ---- Debug ----
   const startDebug = async () => {
     if (!debugEnvironmentId || !debugModel) {
@@ -462,10 +635,61 @@ export function CaseEditorPage() {
       return;
     }
 
-    // Must save before debugging
-    if (isNewCase) {
-      setDebugError('请先保存用例后再调试');
+    // Resolve current form data (sync from YAML tab if needed)
+    let dataToUse = formData;
+    if (activeTab === 'yaml') {
+      const { data, error } = yamlToForm(modalYaml);
+      if (error) {
+        setDebugError(`表单数据无效: ${error}`);
+        return;
+      }
+      if (data) dataToUse = { ...formData, ...data };
+    }
+
+    // Validate minimum requirements
+    if (!dataToUse.name?.trim()) {
+      setDebugError('用例名称不能为空');
       return;
+    }
+    const validSteps = (dataToUse.steps || []).filter(s =>
+      s.step_type === 'action' ? s.action?.description?.trim() : s.verify?.assertion?.trim()
+    );
+    if (validSteps.length === 0) {
+      setDebugError('至少需要一个有效的测试步骤');
+      return;
+    }
+
+    // Check use_snapshot dependency BEFORE entering running state
+    const snapshotName = dataToUse.use_snapshot?.trim();
+    let snapshotCase: APITestCase | null = null;
+
+    if (snapshotName) {
+      try {
+        const allCases = await apiClient.getTestCases(businessId!);
+        snapshotCase = allCases.items.find(
+          (c: APITestCase) => c.snapshot === snapshotName
+        ) || null;
+
+        if (!snapshotCase) {
+          setDebugError(
+            `未找到快照用例：当前用例依赖快照 "${snapshotName}"，` +
+            `请先创建并运行一个包含 snapshot: "${snapshotName}" 的用例。`
+          );
+          return;
+        }
+      } catch (err: any) {
+        setDebugError(`查找快照用例失败: ${err.message || '未知错误'}`);
+        return;
+      }
+    }
+
+    // Set info message in debug panel
+    if (snapshotCase) {
+      setDebugInfo(`将先执行快照用例「${snapshotCase.name}」建立登录态，再执行当前用例`);
+    } else if (dataToUse.login_required) {
+      setDebugInfo('已开启登录，将注入环境 cookies');
+    } else {
+      setDebugInfo(null);
     }
 
     setDebugState('running');
@@ -474,13 +698,44 @@ export function CaseEditorPage() {
     setDebugReportUrl(null);
 
     try {
+      // Build case data for execution
+      const effectiveCaseId = isNewCase ? crypto.randomUUID() : caseId!;
+      const testCaseIds: string[] = [];
+      let caseData: Record<string, any> | undefined;
+
+      // If there's a snapshot dependency, prepend it so it runs first
+      if (snapshotCase) {
+        testCaseIds.push(snapshotCase.id);
+      }
+      testCaseIds.push(effectiveCaseId);
+
+      if (isNewCase || isDirty) {
+        const steps = validSteps.map(step => ({
+          step_type: step.step_type,
+          description: step.step_type === 'action' ? step.action?.description : undefined,
+          assertion: step.step_type === 'verify' ? step.verify?.assertion : undefined,
+          args: step.step_type === 'action' ? step.action?.args : step.verify?.args,
+        }));
+
+        caseData = {
+          [effectiveCaseId]: {
+            login_required: dataToUse.login_required ?? false,
+            name: dataToUse.name,
+            steps,
+            snapshot: dataToUse.snapshot || undefined,
+            use_snapshot: dataToUse.use_snapshot || undefined,
+          },
+        };
+      }
+
       const exec = await apiClient.createExecution({
         business_id: businessId!,
         environment_id: debugEnvironmentId,
-        test_case_ids: [caseId!],
+        test_case_ids: testCaseIds,
         model: debugModel,
         workers: 1,
         trigger_type: 'debug',
+        case_data: caseData,
       });
       setDebugExecutionId(exec.id);
 
@@ -736,52 +991,101 @@ export function CaseEditorPage() {
                       />
                     </div>
 
-                    {/* Login Required */}
-                    <label className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-gray-100">
-                      <input
-                        type="checkbox"
-                        checked={formData.login_required ?? false}
-                        onChange={(e) => updateFormData({ ...formData, login_required: e.target.checked })}
-                        className="w-4 h-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
-                      />
-                      <Key className="w-4 h-4 text-amber-500" />
-                      <span className="text-sm text-gray-700">需要登录</span>
-                    </label>
+                    {/* Collapsible Settings Section */}
+                    <div className="w-full border border-gray-200 rounded-lg overflow-hidden">
+                      {/* Settings Header — always visible */}
+                      <button
+                        type="button"
+                        onClick={() => setSettingsExpanded(!settingsExpanded)}
+                        className="w-full flex items-center gap-2 px-3 py-2 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+                      >
+                        {settingsExpanded
+                          ? <ChevronDown className="w-3 h-3 text-gray-400 flex-shrink-0" />
+                          : <ChevronRight className="w-3 h-3 text-gray-400 flex-shrink-0" />
+                        }
+                        <Settings2 className="w-3 h-3 text-gray-400 flex-shrink-0" />
+                        <span className="text-xs font-medium text-gray-500">用例设置</span>
 
-                    {/* Version */}
-                    <div>
-                      <label className="block text-sm font-medium mb-1.5 text-gray-700">用例版本</label>
-                      <input
-                        type="text"
-                        value={formData.version || ''}
-                        onChange={(e) => updateFormData({ ...formData, version: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                        placeholder="例如：v1.0、迭代2"
-                      />
-                    </div>
+                        {/* Tag summary — always visible */}
+                        <div className="flex items-center gap-2 ml-2 flex-wrap">
+                          {formData.login_required && (
+                            <span className="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg text-xs font-medium flex-shrink-0 border border-amber-200">
+                              <Key className="w-3 h-3" />需登录
+                            </span>
+                          )}
+                          {formData.version && (
+                            <span className="px-3 py-1.5 bg-purple-50 text-purple-700 rounded-lg text-xs font-medium flex-shrink-0 border border-purple-200">
+                              🏷️ {formData.version}
+                            </span>
+                          )}
+                          {formData.snapshot && (
+                            <span className="px-3 py-1.5 bg-green-50 text-green-700 rounded-lg text-xs font-medium flex-shrink-0 border border-green-200">
+                              📸 快照: {formData.snapshot}
+                            </span>
+                          )}
+                          {formData.use_snapshot && (
+                            <span className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-xs font-medium flex-shrink-0 border border-blue-200">
+                              🔄 使用: {formData.use_snapshot}
+                            </span>
+                          )}
+                          {!formData.login_required && !formData.version && !formData.snapshot && !formData.use_snapshot && (
+                            <span className="text-xs text-gray-400">未设置</span>
+                          )}
+                        </div>
+                      </button>
 
-                    {/* Snapshot */}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-sm font-medium mb-1.5 text-gray-700">创建快照 (Snapshot)</label>
-                        <input
-                          type="text"
-                          value={formData.snapshot || ''}
-                          onChange={(e) => updateFormData({ ...formData, snapshot: e.target.value })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                          placeholder="例如：global_before"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium mb-1.5 text-gray-700">使用快照 (Use Snapshot)</label>
-                        <input
-                          type="text"
-                          value={formData.use_snapshot || ''}
-                          onChange={(e) => updateFormData({ ...formData, use_snapshot: e.target.value })}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                          placeholder="例如：global_before"
-                        />
-                      </div>
+                      {/* Settings Body — collapsible */}
+                      {settingsExpanded && (
+                        <div className="px-4 py-4 border-t border-gray-200">
+                          <div className="grid grid-cols-4 gap-4">
+                            {/* Login */}
+                            <div className="flex flex-col justify-end">
+                              <label className="flex items-center gap-2 cursor-pointer h-[38px]">
+                                <input
+                                  type="checkbox"
+                                  checked={formData.login_required ?? false}
+                                  onChange={(e) => updateFormData({ ...formData, login_required: e.target.checked })}
+                                  className="w-4 h-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                                />
+                                <span className="text-sm text-gray-700">需要登录</span>
+                              </label>
+                            </div>
+                            {/* Version */}
+                            <div>
+                              <label className="block text-sm font-medium mb-1.5 text-gray-700">用例版本</label>
+                              <input
+                                type="text"
+                                value={formData.version || ''}
+                                onChange={(e) => updateFormData({ ...formData, version: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                placeholder="v1.0"
+                              />
+                            </div>
+                            {/* Snapshot */}
+                            <div>
+                              <label className="block text-sm font-medium mb-1.5 text-gray-700">创建快照</label>
+                              <input
+                                type="text"
+                                value={formData.snapshot || ''}
+                                onChange={(e) => updateFormData({ ...formData, snapshot: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                placeholder="global_before"
+                              />
+                            </div>
+                            {/* Use Snapshot */}
+                            <div>
+                              <label className="block text-sm font-medium mb-1.5 text-gray-700">使用快照</label>
+                              <input
+                                type="text"
+                                value={formData.use_snapshot || ''}
+                                onChange={(e) => updateFormData({ ...formData, use_snapshot: e.target.value })}
+                                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                placeholder="global_before"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* Steps */}
@@ -792,87 +1096,27 @@ export function CaseEditorPage() {
                           + 添加步骤
                         </button>
                       </div>
-                      <div className="space-y-2">
-                        {formData.steps!.map((step, index) => (
-                          <div key={step.id} className="border border-gray-200 rounded-lg p-3 bg-white">
-                            <div className="flex items-center gap-2 mb-2">
-                              <span className="w-5 h-5 bg-blue-600 text-white rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0">
-                                {step.order}
-                              </span>
-                              <select
-                                value={step.step_type}
-                                onChange={(e) => updateStepType(index, e.target.value as 'action' | 'verify')}
-                                className={`px-2 py-0.5 rounded text-xs font-medium border-0 cursor-pointer ${
-                                  step.step_type === 'action' ? 'bg-green-100 text-green-700' : 'bg-purple-100 text-purple-700'
-                                }`}
-                              >
-                                <option value="action">Action</option>
-                                <option value="verify">Verify</option>
-                              </select>
-                              {formData.steps!.length > 1 && (
-                                <button type="button" onClick={() => removeStep(index)} className="ml-auto text-xs text-red-500 hover:text-red-700">
-                                  删除
-                                </button>
-                              )}
-                            </div>
-                            <textarea
-                              required
-                              value={step.step_type === 'action' ? step.action?.description || '' : step.verify?.assertion || ''}
-                              onChange={(e) => updateStepDescription(index, e.target.value)}
-                              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono resize-y"
-                              placeholder={step.step_type === 'action' ? '操作描述' : '验证条件'}
-                              rows={2}
-                            />
-                            <div className="mt-2 flex items-center gap-2 flex-wrap">
-                              <button
-                                type="button"
-                                onClick={() => setExpandedArgs(prev => ({ ...prev, [step.id]: !prev[step.id] }))}
-                                className={`text-xs px-2 py-1 rounded ${expandedArgs[step.id] ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
-                              >
-                                {expandedArgs[step.id] ? '▼ 参数' : '▶ 参数'}
-                              </button>
-                            </div>
-                            {expandedArgs[step.id] && (
-                              <div className="mt-2 bg-gray-50 rounded p-2">
-                                {step.step_type === 'action' && (
-                                  <div className="space-y-2">
-                                    <div className="text-xs text-gray-600 font-medium mb-1">选择上传文件（可多选）:</div>
-                                    {businessFiles.length === 0 ? (
-                                      <div className="text-xs text-gray-400 italic">暂无可用文件</div>
-                                    ) : (
-                                      <div className="space-y-1 max-h-40 overflow-y-auto">
-                                        {businessFiles.map(file => {
-                                          const currentFiles = (() => { const fp = step.action?.args?.file_path; if (!fp) return []; if (Array.isArray(fp)) return fp; return [fp]; })();
-                                          const isChecked = currentFiles.includes(file.name);
-                                          return (
-                                            <label key={file.id} className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer hover:bg-gray-100 p-1 rounded">
-                                              <input type="checkbox" checked={isChecked} onChange={(e) => {
-                                                const curr = (() => { const fp = step.action?.args?.file_path; if (!fp) return []; if (Array.isArray(fp)) return fp; return [fp]; })();
-                                                let newFiles: string[];
-                                                if (e.target.checked) newFiles = [...curr, file.name];
-                                                else newFiles = curr.filter((f: string) => f !== file.name);
-                                                const val = newFiles.length === 0 ? '' : newFiles.length === 1 ? newFiles[0] : newFiles;
-                                                updateStepArg(index, 'file_path', val);
-                                              }} className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600" />
-                                              <span className="flex-1">{file.name}</span>
-                                            </label>
-                                          );
-                                        })}
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                                {step.step_type === 'verify' && (
-                                  <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
-                                    <input type="checkbox" checked={step.verify?.args?.use_context || false} onChange={(e) => updateStepArg(index, 'use_context', e.target.checked)} className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600" />
-                                    使用上下文验证
-                                  </label>
-                                )}
-                              </div>
-                            )}
+                      <DndContext sensors={stepSensors} collisionDetection={closestCenter} onDragEnd={handleStepDragEnd}>
+                        <SortableContext items={formData.steps!.map(s => s.id)} strategy={verticalListSortingStrategy}>
+                          <div className="space-y-2">
+                            {formData.steps!.map((step, index) => (
+                              <SortableStepItem
+                                key={step.id}
+                                step={step}
+                                index={index}
+                                stepsCount={formData.steps!.length}
+                                expandedArgs={expandedArgs}
+                                setExpandedArgs={setExpandedArgs}
+                                updateStepType={updateStepType}
+                                updateStepDescription={updateStepDescription}
+                                updateStepArg={updateStepArg}
+                                removeStep={removeStep}
+                                businessFiles={businessFiles}
+                              />
+                            ))}
                           </div>
-                        ))}
-                      </div>
+                        </SortableContext>
+                      </DndContext>
                     </div>
                   </div>
                   </div>
@@ -978,7 +1222,7 @@ export function CaseEditorPage() {
                   ) : (
                     <button
                       onClick={startDebug}
-                      disabled={isNewCase || !debugEnvironmentId}
+                      disabled={!debugEnvironmentId}
                       className="flex items-center justify-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
                     >
                       <Play className="w-4 h-4" />
@@ -986,16 +1230,22 @@ export function CaseEditorPage() {
                     </button>
                   )}
                 </div>
-                {isNewCase && (
-                  <p className="text-xs text-amber-600" style={{ width: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>请先保存用例后再调试</p>
-                )}
                 {debugError && (
                   <div
-                    className="text-xs text-red-600 flex items-center gap-1"
-                    style={{ width: '100%', minWidth: 0, overflow: 'hidden' }}
+                    className="text-xs text-red-600 flex items-start gap-1 leading-relaxed"
+                    style={{ width: '100%', minWidth: 0 }}
                   >
-                    <AlertCircle className="w-3 h-3 flex-shrink-0" />
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{debugError}</span>
+                    <AlertCircle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                    <span>{debugError}</span>
+                  </div>
+                )}
+                {debugInfo && !debugError && (
+                  <div
+                    className="text-xs text-blue-600 flex items-start gap-1 leading-relaxed"
+                    style={{ width: '100%', minWidth: 0 }}
+                  >
+                    <AlertCircle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                    <span>{debugInfo}</span>
                   </div>
                 )}
               </div>

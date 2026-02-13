@@ -17,6 +17,9 @@ class ExecutionCreate(BaseModel):
     model: str = settings.LLM_DEFAULT_MODEL
     workers: int = Field(default=settings.DEFAULT_WORKERS, ge=1)
     trigger_type: str = Field(default='manual', pattern='^(manual|debug)$')
+    # Debug 模式：前端直传 case 数据，不存 DB
+    # 格式: {case_id_str: {login_required: bool, name: str, steps: [...], ...}}
+    case_data: Optional[Dict[str, Any]] = None
 
     @field_validator('workers')
     @classmethod

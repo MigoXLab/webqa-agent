@@ -183,6 +183,12 @@ class APIClient {
     });
   }
 
+  async deleteEnvironment(id: string): Promise<void> {
+    await this.request(`/environments/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
   // Test Case APIs
   async getTestCases(businessId: string): Promise<ListResponse<TestCase>> {
     return this.request<ListResponse<TestCase>>(`/businesses/${businessId}/cases`);
@@ -278,6 +284,7 @@ class APIClient {
     model?: string;
     workers?: number;
     trigger_type?: 'manual' | 'debug';
+    case_data?: Record<string, any>;
   }): Promise<Execution> {
     return this.request<Execution>('/executions', {
       method: 'POST',

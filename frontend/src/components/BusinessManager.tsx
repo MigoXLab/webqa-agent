@@ -162,22 +162,44 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
     setFormData({ ...formData, environments: newEnvs });
   };
 
-  const removeEnvironment = (index: number) => {
-    if (formData.environments.length > 1) {
-      const envToRemove = formData.environments[index];
-      setFormData({
-        ...formData,
-        environments: formData.environments.filter((_, i) => i !== index),
-      });
-      // Clean up collapsed sections for removed env
-      if (envToRemove) {
-        setCollapsedEnvSections(prev => {
-          const newState = { ...prev };
-          delete newState[envToRemove.id];
-          return newState;
-        });
+  const removeEnvironment = async (index: number) => {
+    const envToRemove = formData.environments[index];
+    if (!envToRemove) return;
+
+    // Prevent deleting the last environment
+    if (formData.environments.length <= 1) {
+      setError('至少需要保留一个环境');
+      return;
+    }
+
+    // Confirm before deletion
+    const confirmed = window.confirm(
+      `确认删除环境「${envToRemove.name || '未命名'}」？\n\n` +
+      '注意：关联的定时任务也会一并删除，此操作不可撤销。'
+    );
+    if (!confirmed) return;
+
+    // If editing an existing business, call API to delete immediately
+    if (editingBusiness) {
+      try {
+        await apiClient.deleteEnvironment(envToRemove.id);
+      } catch (err: any) {
+        setError(`删除环境失败: ${err.message || '未知错误'}`);
+        return;
       }
     }
+
+    // Remove from form state
+    setFormData({
+      ...formData,
+      environments: formData.environments.filter((_, i) => i !== index),
+    });
+    // Clean up collapsed sections for removed env
+    setCollapsedEnvSections(prev => {
+      const newState = { ...prev };
+      delete newState[envToRemove.id];
+      return newState;
+    });
   };
 
   const renderFormContent = () => (
@@ -264,15 +286,14 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
                           className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                           placeholder="https://..."
                         />
-                        {formData.environments.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => removeEnvironment(index)}
-                            className="w-full sm:w-auto px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors text-sm"
-                          >
-                            删除
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeEnvironment(index)}
+                          className="p-1.5 hover:bg-red-50 rounded-lg transition-colors"
+                          title="删除环境"
+                        >
+                          <Trash2 className="w-4 h-4 text-red-600" />
+                        </button>
                       </div>
 
                       {/* Auth Section - Always visible, collapsible */}
@@ -603,7 +624,7 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
         {businesses.map((business) => (
           <div
             key={business.id}
-            className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6 hover:shadow-lg transition-shadow cursor-pointer"
+            className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6 hover:shadow-lg transition-shadow cursor-pointer h-full flex flex-col"
             onClick={() => onSelectBusiness(business)}
           >
             <div className="flex items-start justify-between mb-4">
@@ -627,7 +648,7 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
               </button>
             </div>
 
-            <div className="space-y-2 mt-4">
+            <div className="space-y-2 mt-4 flex-1">
               <p className="text-sm text-gray-500">环境配置：</p>
               {business.environments.map((env) => (
                 <div key={env.id} className="flex items-center gap-2 text-sm min-w-0">

@@ -1,6 +1,23 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, PlayCircle, Edit, Trash2, FileText, Download, Calendar, Settings, Loader2, LayoutList, Code, Key, AlertCircle, Check, Search, X } from 'lucide-react';
+import { ArrowLeft, Plus, PlayCircle, Edit, Trash2, FileText, Download, Calendar, Settings, Loader2, LayoutList, Code, Key, AlertCircle, Check, Search, X, GripVertical } from 'lucide-react';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  rectSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { Business, TestCase, Environment, TestStep, BatchExecution, BusinessFile } from '../App';
 import { ConfigImportExport } from './ConfigImportExport';
 import { FileManager } from './FileManager';
@@ -79,6 +96,10 @@ const formToYaml = (formData: Partial<TestCase>): string => {
 
   if (formData.description) {
     obj.description = formData.description;
+  }
+
+  if (formData.version) {
+    obj.version = formData.version;
   }
 
   if (formData.snapshot) {
@@ -165,6 +186,7 @@ const yamlToForm = (yamlText: string): { data: Partial<TestCase> | null; error: 
       name: parsed.name || '',
       description: parsed.description || '',
       login_required: parsed.login_required ?? false,
+      version: parsed.version,
       snapshot: parsed.snapshot,
       use_snapshot: parsed.use_snapshot,
       status: 'active',
@@ -433,6 +455,34 @@ const parseGlobalYaml = (yamlText: string, businessId: string): TestCase[] => {
   }
 };
 
+// ============================================================================
+// Sortable Case Card wrapper (drag-and-drop)
+// ============================================================================
+
+function SortableCaseCard({ id, children }: { id: string; children: (props: { dragHandleProps: Record<string, any>; isDragging: boolean }) => React.ReactNode }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 10 : undefined,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="h-full">
+      {children({ dragHandleProps: { ...attributes, ...listeners }, isDragging })}
+    </div>
+  );
+}
+
 type Props = {
   business: Business;
   testCases: TestCase[];
@@ -595,6 +645,41 @@ export function TestCaseManager({
     setFilterVersion('all');
   }, []);
 
+  // ---- Drag-and-drop for case list ----
+  const caseSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const handleCaseDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = filteredTestCases.findIndex(tc => tc.id === active.id);
+    const newIndex = filteredTestCases.findIndex(tc => tc.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    // Reorder filteredTestCases, then rebuild the full list
+    const reordered = arrayMove([...filteredTestCases], oldIndex, newIndex);
+    const filteredIds = new Set(filteredTestCases.map(tc => tc.id));
+    const nonFiltered = testCases.filter(tc => !filteredIds.has(tc.id));
+    // Place reordered items at the positions of the filtered items in the original order
+    const newList: TestCase[] = [];
+    let reorderedIdx = 0;
+    for (const tc of testCases) {
+      if (filteredIds.has(tc.id)) {
+        newList.push(reordered[reorderedIdx++]);
+      } else {
+        newList.push(tc);
+      }
+    }
+    setTestCases(newList);
+
+    // Persist sort_order to backend (fire-and-forget)
+    reordered.forEach((tc, i) => {
+      apiClient.updateTestCase(tc.id, { sort_order: i + 1 }).catch(() => {});
+    });
+  };
+
   // Batch delete handler
   const handleBatchDelete = async () => {
     if (selectedCases.length === 0) return;
@@ -635,6 +720,7 @@ export function TestCaseManager({
           name: data.name,
           description: data.description,
           login_required: data.login_required,
+          version: data.version || undefined,
           snapshot: data.snapshot,
           use_snapshot: data.use_snapshot,
           steps: apiSteps,
@@ -647,6 +733,7 @@ export function TestCaseManager({
           name: updatedApiCase.name,
           description: updatedApiCase.description || '',
           login_required: updatedApiCase.login_required ?? false,
+          version: updatedApiCase.version,
           snapshot: updatedApiCase.snapshot,
           use_snapshot: updatedApiCase.use_snapshot,
           steps: updatedApiCase.steps.map((step, idx) => ({
@@ -676,6 +763,7 @@ export function TestCaseManager({
           name: data.name!,
           description: data.description,
           login_required: data.login_required ?? false,
+          version: data.version || undefined,
           snapshot: data.snapshot,
           use_snapshot: data.use_snapshot,
           steps: apiSteps,
@@ -688,6 +776,7 @@ export function TestCaseManager({
           name: createdApiCase.name,
           description: createdApiCase.description || '',
           login_required: createdApiCase.login_required ?? false,
+          version: createdApiCase.version,
           snapshot: createdApiCase.snapshot,
           use_snapshot: createdApiCase.use_snapshot,
           steps: createdApiCase.steps.map((step, idx) => ({
@@ -747,6 +836,7 @@ export function TestCaseManager({
       name: '',
       description: '',
       login_required: false,
+      version: '',
       snapshot: '',
       use_snapshot: '',
       status: 'active',
@@ -1195,7 +1285,7 @@ export function TestCaseManager({
           <div className="flex items-center">
             <button
               onClick={() => setActiveTab('cases')}
-              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === 'cases'
                   ? 'border-blue-600 text-blue-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -1206,19 +1296,19 @@ export function TestCaseManager({
             </button>
             <button
               onClick={() => setActiveTab('schedules')}
-              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === 'schedules'
                   ? 'border-blue-600 text-blue-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
             >
               <Calendar className="w-4 h-4" />
-              任务配置
+              测试任务
             </button>
-            <div className="w-px h-5 bg-gray-200 mx-1" />
+            <div className="w-px h-5 bg-gray-200 mx-2" />
             <button
               onClick={() => setActiveTab('settings')}
-              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === 'settings'
                   ? 'border-blue-600 text-blue-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -1289,9 +1379,9 @@ export function TestCaseManager({
                       filterLogin !== 'all' ? 'border-blue-400 text-blue-600 bg-blue-50' : 'border-gray-300 text-gray-600'
                     }`}
                   >
-                    <option value="all">登录</option>
-                    <option value="required">需登录</option>
-                    <option value="not_required">不需登录</option>
+                    <option value="all">登录状态: 全部</option>
+                    <option value="required">需要登录</option>
+                    <option value="not_required">无需登录</option>
                   </select>
 
                   <select
@@ -1301,8 +1391,8 @@ export function TestCaseManager({
                       filterSnapshot !== 'all' ? 'border-blue-400 text-blue-600 bg-blue-50' : 'border-gray-300 text-gray-600'
                     }`}
                   >
-                    <option value="all">快照</option>
-                    <option value="has_snapshot">有快照</option>
+                    <option value="all">快照状态: 全部</option>
+                    <option value="has_snapshot">创建快照</option>
                     <option value="use_snapshot">使用快照</option>
                     <option value="none">无快照</option>
                   </select>
@@ -1314,8 +1404,8 @@ export function TestCaseManager({
                       filterVersion !== 'all' ? 'border-blue-400 text-blue-600 bg-blue-50' : 'border-gray-300 text-gray-600'
                     }`}
                   >
-                    <option value="all">版本</option>
-                    <option value="">未设置</option>
+                    <option value="all">用例版本: 全部</option>
+                    <option value="">未设置版本</option>
                     {availableVersions.map(v => (
                       <option key={v} value={v}>{v}</option>
                     ))}
@@ -1407,7 +1497,7 @@ export function TestCaseManager({
                     className="flex items-center gap-1 px-2 py-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors text-xs flex-shrink-0"
                     title={`删除选中的 ${selectedCases.length} 个用例`}
                   >
-                    {batchDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                    {batchDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4 text-red-600" />}
                     <span>删除({selectedCases.length})</span>
                   </button>
                 )}
@@ -1450,11 +1540,11 @@ export function TestCaseManager({
                 <button
                   onClick={handleBatchRun}
                   disabled={selectedCases.length === 0 || !selectedEnv || executing}
-                  className="flex items-center gap-1.5 px-5 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm font-medium flex-shrink-0"
+                  className="flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm flex-shrink-0"
                   title={!selectedEnv ? '请先选择执行环境' : selectedCases.length === 0 ? '请先选择测试用例' : ''}
                 >
-                  {executing ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlayCircle className="w-4 h-4" />}
-                  {executing ? '执行中...' : `执行`}
+                  {executing ? <Loader2 className="w-5 h-5 animate-spin" /> : <PlayCircle className="w-5 h-5" />}
+                  {executing ? '执行中...' : '执行'}
                 </button>
               </div>
             </div>
@@ -1482,6 +1572,8 @@ export function TestCaseManager({
                 </div>
               )}
 
+              <DndContext sensors={caseSensors} collisionDetection={closestCenter} onDragEnd={handleCaseDragEnd}>
+                <SortableContext items={filteredTestCases.map(tc => tc.id)} strategy={rectSortingStrategy}>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {filteredTestCases.map((testCase) => {
                   // Defensive check: ensure steps is an array
@@ -1490,40 +1582,54 @@ export function TestCaseManager({
                     return null;
                   }
                   return (
+                <SortableCaseCard key={testCase.id} id={testCase.id}>
+                  {({ dragHandleProps }) => (
                 <div
-                    key={testCase.id}
-                    className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6 hover:shadow-md transition-shadow"
+                    className="bg-white rounded-lg border border-gray-200 hover:shadow-md transition-shadow h-full flex"
                 >
-                    <div className="flex items-start gap-3 sm:gap-4">
-                    <input
-                        type="checkbox"
-                        checked={selectedCases.includes(testCase.id)}
-                        onChange={() => toggleCaseSelection(testCase.id)}
-                        className="w-4 h-4 mt-2 rounded border-gray-300 flex-shrink-0"
-                    />
+                    {/* Drag handle — left edge strip */}
+                    <button
+                      type="button"
+                      className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 hover:bg-gray-50 touch-none flex items-center px-1.5 flex-shrink-0 rounded-l-lg transition-colors"
+                      {...dragHandleProps}
+                    >
+                      <GripVertical className="w-4 h-4" />
+                    </button>
 
-                    <div className="flex-1 min-w-0">
+                    {/* Card content */}
+                    <div className="flex-1 min-w-0 p-4 flex flex-col overflow-hidden">
                         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-3">
                         <div className="min-w-0 flex-1">
-                            <h3 className="mb-1 truncate font-semibold">{testCase.name}</h3>
+                            <div className="flex items-center gap-2 mb-1">
+                              <input
+                                type="checkbox"
+                                checked={selectedCases.includes(testCase.id)}
+                                onChange={() => toggleCaseSelection(testCase.id)}
+                                className="w-4 h-4 rounded border-gray-300 flex-shrink-0"
+                              />
+                              <h3 className="truncate font-semibold">{testCase.name}</h3>
+                            </div>
                             {testCase.description && (
                               <p className="text-sm text-gray-600 line-clamp-2">{testCase.description}</p>
                             )}
                             <div className="flex items-center gap-2 mt-2 flex-wrap">
-                              <label
-                                className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 rounded-lg text-xs font-medium flex-shrink-0 cursor-pointer transition-colors border border-amber-200"
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); handleToggleLoginRequired(testCase, e as any); }}
+                                title={testCase.login_required ? '点击关闭登录' : '点击开启登录'}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium flex-shrink-0 border transition-colors ${
+                                  testCase.login_required
+                                    ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
+                                    : 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100 hover:text-gray-600'
+                                }`}
                               >
-                                <input
-                                  type="checkbox"
-                                  checked={testCase.login_required ?? false}
-                                  onChange={(e) => {
-                                    e.stopPropagation();
-                                    handleToggleLoginRequired(testCase, e as any);
-                                  }}
-                                  className="w-4 h-3.5 rounded border-amber-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
-                                />
-                                需登录
-                              </label>
+                                {testCase.login_required ? '🔑 需登录' : '🔓 免登录'}
+                              </button>
+                              {testCase.version && (
+                                <span className="px-3 py-1.5 bg-purple-50 text-purple-700 rounded-lg text-xs font-medium flex-shrink-0 border border-purple-200">
+                                  🏷️ {testCase.version}
+                                </span>
+                              )}
                               {testCase.snapshot && (
                                 <span className="px-3 py-1.5 bg-green-50 text-green-700 rounded-lg text-xs font-medium flex-shrink-0 border border-green-200">
                                   📸 快照: {testCase.snapshot}
@@ -1532,11 +1638,6 @@ export function TestCaseManager({
                               {testCase.use_snapshot && (
                                 <span className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-xs font-medium flex-shrink-0 border border-blue-200">
                                   🔄 使用: {testCase.use_snapshot}
-                                </span>
-                              )}
-                              {testCase.version && (
-                                <span className="px-3 py-1.5 bg-purple-50 text-purple-700 rounded-lg text-xs font-medium flex-shrink-0 border border-purple-200">
-                                  🏷️ {testCase.version}
                                 </span>
                               )}
                             </div>
@@ -1559,7 +1660,7 @@ export function TestCaseManager({
                         </div>
                         </div>
 
-                        <div className="bg-gray-50 rounded-lg p-3 sm:p-4">
+                        <div className="bg-gray-50 rounded-lg p-3 sm:p-4 flex-1">
                         <div className="flex items-center gap-2 mb-3 text-sm text-gray-600">
                             <FileText className="w-4 h-4" />
                             <span>测试步骤 ({testCase.steps?.length || 0})</span>
@@ -1595,12 +1696,15 @@ export function TestCaseManager({
                         </div>
                         </div>
                     </div>
-                    </div>
                 </div>
+                  )}
+                </SortableCaseCard>
                   );
                 }).filter(Boolean)}
 
               </div>
+                </SortableContext>
+              </DndContext>
               </>
             )}
 
@@ -1669,7 +1773,7 @@ export function TestCaseManager({
 
       {activeTab === 'schedules' && (
         <>
-        <div className="flex justify-end mb-4">
+        <div className="flex justify-end mb-3">
           <button
             onClick={() => setScheduleCreateOpen(true)}
             className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
@@ -1873,9 +1977,10 @@ export function TestCaseManager({
                                 <button
                                   type="button"
                                   onClick={() => removeStep(index)}
-                                  className="ml-auto text-xs text-red-500 hover:text-red-700"
+                                  className="ml-auto p-1.5 hover:bg-red-50 rounded-lg transition-colors"
+                                  title="删除步骤"
                                 >
-                                  删除
+                                  <Trash2 className="w-4 h-4 text-red-600" />
                                 </button>
                               )}
                             </div>

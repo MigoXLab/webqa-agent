@@ -99,8 +99,11 @@ async def create_execution(
             detail={'code': 2002, 'message': '环境不存在'}
         )
 
-    # Verify all test cases exist
+    # Verify all test cases exist (skip for cases with data provided inline)
+    inline_ids = set(data.case_data.keys()) if data.case_data else set()
     for case_id in data.test_case_ids:
+        if str(case_id) in inline_ids:
+            continue  # Data provided inline, no DB record needed
         case_result = await db.execute(
             select(TestCase).where(TestCase.id == case_id)
         )
@@ -129,7 +132,7 @@ async def create_execution(
 
     # Start execution in background using asyncio.create_task for true concurrency
     execution_id_str = str(execution.id)
-    task = asyncio.create_task(run_execution(execution_id_str))
+    task = asyncio.create_task(run_execution(execution_id_str, case_data=data.case_data))
     _running_tasks[execution_id_str] = task
 
     # Clean up task reference when done
