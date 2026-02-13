@@ -228,6 +228,11 @@ class LinkCheckTool(WebQABaseTool):
         try:
             # Step 1: Get current page and extract all links
             page = await self.ui_tester_instance.get_current_page()
+            if not page:
+                return self.format_critical_error(
+                    'PAGE_CRASHED',
+                    'Cannot get current page for dynamic link detection'
+                )
             current_url = page.url
 
             logging.debug(f'Dynamic Link Detection: Extracting links from {current_url}')
@@ -296,12 +301,47 @@ class LinkCheckTool(WebQABaseTool):
 
                     validated_links.append(link_result)
 
-            # Step 5: Update context with current link snapshot for next invocation
-            # IMPORTANT: This context enables subsequent assertion steps to verify link quality
-            # Fields align with UITool pattern (element_action_tool.py:222-231) to ensure
-            # function_tester.py:_format_execution_context() can extract all required data
+            # Step 5: Format response and update context
+            # IMPORTANT: Context enables subsequent assertion steps to verify link quality
+            # Fields align with UITool pattern for function_tester.py compatibility
 
-            # Build result message for LLM and assertions
+            if not new_links:
+                # Record step even when no new links found (using safe_record_step helper)
+                self.safe_record_step(
+                    description='Detect dynamic links (no new links found)',
+                    model_io_data={
+                        'message': f'Total links on page: {len(current_links)}. No new links since last check.',
+                        'total_links': len(current_links),
+                    },
+                    status='passed',
+                )
+
+                self.update_action_context(
+                    self.ui_tester_instance,
+                    {
+                        'description': 'Detect dynamic links (no new links found)',
+                        'action_type': 'DynamicLinkCheck',
+                        'status': 'success',
+                        'result': {
+                            'message': f'No new links detected. Total links on page: {len(current_links)}',
+                            'validated_links': [],
+                            'total_links_on_page': len(current_links),
+                            'new_links_count': 0,
+                            'check_https': check_https,
+                            'check_status': check_status,
+                        },
+                        'timestamp': datetime.now().isoformat(),
+                        'detected_new_links_count': 0,
+                        'all_links_snapshot': list(current_links_set),
+                    }
+                )
+
+                return self.format_success(
+                    'No new links detected since last check',
+                    page_state=f'Total links on page: {len(current_links)}'
+                )
+
+            # Build result message for LLM and assertions (only when new links found)
             result_message = f'Detected {len(new_links)} new links on page'
             if check_https or check_status:
                 passed_count = sum(
@@ -314,66 +354,22 @@ class LinkCheckTool(WebQABaseTool):
             self.update_action_context(
                 self.ui_tester_instance,
                 {
-                    # Core fields (required by assertion tools)
                     'description': f'Detect dynamic links (found {len(new_links)} new)',
                     'action_type': 'DynamicLinkCheck',
-                    'status': 'success',  # Detection succeeded even if some links failed validation
+                    'status': 'success',
                     'result': {
-                        'message': result_message,  # CRITICAL: Used by LLM prompts as "Result: ..."
-                        'validated_links': validated_links,  # CRITICAL: Enables link quality assertions
+                        'message': result_message,
+                        'validated_links': validated_links,
                         'total_links_on_page': len(current_links_set),
                         'new_links_count': len(new_links),
                         'check_https': check_https,
                         'check_status': check_status,
                     },
                     'timestamp': datetime.now().isoformat(),
-
-                    # DynamicLinkCheck-specific fields (backward compatibility + state tracking)
-                    'detected_new_links_count': len(new_links),  # Keep for backward compatibility
-                    'all_links_snapshot': list(current_links_set),  # Required for next invocation comparison
+                    'detected_new_links_count': len(new_links),
+                    'all_links_snapshot': list(current_links_set),
                 }
             )
-
-            # Step 6: Format response
-            if not new_links:
-                # Record step even when no new links found (using safe_record_step helper)
-                self.safe_record_step(
-                    description='Detect dynamic links (no new links found)',
-                    model_io_data={
-                        'message': f'Total links on page: {len(current_links)}. No new links since last check.',
-                        'total_links': len(current_links),
-                    },
-                    status='passed',
-                )
-
-                # Update context even when no new links (enables proper assertion context)
-                self.update_action_context(
-                    self.ui_tester_instance,
-                    {
-                        # Core fields (required by assertion tools)
-                        'description': 'Detect dynamic links (no new links found)',
-                        'action_type': 'DynamicLinkCheck',
-                        'status': 'success',  # No new links is a successful detection result
-                        'result': {
-                            'message': f'No new links detected. Total links on page: {len(current_links)}',
-                            'validated_links': [],  # Empty list (no new links to validate)
-                            'total_links_on_page': len(current_links),
-                            'new_links_count': 0,
-                            'check_https': check_https,
-                            'check_status': check_status,
-                        },
-                        'timestamp': datetime.now().isoformat(),
-
-                        # DynamicLinkCheck-specific fields (backward compatibility + state tracking)
-                        'detected_new_links_count': 0,
-                        'all_links_snapshot': list(current_links_set),
-                    }
-                )
-
-                return self.format_success(
-                    'No new links detected since last check',
-                    page_state=f'Total links on page: {len(current_links)}'
-                )
 
             # Build detailed summary of first 10 validated links
             link_details = []

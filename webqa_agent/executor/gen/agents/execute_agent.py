@@ -3,12 +3,14 @@ application.
 
 The agent worker is responsible for executing a single test case.
 """
+
 import asyncio
+import copy
 import datetime
 import json
 import logging
 import re
-from typing import Union
+from typing import Any, Dict, List, Optional, Union
 
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
@@ -51,7 +53,10 @@ MIN_RECOVERY_CONFIDENCE = 0.7
 # Tool Registry Helper Functions
 # ============================================================================
 
-def _get_tools(ui_tester_instance, llm_config, case_recorder, enabled_custom_tools=None):
+
+def _get_tools(
+    ui_tester_instance, llm_config, case_recorder, enabled_custom_tools=None
+):
     """Get tools combining core tools with registry tools.
 
     Always includes core tools (UITool, UIAssertTool, UIUXViewportTool) and
@@ -70,8 +75,14 @@ def _get_tools(ui_tester_instance, llm_config, case_recorder, enabled_custom_too
     # Always instantiate core tools to ensure consistent behavior
     core_tools = [
         UITool(ui_tester_instance=ui_tester_instance, case_recorder=case_recorder),
-        UIAssertTool(ui_tester_instance=ui_tester_instance, case_recorder=case_recorder),
-        UIUXViewportTool(ui_tester_instance=ui_tester_instance, llm_config=llm_config, case_recorder=case_recorder)
+        UIAssertTool(
+            ui_tester_instance=ui_tester_instance, case_recorder=case_recorder
+        ),
+        UIUXViewportTool(
+            ui_tester_instance=ui_tester_instance,
+            llm_config=llm_config,
+            case_recorder=case_recorder,
+        ),
     ]
     logging.debug(f'Core tools instantiated: {[t.name for t in core_tools]}')
 
@@ -86,19 +97,27 @@ def _get_tools(ui_tester_instance, llm_config, case_recorder, enabled_custom_too
                 ui_tester_instance=ui_tester_instance,
                 llm_config=llm_config,
                 case_recorder=case_recorder,
-                enabled_custom_tools=enabled_custom_tools  # Pass filtering parameter
+                enabled_custom_tools=enabled_custom_tools,  # Pass filtering parameter
             )
             if registry_tools:
                 # Filter out core tools from registry to avoid duplicates
                 # Only keep custom tools (category='custom')
                 core_tool_names = {t.name for t in core_tools}
-                custom_tools = [t for t in registry_tools if t.name not in core_tool_names]
+                custom_tools = [
+                    t for t in registry_tools if t.name not in core_tool_names
+                ]
                 if custom_tools:
-                    logging.debug(f'Custom tools loaded from registry: {[t.name for t in custom_tools]}')
+                    logging.debug(
+                        f'Custom tools loaded from registry: {[t.name for t in custom_tools]}'
+                    )
                 elif enabled_custom_tools:
-                    logging.debug(f'No custom tools loaded (enabled: {enabled_custom_tools})')
+                    logging.debug(
+                        f'No custom tools loaded (enabled: {enabled_custom_tools})'
+                    )
     except Exception as e:
-        logging.warning(f'Registry loading failed, continuing with core tools only: {e}')
+        logging.warning(
+            f'Registry loading failed, continuing with core tools only: {e}'
+        )
 
     # Return combined list: core tools + custom tools
     all_tools = core_tools + custom_tools
@@ -109,6 +128,7 @@ def _get_tools(ui_tester_instance, llm_config, case_recorder, enabled_custom_too
 # ============================================================================
 # Dynamic Step Generation Configuration Helper
 # ============================================================================
+
 
 def _get_dynamic_config(state: dict) -> dict:
     """Extract and merge dynamic step generation config from state with
@@ -130,11 +150,7 @@ def _get_dynamic_config(state: dict) -> dict:
         A complete configuration dictionary with all keys present.
         User-provided values override defaults.
     """
-    defaults = {
-        'enabled': True,
-        'max_dynamic_steps': 8,
-        'min_elements_threshold': 2
-    }
+    defaults = {'enabled': True, 'max_dynamic_steps': 8, 'min_elements_threshold': 2}
     user_config = state.get('dynamic_step_generation', {})
     # Merge defaults with user config. User values override defaults.
     return {**defaults, **user_config}
@@ -143,6 +159,7 @@ def _get_dynamic_config(state: dict) -> dict:
 # ============================================================================
 # Step Type Parsing Helper
 # ============================================================================
+
 
 def _parse_step_type(step: dict) -> str:
     """Parse step type from test step dict.
@@ -175,6 +192,7 @@ def _parse_step_type(step: dict) -> str:
 # ============================================================================
 # Dynamic Step Generation Helper Functions
 # ============================================================================
+
 
 def normalize_url(u):
     """Normalize URL for comparison by removing www prefix and standardizing
@@ -335,7 +353,9 @@ def extract_text_content(content: Union[str, list, None]) -> str:
         return ''
 
 
-def safe_get_intermediate_step(result: dict, index: int = 0, subindex: int = 1, default: str = '') -> str:
+def safe_get_intermediate_step(
+    result: dict, index: int = 0, subindex: int = 1, default: str = ''
+) -> str:
     """Safely extract intermediate_steps observation from AgentExecutor result.
 
     Modified to use extract_text_content for provider compatibility:
@@ -402,8 +422,8 @@ def format_elements_for_llm(dom_diff: dict) -> list[dict]:
             'text': inner_text[:100] if inner_text else '',  # Limit text length
             'position': {
                 'x': elem_data.get('center_x'),
-                'y': elem_data.get('center_y')
-            }
+                'y': elem_data.get('center_y'),
+            },
         }
 
         # Add important attribute information
@@ -411,20 +431,40 @@ def format_elements_for_llm(dom_diff: dict) -> list[dict]:
         if attributes:
             # Define comprehensive attribute whitelist
             navigation_attrs = ['href', 'target', 'rel', 'download']
-            form_attrs = ['type', 'placeholder', 'value', 'name', 'required', 'disabled']
+            form_attrs = [
+                'type',
+                'placeholder',
+                'value',
+                'name',
+                'required',
+                'disabled',
+            ]
             semantic_attrs = ['role', 'aria-label', 'aria-describedby', 'aria-expanded']
 
             for key, value in attributes.items():
                 # Include whitelisted attributes
-                if key in ['class', 'id'] + navigation_attrs + form_attrs + semantic_attrs:
+                if (
+                    key
+                    in ['class', 'id'] + navigation_attrs + form_attrs + semantic_attrs
+                ):
                     important_attrs[key] = value
                 # Include data-* attributes (often contain behavior info)
                 elif key.startswith('data-'):
                     # Limit length to prevent token explosion
-                    important_attrs[key] = value[:200] if isinstance(value, str) and len(value) > 200 else value
+                    important_attrs[key] = (
+                        value[:200]
+                        if isinstance(value, str) and len(value) > 200
+                        else value
+                    )
                 # Include style if it indicates visibility/interactivity
-                elif key == 'style' and isinstance(value, str) and ('display' in value or 'visibility' in value):
-                    important_attrs[key] = value[:200] + '...' if len(value) > 200 else value
+                elif (
+                    key == 'style'
+                    and isinstance(value, str)
+                    and ('display' in value or 'visibility' in value)
+                ):
+                    important_attrs[key] = (
+                        value[:200] + '...' if len(value) > 200 else value
+                    )
 
         if important_attrs:
             formatted_elem['attributes'] = important_attrs
@@ -435,20 +475,20 @@ def format_elements_for_llm(dom_diff: dict) -> list[dict]:
 
 
 async def generate_dynamic_steps_with_llm(
-        dom_diff: dict = None,
-        last_action: str = '',
-        test_objective: str = '',
-        executed_steps: int = 0,
-        max_steps: int = 8,
-        llm: any = None,
-        current_case: dict = None,
-        screenshot: str = None,
-        tool_output: str = None,
-        step_success: bool = True,
-        # New parameters for failure recovery mode
-        failure_recovery_mode: bool = False,
-        failed_instruction: str = '',
-        error_message: str = ''
+    dom_diff: dict = None,
+    last_action: str = '',
+    test_objective: str = '',
+    executed_steps: int = 0,
+    max_steps: int = 8,
+    llm: any = None,
+    current_case: dict = None,
+    screenshot: str = None,
+    tool_output: str = None,
+    step_success: bool = True,
+    # New parameters for failure recovery mode
+    failure_recovery_mode: bool = False,
+    failed_instruction: str = '',
+    error_message: str = '',
 ) -> dict:
     """Generate dynamic test steps or recover from failed steps using LLM.
 
@@ -485,13 +525,22 @@ async def generate_dynamic_steps_with_llm(
     # === FAILURE RECOVERY MODE ===
     if failure_recovery_mode:
         if not failed_instruction or not error_message:
-            return {'strategy': 'abort', 'reason': 'Missing failure context', 'steps': [], 'confidence': 0.0}
+            return {
+                'strategy': 'abort',
+                'reason': 'Missing failure context',
+                'steps': [],
+                'confidence': 0.0,
+            }
 
         try:
             # Build failure recovery prompt
             all_steps = current_case.get('steps', []) if current_case else []
-            remaining_steps = all_steps[executed_steps:] if executed_steps < len(all_steps) else []
-            executed_steps_detail = all_steps[:executed_steps] if executed_steps > 0 else []
+            remaining_steps = (
+                all_steps[executed_steps:] if executed_steps < len(all_steps) else []
+            )
+            executed_steps_detail = (
+                all_steps[:executed_steps] if executed_steps > 0 else []
+            )
 
             failure_prompt = f"""## Test Step Failure Recovery Analysis
 
@@ -608,25 +657,34 @@ Use this logic to select strategy:
             # Call LLM with multi-modal context
             if screenshot:
                 messages = [
-                    {'role': 'system',
-                     'content': 'You are a QA expert analyzing test step failures. Respond with JSON only.'},
+                    {
+                        'role': 'system',
+                        'content': 'You are a QA expert analyzing test step failures. Respond with JSON only.',
+                    },
                     {
                         'role': 'user',
                         'content': [
                             {'type': 'text', 'text': failure_prompt},
-                            {'type': 'image_url', 'image_url': {'url': screenshot, 'detail': 'low'}}
-                        ]
-                    }
+                            {
+                                'type': 'image_url',
+                                'image_url': {'url': screenshot, 'detail': 'low'},
+                            },
+                        ],
+                    },
                 ]
             else:
                 messages = [
-                    {'role': 'system',
-                     'content': 'You are a QA expert analyzing test step failures. Respond with JSON only.'},
-                    {'role': 'user', 'content': failure_prompt}
+                    {
+                        'role': 'system',
+                        'content': 'You are a QA expert analyzing test step failures. Respond with JSON only.',
+                    },
+                    {'role': 'user', 'content': failure_prompt},
                 ]
 
             response = await llm.ainvoke(messages)
-            response_text = response.content if hasattr(response, 'content') else str(response)
+            response_text = (
+                response.content if hasattr(response, 'content') else str(response)
+            )
 
             # Parse JSON response
             try:
@@ -636,29 +694,45 @@ Use this logic to select strategy:
                 # Validate response
                 if not isinstance(result, dict) or 'strategy' not in result:
                     logging.error("LLM response missing required 'strategy' field")
-                    return {'strategy': 'abort', 'reason': 'Invalid LLM response format', 'steps': [],
-                            'confidence': 0.0}
+                    return {
+                        'strategy': 'abort',
+                        'reason': 'Invalid LLM response format',
+                        'steps': [],
+                        'confidence': 0.0,
+                    }
 
                 strategy = result.get('strategy')
                 if strategy not in ['retry_modified', 'skip', 'abort']:
                     logging.error(f"Invalid strategy '{strategy}', defaulting to abort")
-                    return {'strategy': 'abort', 'reason': f'Invalid strategy returned: {strategy}', 'steps': [],
-                            'confidence': 0.0}
+                    return {
+                        'strategy': 'abort',
+                        'reason': f'Invalid strategy returned: {strategy}',
+                        'steps': [],
+                        'confidence': 0.0,
+                    }
 
                 # Validate confidence
                 confidence = result.get('confidence', 0.5)
-                if not isinstance(confidence, (int, float)) or confidence < 0 or confidence > 1:
-                    logging.warning(f'Invalid confidence {confidence}, defaulting to 0.5')
+                if (
+                    not isinstance(confidence, (int, float))
+                    or confidence < 0
+                    or confidence > 1
+                ):
+                    logging.warning(
+                        f'Invalid confidence {confidence}, defaulting to 0.5'
+                    )
                     confidence = 0.5
 
                 # Safety check: low confidence should abort
                 if confidence < MIN_RECOVERY_CONFIDENCE:
-                    logging.warning(f'Low confidence ({confidence}) in recovery strategy, overriding to abort')
+                    logging.warning(
+                        f'Low confidence ({confidence}) in recovery strategy, overriding to abort'
+                    )
                     return {
                         'strategy': 'abort',
                         'reason': f"Low confidence in recovery. Original suggestion: {result.get('reason', 'N/A')}",
                         'steps': [],
-                        'confidence': confidence
+                        'confidence': confidence,
                     }
 
                 # Validate steps for retry_modified
@@ -666,8 +740,12 @@ Use this logic to select strategy:
                     steps = result.get('steps', [])
                     if not steps or not isinstance(steps, list) or len(steps) == 0:
                         logging.error('retry_modified strategy missing valid steps')
-                        return {'strategy': 'abort', 'reason': 'retry_modified requires new instruction', 'steps': [],
-                                'confidence': 0.0}
+                        return {
+                            'strategy': 'abort',
+                            'reason': 'retry_modified requires new instruction',
+                            'steps': [],
+                            'confidence': 0.0,
+                        }
 
                     # Warn if LLM returns multiple steps (only first will be used)
                     if len(steps) > 1:
@@ -677,30 +755,52 @@ Use this logic to select strategy:
                         )
 
                     # Validate step format
-                    valid_step = steps[0] if (isinstance(steps[0], dict) and
-                                              ('action' in steps[0] or 'verify' in steps[0])) else None
+                    valid_step = (
+                        steps[0]
+                        if (
+                            isinstance(steps[0], dict)
+                            and ('action' in steps[0] or 'verify' in steps[0])
+                        )
+                        else None
+                    )
                     if not valid_step:
                         logging.error('retry_modified step has invalid format')
-                        return {'strategy': 'abort', 'reason': 'Invalid step format in retry_modified', 'steps': [],
-                                'confidence': 0.0}
+                        return {
+                            'strategy': 'abort',
+                            'reason': 'Invalid step format in retry_modified',
+                            'steps': [],
+                            'confidence': 0.0,
+                        }
 
-                logging.info(f'Failure recovery strategy: {strategy} (confidence: {confidence:.2f})')
+                logging.info(
+                    f'Failure recovery strategy: {strategy} (confidence: {confidence:.2f})'
+                )
                 logging.debug(f"Recovery reason: {result.get('reason', 'N/A')}")
 
                 return {
                     'strategy': strategy,
                     'reason': result.get('reason', 'No reason provided'),
                     'steps': result.get('steps', []),
-                    'confidence': confidence
+                    'confidence': confidence,
                 }
 
             except json.JSONDecodeError as e:
                 logging.error(f'Failed to parse failure recovery LLM response: {e}')
-                return {'strategy': 'abort', 'reason': 'JSON parsing failed', 'steps': [], 'confidence': 0.0}
+                return {
+                    'strategy': 'abort',
+                    'reason': 'JSON parsing failed',
+                    'steps': [],
+                    'confidence': 0.0,
+                }
 
         except Exception as e:
             logging.error(f'Error in failure recovery mode: {e}')
-            return {'strategy': 'abort', 'reason': f'Recovery failed: {str(e)}', 'steps': [], 'confidence': 0.0}
+            return {
+                'strategy': 'abort',
+                'reason': f'Recovery failed: {str(e)}',
+                'steps': [],
+                'confidence': 0.0,
+            }
 
     # === DOM CHANGE MODE (Original Logic) ===
     if not dom_diff:
@@ -711,7 +811,11 @@ Use this logic to select strategy:
         new_elements = format_elements_for_llm(dom_diff)
 
         if not new_elements:
-            return {'strategy': 'insert', 'reason': 'No meaningful elements to test', 'steps': []}
+            return {
+                'strategy': 'insert',
+                'reason': 'No meaningful elements to test',
+                'steps': [],
+            }
 
         # Build system prompt
         system_prompt = get_dynamic_step_generation_prompt()
@@ -720,8 +824,12 @@ Use this logic to select strategy:
         test_case_context = ''
         if current_case and 'steps' in current_case:
             all_steps = current_case['steps']
-            executed_steps_detail = all_steps[:executed_steps] if executed_steps > 0 else []
-            remaining_steps = all_steps[executed_steps:] if executed_steps < len(all_steps) else []
+            executed_steps_detail = (
+                all_steps[:executed_steps] if executed_steps > 0 else []
+            )
+            remaining_steps = (
+                all_steps[executed_steps:] if executed_steps < len(all_steps) else []
+            )
 
             test_case_context = f"""
 Test Case Context:
@@ -740,7 +848,11 @@ Remaining Steps (may need adjustment after replan):
         # Build multi-modal user prompt with dynamic status context
         visual_context_section = ''
         if screenshot:
-            execution_context = 'AFTER the execution of the last action' if step_success else 'AFTER the attempted execution of the last action'
+            execution_context = (
+                'AFTER the execution of the last action'
+                if step_success
+                else 'AFTER the attempted execution of the last action'
+            )
             visual_context_section = f"""
 ## Current Page Visual Context
 The attached screenshot shows the current state of the page {execution_context}.
@@ -749,11 +861,11 @@ Use this visual information along with the DOM diff to understand the complete U
 
         # Build context based on actual execution result
         if step_success:
-            action_status = f"✅ SUCCESSFULLY EXECUTED: \"{last_action}\""
+            action_status = f'✅ SUCCESSFULLY EXECUTED: "{last_action}"'
             status_context = 'The above action has been completed successfully. Do NOT re-plan or duplicate this action.'
             execution_description = 'After the successful action execution'
         else:
-            action_status = f"⚠️ FAILED/PARTIAL EXECUTION: \"{last_action}\""
+            action_status = f'⚠️ FAILED/PARTIAL EXECUTION: "{last_action}"'
             status_context = 'The above action failed or partially succeeded. Consider recovery steps or alternative approaches.'
             execution_description = 'After the failed/partial action execution'
 
@@ -787,7 +899,9 @@ Test Objective: "{test_objective}"
 Please analyze these new UI elements using the QAG methodology and generate appropriate test steps if needed.
         """
 
-        logging.debug(f'Requesting LLM to generate dynamic steps for {len(new_elements)} new elements')
+        logging.debug(
+            f'Requesting LLM to generate dynamic steps for {len(new_elements)} new elements'
+        )
 
         # Call LLM with proper message structure
         if screenshot:
@@ -800,16 +914,16 @@ Please analyze these new UI elements using the QAG methodology and generate appr
                         {'type': 'text', 'text': user_prompt},
                         {
                             'type': 'image_url',
-                            'image_url': {'url': screenshot, 'detail': 'low'}
-                        }
-                    ]
-                }
+                            'image_url': {'url': screenshot, 'detail': 'low'},
+                        },
+                    ],
+                },
             ]
         else:
             # Text-only call with proper message structure
             messages = [
                 {'role': 'system', 'content': system_prompt},
-                {'role': 'user', 'content': user_prompt}
+                {'role': 'user', 'content': user_prompt},
             ]
 
         response = await llm.ainvoke(messages)
@@ -834,57 +948,84 @@ Please analyze these new UI elements using the QAG methodology and generate appr
 
                 # Extract and validate analysis fields (Enhanced QAG format)
                 analysis = result.get('analysis', {})
-                q1_can_complete_alone = analysis.get('q1_can_complete_alone', False) if isinstance(analysis,
-                                                                                                   dict) else False
-                q2_different_aspects = analysis.get('q2_different_aspects', False) if isinstance(analysis,
-                                                                                                 dict) else False
-                q3_remaining_redundant = analysis.get('q3_remaining_redundant', False) if isinstance(analysis,
-                                                                                                     dict) else False
-                q4_abstraction_gap = analysis.get('q4_abstraction_gap', False) if isinstance(analysis, dict) else False
+                q1_can_complete_alone = (
+                    analysis.get('q1_can_complete_alone', False)
+                    if isinstance(analysis, dict)
+                    else False
+                )
+                q2_different_aspects = (
+                    analysis.get('q2_different_aspects', False)
+                    if isinstance(analysis, dict)
+                    else False
+                )
+                q3_remaining_redundant = (
+                    analysis.get('q3_remaining_redundant', False)
+                    if isinstance(analysis, dict)
+                    else False
+                )
+                q4_abstraction_gap = (
+                    analysis.get('q4_abstraction_gap', False)
+                    if isinstance(analysis, dict)
+                    else False
+                )
 
                 # Validate strategy value
                 if strategy not in ['insert', 'replace']:
-                    logging.warning(f"Invalid strategy '{strategy}', defaulting to 'insert'")
+                    logging.warning(
+                        f"Invalid strategy '{strategy}', defaulting to 'insert'"
+                    )
                     strategy = 'insert'
 
                 # Validate QAG analysis fields
                 if not isinstance(q1_can_complete_alone, bool):
-                    logging.debug(f'Invalid q1_can_complete_alone {q1_can_complete_alone}, defaulting to False')
+                    logging.debug(
+                        f'Invalid q1_can_complete_alone {q1_can_complete_alone}, defaulting to False'
+                    )
                     q1_can_complete_alone = False
 
                 if not isinstance(q2_different_aspects, bool):
-                    logging.debug(f'Invalid q2_different_aspects {q2_different_aspects}, defaulting to False')
+                    logging.debug(
+                        f'Invalid q2_different_aspects {q2_different_aspects}, defaulting to False'
+                    )
                     q2_different_aspects = False
 
                 if not isinstance(q3_remaining_redundant, bool):
-                    logging.debug(f'Invalid q3_remaining_redundant {q3_remaining_redundant}, defaulting to False')
+                    logging.debug(
+                        f'Invalid q3_remaining_redundant {q3_remaining_redundant}, defaulting to False'
+                    )
                     q3_remaining_redundant = False
 
                 if not isinstance(q4_abstraction_gap, bool):
-                    logging.debug(f'Invalid q4_abstraction_gap {q4_abstraction_gap}, defaulting to False')
+                    logging.debug(
+                        f'Invalid q4_abstraction_gap {q4_abstraction_gap}, defaulting to False'
+                    )
                     q4_abstraction_gap = False
 
                 # Validate and limit step count
                 valid_steps = []
                 if isinstance(steps, list):
                     for step in steps[:max_steps]:
-                        if isinstance(step, dict) and ('action' in step or 'verify' in step):
+                        if isinstance(step, dict) and (
+                            'action' in step or 'verify' in step
+                        ):
                             valid_steps.append(step)
 
                 # Enhanced logging with QAG analysis data
                 logging.info(
-                    f"Generated {len(valid_steps)} dynamic steps with strategy '{strategy}' from {len(new_elements)} new elements")
+                    f"Generated {len(valid_steps)} dynamic steps with strategy '{strategy}' from {len(new_elements)} new elements"
+                )
 
                 logging.debug(f'Strategy reason: {reason}')
                 if analysis:
                     logging.debug(
-                        f'Enhanced QAG Analysis: q1_can_complete_alone={q1_can_complete_alone}, q2_different_aspects={q2_different_aspects}, q3_remaining_redundant={q3_remaining_redundant}, q4_abstraction_gap={q4_abstraction_gap}')
+                        f'Enhanced QAG Analysis: q1_can_complete_alone={q1_can_complete_alone}, q2_different_aspects={q2_different_aspects}, q3_remaining_redundant={q3_remaining_redundant}, q4_abstraction_gap={q4_abstraction_gap}'
+                    )
 
                 # Return enhanced result with QAG analysis
                 result_data = {
                     'strategy': strategy,
                     'reason': reason,
-                    'steps': valid_steps
+                    'steps': valid_steps,
                 }
 
                 # Include Enhanced QAG analysis if provided
@@ -893,23 +1034,35 @@ Please analyze these new UI elements using the QAG methodology and generate appr
                         'q1_can_complete_alone': q1_can_complete_alone,
                         'q2_different_aspects': q2_different_aspects,
                         'q3_remaining_redundant': q3_remaining_redundant,
-                        'q4_abstraction_gap': q4_abstraction_gap
+                        'q4_abstraction_gap': q4_abstraction_gap,
                     }
 
                 return result_data
             else:
-                logging.warning('LLM response missing required fields (strategy, steps)')
-                return {'strategy': 'insert', 'reason': 'Invalid response format', 'steps': []}
+                logging.warning(
+                    'LLM response missing required fields (strategy, steps)'
+                )
+                return {
+                    'strategy': 'insert',
+                    'reason': 'Invalid response format',
+                    'steps': [],
+                }
 
         except json.JSONDecodeError as e:
             logging.warning(f'Failed to parse LLM response as JSON: {e}')
             logging.debug(f'Raw LLM response: {response_text[:500]}...')
-            logging.debug(f'Extracted JSON content: {extract_json_from_response(response_text)[:500]}...')
+            logging.debug(
+                f'Extracted JSON content: {extract_json_from_response(response_text)[:500]}...'
+            )
             return {'strategy': 'insert', 'reason': 'JSON parsing failed', 'steps': []}
 
     except Exception as e:
         logging.error(f'Error generating dynamic steps with LLM: {e}')
-        return {'strategy': 'insert', 'reason': f'Generation failed: {str(e)}', 'steps': []}
+        return {
+            'strategy': 'insert',
+            'reason': f'Generation failed: {str(e)}',
+            'steps': [],
+        }
 
 
 def _contains_failure_indicators(text: str) -> bool:
@@ -955,11 +1108,14 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     # Expose recorder to UITester so it can record action/verify steps automatically
     ui_tester_instance.central_case_recorder = case_recorder
 
-    # Note: case tracking is managed by execute_single_case node via start_case/finish_case
-    # No need to set test name here as it's already handled
+    # Deep-copy original steps BEFORE any execution or adaptive recovery
+    # case_steps[i] = new_steps[0] modifies the list in-place, corrupting the original plan
+    original_planned_steps = copy.deepcopy(case.get('steps', []))
 
     system_prompt_string = get_execute_system_prompt(case)
-    logging.debug(f'Generated system prompt length: {len(system_prompt_string)} characters')
+    logging.debug(
+        f'Generated system prompt length: {len(system_prompt_string)} characters'
+    )
 
     llm_config = ui_tester_instance.llm.llm_config
 
@@ -983,7 +1139,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     else:
         # Set default base_url for Gemini if not explicitly configured
         if provider == 'gemini':
-            llm_kwargs['base_url'] = 'https://generativelanguage.googleapis.com/v1beta/openai/'
+            llm_kwargs['base_url'] = (
+                'https://generativelanguage.googleapis.com/v1beta/openai/'
+            )
             logging.debug('Gemini using official OpenAI compatibility endpoint')
 
     # Add temperature with provider-specific defaults
@@ -1020,7 +1178,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 if budget:
                     # Validate: budget_tokens must be < max_tokens (Anthropic API requirement)
                     if budget >= cfg_max_tokens:
-                        recommended_max = int(budget / 0.5)  # 50% ratio as middle ground
+                        recommended_max = int(
+                            budget / 0.5
+                        )  # 50% ratio as middle ground
                         logging.warning(
                             f'Extended Thinking: budget_tokens ({budget}) >= max_tokens ({cfg_max_tokens}). '
                             f'Auto-adjusting budget to {cfg_max_tokens - 1}. '
@@ -1028,8 +1188,13 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         )
                         budget = cfg_max_tokens - 1
 
-                    llm_kwargs['thinking'] = {'type': 'enabled', 'budget_tokens': budget}
-                    logging.debug(f'Claude thinking enabled with budget_tokens={budget} based on effort={effort}')
+                    llm_kwargs['thinking'] = {
+                        'type': 'enabled',
+                        'budget_tokens': budget,
+                    }
+                    logging.debug(
+                        f'Claude thinking enabled with budget_tokens={budget} based on effort={effort}'
+                    )
 
     # For OpenAI and Gemini: Maps reasoning.effort → reasoning_effort parameter
     # Both providers use OpenAI SDK format but with different implementations:
@@ -1045,7 +1210,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 # OpenAI o1/o3 and Gemini 2.5/3.x support: low, medium, high
                 # We map 'minimal' → 'low' since OpenAI doesn't support 'minimal'
                 effort_mapping = {
-                    'minimal': 'low',   # Map minimal to low (OpenAI doesn't have 'minimal')
+                    'minimal': 'low',  # Map minimal to low (OpenAI doesn't have 'minimal')
                     'low': 'low',
                     'medium': 'medium',
                     'high': 'high',
@@ -1056,7 +1221,13 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     if 'model_kwargs' not in llm_kwargs:
                         llm_kwargs['model_kwargs'] = {}
                     llm_kwargs['model_kwargs']['reasoning_effort'] = reasoning_effort
-                    logging.debug(f'{provider.capitalize()} reasoning_effort set to {reasoning_effort} based on effort={effort}')
+                    logging.debug(
+                        f'{provider.capitalize()} reasoning_effort set to {reasoning_effort} based on effort={effort}'
+                    )
+
+    # Add request timeout to prevent indefinite hangs during concurrent execution
+    cfg_timeout = llm_config.get('timeout') or 360
+    logging.debug(f'LLM request timeout set to {cfg_timeout}s')
 
     # Instantiate appropriate LangChain chat model
     if provider == 'anthropic':
@@ -1065,26 +1236,34 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 f"Model '{model_name}' requires 'langchain-anthropic' package. "
                 'Install with: pip install langchain-anthropic'
             )
+        llm_kwargs['default_request_timeout'] = cfg_timeout
         llm = ChatAnthropic(**llm_kwargs)
         logging.debug('Using ChatAnthropic for LangChain integration')
     else:
         # OpenAI and Gemini models use ChatOpenAI (via OpenAI SDK)
+        llm_kwargs['timeout'] = cfg_timeout
         llm = ChatOpenAI(**llm_kwargs)
-        logging.debug(f'Using ChatOpenAI for LangChain integration (provider: {provider})')
+        logging.debug(
+            f'Using ChatOpenAI for LangChain integration (provider: {provider})'
+        )
 
     logging.debug(
         f"LangGraph LLM params resolved: provider={provider}, model={llm_kwargs.get('model')}, "
         f"base_url={llm_kwargs.get('base_url', 'default')}, temperature={llm_kwargs.get('temperature')}, "
         f"top_p={llm_kwargs.get('top_p', 'unset')}"
     )
-    logging.debug(f"LLM configured: {llm_config.get('model')} at {llm_config.get('base_url')}")
+    logging.debug(
+        f"LLM configured: {llm_config.get('model')} at {llm_config.get('base_url')}"
+    )
 
     # Extract enabled_custom_tools from state (passed from GenExecutor via LangGraph)
     enabled_custom_tools = state.get('enabled_custom_tools', [])
     logging.debug(f'Enabled custom tools from config: {enabled_custom_tools}')
 
     # Instantiate tools via registry with custom tools filtering
-    tools = _get_tools(ui_tester_instance, llm_config, case_recorder, enabled_custom_tools)
+    tools = _get_tools(
+        ui_tester_instance, llm_config, case_recorder, enabled_custom_tools
+    )
     logging.debug(f'Tools initialized: {[tool.name for tool in tools]}')
 
     # The prompt now includes the system message
@@ -1098,8 +1277,13 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
     # Create the agent
     agent = create_tool_calling_agent(llm, tools, prompt)
-    agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=False, max_iterations=5,
-                                   return_intermediate_steps=True)
+    agent_executor = AgentExecutor(
+        agent=agent,
+        tools=tools,
+        verbose=False,
+        max_iterations=5,
+        return_intermediate_steps=True,
+    )
     logging.debug('AgentExecutor created successfully')
 
     # --- Execute Preamble Actions to Restore State ---
@@ -1122,7 +1306,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 continue
 
             # Smart check: Skip preamble action if it's a navigation instruction and already on target page
-            if case.get('reset_session', False) and _is_navigation_instruction(instruction_to_execute):
+            if case.get('reset_session', False) and _is_navigation_instruction(
+                instruction_to_execute
+            ):
                 # Check if already on target page
                 try:
                     page = ui_tester_instance.browser_session.page
@@ -1135,7 +1321,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
                     # Basic standardized matching
                     if current_normalized == target_normalized:
-                        logging.debug('Skipping preamble navigation action - already on target page (normalized match)')
+                        logging.debug(
+                            'Skipping preamble navigation action - already on target page (normalized match)'
+                        )
                         continue
 
                     # More flexible domain and path matching
@@ -1145,13 +1333,13 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     target_path = extract_path(target_url)
 
                     if current_domain == target_domain and (
-                            current_path == target_path
-                            or current_path == ''
-                            and target_path == ''
-                            or current_path == '/'
-                            and target_path == ''
-                            or current_path == ''
-                            and target_path == '/'
+                        current_path == target_path
+                        or current_path == ''
+                        and target_path == ''
+                        or current_path == '/'
+                        and target_path == ''
+                        or current_path == ''
+                        and target_path == '/'
                     ):
                         logging.debug(
                             f'Skipping preamble navigation action - domain and path match detected ({current_domain}{current_path})'
@@ -1159,11 +1347,17 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         continue
 
                 except Exception as e:
-                    logging.warning(f'Could not check current URL for preamble action: {e}, proceeding with execution')
+                    logging.warning(
+                        f'Could not check current URL for preamble action: {e}, proceeding with execution'
+                    )
 
-            logging.info(f'Executing preamble action {i + 1}/{len(preamble_actions)}: {instruction_to_execute}')
+            logging.info(
+                f'Executing preamble action {i + 1}/{len(preamble_actions)}: {instruction_to_execute}'
+            )
             preamble_messages.append(
-                HumanMessage(content=f'Now, execute this preamble action: {instruction_to_execute}')
+                HumanMessage(
+                    content=f'Now, execute this preamble action: {instruction_to_execute}'
+                )
             )
 
             try:
@@ -1177,7 +1371,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 # AgentExecutor may not return messages, check for intermediate_steps instead
                 if 'intermediate_steps' in result and result['intermediate_steps']:
                     # Convert intermediate steps to proper message format
-                    intermediate_messages = convert_intermediate_steps_to_messages(result['intermediate_steps'])
+                    intermediate_messages = convert_intermediate_steps_to_messages(
+                        result['intermediate_steps']
+                    )
                     preamble_messages.extend(intermediate_messages)
 
                 end_time = datetime.datetime.now()
@@ -1187,25 +1383,83 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 raw_output = result.get('output', '')
                 # Extract text content for string operations
                 tool_output = extract_text_content(raw_output)
-                logging.debug(f'Preamble action {i + 1} completed in {duration:.2f} seconds')
+                logging.debug(
+                    f'Preamble action {i + 1} completed in {duration:.2f} seconds'
+                )
                 logging.debug(f'Preamble action {i + 1} result: {tool_output[:200]}...')
                 preamble_messages.append(AIMessage(content=tool_output))
 
                 # Safely check for failure in intermediate steps
-                intermediate_output = safe_get_intermediate_step(result, index=0, subindex=1, default='')
+                intermediate_output = safe_get_intermediate_step(
+                    result, index=0, subindex=1, default=''
+                )
                 # Check BOTH tool_output and intermediate_output for failures
-                if _contains_failure_indicators(intermediate_output) or _contains_failure_indicators(tool_output):
+                if _contains_failure_indicators(
+                    intermediate_output
+                ) or _contains_failure_indicators(tool_output):
                     final_summary = f"FINAL_SUMMARY: Preamble action '{instruction_to_execute}' failed, cannot proceed with the test case. Error: {tool_output}"
-                    case_result = {'case_name': case_name, 'final_summary': final_summary, 'status': 'failed'}
                     logging.error(f'Preamble action {i + 1} failed, aborting test case')
-                    return {'case_result': case_result, 'current_case_steps': []}
+                    # Ensure time data is recorded even on early failure
+                    case_recorder.finish_case(final_status='failed', final_summary=final_summary)
+                    recorded_case_data = case_recorder.get_case_data()
+                    if recorded_case_data is not None:
+                        recorded_case_data['original_planned_steps'] = original_planned_steps
+                    # Extract metrics for consistent case_result structure
+                    metrics = recorded_case_data.get('metrics', {}) if recorded_case_data else {}
+                    failed_step_details = _extract_failed_step_details(recorded_case_data)
+                    case_result = {
+                        'case_name': case_name,
+                        'case_id': case.get('case_id', ''),
+                        'final_summary': final_summary,
+                        'status': 'failed',
+                        'failure_type': 'preamble_failure',
+                        'metrics': {
+                            'total_steps': metrics.get('total_steps', 0),
+                            'passed_steps': metrics.get('passed_steps', 0),
+                            'failed_steps': metrics.get('failed_steps', 0),
+                            'warning_steps': metrics.get('warning_steps', 0),
+                            'total_actions': metrics.get('total_actions', 0),
+                        },
+                        'failed_step_details': failed_step_details,
+                    }
+                    return {
+                        'case_result': case_result,
+                        'current_case_steps': [],
+                        'recorded_case': recorded_case_data,
+                    }
 
                 logging.debug(f'Preamble action {i + 1} completed successfully')
             except Exception as e:
                 logging.error(f'Exception during preamble action {i + 1}: {str(e)}')
                 final_summary = f"FINAL_SUMMARY: Preamble action '{instruction_to_execute}' raised exception: {str(e)}"
-                case_result = {'case_name': case_name, 'final_summary': final_summary, 'status': 'failed'}
-                return {'case_result': case_result, 'current_case_steps': []}
+                # Ensure time data is recorded even on exception
+                case_recorder.finish_case(final_status='failed', final_summary=final_summary)
+                recorded_case_data = case_recorder.get_case_data()
+                if recorded_case_data is not None:
+                    recorded_case_data['original_planned_steps'] = original_planned_steps
+                # Extract metrics for consistent case_result structure
+                metrics = recorded_case_data.get('metrics', {}) if recorded_case_data else {}
+                failed_step_details = _extract_failed_step_details(recorded_case_data)
+                case_result = {
+                    'case_name': case_name,
+                    'case_id': case.get('case_id', ''),
+                    'final_summary': final_summary,
+                    'status': 'failed',
+                    'failure_type': 'preamble_exception',
+                    'metrics': {
+                        'total_steps': metrics.get('total_steps', 0),
+                        'passed_steps': metrics.get('passed_steps', 0),
+                        'failed_steps': metrics.get('failed_steps', 0),
+                        'warning_steps': metrics.get('warning_steps', 0),
+                        'total_actions': metrics.get('total_actions', 0),
+                    },
+                    'failed_step_details': failed_step_details,
+                }
+                return {
+                    'case_result': case_result,
+                    'current_case_steps': [],
+                    'recorded_case': recorded_case_data,
+                }
 
         logging.debug('=== All Preamble Actions Completed Successfully ===')
 
@@ -1223,8 +1477,12 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     warning_steps = []  # Track steps with warnings (e.g., UX issues)
     case_modified = False  # Track if case was modified with dynamic steps
     dynamic_generation_count = 0  # Track how many times dynamic generation occurred
-    dom_diff_cache = []  # Stores DOM diff history for debugging and analysis (not used for deduplication)
-    step_retry_tracker = {}  # Track retry attempts per step for adaptive recovery (prevents infinite loops)
+    dom_diff_cache = (
+        []
+    )  # Stores DOM diff history for debugging and analysis (not used for deduplication)
+    step_retry_tracker = (
+        {}
+    )  # Track retry attempts per step for adaptive recovery (prevents infinite loops)
 
     # ===================================================================
     # State Machine Flow: Step-by-Step Test Execution Loop
@@ -1259,17 +1517,21 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             params = step.get('params', {})
             param_str = ', '.join(f'{k}={v!r}' for k, v in params.items())
             instruction_to_execute = f'{action_value}({param_str})'
-            logging.debug(f'Converted unified format custom tool to instruction: {instruction_to_execute}')
+            logging.debug(
+                f'Converted unified format custom tool to instruction: {instruction_to_execute}'
+            )
         else:
             # Standard extraction (supports core fields and custom tool instruction field)
             instruction_to_execute = (
-                step.get('action') or
-                step.get('verify') or
-                step.get('ux_verify') or
-                step.get('instruction')  # Support custom tool instruction
+                step.get('action')
+                or step.get('verify')
+                or step.get('ux_verify')
+                or step.get('instruction')  # Support custom tool instruction
             )
 
-        logging.info(f'Executing Step {i + 1}/{total_steps} ({step_type}), step instruction: {instruction_to_execute}')
+        logging.info(
+            f'Executing Step {i + 1}/{total_steps} ({step_type}), step instruction: {instruction_to_execute}'
+        )
 
         # Define instruction templates for variation
         instruction_templates = [
@@ -1280,15 +1542,16 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         ]
         # Vary the instruction prompt to avoid repetitive context
         prompt_template = instruction_templates[i % len(instruction_templates)]
-        formatted_instruction = prompt_template.format(instruction=instruction_to_execute)
+        formatted_instruction = prompt_template.format(
+            instruction=instruction_to_execute
+        )
 
         # --- Multi-Modal Context Generation ---
         page = ui_tester_instance.browser_session.page
         dp = DeepCrawler(page)
         await dp.crawl(highlight=True, viewport_only=True)
         screenshot, _ = await ui_tester_instance._actions.b64_page_screenshot(
-            file_name=f'step_{i + 1}_vision',
-            context='agent'
+            file_name=f'step_{i + 1}_vision', context='agent'
         )
         await dp.remove_marker()
         logging.debug('Generated highlighted screenshot for the agent.')
@@ -1297,10 +1560,12 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         # Create a new message with the current step's instruction and visual context
         step_content = [{'type': 'text', 'text': formatted_instruction}]
         if screenshot:
-            step_content.append({
-                'type': 'image_url',
-                'image_url': {'url': f'{screenshot}', 'detail': 'low'},
-            })
+            step_content.append(
+                {
+                    'type': 'image_url',
+                    'image_url': {'url': f'{screenshot}', 'detail': 'low'},
+                }
+            )
         step_message = HumanMessage(content=step_content)
 
         # The agent's history includes all prior messages
@@ -1312,12 +1577,19 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         # The last message is the one we just added and should always keep its image.
         for j, msg in enumerate(current_messages):
             # Check if it's not the last message
-            if j < len(current_messages) - 1 and isinstance(msg, HumanMessage) and isinstance(msg.content, list):
+            if (
+                j < len(current_messages) - 1
+                and isinstance(msg, HumanMessage)
+                and isinstance(msg.content, list)
+            ):
                 # It's an older multi-modal message, prune the image.
                 text_content = next(
-                    (item.get('text', '') for item in msg.content
-                     if isinstance(item, dict) and item.get('type') == 'text'),
-                    ''
+                    (
+                        item.get('text', '')
+                        for item in msg.content
+                        if isinstance(item, dict) and item.get('type') == 'text'
+                    ),
+                    '',
                 )
                 pruned_messages.append(HumanMessage(content=text_content))
             else:
@@ -1345,27 +1617,37 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             # Handle intermediate_steps if available (when return_intermediate_steps=True)
             if 'intermediate_steps' in result and result['intermediate_steps']:
                 # Convert intermediate steps to proper message format
-                intermediate_messages = convert_intermediate_steps_to_messages(result['intermediate_steps'])
+                intermediate_messages = convert_intermediate_steps_to_messages(
+                    result['intermediate_steps']
+                )
                 # Append intermediate messages to maintain proper conversation history
                 messages.extend(intermediate_messages)
-                logging.debug(f'Step {i + 1} added {len(intermediate_messages)} intermediate messages')
+                logging.debug(
+                    f'Step {i + 1} added {len(intermediate_messages)} intermediate messages'
+                )
 
             # Get raw output (could be string or list depending on provider)
             raw_output = result.get('output', '')
             # Extract text content for string operations
             tool_output = extract_text_content(raw_output)
 
-            logging.debug(f'Step {i + 1} {step_type} completed in {duration:.2f} seconds')
+            logging.debug(
+                f'Step {i + 1} {step_type} completed in {duration:.2f} seconds'
+            )
             logging.debug(f'Step {i + 1} tool output: {tool_output}')
             messages.append(AIMessage(content=tool_output))
 
             # Check for warnings in the tool output (e.g., UX issues)
             # Check both agent output and raw tool result from intermediate steps
-            intermediate_output = safe_get_intermediate_step(result, index=0, subindex=1, default='')
+            intermediate_output = safe_get_intermediate_step(
+                result, index=0, subindex=1, default=''
+            )
             combined_output = f'{tool_output}\n{intermediate_output}'
             if '[warning]' in combined_output.lower():
                 warning_steps.append(i + 1)
-                logging.info(f'Step {i + 1} completed with warnings (e.g., UX issues detected)')
+                logging.info(
+                    f'Step {i + 1} completed with warnings (e.g., UX issues detected)'
+                )
 
             # ===================================================================
             # PRIORITY 0: Critical failure check (highest priority, independent of is_failure)
@@ -1386,8 +1668,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 if is_unsupported_page:
                     # Determine if current operation is page-agnostic
                     is_agnostic = _is_operation_page_agnostic(
-                        step_type=step_type,
-                        instruction=instruction_to_execute
+                        step_type=step_type, instruction=instruction_to_execute
                     )
 
                     if is_agnostic:
@@ -1403,37 +1684,49 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     else:
                         # DOM-dependent operation on unsupported page: Must abort
                         failed_steps.append(i + 1)
+                        # P4: Get current executed step count for accurate error reporting
+                        current_executed_step = len(case_recorder.current_case_steps)
                         final_summary = (
-                            f'FINAL_SUMMARY: Critical failure at step {i + 1}: '
+                            f'FINAL_SUMMARY: Critical failure at executed step {current_executed_step} '
+                            f'(planned step {i + 1}): '
                             f"'{instruction_to_execute}'. "
                             f'DOM-dependent operation cannot execute on unsupported page type. '
                             f'Error details: {tool_output}'
                         )
                         logging.error(
-                            f'[CRITICAL] Step {i + 1} requires DOM elements but page is unsupported (PDF/plugin). '
-                            f'Aborting remaining {len(case_steps) - i - 1} steps to conserve resources.'
+                            f'[CRITICAL] Executed step {current_executed_step} (planned step {i + 1}) '
+                            f'requires DOM elements but page is unsupported (PDF/plugin). '
+                            f'Aborting remaining {len(case_steps) - i - 1} planned steps to conserve resources.'
                         )
                         break  # Abort test case immediately
                 else:
                     # Other types of critical errors (not unsupported page): Abort immediately
                     failed_steps.append(i + 1)
+                    # P4: Get current executed step count for accurate error reporting
+                    current_executed_step = len(case_recorder.current_case_steps)
                     final_summary = (
-                        f'FINAL_SUMMARY: Critical failure at step {i + 1}: '
+                        f'FINAL_SUMMARY: Critical failure at executed step {current_executed_step} '
+                        f'(planned step {i + 1}): '
                         f"'{instruction_to_execute}'. "
                         f'Error details: {tool_output}'
                     )
                     logging.error(
-                        f'[CRITICAL] Step {i + 1} encountered critical failure. '
-                        f'Aborting remaining {len(case_steps) - i - 1} steps to conserve resources.'
+                        f'[CRITICAL] Executed step {current_executed_step} (planned step {i + 1}) '
+                        f'encountered critical failure. '
+                        f'Aborting remaining {len(case_steps) - i - 1} planned steps to conserve resources.'
                     )
                     break  # Abort test case immediately
 
             # ===================================================================
             # PRIORITY 1: Regular failure check (only executed when not critical)
             # ===================================================================
-            is_failure = _contains_failure_indicators(intermediate_output) or _contains_failure_indicators(tool_output)
-            is_element_not_found = ('[critical_error:element_not_found]' in tool_output.lower() or
-                                    '[critical_error:element_not_found]' in intermediate_output.lower())
+            is_failure = _contains_failure_indicators(
+                intermediate_output
+            ) or _contains_failure_indicators(tool_output)
+            is_element_not_found = (
+                '[critical_error:element_not_found]' in tool_output.lower()
+                or '[critical_error:element_not_found]' in intermediate_output.lower()
+            )
 
             if is_failure:
                 # Priority 1: Try recovery for ELEMENT_NOT_FOUND (recoverable critical error)
@@ -1449,8 +1742,11 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         if retry_count == 0:
                             # Layer 1: Simple retry after page stabilization
                             logging.info(
-                                f'Step {i + 1} element not found, attempting Layer 1 recovery (simple retry after stabilization)')
-                            await asyncio.sleep(RETRY_STABILIZATION_DELAY)  # Let page stabilize
+                                f'Step {i + 1} element not found, attempting Layer 1 recovery (simple retry after stabilization)'
+                            )
+                            await asyncio.sleep(
+                                RETRY_STABILIZATION_DELAY
+                            )  # Let page stabilize
                             step_retry_tracker[retry_key] = 1
                             # Don't increment i, will retry same step
                             continue
@@ -1458,17 +1754,24 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         elif retry_count == 1:
                             # Layer 2: LLM-based adaptive replanning
                             logging.info(
-                                f'Step {i + 1} failed twice, attempting Layer 2 recovery (LLM adaptive replanning)')
+                                f'Step {i + 1} failed twice, attempting Layer 2 recovery (LLM adaptive replanning)'
+                            )
 
                             # Get current page screenshot for LLM analysis
                             try:
-                                recovery_screenshot, _ = await ui_tester_instance._actions.b64_page_screenshot(
-                                    file_name=f'step_{i + 1}_recovery_attempt_{retry_count + 1}',
-                                    context='error'
+                                recovery_screenshot, _ = (
+                                    await ui_tester_instance._actions.b64_page_screenshot(
+                                        file_name=f'step_{i + 1}_recovery_attempt_{retry_count + 1}',
+                                        context='error',
+                                    )
                                 )
                             except Exception as e:
-                                logging.error(f'Failed to capture recovery screenshot: {e}')
-                                recovery_screenshot = screenshot  # Fallback to last screenshot
+                                logging.error(
+                                    f'Failed to capture recovery screenshot: {e}'
+                                )
+                                recovery_screenshot = (
+                                    screenshot  # Fallback to last screenshot
+                                )
 
                             # Call unified dynamic adjustment function in failure recovery mode
                             recovery_result = await generate_dynamic_steps_with_llm(
@@ -1479,7 +1782,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 executed_steps=i + 1,
                                 llm=llm,
                                 current_case=case,
-                                screenshot=recovery_screenshot
+                                screenshot=recovery_screenshot,
                             )
 
                             strategy = recovery_result.get('strategy')
@@ -1490,38 +1793,59 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 new_steps = recovery_result.get('steps', [])
                                 if new_steps and len(new_steps) > 0:
                                     logging.info(
-                                        f'Adapting step {i + 1} with new instruction (confidence: {confidence:.2f})')
-                                    logging.debug(f"Adaptation reason: {recovery_result.get('reason', 'N/A')}")
+                                        f'Adapting step {i + 1} with new instruction (confidence: {confidence:.2f})'
+                                    )
+                                    logging.debug(
+                                        f"Adaptation reason: {recovery_result.get('reason', 'N/A')}"
+                                    )
                                     case_steps[i] = new_steps[0]
-                                    case_modified = True  # Mark case as modified for consistency
+                                    case_modified = (
+                                        True  # Mark case as modified for consistency
+                                    )
                                     step_retry_tracker[retry_key] = 2  # Mark as adapted
                                     continue  # Retry with adapted instruction
 
                             elif strategy == 'skip':
                                 logging.warning(
-                                    f"Skipping step {i + 1} based on recovery analysis: {recovery_result.get('reason', 'N/A')}")
+                                    f"Skipping step {i + 1} based on recovery analysis: {recovery_result.get('reason', 'N/A')}"
+                                )
                                 failed_steps.append(i + 1)
                                 # i will increment normally, skip this step
 
                             elif strategy == 'abort':
+                                # P4: Get current executed step count for accurate error reporting
+                                current_executed_step = len(
+                                    case_recorder.current_case_steps
+                                )
                                 logging.error(
-                                    f"Aborting test at step {i + 1} based on recovery analysis: {recovery_result.get('reason', 'N/A')}")
-                                final_summary = f"FINAL_SUMMARY: Test aborted at step {i + 1}. {recovery_result.get('reason', 'Critical failure')}"
+                                    f'Aborting test at executed step {current_executed_step} (planned step {i + 1}) '
+                                    f"based on recovery analysis: {recovery_result.get('reason', 'N/A')}"
+                                )
+                                final_summary = (
+                                    f'FINAL_SUMMARY: Test aborted at executed step {current_executed_step} '
+                                    f"(planned step {i + 1}). {recovery_result.get('reason', 'Critical failure')}"
+                                )
                                 break
 
                         else:
                             # Already adapted but still failing - mark as failed and continue
                             failed_steps.append(i + 1)
-                            logging.error(f'Step {i + 1} failed even after adaptation, marking as failed')
+                            logging.error(
+                                f'Step {i + 1} failed even after adaptation, marking as failed'
+                            )
                     else:
                         # Adaptive recovery disabled for ELEMENT_NOT_FOUND
                         failed_steps.append(i + 1)
-                        logging.warning(f'Step {i + 1} element not found, but adaptive recovery is disabled')
+                        logging.warning(
+                            f'Step {i + 1} element not found, but adaptive recovery is disabled'
+                        )
 
                 # Handle other failures: Non-critical failures not caused by ELEMENT_NOT_FOUND
                 # (e.g., GoBack with no history, operation timeout, permission issues)
                 else:
-                    logging.warning(f'Step {i + 1} failed (non-ELEMENT_NOT_FOUND): {tool_output}')
+                    logging.warning(
+                        f'Step {i + 1} failed (non-ELEMENT_NOT_FOUND): {tool_output}'
+                    )
 
                     # Extended LLM adaptive recovery for all failure types
                     dynamic_config = _get_dynamic_config(state)
@@ -1547,12 +1871,16 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 # Prepare context for LLM recovery (use correct variable: ui_tester_instance)
                                 screenshot_b64 = None
                                 try:
-                                    screenshot_b64, _ = await ui_tester_instance._actions.b64_page_screenshot(
-                                        file_name=f'recovery_step_{i + 1}',
-                                        context='adaptive_recovery'
+                                    screenshot_b64, _ = (
+                                        await ui_tester_instance._actions.b64_page_screenshot(
+                                            file_name=f'recovery_step_{i + 1}',
+                                            context='adaptive_recovery',
+                                        )
                                     )
                                 except Exception as e:
-                                    logging.warning(f'Failed to capture screenshot for recovery: {e}')
+                                    logging.warning(
+                                        f'Failed to capture screenshot for recovery: {e}'
+                                    )
 
                                 # Call LLM adaptive recovery (aligned with ELEMENT_NOT_FOUND branch parameters)
                                 recovery_result = await generate_dynamic_steps_with_llm(
@@ -1563,13 +1891,15 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                     executed_steps=i + 1,  # Use int, not list
                                     llm=llm,
                                     current_case=case,  # Include current_case for context
-                                    screenshot=screenshot_b64
+                                    screenshot=screenshot_b64,
                                 )
 
                                 # Process recovery strategy
                                 strategy = recovery_result.get('strategy', 'abort')
                                 new_steps = recovery_result.get('steps', [])
-                                reason = recovery_result.get('reason', 'No reason provided')
+                                reason = recovery_result.get(
+                                    'reason', 'No reason provided'
+                                )
 
                                 logging.info(
                                     f'[ADAPTIVE_RECOVERY] Strategy: {strategy}, '
@@ -1580,7 +1910,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                     # Replace current step with modified instruction
                                     case_steps[i] = new_steps[0]
                                     case_modified = True
-                                    step_retry_tracker[retry_key] = retry_count + 1  # Track retry count
+                                    step_retry_tracker[retry_key] = (
+                                        retry_count + 1
+                                    )  # Track retry count
                                     logging.info(
                                         f'[ADAPTIVE_RECOVERY] Modified step {i + 1}: '
                                         f"{new_steps[0].get('action') or new_steps[0].get('verify')}"
@@ -1599,13 +1931,18 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
                                 elif strategy == 'abort':
                                     # Cannot recover, abort test
+                                    # P4: Get current executed step count for accurate error reporting
+                                    current_executed_step = len(
+                                        case_recorder.current_case_steps
+                                    )
                                     logging.error(
-                                        f'[ADAPTIVE_RECOVERY] Cannot recover from step {i + 1} failure. '
-                                        f'Aborting test. Reason: {reason}'
+                                        f'[ADAPTIVE_RECOVERY] Cannot recover from executed step {current_executed_step} '
+                                        f'(planned step {i + 1}) failure. Aborting test. Reason: {reason}'
                                     )
                                     failed_steps.append(i + 1)
                                     final_summary = (
-                                        f'FINAL_SUMMARY: Unrecoverable failure at step {i + 1}: '
+                                        f'FINAL_SUMMARY: Unrecoverable failure at executed step {current_executed_step} '
+                                        f'(planned step {i + 1}): '
                                         f"'{instruction_to_execute}'. "
                                         f'LLM adaptive recovery determined abortion necessary. '
                                         f'Reason: {reason}'
@@ -1633,11 +1970,15 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             # Check for objective achievement signal
             is_achieved, achievement_reason = _is_objective_achieved(tool_output)
             if is_achieved:
-                logging.info(f'Test objective achieved at step {i + 1}: {achievement_reason}')
+                logging.info(
+                    f'Test objective achieved at step {i + 1}: {achievement_reason}'
+                )
                 final_summary = f'FINAL_SUMMARY: Test case completed successfully with early termination at step {i + 1}. {achievement_reason}'
                 break
 
-            logging.debug(f"Step {i + 1} completed {'successfully' if (i + 1) not in failed_steps else 'with issues'}.")
+            logging.debug(
+                f"Step {i + 1} completed {'successfully' if (i + 1) not in failed_steps else 'with issues'}."
+            )
 
             # --- Dynamic Step Generation ---
             # Triggers when new DOM elements (≥ threshold) appear after actions
@@ -1652,16 +1993,28 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
                 if dynamic_enabled:
                     # Extract DOM diff from tool output (safely access intermediate_steps)
-                    intermediate_output = safe_get_intermediate_step(result, index=0, subindex=1, default='')
+                    intermediate_output = safe_get_intermediate_step(
+                        result, index=0, subindex=1, default=''
+                    )
                     dom_diff = extract_dom_diff_from_output(intermediate_output)
 
-                    if dom_diff and len(dom_diff) >= min_elements_threshold and dom_diff not in dom_diff_cache:
-                        logging.info(f'Detected {len(dom_diff)} new elements, starting dynamic test step generation')
+                    if (
+                        dom_diff
+                        and len(dom_diff) >= min_elements_threshold
+                        and dom_diff not in dom_diff_cache
+                    ):
+                        logging.info(
+                            f'Detected {len(dom_diff)} new elements, starting dynamic test step generation'
+                        )
 
                         try:
                             # Capture screenshot for visual context after successful step execution
-                            logging.debug('Capturing screenshot for dynamic step generation context')
-                            screenshot, _ = await ui_tester_instance._actions.b64_page_screenshot()
+                            logging.debug(
+                                'Capturing screenshot for dynamic step generation context'
+                            )
+                            screenshot, _ = (
+                                await ui_tester_instance._actions.b64_page_screenshot()
+                            )
 
                             # Enhance objective with generation context for smarter LLM decision-making
                             enhanced_objective = case.get('objective', '')
@@ -1684,7 +2037,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 current_case=case,
                                 screenshot=screenshot,
                                 tool_output=tool_output,
-                                step_success=step_success
+                                step_success=step_success,
                             )
 
                             # Handle dynamic steps based on LLM strategy decision
@@ -1694,7 +2047,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
                             if dynamic_steps:
                                 logging.info(
-                                    f"Generated {len(dynamic_steps)} dynamic test steps with strategy '{strategy}': {reason}")
+                                    f"Generated {len(dynamic_steps)} dynamic test steps with strategy '{strategy}': {reason}"
+                                )
                                 case_steps = case.get('steps', [])
 
                                 # Increment generation count since we're actually adding steps
@@ -1705,41 +2059,61 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                     """Check if two steps are similar to avoid
                                     duplicates."""
                                     if 'action' in step1 and 'action' in step2:
-                                        return step1['action'].lower().strip() == step2['action'].lower().strip()
+                                        return (
+                                            step1['action'].lower().strip()
+                                            == step2['action'].lower().strip()
+                                        )
                                     if 'verify' in step1 and 'verify' in step2:
-                                        return step1['verify'].lower().strip() == step2['verify'].lower().strip()
+                                        return (
+                                            step1['verify'].lower().strip()
+                                            == step2['verify'].lower().strip()
+                                        )
                                     return False
 
                                 formatted_dynamic_steps = []
-                                executed_and_remaining = case_steps  # All existing steps
+                                executed_and_remaining = (
+                                    case_steps  # All existing steps
+                                )
 
                                 for dyn_step in dynamic_steps:
                                     # Check for duplicates before adding
                                     is_duplicate = False
                                     for existing_step in executed_and_remaining:
                                         if is_similar_step(dyn_step, existing_step):
-                                            logging.debug(f'Skipping duplicate step: {dyn_step}')
+                                            logging.debug(
+                                                f'Skipping duplicate step: {dyn_step}'
+                                            )
                                             is_duplicate = True
                                             break
 
                                     if not is_duplicate:
                                         if 'action' in dyn_step:
-                                            formatted_dynamic_steps.append({'action': dyn_step['action']})
+                                            formatted_dynamic_steps.append(
+                                                {'action': dyn_step['action']}
+                                            )
                                         if 'verify' in dyn_step:
-                                            formatted_dynamic_steps.append({'verify': dyn_step['verify']})
+                                            formatted_dynamic_steps.append(
+                                                {'verify': dyn_step['verify']}
+                                            )
 
                                 # Apply strategy: insert or replace
                                 if strategy == 'replace':
                                     # Replace all remaining steps with new steps
-                                    case_steps = case_steps[:i + 1] + formatted_dynamic_steps
+                                    case_steps = (
+                                        case_steps[: i + 1] + formatted_dynamic_steps
+                                    )
                                     logging.info(
-                                        f'Replaced remaining steps with {len(formatted_dynamic_steps)} dynamic steps')
+                                        f'Replaced remaining steps with {len(formatted_dynamic_steps)} dynamic steps'
+                                    )
                                 else:
                                     # Insert steps at current position
                                     insert_position = i + 1
-                                    case_steps[insert_position:insert_position] = formatted_dynamic_steps
+                                    case_steps[insert_position:insert_position] = (
+                                        formatted_dynamic_steps
+                                    )
                                     logging.info(
-                                        f'Inserted {len(formatted_dynamic_steps)} dynamic steps at position {insert_position}')
+                                        f'Inserted {len(formatted_dynamic_steps)} dynamic steps at position {insert_position}'
+                                    )
 
                                 case['steps'] = case_steps
 
@@ -1748,23 +2122,34 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
                                 # Mark the case as modified for later saving
                                 case['_dynamic_steps_added'] = True
-                                case['_dynamic_steps_count'] = len(formatted_dynamic_steps)
+                                case['_dynamic_steps_count'] = len(
+                                    formatted_dynamic_steps
+                                )
                                 case['_dynamic_strategy'] = strategy
                                 case['_dynamic_reason'] = reason
                                 case_modified = True
 
-                                logging.info(f"Applied '{strategy}' strategy. Total steps now: {total_steps}")
+                                logging.info(
+                                    f"Applied '{strategy}' strategy. Total steps now: {total_steps}"
+                                )
                             else:
-                                logging.debug(f'LLM determined no dynamic steps needed: {reason}')
+                                logging.debug(
+                                    f'LLM determined no dynamic steps needed: {reason}'
+                                )
 
                         except Exception as dyn_gen_e:
-                            logging.error(f'Error in dynamic step generation process: {dyn_gen_e}')
+                            logging.error(
+                                f'Error in dynamic step generation process: {dyn_gen_e}'
+                            )
                     else:
                         if dom_diff:
                             logging.debug(
-                                f'Detected {len(dom_diff)} new elements, but below threshold {min_elements_threshold}, skipping dynamic step generation')
+                                f'Detected {len(dom_diff)} new elements, but below threshold {min_elements_threshold}, skipping dynamic step generation'
+                            )
                         else:
-                            logging.debug('No DOM changes detected, skipping dynamic step generation')
+                            logging.debug(
+                                'No DOM changes detected, skipping dynamic step generation'
+                            )
                     # Store DOM diff for debugging/analysis (not used for deduplication - each step gets fresh analysis)
                     dom_diff_cache.append(dom_diff)
 
@@ -1785,6 +2170,21 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     if 'final_summary:' not in final_summary.lower():
         logging.debug('All test steps completed, generating final summary')
         logging.debug(f'Failed steps detected during execution: {failed_steps}')
+
+        # P4 Enhancement: Get executed steps count from case_recorder
+        # This provides accurate step count including UI Agent's sub-steps
+        executed_steps_count = len(case_recorder.current_case_steps)
+        planned_steps_count = len(case_steps)
+        step_expansion_ratio = (
+            round(executed_steps_count / planned_steps_count, 2)
+            if planned_steps_count > 0
+            else 1.0
+        )
+
+        logging.debug(
+            f'Step counts: {planned_steps_count} planned steps → '
+            f'{executed_steps_count} executed steps (expansion ratio: {step_expansion_ratio}x)'
+        )
 
         # Helper function to sanitize messages for summary generation
         def _sanitize_message_for_summary(msg, max_length: int = 250) -> str:
@@ -1807,9 +2207,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
             # Remove base64 image URLs (primary trigger for content filter)
             content = re.sub(
-                r'data:image/[^;]+;base64,[A-Za-z0-9+/=]+',
-                '[IMAGE_REMOVED]',
-                content
+                r'data:image/[^;]+;base64,[A-Za-z0-9+/=]+', '[IMAGE_REMOVED]', content
             )
 
             # Remove HTML tags (can trigger XSS detection)
@@ -1820,7 +2218,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 r'\b(denied|blocked|failed|error|forbidden|hack|exploit|inject)\b',
                 '[X]',
                 content,
-                flags=re.IGNORECASE
+                flags=re.IGNORECASE,
             )
 
             # Remove DOM dumps (can be large and trigger filters)
@@ -1829,7 +2227,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     r'pageDescription.*?(?===|$)',
                     '[DOM_SUMMARY]',
                     content,
-                    flags=re.DOTALL
+                    flags=re.DOTALL,
                 )
 
             # Truncate to max length
@@ -1838,21 +2236,26 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         # Use the LLM directly to generate the summary (not through the agent)
         try:
             # Prepare context for summary generation
+            # P4 Enhancement: Use executed steps count for accurate reporting
             summary_prompt = f"""Based on the test execution of case "{case_name}", generate a summary.
 
 Test Objective: {case.get('objective', 'Not specified')}
 Success Criteria: {case.get('success_criteria', ['Not specified'])}
-Total Steps Executed: {total_steps}
+Planned Steps: {planned_steps_count} steps
+Executed Steps: {executed_steps_count} steps (expansion ratio: {step_expansion_ratio}x)
 Failed Steps: {failed_steps if failed_steps else 'None'}
+
+**Important**: Use executed step numbers when referencing steps. The test had {planned_steps_count} planned steps,
+but the UI Agent executed {executed_steps_count} detailed steps (including sub-steps for element location, scrolling, etc.).
 
 Generate a test summary in this format:
 FINAL_SUMMARY: Test case "{case_name}" [status]. [details about execution]. [objective achievement status].
 
 If all steps passed without failures:
-FINAL_SUMMARY: Test case "{case_name}" completed successfully. All {total_steps} test steps executed without critical errors. Test objective achieved: [confirmation]. All success criteria met.
+FINAL_SUMMARY: Test case "{case_name}" completed successfully. All {executed_steps_count} executed steps completed without critical errors. Test objective achieved: [confirmation]. All success criteria met.
 
 If there were failures:
-FINAL_SUMMARY: Test case "{case_name}" failed at step [X]. Error: [description]. Recovery attempts: [if any]. Recommendation: [suggested fix]."""
+FINAL_SUMMARY: Test case "{case_name}" failed at executed step [X] (out of {executed_steps_count} total executed steps). Error: [description]. Recovery attempts: [if any]. Recommendation: [suggested fix]."""
 
             # Get and sanitize recent messages (reduced from 6 to 4 to minimize content filter risk)
             recent_messages = []
@@ -1865,9 +2268,13 @@ FINAL_SUMMARY: Test case "{case_name}" failed at step [X]. Error: [description].
                     recent_messages.append(f'Agent: {sanitized}')
 
             context = '\n'.join(recent_messages)
-            logging.debug(f'Sanitized context for summary generation ({len(context)} chars)')
+            logging.debug(
+                f'Sanitized context for summary generation ({len(context)} chars)'
+            )
 
-            full_prompt = f'{summary_prompt}\n\nRecent test execution context:\n{context}'
+            full_prompt = (
+                f'{summary_prompt}\n\nRecent test execution context:\n{context}'
+            )
 
             # Retry logic to handle content filter errors
             agent_output = None
@@ -1875,7 +2282,9 @@ FINAL_SUMMARY: Test case "{case_name}" failed at step [X]. Error: [description].
 
             for attempt in range(max_retries):
                 try:
-                    logging.debug(f'Attempting summary generation (attempt {attempt + 1}/{max_retries})')
+                    logging.debug(
+                        f'Attempting summary generation (attempt {attempt + 1}/{max_retries})'
+                    )
                     response = await llm.ainvoke(full_prompt)
 
                     # Successfully got response
@@ -1891,8 +2300,9 @@ FINAL_SUMMARY: Test case "{case_name}" failed at step [X]. Error: [description].
                     error_msg = str(llm_error)
 
                     # Check if this is a content filter error
-                    is_content_filter = ('content' in error_msg.lower() and
-                                         ('filter' in error_msg.lower() or 'policy' in error_msg.lower()))
+                    is_content_filter = 'content' in error_msg.lower() and (
+                        'filter' in error_msg.lower() or 'policy' in error_msg.lower()
+                    )
 
                     if is_content_filter:
                         logging.warning(
@@ -1901,7 +2311,9 @@ FINAL_SUMMARY: Test case "{case_name}" failed at step [X]. Error: [description].
 
                         if attempt < max_retries - 1:
                             # Retry with minimal context (no message history)
-                            logging.info('Retrying with minimal context (no message history)')
+                            logging.info(
+                                'Retrying with minimal context (no message history)'
+                            )
                             full_prompt = f"""{summary_prompt}
 
 Test case: {case_name}
@@ -1912,11 +2324,15 @@ Generate a brief summary without referencing specific execution details."""
                             await asyncio.sleep(0.5)  # Brief delay before retry
                         else:
                             # Max retries reached
-                            logging.error('Max retries reached for summary generation, using fallback')
+                            logging.error(
+                                'Max retries reached for summary generation, using fallback'
+                            )
                             break
                     else:
                         # Non-content-filter error, don't retry
-                        logging.error(f'Non-content-filter error in summary generation: {error_msg}')
+                        logging.error(
+                            f'Non-content-filter error in summary generation: {error_msg}'
+                        )
                         break
 
             # If LLM failed after retries, agent_output will be None and fallback will be used below
@@ -1927,23 +2343,34 @@ Generate a brief summary without referencing specific execution details."""
             # Ensure the summary has the correct format
             if agent_output and not agent_output.strip().startswith('FINAL_SUMMARY:'):
                 # Auto-format the response if it doesn't follow the expected format
-                logging.debug('LLM summary missing FINAL_SUMMARY prefix, auto-formatting')
+                logging.debug(
+                    'LLM summary missing FINAL_SUMMARY prefix, auto-formatting'
+                )
                 if not failed_steps:
-                    final_summary = f"FINAL_SUMMARY: Test case \"{case_name}\" completed successfully. All {total_steps} test steps executed. {agent_output}"
+                    # P4: Use executed steps count
+                    final_summary = f'FINAL_SUMMARY: Test case "{case_name}" completed successfully. All {executed_steps_count} executed steps completed. {agent_output}'
                 else:
-                    final_summary = f"FINAL_SUMMARY: Test case \"{case_name}\" failed. {agent_output}"
+                    final_summary = (
+                        f'FINAL_SUMMARY: Test case "{case_name}" failed. {agent_output}'
+                    )
             else:
-                final_summary = agent_output if agent_output else f"FINAL_SUMMARY: Test case \"{case_name}\" completed all {total_steps} steps."
+                # P4: Use executed steps count
+                final_summary = (
+                    agent_output
+                    if agent_output
+                    else f'FINAL_SUMMARY: Test case "{case_name}" completed all {executed_steps_count} executed steps.'
+                )
 
             logging.debug(f'Final summary generated: {final_summary}')
 
         except Exception as e:
             logging.error(f'Exception during final summary generation: {str(e)}')
             # Provide a reasonable default summary based on what we know
+            # P4: Use executed steps count
             if not failed_steps:
-                final_summary = f"FINAL_SUMMARY: Test case \"{case_name}\" completed successfully. All {total_steps} test steps executed without detected failures."
+                final_summary = f'FINAL_SUMMARY: Test case "{case_name}" completed successfully. All {executed_steps_count} executed steps completed without detected failures.'
             else:
-                final_summary = f"FINAL_SUMMARY: Test case \"{case_name}\" completed with failures at steps {failed_steps}. Review execution logs for details."
+                final_summary = f'FINAL_SUMMARY: Test case "{case_name}" completed with failures at steps {failed_steps}. Review execution logs for details.'
 
     # Determine test case status with improved logic
     final_summary_lower = final_summary.lower()
@@ -1957,7 +2384,7 @@ Generate a brief summary without referencing specific execution details."""
         'success criteria met',
         'all test steps executed',
         'without critical errors',
-        'passed'
+        'passed',
     ]
 
     failure_indicators = [
@@ -1968,7 +2395,7 @@ Generate a brief summary without referencing specific execution details."""
         'test case failed',
         'test objective not achieved',
         'aborted at step',
-        'unrecoverable failure'
+        'unrecoverable failure',
     ]
 
     warning_indicators = [
@@ -1978,9 +2405,15 @@ Generate a brief summary without referencing specific execution details."""
     ]
 
     # Check for indicators
-    has_success = any(indicator in final_summary_lower for indicator in success_indicators)
-    has_failure = any(indicator in final_summary_lower for indicator in failure_indicators)
-    has_warning = any(indicator in final_summary_lower for indicator in warning_indicators)
+    has_success = any(
+        indicator in final_summary_lower for indicator in success_indicators
+    )
+    has_failure = any(
+        indicator in final_summary_lower for indicator in failure_indicators
+    )
+    has_warning = any(
+        indicator in final_summary_lower for indicator in warning_indicators
+    )
 
     # Determine status with clear priority (most reliable first)
     # Priority 1: Actual execution failures collected during test run
@@ -1999,10 +2432,13 @@ Generate a brief summary without referencing specific execution details."""
     # Check if there are warning steps - adjust status to "warning" if test passed but has warnings
     if status == 'passed' and (warning_steps or has_warning):
         status = 'warning'
-        logging.info(f"Test case '{case_name}' passed but has warnings at steps: {warning_steps}")
+        logging.info(
+            f"Test case '{case_name}' passed but has warnings at steps: {warning_steps}"
+        )
 
     logging.debug(
-        f"Test case '{case_name}' final status: {status} (success indicators: {has_success}, failure indicators: {has_failure}, warning steps: {warning_steps})")
+        f"Test case '{case_name}' final status: {status} (success indicators: {has_success}, failure indicators: {has_failure}, warning steps: {warning_steps})"
+    )
 
     # Classify failure type if the test case failed
     failure_type = None
@@ -2010,11 +2446,40 @@ Generate a brief summary without referencing specific execution details."""
         failure_type = _classify_failure_type(final_summary, failed_steps)
         logging.info(f"Test case '{case_name}' failed with type: {failure_type}")
 
+    logging.debug(f'=== Agent Worker Completed for {case_name}. ===')
+
+    # Finalize case recording with final status (this calculates metrics)
+    case_recorder.finish_case(final_status=status, final_summary=final_summary)
+
+    # Get recorded case data (contains metrics and step details)
+    recorded_case_data = case_recorder.get_case_data()
+
+    # Attach original planned steps (before adaptive recovery modifications)
+    # This allows case_synchronizer to correctly populate planned_steps
+    if recorded_case_data is not None:
+        recorded_case_data['original_planned_steps'] = original_planned_steps
+
+    # Extract metrics and failed step details for reflection phase
+    # This enriches case_result without additional file I/O
+    metrics = recorded_case_data.get('metrics', {}) if recorded_case_data else {}
+    failed_step_details = _extract_failed_step_details(recorded_case_data)
+
+    # Build enriched case_result with detailed metrics for reflection phase
     case_result = {
         'case_name': case_name,
+        'case_id': case.get('case_id', ''),
         'final_summary': final_summary,
         'status': status,
         'failure_type': failure_type,
+        # Enriched fields for better reflection/REPLAN decisions
+        'metrics': {
+            'total_steps': metrics.get('total_steps', 0),
+            'passed_steps': metrics.get('passed_steps', 0),
+            'failed_steps': metrics.get('failed_steps', 0),
+            'warning_steps': metrics.get('warning_steps', 0),
+            'total_actions': metrics.get('total_actions', 0),
+        },
+        'failed_step_details': failed_step_details,
     }
 
     # Include the modified case if dynamic steps were added
@@ -2022,17 +2487,10 @@ Generate a brief summary without referencing specific execution details."""
     if case_modified:
         result['modified_case'] = case
 
-    logging.debug(f'=== Agent Worker Completed for {case_name}. ===')
+    # Include recorded case data for detailed reporting
+    result['recorded_case'] = recorded_case_data
 
-    # Finalize case recording with final status
-    case_recorder.finish_case(final_status=status, final_summary=final_summary)
-
-    # Get recorded case data
-    result_with_case = dict(result)
-    recorded_case_data = case_recorder.get_case_data()
-    result_with_case['recorded_case'] = recorded_case_data
-
-    return result_with_case
+    return result
 
 
 def _is_objective_achieved(tool_output: str) -> tuple[bool, str]:
@@ -2093,7 +2551,9 @@ def _is_operation_page_agnostic(step_type: str, instruction: str) -> bool:
     # Check if instruction contains action type names directly
     for action_type in [ActionType.GO_BACK, ActionType.SLEEP]:
         if action_type in instruction:
-            logging.debug(f'Page-agnostic action detected via action type: {action_type}')
+            logging.debug(
+                f'Page-agnostic action detected via action type: {action_type}'
+            )
             return True
 
     # Priority 2: Keyword matching (handles varied phrasings)
@@ -2156,6 +2616,45 @@ def _classify_failure_type(final_summary: str, failed_steps: list = None) -> str
     return 'recoverable'
 
 
+def _extract_failed_step_details(
+    recorded_data: Optional[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Extract detailed information about failed steps from recorded case data.
+
+    This provides detailed failure context for the reflection phase to make
+    better REPLAN decisions without requiring additional file I/O.
+
+    Args:
+        recorded_data: The recorded case data from CentralCaseRecorder.get_case_data()
+
+    Returns:
+        List of failed step details, each containing:
+        - step_id: Step identifier
+        - description: What the step was trying to do
+        - status: The failure status (failed/error/failure)
+        - type: Step type (action/verify/ux_verify)
+    """
+    if not recorded_data:
+        return []
+
+    steps = recorded_data.get('steps', [])
+    failed_details: List[Dict[str, Any]] = []
+
+    for step in steps:
+        status = (step.get('status') or '').lower()
+        if status in ('failed', 'error', 'failure'):
+            failed_details.append(
+                {
+                    'step_id': step.get('id'),
+                    'description': step.get('description', ''),
+                    'status': step.get('status'),
+                    'type': step.get('type', 'action'),
+                }
+            )
+
+    return failed_details
+
+
 def _is_navigation_instruction(instruction: str) -> bool:
     """Determine if the instruction is a navigation instruction.
 
@@ -2195,7 +2694,11 @@ def _is_navigation_instruction(instruction: str) -> bool:
             return True
 
     # Check URL patterns
-    url_patterns = [r'https?://[^\s]+', r'www\.[^\s]+', r'\.com|\.org|\.net|\.edu|\.gov']
+    url_patterns = [
+        r'https?://[^\s]+',
+        r'www\.[^\s]+',
+        r'\.com|\.org|\.net|\.edu|\.gov',
+    ]
 
     for pattern in url_patterns:
         if re.search(pattern, instruction_lower):

@@ -116,6 +116,7 @@ class UITester:
         all_plans = []  # Collect all planning iterations for modelIO
         all_ordered_screenshots = []  # Collect all screenshots in chronological order
         all_ordered_screenshots_paths = []  # Collect all screenshots paths in chronological order
+        plan_json = {}  # Pre-initialize for error handler safety
         final_execution_result = {'success': False, 'message': 'No execution performed'}
         last_check_thought = None
         global_before_screenshot = None  # Will be assigned in the first iteration
@@ -296,7 +297,7 @@ class UITester:
                 'actions': execution_steps,  # All actions aggregated together
                 'screenshots': screenshots_list,  # All screenshots aggregated together
                 'screenshots_paths': screenshots_paths_list,  # All screenshots paths aggregated together
-                'modelIO': json.dumps(all_plans, indent=2, ensure_ascii=False) if all_plans else '',
+                'modelIO': json.dumps(all_plans, indent=2, ensure_ascii=False, default=str) if all_plans else '',
                 'status': status_str,
                 'start_time': start_time,
                 'end_time': end_time,
@@ -329,18 +330,13 @@ class UITester:
 
             end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-            # Safely get possibly undefined variables
-            safe_all_ordered_screenshots = locals().get('all_ordered_screenshots', [])
-            safe_all_ordered_screenshots_paths = locals().get('all_ordered_screenshots_paths', [])
-            safe_plan_json = locals().get('plan_json', {})
-
             # Build error case execution step dictionary structure
-            error_screenshots = [{'type': 'base64', 'data': ss} for ss in safe_all_ordered_screenshots if ss]
-            error_screenshots_paths = [{'type': 'path', 'data': path} for path in safe_all_ordered_screenshots_paths if path]
+            error_screenshots = [{'type': 'base64', 'data': ss} for ss in all_ordered_screenshots if ss]
+            error_screenshots_paths = [{'type': 'path', 'data': path} for path in all_ordered_screenshots_paths if path]
 
             error_execution_steps = {
                 'description': f'action: {test_step}',
-                'actions': locals().get('all_execution_steps', []),
+                'actions': all_execution_steps,
                 'screenshots': error_screenshots,
                 'screenshots_paths': error_screenshots_paths,
                 'modelIO': '',  # No valid model interaction output
@@ -761,7 +757,7 @@ class UITester:
                     file_name='assertion_failed',
                     context='error'
                 )
-            except:
+            except Exception:
                 basic_screenshot = None
                 basic_screenshot_path = None
 
@@ -946,7 +942,7 @@ class UITester:
 
                 return plan_json
 
-            except (ValueError, json.JSONDecodeError) as e:
+            except ValueError as e:
                 if attempt == max_retries - 1:
                     raise ValueError(f'Failed to generate valid plan after {max_retries} attempts: {str(e)}')
 
@@ -1064,7 +1060,7 @@ class UITester:
                         file_name='plan_final_screenshot_exception',
                         context='verify'
                     )
-                except:
+                except Exception:
                     final_screenshot = None
                     final_screenshot_path = None
 
@@ -1079,6 +1075,7 @@ class UITester:
                     'message': f'Exception occurred: {str(e)}',
                     'screenshot': None,
                     'before_screenshot': initial_screenshot,
+                    'before_screenshot_path': initial_screenshot_path,
                     'after_screenshot': final_screenshot,
                     'after_screenshot_path': final_screenshot_path,
                     'after_action_url': after_action_url,
@@ -1274,13 +1271,17 @@ class UITester:
         except Exception as e:
             logging.warning(f'UITester.end_session error during cleanup: {e}')
 
-        # # 2. Close LLM API client (critical for preventing connection leaks)
-        # try:
-        #     if self.llm:
-        #         await self.llm.close()
-        #         logging.debug('LLM API client closed')
-        # except Exception as e:
-        #     logging.warning(f'Failed to close LLM client: {e}')
+        # 2. Close LLM API client (releases httpx connections)
+        try:
+            if self.llm:
+                await asyncio.wait_for(self.llm.close(), timeout=5.0)
+                logging.debug('LLM API client closed')
+        except asyncio.TimeoutError:
+            logging.warning('LLM client close timed out after 5s, skipping')
+        except Exception as e:
+            logging.warning(f'Failed to close LLM client: {e}')
+        finally:
+            self.llm = None
 
         # 3. Clear references to browser objects
         self.page = None

@@ -24,6 +24,7 @@ Example test step:
     {"action": "execute_lighthouse_test", "params": {}}
 """
 import logging
+from datetime import datetime
 from typing import Any, Dict, Type
 
 from pydantic import BaseModel, Field
@@ -227,83 +228,94 @@ class LighthouseTool(WebQABaseTool):
             lighthouse_test = LighthouseMetricsTest(report_config=report_config)
             result = await lighthouse_test.run(url, browser_config=browser_config)
 
-            # Step 4: Extract key metrics
+            # Step 4: Extract key metrics from nested performance_metrics dict
             performance_score = result.metrics.get('overall_scores', {}).get('performance', 0)
-            fcp = result.metrics.get('first_contentful_paint', 'N/A')
-            lcp = result.metrics.get('largest_contentful_paint', 'N/A')
-            tbt = result.metrics.get('total_blocking_time', 'N/A')
-            cls_value = result.metrics.get('cumulative_layout_shift', 'N/A')
+            perf_metrics = result.metrics.get('performance_metrics', {})
+
+            fcp_data = perf_metrics.get('fcp', {})
+            lcp_data = perf_metrics.get('lcp', {})
+            tbt_data = perf_metrics.get('tbt', {})
+            cls_data = perf_metrics.get('cls', {})
+
+            fcp_display = fcp_data.get('display_value', 'N/A')
+            lcp_display = lcp_data.get('display_value', 'N/A')
+            tbt_display = tbt_data.get('display_value', 'N/A')
+            cls_display = cls_data.get('display_value', 'N/A')
 
             logger.info(
                 f'Performance Tool: Completed. Score: {performance_score}/100, '
-                f'FCP: {fcp}ms, LCP: {lcp}ms'
+                f'FCP: {fcp_display}, LCP: {lcp_display}'
             )
 
-            # Step 5: Build result message
+            # Step 5: Build result message (display_value already contains units)
             message = (
                 f'Performance Score: {performance_score}/100\n'
-                f'First Contentful Paint: {fcp}ms\n'
-                f'Largest Contentful Paint: {lcp}ms\n'
-                f'Total Blocking Time: {tbt}ms\n'
-                f'Cumulative Layout Shift: {cls_value}\n'
+                f'First Contentful Paint: {fcp_display}\n'
+                f'Largest Contentful Paint: {lcp_display}\n'
+                f'Total Blocking Time: {tbt_display}\n'
+                f'Cumulative Layout Shift: {cls_display}\n'
                 f'Status: {result.status.value}'
             )
 
-            # Step 6: Update context for downstream tools
+            # Step 6: Build shared data structures for context and recording
+            metrics_display = {
+                'fcp': fcp_display,
+                'lcp': lcp_display,
+                'tbt': tbt_display,
+                'cls': cls_display,
+            }
+            test_description = f'Execute performance test (score: {performance_score}/100)'
+            status_label = 'success' if result.status.value == 'passed' else 'warning'
+
+            # Step 7: Update context for downstream tools
             self.update_action_context(
                 self.ui_tester_instance,
                 {
-                    'description': f'Execute performance test (score: {performance_score}/100)',
+                    'description': test_description,
                     'action_type': 'PerformanceTest',
-                    'status': 'success' if result.status.value == 'passed' else 'warning',
+                    'status': status_label,
                     'result': {
                         'message': message,
                         'performance_score': performance_score,
-                        'metrics': {
-                            'fcp': fcp,
-                            'lcp': lcp,
-                            'tbt': tbt,
-                            'cls': cls_value,
-                        },
+                        'metrics': metrics_display,
                         'test_status': result.status.value,
                     },
-                    'timestamp': __import__('datetime').datetime.now().isoformat(),
+                    'timestamp': datetime.now().isoformat(),
                 }
             )
 
-            # Step 7: Record to case_recorder (using safe_record_step helper)
+            # Step 8: Record to case_recorder (using safe_record_step helper)
             self.safe_record_step(
-                description=f'Execute performance test (score: {performance_score}/100)',
+                description=test_description,
                 model_io_data={
                     'url': url,
                     'performance_score': performance_score,
-                    'metrics': {
-                        'fcp': fcp,
-                        'lcp': lcp,
-                        'tbt': tbt,
-                        'cls': cls_value,
-                    },
+                    'metrics': metrics_display,
                     'status': result.status.value,
                 },
-                status='passed' if result.status.value == 'passed' else 'warning',
+                status='passed' if result.status.value == 'passed' else status_label,
             )
 
-            # Step 8: Generate targeted recovery hints based on specific metrics
+            # Step 9: Generate targeted recovery hints based on specific metrics
             recovery_hints = []
-            metrics_data = {
-                'fcp': fcp,
-                'lcp': lcp,
-                'tbt': tbt,
-                'cls': cls_value
-            }
+            threshold_metrics = {'fcp': fcp_data, 'lcp': lcp_data, 'tbt': tbt_data, 'cls': cls_data}
 
-            # Check each metric against thresholds
-            for metric_name, metric_value in metrics_data.items():
+            for metric_name, metric_data in threshold_metrics.items():
+                if not metric_data:
+                    continue
                 threshold_config = PERFORMANCE_THRESHOLDS[metric_name]
-                # Skip if metric value is not numeric (e.g., 'N/A')
-                if isinstance(metric_value, (int, float)) and metric_value > threshold_config['threshold']:
+                # Core vitals (lcp, tbt, cls) have passes_threshold from lighthouse.py;
+                # for fcp, fall back to Lighthouse score < 0.9 as threshold indicator
+                fails_threshold = False
+                if 'passes_threshold' in metric_data:
+                    fails_threshold = not metric_data['passes_threshold']
+                elif metric_data.get('score') is not None and metric_data['score'] < 0.9:
+                    fails_threshold = True
+
+                if fails_threshold:
+                    display = metric_data.get('display_value', 'N/A')
                     recovery_hints.append(
-                        f"{metric_name.upper()} {metric_value}ms > {threshold_config['threshold']}ms: {threshold_config['hint']}"
+                        f"{metric_name.upper()} ({display}): {threshold_config['hint']}"
                     )
 
             # Add general hints if no specific issues or for overall optimization
@@ -320,7 +332,7 @@ class LighthouseTool(WebQABaseTool):
                     'General: Use lazy loading, implement caching strategies, optimize fonts'
                 ])
 
-            # Step 9: Return formatted response based on status
+            # Step 10: Return formatted response based on status
             if result.status.value == 'passed':
                 return self.format_success(message)
             elif result.status.value == 'warning':

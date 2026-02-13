@@ -20,7 +20,7 @@ from webqa_agent.actions.action_handler import screenshot_prefix_var
 from webqa_agent.browser import BrowserSession, BrowserSessionPool
 from webqa_agent.data import (CaseStep, StepContext, SubTestResult,
                               SubTestStep, TestConfiguration, TestStatus)
-from webqa_agent.utils import Display
+from webqa_agent.utils import Display, i18n
 from webqa_agent.utils.get_log import test_id_var
 from webqa_agent.utils.log_icon import icon
 from webqa_agent.utils.reporting_utils import (save_monitor_data_json,
@@ -54,6 +54,10 @@ class CaseRunner:
         self.report_config = test_config.report_config
         self.test_specific_config = test_config.test_specific_config
         self.report_dir = report_dir
+
+        # Pre-compute invariant i18n values for display
+        report_lang = self.report_config.get('language', 'zh-CN') if self.report_config else 'zh-CN'
+        self._display_prefix = i18n.t(report_lang, 'tools.run_mode.display_text', 'Run Mode')
 
     async def execute_cases(
         self,
@@ -106,8 +110,8 @@ class CaseRunner:
             case_name = case.get('name', f'Case {idx}')
             case_id = case.get('case_id', f'case_{idx}')
             browser_cfg = case.get('_config', {}).get('browser_config', self.browser_config)
-            # Set test_id context for logging
-            log_context = f'{case_id} | {case_name}'
+            # Set test_id context for logging (matching Gen mode pattern: "Run | case_id")
+            log_context = f'Run | {case_id}'
             token = test_id_var.set(log_context)
             session = None
             case_result = None
@@ -233,9 +237,8 @@ class CaseRunner:
                 browser_cfg = case.get('_config', {}).get('browser_config', self.browser_config)
                 new_config_key = session_pool._make_config_key(browser_cfg)
 
-                # Set test_id context for logging (imitating graph.py style)
-                # Including both ID and Name for maximum clarity
-                log_context = f'{case_id} | {case_name}'
+                # Set test_id context for logging (matching Gen mode pattern: "Run | case_id")
+                log_context = f'Run | {case_id}'
                 token = test_id_var.set(log_context)
 
                 # Set screenshot prefix to avoid filename collisions in parallel execution
@@ -322,7 +325,10 @@ class CaseRunner:
 
                     if case_result is not None:
                         case_config = case.get('_config', {})
-                        self._save_case_result(case_result, case_name, idx, raw_monitoring_data=raw_monitoring_data, case_config=case_config)
+                        await asyncio.to_thread(
+                            self._save_case_result, case_result, case_name, idx,
+                            raw_monitoring_data=raw_monitoring_data, case_config=case_config,
+                        )
                         self._clear_case_screenshots(case_result)
 
                     case_queue.task_done()
@@ -567,6 +573,19 @@ class CaseRunner:
         except Exception as e:
             logging.warning(f'Failed to cleanup UITester: {e}')
 
+    @staticmethod
+    def _resolve_screenshots(step_data: Dict[str, Any]) -> Any:
+        """Resolve screenshots from step data, preferring file paths over
+        base64.
+
+        Args:
+            step_data: Step execution result dictionary
+
+        Returns:
+            Screenshots list (paths preferred over base64)
+        """
+        return step_data.get('screenshots_paths') or step_data.get('screenshots')
+
     # ========================================================================
     # Private Methods - Step Execution
     # ========================================================================
@@ -642,15 +661,10 @@ class CaseRunner:
             full_page=False
         )
 
-        if execution_steps_dict.get('screenshots_paths'):
-            final_screenshots = execution_steps_dict.get('screenshots_paths')
-        else:
-            final_screenshots = execution_steps_dict.get('screenshots')
-
         step_result = SubTestStep(
             id=step_idx,
             description=f'action: {action.description}',
-            screenshots=final_screenshots,
+            screenshots=self._resolve_screenshots(execution_steps_dict),
             modelIO=str(execution_steps_dict.get('modelIO', {})),
             actions=execution_steps_dict.get('actions', []),
             status=execution_steps_dict.get('status', TestStatus.PASSED),
@@ -709,15 +723,10 @@ class CaseRunner:
             full_page=False
         )
 
-        if verification_step.get('screenshots_paths'):
-            final_screenshots = verification_step.get('screenshots_paths')
-        else:
-            final_screenshots = verification_step.get('screenshots')
-
         step_result = SubTestStep(
             id=step_idx,
             description=f'verify: {verify.assertion}',
-            screenshots=final_screenshots,
+            screenshots=self._resolve_screenshots(verification_step),
             modelIO=str(verification_step.get('modelIO', {})),
             actions=verification_step.get('actions', []),
             status=verification_step.get('status', TestStatus.PASSED),

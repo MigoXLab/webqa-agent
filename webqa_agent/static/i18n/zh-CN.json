@@ -14,9 +14,9 @@
     "llm_prompt_main": "你是一名经验丰富的软件测试分析师。请阅读以下子测试信息，提取【问题内容】、【问题数量】和【严重程度】：\n1）如果 status = pass，请返回 JSON {\"issue_count\": 0}。\n2）如果 status != pass，则根据 report、metrics 或 final_summary 的具体内容判断：\n   - 提取最关键的一句话问题描述 issues\n   - 统计问题数量 issue_count（如果无法准确统计，可默认为 1）\n   - 严重程度判断：优先查看 report 中是否已标明严重程度（如 high/medium/low、严重/中等/轻微、critical/major/minor 等），如果有则直接遵循；如果 report 中没有明确标明，则根据问题影响程度自行判断：high（严重影响功能/性能）、medium（中等影响）、low（轻微问题/警告）\n3）你不能输出任何其他内容，也不能输出代码块，只能输出统一为 JSON：{\"issue_count\": <数字>, \"issues\": \"一句话中文问题描述\", \"severity\": \"high|medium|low\"}。",
     "llm_prompt_test_info": "子测试信息: "
   },
-  "testers": {
+  "tools": {
     "basic": {
-      "basic_test_display": "遍历功能测试 - ",
+      "basic_test_display": "网页检查 - ",
       "accessibility_check": "可访问性检查",
       "main_link_check": "主链接检查",
       "sub_link_check": "子链接检查",
@@ -108,7 +108,11 @@
       "no_details": "无更多详情"
     },
     "ai_function": {
-        "intelligent_function_test": "智能功能测试"
+      "display_text": "探索模式"
+    },
+    "run_mode": {
+      "display_text": "执行模式",
+      "test_name": "执行模式"
     }
   },
   "common": {

@@ -83,6 +83,7 @@ class LLMConfig(BaseModel):
     )
     top_p: Optional[float] = Field(default=None, ge=0.0, le=1.0, description='Nucleus sampling parameter')
     text: Optional[Dict[str, Any]] = Field(default=None, description='Text generation options (GPT-5)')
+    timeout: Optional[int] = Field(default=None, gt=0, description='LLM request timeout in seconds')
 
     @field_validator('api_key')
     @classmethod

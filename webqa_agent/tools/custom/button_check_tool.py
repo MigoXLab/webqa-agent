@@ -22,6 +22,7 @@ Example test step:
     {"action": "traverse_clickable_elements", "params": {}}
 """
 import logging
+from datetime import datetime
 from typing import Any, Dict, Type
 
 from pydantic import BaseModel, Field
@@ -291,7 +292,7 @@ class ButtonCheckTool(WebQABaseTool):
                         'failed_count': failed_count,
                         'test_status': result.status.value,
                     },
-                    'timestamp': __import__('datetime').datetime.now().isoformat(),
+                    'timestamp': datetime.now().isoformat(),
                 }
             )
 
@@ -410,7 +411,7 @@ class ButtonCheckTool(WebQABaseTool):
                             'error_type': type(e).__name__,
                         }
                     },
-                    'timestamp': __import__('datetime').datetime.now().isoformat(),
+                    'timestamp': datetime.now().isoformat(),
                 }
             )
 

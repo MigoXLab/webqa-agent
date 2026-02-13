@@ -25,12 +25,20 @@ from webqa_agent.prompts.test_planning_prompts import (
     get_element_filtering_system_prompt, get_element_filtering_user_prompt,
     get_planning_prompt, get_reflection_prompt)
 from webqa_agent.tools.core.ui_driver import UITester
-from webqa_agent.utils import Display
+from webqa_agent.utils import Display, i18n
 from webqa_agent.utils.get_log import test_id_var
 from webqa_agent.utils.log_icon import icon
 from webqa_agent.utils.reporting_utils import save_test_result_json
 
 _completed_case_count = 0  # 全局已完成 case 计数
+
+
+def _write_json_sync(filepath: str, data: Any) -> None:
+    """Synchronous JSON write, intended to be called via
+    asyncio.to_thread()."""
+    with open(filepath, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
 
 # Case ID 生成器（协程安全）
 _case_id_counter = 0
@@ -45,28 +53,58 @@ async def get_next_case_id() -> str:
         return f'case_{_case_id_counter}'
 
 
+def _resolve_report_dir(state: Dict[str, Any]) -> str:
+    """Resolve report directory from state config or environment fallback.
+
+    Args:
+        state: Graph state containing report_config
+
+    Returns:
+        Resolved report directory path
+    """
+    report_dir = state.get('report_config', {}).get('report_dir')
+    if not report_dir:
+        timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP')
+        report_dir = os.path.join('reports', f'test_{timestamp}')
+    return report_dir
+
+
 async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any]]]:
     """Analyzes the initial page and generates test cases."""
+    # 重置 case_id 计数器（每次新的测试运行从 case_1 开始）
+    global _case_id_counter
+    _case_id_counter = 0
+
     ui_tester = None
     s = None  # session
     sp = state.get('session_pool', None)
     llm_cfg = state.get('llm_config', None)
-    business_objectives = state.get('business_objectives', 'No specific business objectives provided.')
+    business_objectives = state.get(
+        'business_objectives', 'No specific business objectives provided.'
+    )
     language = state.get('language', 'zh-CN')
 
-    logging.debug('=== Stage 0: Generating initial test plan with two-stage architecture ===')
+    logging.debug(
+        '=== Stage 0: Generating initial test plan with two-stage architecture ==='
+    )
 
     # === Stage 0: Data Collection ===
     logging.info('Stage 0: Collecting full-page data...')
-    s = await sp.acquire(timeout=120.0)
+    s = await sp.acquire(timeout=300.0)
     try:
         await s.navigate_to(state['url'], cookies=state.get('cookies'))
         ui_tester = UITester(
             llm_config=llm_cfg,
             browser_session=s,
-            execution_mode='gen'  # GEN mode: conservative approach for AI exploration
+            execution_mode='gen',  # GEN mode: conservative approach for AI exploration
         )
         await ui_tester.initialize()
+
+        # P0 Fix: Initialize URLValidator to prevent LLM URL hallucinations
+        # Set base URL from test target for runtime validation
+        ui_tester._actions.set_url_validator(state['url'])
+        logging.debug(f"URLValidator initialized with base_url: {state['url']}")
+
         page = await ui_tester.get_current_page()
         dp = DeepCrawler(page)
 
@@ -74,14 +112,17 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
         crawl_result = await dp.crawl(highlight=True, viewport_only=False)
 
         # Check for unsupported page types at the start
-        if hasattr(crawl_result, 'page_status') and crawl_result.page_status == 'UNSUPPORTED_PAGE':
+        if (
+            hasattr(crawl_result, 'page_status')
+            and crawl_result.page_status == 'UNSUPPORTED_PAGE'
+        ):
             page_type = getattr(crawl_result, 'page_type', 'unknown')
-            logging.warning(f'Initial page type ({page_type}) is unsupported, cannot generate test cases')
+            logging.warning(
+                f'Initial page type ({page_type}) is unsupported, cannot generate test cases'
+            )
             return {'test_cases': []}
         screenshot, _ = await ui_tester._actions.b64_page_screenshot(
-            full_page=True,
-            file_name='plan_full_page',
-            context='agent'
+            full_page=True, file_name='plan_full_page', context='agent'
         )
 
         # Get all interactive elements (we'll filter them in Stage 1)
@@ -108,8 +149,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
         page_text_raw = dp.get_text()
         page_text_array = json.loads(page_text_raw) if page_text_raw else []
         page_text_info = DeepCrawler.smart_truncate_page_text(
-            page_text_array,
-            max_tokens=3000
+            page_text_array, max_tokens=3000
         )
 
         logging.info(
@@ -123,7 +163,9 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
         crawl_handler = CrawlHandler(base_url=state['url'])
         all_page_links = await crawl_handler.extract_links(page)
 
-        logging.info(f'Stage 0: Extracted {len(all_page_links)} navigable links from page')
+        logging.info(
+            f'Stage 0: Extracted {len(all_page_links)} navigable links from page'
+        )
 
         # Build navigation mapping: correlate priority elements with target URLs
         # This will be done after priority_elements is available (after Stage 1)
@@ -136,7 +178,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             url=state['url'],
             business_objectives=business_objectives,
             elements=filtered_elements_for_llm,
-            max_elements=50
+            max_elements=50,
         )
 
         # Use lightweight model for filtering (cost-effective)
@@ -145,14 +187,16 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
         if filter_model == primary_model:
             logging.debug(f'Using filter model: {filter_model} (same as primary model)')
         else:
-            logging.debug(f'Using filter model: {filter_model} (lightweight model for cost efficiency, primary: {primary_model})')
+            logging.debug(
+                f'Using filter model: {filter_model} (lightweight model for cost efficiency, primary: {primary_model})'
+            )
 
         stage1_start = datetime.datetime.now()
         filter_response = await ui_tester.llm.get_llm_response(
             system_prompt=filter_system,
             prompt=filter_user,
             images=None,  # No image needed for filtering
-            model_override=filter_model
+            model_override=filter_model,
         )
         stage1_duration = (datetime.datetime.now() - stage1_start).total_seconds()
         logging.debug(f'Stage 1 completed in {stage1_duration:.2f} seconds')
@@ -161,7 +205,9 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
         try:
             selected_elements = json.loads(filter_response)
             selected_ids = [item['id'] for item in selected_elements]
-            logging.info(f'Stage 1: LLM selected {len(selected_ids)}/{len(all_elements)} priority elements')
+            logging.info(
+                f'Stage 1: LLM selected {len(selected_ids)}/{len(all_elements)} priority elements'
+            )
 
             # Build priority elements map (keep full info for Stage 2)
             priority_elements = {
@@ -170,11 +216,15 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
                 if elem_id in all_elements
             }
         except Exception as e:
-            logging.error(f'Stage 1: Element filtering failed: {e}, using fallback strategy')
+            logging.error(
+                f'Stage 1: Element filtering failed: {e}, using fallback strategy'
+            )
             logging.error(f'Stage 1: Raw response: {filter_response[:500]}...')
             # Fallback: use first 50 elements
             priority_elements = dict(list(all_elements.items())[:50])
-            logging.info(f'Stage 1: Fallback to first {len(priority_elements)} elements')
+            logging.info(
+                f'Stage 1: Fallback to first {len(priority_elements)} elements'
+            )
 
         # === Build Navigation Mapping ===
         # Correlate priority elements with links based on href attributes or text matching
@@ -188,7 +238,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
                     absolute_url = urljoin(state['url'], href)
                     navigation_map[elem_id] = {
                         'text': elem_data.get(ElementKey.INNER_TEXT, ''),
-                        'target': absolute_url
+                        'target': absolute_url,
                     }
 
             # For JS-controlled navigation (e.g., onclick handlers), try text matching with links
@@ -203,14 +253,18 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
                             navigation_map[elem_id] = {
                                 'text': inner_text,
                                 'target': link,
-                                'inferred': True  # Mark as heuristic match
+                                'inferred': True,  # Mark as heuristic match
                             }
                             break
 
-        logging.info(f'Stage 0: Built navigation mapping for {len(navigation_map)} elements')
+        logging.info(
+            f'Stage 0: Built navigation mapping for {len(navigation_map)} elements'
+        )
 
         # === Solution A+: Lightweight Feature Detection ===
-        logging.info('Performing lightweight feature detection to guide tool selection...')
+        logging.info(
+            'Performing lightweight feature detection to guide tool selection...'
+        )
         detected_features = await detect_page_features(page)
 
         # Inject concise feature hints into business objectives if features detected
@@ -219,14 +273,21 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             feature_hint = ', '.join(detected_features) + '.'
 
             # Add actionable hint only when dynamic/interactive features detected
-            has_dynamic = any(kw in str(detected_features) for kw in ['SPA', 'API', 'MutationObserver', 'Lazy'])
+            has_dynamic = any(
+                kw in str(detected_features)
+                for kw in ['SPA', 'API', 'MutationObserver', 'Lazy']
+            )
             if has_dynamic:
                 feature_hint += ' Page may reveal new content after user interactions.'
 
             enhanced_business_objectives = business_objectives + feature_hint
-            logging.info(f'Feature Detection: {len(detected_features)} features detected: {detected_features}')
+            logging.info(
+                f'Feature Detection: {len(detected_features)} features detected: {detected_features}'
+            )
         else:
-            logging.info('Feature Detection: No specific features detected, using standard tools only')
+            logging.info(
+                'Feature Detection: No specific features detected, using standard tools only'
+            )
 
         # === Stage 2: Test Case Planning with Enhanced Context ===
         logging.info('Stage 2: Test case planning with enhanced context...')
@@ -253,13 +314,15 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             system_prompt=system_prompt,
             prompt=user_prompt,
             images=screenshot,
-            max_tokens=configured_max_tokens  # Use config value for flexibility
+            max_tokens=configured_max_tokens,  # Use config value for flexibility
         )
 
         end_time = datetime.datetime.now()
         stage2_duration = (end_time - start_time).total_seconds()
         total_duration = stage1_duration + stage2_duration
-        logging.info(f'Two-stage planning completed: Stage 1 ({stage1_duration:.2f}s) + Stage 2 ({stage2_duration:.2f}s) = Total {total_duration:.2f}s')
+        logging.info(
+            f'Two-stage planning completed: Stage 1 ({stage1_duration:.2f}s) + Stage 2 ({stage2_duration:.2f}s) = Total {total_duration:.2f}s'
+        )
 
         try:
             # Extract only the JSON part of the response, ignoring the scratchpad
@@ -270,12 +333,20 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
                 # A more robust way to find the JSON array
                 start_bracket = response.find('[')
                 end_bracket = response.rfind(']')
-                if start_bracket != -1 and end_bracket != -1 and end_bracket > start_bracket:
+                if (
+                    start_bracket != -1
+                    and end_bracket != -1
+                    and end_bracket > start_bracket
+                ):
                     json_str = response[start_bracket : end_bracket + 1]
                 else:  # Try with curly braces for single object
                     start_brace = response.find('{')
                     end_brace = response.rfind('}')
-                    if start_brace != -1 and end_brace != -1 and end_brace > start_brace:
+                    if (
+                        start_brace != -1
+                        and end_brace != -1
+                        and end_brace > start_brace
+                    ):
                         # Wrap in array brackets if it's a single object
                         json_str = f'[{response[start_brace:end_brace + 1]}]'
                 if not json_str:
@@ -291,41 +362,52 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
 
             for case in test_cases:
                 case['status'] = 'pending'
-                case['completed_steps'] = []
-                case['test_context'] = {}
+                case['execution_steps'] = []
                 case['url'] = state['url']
-                case['case_id'] = await get_next_case_id()  # 为 graph 生成的 case 添加递增 ID
+                case['case_id'] = (
+                    await get_next_case_id()
+                )  # 为 graph 生成的 case 添加递增 ID
 
             try:
-                timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP')
-                report_dir = state.get('report_config').get('report_dir')
-                if not report_dir:
-                    timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP')
-                    report_dir = os.path.join('reports', f'test_{timestamp}')
+                report_dir = _resolve_report_dir(state)
                 os.makedirs(report_dir, exist_ok=True)
                 cases_path = os.path.join(report_dir, 'cases.json')
-                with open(cases_path, 'w', encoding='utf-8') as f:
-                    json.dump(test_cases, f, ensure_ascii=False, indent=4)
+                await asyncio.to_thread(_write_json_sync, cases_path, test_cases)
                 logging.debug(f'Successfully saved initial test cases to {cases_path}')
             except Exception as e:
                 logging.error(f'Failed to save initial test cases to file: {e}')
 
             logging.debug(f'Generated {len(test_cases)} test cases.')
-            logging.info(f"{icon['rocket']} Designed {len(test_cases)} functional test cases")
+            logging.info(
+                f"{icon['rocket']} Designed {len(test_cases)} functional test cases"
+            )
             return {'test_cases': test_cases}
         except (json.JSONDecodeError, IndexError, ValueError) as e:
-            logging.error(f'Failed to parse test cases from LLM response: {e}\nResponse: {response}')
+            logging.error(
+                f'Failed to parse test cases from LLM response: {e}\nResponse: {response}'
+            )
             return {'test_cases': []}
     finally:
+        # Cleanup UITester resources (LLM client, browser listeners)
+        if ui_tester:
+            try:
+                await asyncio.wait_for(ui_tester.cleanup(), timeout=10.0)
+            except asyncio.TimeoutError:
+                logging.warning('UITester cleanup timed out after 10s in plan_test_cases')
+            except Exception as cleanup_err:
+                logging.warning(f'UITester cleanup failed in plan_test_cases: {cleanup_err}')
+
         # Release session back to pool after planning is complete
         if s and sp:
             await sp.release(s)
-            logging.debug(f'[plan_test_cases] Released session {s.session_id} back to pool')
+            logging.debug(
+                f'[plan_test_cases] Released session {s.session_id} back to pool'
+            )
 
 
 async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
     """使用 asyncio worker pool 模式并发执行所有 test cases，实现真正的动态补位。"""
-    # 重置全局计数（每次新的测试运行从0开始）
+    # 重置 progress 计数（每次新的测试运行从0开始）
     global _completed_case_count
     _completed_case_count = 0
 
@@ -345,9 +427,13 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
 
     sp = state['session_pool']
     pool_size = sp.pool_size
-    max_replan_count = state.get('max_replan_count', 3)  # 限制最大 replan 次数，防止无限循环
+    max_replan_count = state.get(
+        'max_replan_count', 3
+    )  # 限制最大 replan 次数，防止无限循环
 
-    logging.info(f'Starting worker pool with {pool_size} workers for {len(test_cases)} cases')
+    logging.info(
+        f'Starting worker pool with {pool_size} workers for {len(test_cases)} cases'
+    )
 
     # 创建共享队列并填充 test cases
     case_queue = asyncio.Queue()
@@ -367,7 +453,9 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
         nonlocal replan_count, all_test_cases  # 声明需要修改外部变量  # noqa: F824
 
         while True:
-            case = await case_queue.get()  # wait for new cases (including replanned ones)
+            case = (
+                await case_queue.get()
+            )  # wait for new cases (including replanned ones)
 
             # Check for sentinel value(None) to exit
             if case is None:
@@ -376,25 +464,32 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
 
             case_name = case.get('name', 'UNNAMED')
             case_id = case.get('case_id', 'N/A')  # 获取 case_id 用于日志
-            is_replanned = case.get('_is_replanned', False)  # 标记是否为 replan 生成的 case
+            is_replanned = case.get(
+                '_is_replanned', False
+            )  # 标记是否为 replan 生成的 case
 
-            # 设置日志上下文（case_id + case_name 组合，方便 grep 和识别）
-            log_context = f'AI Function Test | {case_id}'
+            # 设置日志上下文（case_id 用于 grep 和识别）
+            log_context = f'Gen | {case_id}'
             token = test_id_var.set(log_context)
 
             # Set screenshot prefix to avoid filename collisions in parallel execution
             from webqa_agent.actions.action_handler import \
                 screenshot_prefix_var
+
             prefix_token = screenshot_prefix_var.set(case_id)
 
             try:
-                logging.info(f"Worker {worker_id}: Starting case '{case_name}'" + (' [REPLANNED]' if is_replanned else ''))
+                logging.info(
+                    f"Worker {worker_id}: Starting case '{case_name}'"
+                    + (' [REPLANNED]' if is_replanned else '')
+                )
 
                 s = None
+                ui_tester = None
                 failed = False
 
                 # 获取 session（阻塞直到有可用 session）
-                s = await sp.acquire(timeout=120.0)
+                s = await sp.acquire(timeout=300.0)
                 logging.debug(f"Worker {worker_id}: Acquired session for '{case_name}'")
 
                 await s.navigate_to(state['url'], cookies=state.get('cookies'))
@@ -402,20 +497,31 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                 ui_tester = UITester(
                     llm_config=state['llm_config'],
                     browser_session=s,
-                    execution_mode='gen'  # GEN mode: conservative approach for AI exploration
+                    execution_mode='gen',  # GEN mode: conservative approach for AI exploration
                 )
                 await ui_tester.initialize()
 
+                # P0 Fix: Initialize URLValidator to prevent LLM URL hallucinations in worker execution
+                if state.get('url'):
+                    ui_tester._actions.set_url_validator(state['url'])
+                    logging.debug(
+                        f"Worker {worker_id}: URLValidator initialized with base_url: {state['url']}"
+                    )
+
                 # Set testcase context
-                ui_tester.current_test_objective = case.get('objective', case.get('name'))
+                ui_tester.current_test_objective = case.get(
+                    'objective', case.get('name')
+                )
                 ui_tester.current_success_criteria = case.get('success_criteria', [])
                 ui_tester.execution_history.clear()
                 ui_tester.last_action_context = None
 
                 lang = state.get('language', 'zh-CN')
-                default_text = '智能功能测试' if lang == 'zh-CN' else 'AI Function Test'
+                display_prefix = i18n.t(lang, 'tools.ai_function.display_text', 'Gen Mode')
 
-                with Display.display(f'{default_text} - {case_name}'):  # pylint: disable=not-callable
+                with Display.display(  # pylint: disable=not-callable
+                    f'{display_prefix} - {case_name}'
+                ):
                     logging.debug(f"Worker {worker_id}: Executing '{case_name}'")
 
                     # Execute test case via agent worker
@@ -427,48 +533,94 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                     # 执行 case 并添加超时
                     try:
                         result = await asyncio.wait_for(
-                            agent_worker_node(worker_input_state, config={'configurable': {'ui_tester_instance': ui_tester}}),
-                            timeout=1800
+                            agent_worker_node(
+                                worker_input_state,
+                                config={
+                                    'configurable': {
+                                        'ui_tester_instance': ui_tester,
+                                        'results_lock': results_lock,  # Thread safety: Pass lock for state updates
+                                    }
+                                },
+                            ),
+                            timeout=1800,
                         )
-                        logging.debug(f"Worker {worker_id}: Case '{case_name}' completed")
+                        logging.debug(
+                            f"Worker {worker_id}: Case '{case_name}' completed"
+                        )
                     except asyncio.TimeoutError:
-                        logging.error(f"Worker {worker_id}: Case '{case_name}' timed out (30 minutes)")
+                        logging.error(
+                            f"Worker {worker_id}: Case '{case_name}' timed out (30 minutes)"
+                        )
                         failed = True
+                        now_str = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
                         case_result = {
                             'case_name': case_name,
+                            'case_id': case_id,
                             'status': 'failed',
                             'failure_type': 'timeout',
-                            'reason': 'Case execution timed out after 30 minutes'
+                            'reason': 'Case execution timed out after 30 minutes',
+                        }
+                        timeout_recorded = {
+                            'name': case_name,
+                            'case_id': case_id,
+                            'status': 'failed',
+                            'steps': [],
+                            'final_summary': 'Case timed out after 30 minutes',
+                            'start_time': now_str,
+                            'end_time': now_str,
                         }
                         async with results_lock:
                             completed_cases.append(case_result)
+                            recorded_cases.append(timeout_recorded)
+                            _completed_case_count += 1
                         continue
 
                     # 处理执行结果
                     case_result = result.get('case_result')
+                    if case_result and 'case_id' not in case_result:
+                        case_result['case_id'] = case_id
                     modified_case = result.get('modified_case')
                     recorded_case = result.get('recorded_case')
 
                     # Handle case modification when dynamic steps were added
                     if modified_case:
-                        logging.info(f"Worker {worker_id}: Case '{case_name}' was modified with dynamic steps")
+                        logging.info(
+                            f"Worker {worker_id}: Case '{case_name}' was modified with dynamic steps"
+                        )
 
                     # Check if this is a critical failure that should skip reflection
                     skip_reflection = False
                     if case_result and case_result.get('status') == 'failed':
                         failure_type = case_result.get('failure_type')
                         if failure_type == 'critical':
-                            logging.warning(f"Worker {worker_id}: Critical failure in '{case_name}', skipping reflection")
+                            logging.warning(
+                                f"Worker {worker_id}: Critical failure in '{case_name}', skipping reflection"
+                            )
                             skip_reflection = True
                         else:
-                            logging.info(f"Worker {worker_id}: Recoverable failure in '{case_name}', will reflect")
+                            logging.info(
+                                f"Worker {worker_id}: Recoverable failure in '{case_name}', will reflect"
+                            )
 
                     # 执行反思（非 skip_reflection 时）
                     if not skip_reflection:
-                        reflect_result = await _do_reflection(ui_tester, dict(state), case_name)
+                        # Create a state copy with current case_result included
+                        # This ensures reflection has access to enriched metrics
+                        reflect_state = dict(state)
+                        if case_result:
+                            # Include current case result in completed_cases for reflection
+                            reflect_state['completed_cases'] = list(
+                                state.get('completed_cases', [])
+                            ) + [case_result]
+
+                        reflect_result = await _do_reflection(
+                            ui_tester, reflect_state, case_name
+                        )
 
                         # 处理 REPLAN 结果：将新 cases 加入队列
-                        if reflect_result.get('is_replan') and reflect_result.get('replanned_cases'):
+                        if reflect_result.get('is_replan') and reflect_result.get(
+                            'replanned_cases'
+                        ):
                             async with results_lock:
                                 if replan_count < max_replan_count:
                                     new_cases = reflect_result['replanned_cases']
@@ -477,12 +629,17 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                                     # 为新 cases 添加元数据
                                     for new_case in new_cases:
                                         new_case['status'] = 'pending'
-                                        new_case['completed_steps'] = []
-                                        new_case['test_context'] = {}
+                                        new_case['execution_steps'] = []
                                         new_case['url'] = state['url']
-                                        new_case['case_id'] = await get_next_case_id()  # 为 replan 生成的 case 添加递增 ID
-                                        new_case['_is_replanned'] = True  # 标记为 replan 生成
-                                        new_case['_replan_source'] = case_name  # 记录来源 case
+                                        new_case['case_id'] = (
+                                            await get_next_case_id()
+                                        )  # 为 replan 生成的 case 添加递增 ID
+                                        new_case['_is_replanned'] = (
+                                            True  # 标记为 replan 生成
+                                        )
+                                        new_case['_replan_source'] = (
+                                            case_name  # 记录来源 case
+                                        )
 
                                     # 加入队列供 workers 消费
                                     for new_case in new_cases:
@@ -497,19 +654,21 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
 
                                     # 保存更新后的 cases.json
                                     try:
-                                        timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP')
-                                        # report_dir = os.path.join('reports', f'test_{timestamp}')
-                                        report_dir = state.get('report_config').get('report_dir')
-                                        if not report_dir:
-                                            timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP')
-                                            report_dir = os.path.join('reports', f'test_{timestamp}')
+                                        report_dir = _resolve_report_dir(state)
                                         os.makedirs(report_dir, exist_ok=True)
-                                        cases_path = os.path.join(report_dir, 'cases.json')
-                                        with open(cases_path, 'w', encoding='utf-8') as f:
-                                            json.dump(all_test_cases, f, ensure_ascii=False, indent=4)
-                                        logging.debug(f'Saved updated test cases with replanned cases to {cases_path}')
+                                        cases_path = os.path.join(
+                                            report_dir, 'cases.json'
+                                        )
+                                        await asyncio.to_thread(
+                                            _write_json_sync, cases_path, list(all_test_cases)
+                                        )
+                                        logging.debug(
+                                            f'Saved updated test cases with replanned cases to {cases_path}'
+                                        )
                                     except Exception as save_err:
-                                        logging.error(f'Failed to save replanned cases: {save_err}')
+                                        logging.error(
+                                            f'Failed to save replanned cases: {save_err}'
+                                        )
                                 else:
                                     logging.warning(
                                         f"Worker {worker_id}: REPLAN requested by '{case_name}' but "
@@ -518,10 +677,7 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
 
                     # 保存 case 结果
                     try:
-                        report_dir = state.get('report_config', {}).get('report_dir')
-                        if not report_dir:
-                            timestamp = os.getenv('WEBQA_REPORT_TIMESTAMP')
-                            report_dir = os.path.join('reports', f'test_{timestamp}')
+                        report_dir = _resolve_report_dir(state)
 
                         # 从 case_id 提取索引
                         try:
@@ -533,7 +689,8 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                             if isinstance(recorded_case, dict):
                                 recorded_case['sub_test_id'] = case_id
 
-                            save_test_result_json(
+                            await asyncio.to_thread(
+                                save_test_result_json,
                                 test_result=recorded_case,
                                 report_dir=report_dir,
                                 index=case_idx,
@@ -543,10 +700,12 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                                 sub_test_id=case_id,
                                 llm_config=state.get('llm_config'),
                                 browser_config=state.get('browser_config', {}),
-                                target_url=state.get('url', '')
+                                target_url=state.get('url', ''),
                             )
                     except Exception as save_err:
-                        logging.error(f'Failed to save individual case file for {case_name}: {save_err}')
+                        logging.error(
+                            f'Failed to save individual case file for {case_name}: {save_err}'
+                        )
 
                     async with results_lock:
                         if case_result:
@@ -557,18 +716,26 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                         _completed_case_count += 1
                         total = len(all_test_cases)
                         pending = case_queue.qsize()
-                        logging.info(f"{icon['hourglass']} Progress: {_completed_case_count}/{total} cases completed ({pending} pending)")
+                        logging.info(
+                            f"{icon['hourglass']} Progress: {_completed_case_count}/{total} cases completed ({pending} pending)"
+                        )
 
             except Exception as e:
-                logging.error(f"Worker {worker_id}: Exception during '{case_name}': {e}", exc_info=True)
+                logging.error(
+                    f"Worker {worker_id}: Exception during '{case_name}': {e}",
+                    exc_info=True,
+                )
                 failed = True
                 async with results_lock:
-                    completed_cases.append({
-                        'case_name': case_name,
-                        'status': 'failed',
-                        'failure_type': 'unexpected_error',
-                        'reason': f'Unexpected error: {str(e)}'
-                    })
+                    completed_cases.append(
+                        {
+                            'case_name': case_name,
+                            'case_id': case_id,
+                            'status': 'failed',
+                            'failure_type': 'unexpected_error',
+                            'reason': f'Unexpected error: {str(e)}',
+                        }
+                    )
                     _completed_case_count += 1
 
             finally:
@@ -576,24 +743,44 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                 test_id_var.reset(token)
                 screenshot_prefix_var.reset(prefix_token)
 
+                # Cleanup UITester resources (LLM client, browser listeners, etc.)
+                if ui_tester:
+                    try:
+                        await asyncio.wait_for(ui_tester.cleanup(), timeout=10.0)
+                    except asyncio.TimeoutError:
+                        logging.warning(
+                            f'Worker {worker_id}: UITester cleanup timed out after 10s'
+                        )
+                    except Exception as cleanup_err:
+                        logging.warning(
+                            f'Worker {worker_id}: UITester cleanup failed: {cleanup_err}'
+                        )
+
                 # Release or close session based on remaining work
                 if s:
                     # Check if there are more cases waiting in the queue
                     # If queue is empty, close the session to free browser resources
                     # If queue has pending cases, release back to pool for reuse
                     if case_queue.qsize() == 0:
-                        await s.close()
-                        logging.info(f"Worker {worker_id}: Closed session for '{case_name}' (no more pending cases)")
+                        # Use keep_alive=False to close session AND release semaphore
+                        await sp.release(s, keep_alive=False)
+                        logging.info(
+                            f"Worker {worker_id}: Released and closed session for '{case_name}' (no more pending cases)"
+                        )
                     else:
                         await sp.release(s, failed=failed)
-                        logging.debug(f"Worker {worker_id}: Released session for '{case_name}' to pool (failed={failed})")
+                        logging.debug(
+                            f"Worker {worker_id}: Released session for '{case_name}' to pool (failed={failed})"
+                        )
 
                 # Mark task as done AFTER session is handled, so join() only unblocks
                 # when all resources are properly managed
                 case_queue.task_done()
 
     # 启动 K 个 workers
-    workers = [asyncio.create_task(worker(i), name=f'worker-{i}') for i in range(pool_size)]
+    workers = [
+        asyncio.create_task(worker(i), name=f'worker-{i}') for i in range(pool_size)
+    ]
 
     # Wait for all items in the queue to be processed (including replanned cases)
     # This blocks until task_done() has been called for every item that was put into the queue
@@ -612,6 +799,35 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
         f'replan count: {replan_count}/{max_replan_count})'
     )
 
+    # Synchronize execution results to cases.json
+    # This ensures cases.json reflects actual execution status
+    try:
+        from pathlib import Path
+
+        from webqa_agent.executor.gen.utils.case_synchronizer import \
+            CaseJsonSynchronizer
+
+        # Get report directory
+        report_dir = _resolve_report_dir(state)
+
+        cases_json_path = Path(report_dir) / 'cases.json'
+
+        # Only sync if cases.json exists and we have recorded cases
+        if cases_json_path.exists() and recorded_cases:
+            synchronizer = CaseJsonSynchronizer(cases_json_path)
+            await asyncio.to_thread(synchronizer.sync_cases, all_test_cases, recorded_cases)
+            logging.info(
+                f'Synchronized {len(recorded_cases)} execution results to cases.json'
+            )
+        elif not recorded_cases:
+            logging.warning('No recorded cases to sync to cases.json')
+        else:
+            logging.warning(f'cases.json not found at {cases_json_path}, skipping sync')
+
+    except Exception as sync_err:
+        # Don't fail the entire execution if sync fails
+        logging.error(f'Failed to synchronize cases.json: {sync_err}', exc_info=True)
+
     return {
         'completed_cases': completed_cases,
         'recorded_cases': recorded_cases,
@@ -628,8 +844,11 @@ async def _do_reflection(ui_tester: UITester, state: dict, case_name: str) -> di
         curr = await dp.crawl(highlight=True, viewport_only=False)
 
         reflect_template = [
-            str(ElementKey.TAG_NAME), str(ElementKey.INNER_TEXT),
-            str(ElementKey.ATTRIBUTES), str(ElementKey.CENTER_X), str(ElementKey.CENTER_Y)
+            str(ElementKey.TAG_NAME),
+            str(ElementKey.INNER_TEXT),
+            str(ElementKey.ATTRIBUTES),
+            str(ElementKey.CENTER_X),
+            str(ElementKey.CENTER_Y),
         ]
         page_content_summary = curr.clean_dict(reflect_template)
         screenshot, _ = await ui_tester._actions.b64_page_screenshot(
@@ -661,15 +880,29 @@ async def _do_reflection(ui_tester: UITester, state: dict, case_name: str) -> di
         if decision == 'REPLAN' and decision_data.get('new_plan'):
             result['is_replan'] = True
             result['replanned_cases'] = decision_data['new_plan']
-            logging.info(f"[{case_name}] REPLAN with {len(decision_data['new_plan'])} new cases")
+            logging.info(
+                f"[{case_name}] REPLAN with {len(decision_data['new_plan'])} new cases"
+            )
         return result
 
     except json.JSONDecodeError as e:
         logging.error(f'[{case_name}] Failed to parse reflection response: {e}')
-        return {'reflection_history': [{'decision': 'CONTINUE', 'reasoning': f'JSON error: {e}', 'new_plan': []}]}
+        return {
+            'reflection_history': [
+                {
+                    'decision': 'CONTINUE',
+                    'reasoning': f'JSON error: {e}',
+                    'new_plan': [],
+                }
+            ]
+        }
     except Exception as e:
         logging.error(f'[{case_name}] Reflection error: {e}')
-        return {'reflection_history': [{'decision': 'CONTINUE', 'reasoning': str(e), 'new_plan': []}]}
+        return {
+            'reflection_history': [
+                {'decision': 'CONTINUE', 'reasoning': str(e), 'new_plan': []}
+            ]
+        }
 
 
 async def aggregate_results(state: MainGraphState) -> Dict[str, Dict[str, Any]]:

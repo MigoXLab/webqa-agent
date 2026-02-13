@@ -28,9 +28,10 @@ Usage in test plans:
 Example test step:
     {"action": "execute_nuclei_scan", "params": {"scan_types": "cve,xss"}}
 """
+import asyncio
 import json
 import logging
-import subprocess
+from datetime import datetime
 from typing import Any, Dict, List, Type
 
 from pydantic import BaseModel, Field
@@ -193,18 +194,18 @@ class NucleiTool(WebQABaseTool):
         """Format a single security finding with metadata.
 
         Args:
-            finding: Finding dictionary from Nuclei scan
+            finding: Normalized finding dict from _parse_nuclei_output()
             default_severity: Default severity level if not found in data
 
         Returns:
             Formatted finding string with severity, CVSS, and endpoint
         """
-        severity = finding.get('info', {}).get('severity', default_severity)
-        matched_at = finding.get('matched_at', finding.get('host', 'Unknown endpoint'))
-        cvss_score = finding.get('info', {}).get('classification', {}).get('cvss-score', 'N/A')
+        severity = finding.get('severity', default_severity)
+        matched_at = finding.get('matched_at', 'Unknown endpoint')
+        cvss_score = finding.get('cvss_score', 'N/A')
 
         return (
-            f"  - {finding['name']} ({finding['template_id']})\n"
+            f"  - {finding.get('name', 'Unknown')} ({finding.get('template_id', 'unknown')})\n"
             f'    Severity: {severity.upper()} | CVSS: {cvss_score} | Affected: {matched_at}'
         )
 
@@ -250,12 +251,10 @@ class NucleiTool(WebQABaseTool):
             'default': 'default-logins,exposed-panels,vulnerabilities'
         }
 
-        types = [t.strip().lower() for t in scan_types.split(',')]
-        tags = []
-        for scan_type in types:
-            tag = type_mapping.get(scan_type, scan_type)
-            tags.append(tag)
-
+        tags = [
+            type_mapping.get(t.strip().lower(), t.strip().lower())
+            for t in scan_types.split(',')
+        ]
         return tags if tags else ['default-logins', 'exposed-panels']
 
     def _parse_nuclei_output(self, output_lines: List[str]) -> Dict[str, Any]:
@@ -290,7 +289,8 @@ class NucleiTool(WebQABaseTool):
                     'severity': severity,
                     'matched_at': finding.get('matched-at', ''),
                     'description': finding.get('info', {}).get('description', ''),
-                    'reference': finding.get('info', {}).get('reference', [])
+                    'reference': finding.get('info', {}).get('reference', []),
+                    'cvss_score': finding.get('info', {}).get('classification', {}).get('cvss-score', 'N/A'),
                 }
 
                 if severity in findings:
@@ -365,7 +365,7 @@ class NucleiTool(WebQABaseTool):
             logger.info(f'Security Tool: Executing Nuclei with tags: {tags}')
 
             try:
-                # Run Nuclei with JSON output
+                # Run Nuclei with JSON output (async to avoid blocking event loop)
                 cmd = [
                     'nuclei',
                     '-u', url,
@@ -375,28 +375,34 @@ class NucleiTool(WebQABaseTool):
                     '-nc',  # No color
                 ]
 
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=300,  # 5 minute timeout
-                    check=False  # Don't raise on non-zero exit
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
                 )
+
+                try:
+                    stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                        process.communicate(), timeout=300  # 5 minute timeout
+                    )
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
+                    logger.error('Security Tool: Nuclei scan timed out after 5 minutes')
+                    return self.format_failure(
+                        'Nuclei scan timed out after 5 minutes',
+                        recovery_hints=[
+                            'Try scanning with fewer template tags',
+                            'Check network connectivity',
+                            'Verify target URL is accessible'
+                        ]
+                    )
 
                 # Step 5: Parse JSON output
-                output_lines = result.stdout.strip().split('\n') if result.stdout else []
+                stdout_text = stdout_bytes.decode('utf-8', errors='replace') if stdout_bytes else ''
+                output_lines = stdout_text.strip().split('\n') if stdout_text.strip() else []
                 findings_data = self._parse_nuclei_output(output_lines)
 
-            except subprocess.TimeoutExpired:
-                logger.error('Security Tool: Nuclei scan timed out after 5 minutes')
-                return self.format_failure(
-                    'Nuclei scan timed out after 5 minutes',
-                    recovery_hints=[
-                        'Try scanning with fewer template tags',
-                        'Check network connectivity',
-                        'Verify target URL is accessible'
-                    ]
-                )
             except Exception as e:
                 logger.error(f'Security Tool: Nuclei execution failed: {e}')
                 return self.format_failure(
@@ -472,7 +478,7 @@ class NucleiTool(WebQABaseTool):
                             'medium': findings_data['medium'][:5]
                         }
                     },
-                    'timestamp': __import__('datetime').datetime.now().isoformat(),
+                    'timestamp': datetime.now().isoformat(),
                 }
             )
 
@@ -542,7 +548,7 @@ class NucleiTool(WebQABaseTool):
                             'error_type': type(e).__name__,
                         }
                     },
-                    'timestamp': __import__('datetime').datetime.now().isoformat(),
+                    'timestamp': datetime.now().isoformat(),
                 }
             )
 

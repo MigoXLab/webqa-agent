@@ -96,9 +96,11 @@ def validate_and_build_llm_config(cfg):
     max_tokens = llm_cfg_raw.get('max_tokens')
     reasoning = llm_cfg_raw.get('reasoning')
     text_cfg = llm_cfg_raw.get('text')
+    timeout = llm_cfg_raw.get('timeout')
 
     # Validate required fields
-    if not api_key or api_key == 'your_openai_api_key' or api_key == 'your_anthropic_api_key' or api_key == 'your_gemini_api_key':
+    placeholder_keys = {'your_openai_api_key', 'your_anthropic_api_key', 'your_gemini_api_key'}
+    if not api_key or api_key in placeholder_keys:
         raise ValueError('❌ LLM API Key not configured!')
 
     if not base_url:
@@ -122,6 +124,8 @@ def validate_and_build_llm_config(cfg):
         llm_config['reasoning'] = reasoning
     if text_cfg is not None:
         llm_config['text'] = text_cfg
+    if timeout is not None:
+        llm_config['timeout'] = timeout
 
     # Display configuration (masked)
     api_key_masked = f'{api_key[:8]}...{api_key[-4:]}' if len(api_key) > 12 else '***'
@@ -227,12 +231,12 @@ async def run_tests(cfg, execution_mode, config_path: str = None, workers: int =
     if execution_mode == 'run':
         await execute_run_mode(config_path, workers=workers)
     else:  # gen mode
-        # Resolve workers: CLI > config > default (2)
-        w = workers if workers is not None else cfg.get('target', {}).get('max_concurrent_tests', 2)
+        # Resolve workers: CLI > config > default (4)
+        w = workers if workers is not None else cfg.get('target', {}).get('max_concurrent_tests', 4)
         try:
             workers = max(1, int(w))
         except (ValueError, TypeError):
-            workers = 2
+            workers = 4
         print('🎯 Mode: Gen Mode (AI-driven test generation)')
         await execute_gen_mode(cfg, workers=workers)
 
@@ -343,7 +347,7 @@ async def execute_gen_mode(cfg, workers: int = 1):
     )
 
     # Display configuration
-    print('📋 Tests enabled: Function Test (AI-driven)')
+    print('📋 Tests enabled: Gen Mode')
     if custom_tools_enabled:
         print(f'🔧 Custom tools: {", ".join(custom_tools_enabled)}')
 
@@ -377,9 +381,6 @@ async def execute_run_mode(config_path: str, workers: int = None):
         config_path: Path to config file or folder
         workers: Workers value from CLI (None if not specified)
     """
-    from webqa_agent.config_models.base_config import (BrowserConfig,
-                                                       LLMConfig, LogConfig,
-                                                       ReportConfig)
     from webqa_agent.config_models.run_config import RunConfig
     from webqa_agent.executor.run_executor import RunExecutor
 
@@ -414,12 +415,12 @@ async def execute_run_mode(config_path: str, workers: int = None):
             if cfg.get('browser_config', {}).get('cookies'):
                 cfg['browser_config']['cookies'] = loaded_cookies
 
-    # Resolve workers: CLI > config > default (2)
-    w = workers if workers is not None else configs[0].get('target', {}).get('max_concurrent_tests', 2)
+    # Resolve workers: CLI > config > default (4)
+    w = workers if workers is not None else configs[0].get('target', {}).get('max_concurrent_tests', 4)
     try:
         workers = max(1, int(w))
     except (ValueError, TypeError):
-        workers = 2
+        workers = 4
     mode_info = f'parallel ({workers} workers)' if workers > 1 else 'serial'
     print(f'🎯 Mode: Run Mode ({mode_info})')
 
@@ -472,7 +473,6 @@ async def execute_run_mode(config_path: str, workers: int = None):
 
     except Exception as e:
         print(f'\n❌ Test execution failed: {e}', file=sys.stderr)
-        import traceback
         traceback.print_exc()
         sys.exit(1)
 
@@ -696,7 +696,7 @@ Documentation: https://github.com/MigoXLab/webqa-agent
         type=int,
         default=None,
         metavar='N',
-        help='Number of parallel workers. Priority: CLI arg > config max_concurrent_tests > default 2'
+        help='Number of parallel workers. Priority: CLI arg > config max_concurrent_tests > default 4'
     )
 
     # run command
@@ -715,7 +715,7 @@ Documentation: https://github.com/MigoXLab/webqa-agent
         type=int,
         default=None,
         metavar='N',
-        help='Number of parallel workers (1=serial, >1=parallel). Priority: CLI arg > config max_concurrent_tests > default 2'
+        help='Number of parallel workers (1=serial, >1=parallel). Priority: CLI arg > config max_concurrent_tests > default 4'
     )
     # ui command
     ui_parser = subparsers.add_parser(

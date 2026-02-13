@@ -6,7 +6,9 @@ from webqa_agent.tools.base import ActionTypes
 from webqa_agent.tools.registry import get_registry
 
 
-def _get_custom_tools_planning_section(enabled_custom_tools: list[str] | None = None) -> str:
+def _get_custom_tools_planning_section(
+    enabled_custom_tools: list[str] | None = None,
+) -> str:
     """Generate custom tools documentation section for planning prompt.
 
     Creates a dynamic documentation section listing registered custom tools
@@ -37,7 +39,13 @@ def _get_custom_tools_planning_section(enabled_custom_tools: list[str] | None = 
     custom_tools = []
     for name in registry.get_tool_names():
         metadata = registry.get_metadata(name)
-        if metadata and hasattr(metadata, 'category') and metadata.category == 'custom' and hasattr(metadata, 'step_type') and metadata.step_type:
+        if (
+            metadata
+            and hasattr(metadata, 'category')
+            and metadata.category == 'custom'
+            and hasattr(metadata, 'step_type')
+            and metadata.step_type
+        ):
             # Filter by enabled_custom_tools if provided
             if enabled_custom_tools is not None:
                 if metadata.step_type not in enabled_custom_tools:
@@ -59,7 +67,9 @@ def _get_custom_tools_planning_section(enabled_custom_tools: list[str] | None = 
 
         # Add anti-patterns
         if metadata.dont_use_when:
-            section += f"  - ❌ **Don't use for**: {', '.join(metadata.dont_use_when)}\n"
+            section += (
+                f"  - ❌ **Don't use for**: {', '.join(metadata.dont_use_when)}\n"
+            )
 
         # Add example usage - show up to 3 examples for better few-shot learning
         if metadata.examples:
@@ -70,8 +80,14 @@ def _get_custom_tools_planning_section(enabled_custom_tools: list[str] | None = 
         section += '\n'
 
     # Build dynamic list of custom tool names from registered tools
-    custom_tool_names = [metadata.step_type for _, metadata in custom_tools] if custom_tools else []
-    custom_tools_list = ', '.join(custom_tool_names) if custom_tool_names else 'none currently registered'
+    custom_tool_names = (
+        [metadata.step_type for _, metadata in custom_tools] if custom_tools else []
+    )
+    custom_tools_list = (
+        ', '.join(custom_tool_names)
+        if custom_tool_names
+        else 'none currently registered'
+    )
 
     # Updated note to reflect unified format with action + params
     section += (
@@ -672,7 +688,11 @@ def get_test_case_planning_system_prompt(
 
     # Decide mode based on whether business_objectives is empty
     # Handle case where business_objectives might be a list
-    business_objectives_str = business_objectives if isinstance(business_objectives, str) else str(business_objectives) if business_objectives else ''
+    business_objectives_str = (
+        business_objectives
+        if isinstance(business_objectives, str)
+        else str(business_objectives) if business_objectives else ''
+    )
     if business_objectives_str and business_objectives_str.strip():
         role_and_objective = """## Role
 You are a Senior QA Testing Professional with expertise in business domain analysis, requirement engineering, and context-aware test design. Your responsibility is to deeply understand the application's business context, domain-specific patterns, and user needs to generate highly relevant and effective test cases.
@@ -826,9 +846,14 @@ For each test case, provide:
         for name in registry.get_tool_names():
             metadata = registry.get_metadata(name)
             # Filter for custom category with step_type and examples defined
-            if (metadata and hasattr(metadata, 'category') and metadata.category == 'custom'
-                    and hasattr(metadata, 'step_type') and metadata.step_type
-                    and metadata.examples):  # Only include if has examples
+            if (
+                metadata
+                and hasattr(metadata, 'category')
+                and metadata.category == 'custom'
+                and hasattr(metadata, 'step_type')
+                and metadata.step_type
+                and metadata.examples
+            ):  # Only include if has examples
                 # Filter by enabled_custom_tools if provided
                 if enabled_custom_tools is not None:
                     if metadata.step_type not in enabled_custom_tools:
@@ -840,9 +865,9 @@ For each test case, provide:
     if custom_step_examples:
         # Randomly select 1-2 custom tool examples to show (avoid prompt bloat)
         import random
+
         selected = random.sample(
-            custom_step_examples,
-            min(2, len(custom_step_examples))
+            custom_step_examples, min(2, len(custom_step_examples))
         )
 
         # Build steps array with both standard and custom step types
@@ -1167,6 +1192,111 @@ When using the **REPLAN** strategy to create new test cases, you can use any of 
 - Consider using custom tools if they could provide additional verification or context
 - Maintain test case structure: clear objectives, appropriate step granularity (3-8 steps)
 - Ensure new test cases have proper verification points
+
+### Replanned Test Case Pre-conditions (CRITICAL)
+
+When creating replanned test cases based on discovered opportunities:
+
+**Context Awareness**:
+- The current test case has already navigated to a specific page/state
+- The replanned case will be executed in a **new browser session** (fresh state)
+- You MUST restore the necessary UI state before the replanned case steps
+
+**State Restoration Strategy**:
+Replanned cases start from a **fresh browser session** (homepage). You must use `preamble_actions` to restore the necessary UI state:
+
+1. **Add preamble_actions for Complex State Restoration**:
+   ```json
+   {{
+     "name": "Verify_Language_Switcher",
+     "_is_replanned": true,
+     "_replan_source": "Verify_Login_Button",
+     "preamble_actions": [
+       {{"action": "Click the user menu button"}},
+       {{"action": "Select 'Settings' from dropdown"}},
+       {{"action": "Navigate to 'Language Preferences' tab"}}
+     ],
+     "steps": [
+       {{"action": "Click on language dropdown"}},
+       {{"verify": "Available language options are displayed"}}
+     ]
+   }}
+   ```
+
+2. **Preamble Actions Guidelines**:
+   - **Add navigation actions** - Include "Navigate to X page" or "Click X link" to reach the target page
+   - **Add UI interactions as needed** (clicks, form fills, scrolls, etc.)
+   - Keep preamble simple and focused on state restoration
+   - Preamble will be executed before main test steps
+   - If replanned case can start from homepage, set `"preamble_actions": []`
+
+3. **Example Scenarios**:
+
+   **Scenario A: Simple replanning from login page**
+   ```json
+   {{
+     "name": "Verify_Login_Error_Messages",
+     "_is_replanned": true,
+     "_replan_source": "Verify_Header_Try_Now_Button",
+     "preamble_actions": [
+       {{"action": "Navigate to the login page via header 'Try Now' button"}}
+     ],
+     "steps": [
+       {{"action": "Enter invalid email"}},
+       {{"verify": "Error message displayed"}}
+     ]
+   }}
+   ```
+
+   **Scenario B: Replanning requiring UI interaction**
+   ```json
+   {{
+     "name": "Verify_Form_Validation_Messages",
+     "_is_replanned": true,
+     "_replan_source": "Verify_Submit_Button",
+     "preamble_actions": [
+       {{"action": "Click 'Sign Up' button"}},
+       {{"action": "Wait for registration form to load"}}
+     ],
+     "steps": [
+       {{"action": "Enter invalid phone number"}},
+       {{"verify": "Validation error displayed"}}
+     ]
+   }}
+   ```
+
+   **Scenario C: Replanning from user dashboard**
+   ```json
+   {{
+     "name": "Verify_Profile_Settings",
+     "_is_replanned": true,
+     "_replan_source": "Verify_Dashboard_Layout",
+     "preamble_actions": [
+       {{"action": "Perform login sequence"}},
+       {{"action": "Navigate to user dashboard"}},
+       {{"action": "Click 'Profile' menu item"}}
+     ],
+     "steps": [
+       {{"verify": "Profile settings page is displayed"}},
+       {{"action": "Update username field"}}
+     ]
+   }}
+   ```
+
+**Decision Tree for Preamble Actions**:
+```
+Is this a replanned case? YES → Add preamble_actions to restore UI state
+                               ├─ Need navigation → Add navigation actions
+                               └─ Need interactions → Add click/form actions
+
+Is this a replanned case? NO  → Use preamble_actions only if needed for setup
+```
+
+**Important Notes**:
+- Mark replanned cases with `"_is_replanned": true` and `"_replan_source": "source_case_name"`
+- Replanned cases start from homepage - use `preamble_actions` to navigate to target page
+- Include all necessary navigation and UI interactions in preamble_actions
+- Focus on essential state restoration - keep preamble concise
 """
 
     return f"""## Role
@@ -1354,7 +1484,11 @@ The screenshot shows the ENTIRE webpage from top to bottom, not just the visible
 
     # Determine test mode for reflection decision
     # Handle case where business_objectives might be a list
-    business_objectives_str = business_objectives if isinstance(business_objectives, str) else str(business_objectives) if business_objectives else ''
+    business_objectives_str = (
+        business_objectives
+        if isinstance(business_objectives, str)
+        else str(business_objectives) if business_objectives else ''
+    )
     if business_objectives_str and business_objectives_str.strip():
         mode_context = f"""
 ## Testing Mode: Enhanced Context-Aware Intent-Driven Testing
@@ -1405,6 +1539,26 @@ The screenshot shows the ENTIRE webpage from top to bottom, not just the visible
 {current_plan_json}
 - **Completed Test Execution Summary**:
 {completed_summary}
+
+### Execution Metrics Guide
+Each completed case may include detailed metrics to help with REPLAN decisions:
+- `metrics.total_steps`: Total number of steps executed
+- `metrics.passed_steps`: Steps that completed successfully
+- `metrics.failed_steps`: Steps that failed (use this to assess failure severity)
+- `metrics.warning_steps`: Steps with warnings
+- `metrics.total_actions`: Total browser actions performed
+- `failed_step_details`: Array of failed step information including:
+  - `step_id`: Which step failed
+  - `description`: What the step was trying to do
+  - `status`: The failure status
+  - `type`: Step type (action/verify/ux_verify)
+
+**REPLAN Decision Guidance**:
+- If `failed_steps > 0` with `type: 'action'`, consider REPLAN with alternative navigation paths
+- If `failed_steps > 0` with `type: 'verify'`, the feature may be broken - document and continue
+- High `passed_steps` ratio (>80%) suggests minor issues - likely CONTINUE
+- Low `passed_steps` ratio (<50%) suggests major issues - consider REPLAN or skip
+
 - **Current Application State**: (Referenced via attached screenshot){interactive_elements_section}
 
 ## Enhanced Coverage Analysis Criteria
@@ -1526,10 +1680,7 @@ Maximum elements to return: as specified in user prompt.
 
 
 def get_element_filtering_user_prompt(
-    url: str,
-    business_objectives: str,
-    elements: dict,
-    max_elements: int = 50
+    url: str, business_objectives: str, elements: dict, max_elements: int = 50
 ) -> str:
     """Generate user prompt for Stage 1: element filtering.
 

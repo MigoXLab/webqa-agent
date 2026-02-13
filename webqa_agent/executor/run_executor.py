@@ -20,7 +20,7 @@ from webqa_agent.data import (ParallelTestSession, TestCategory,
 from webqa_agent.data.run_structures import Case
 from webqa_agent.executor.result_aggregator import ResultAggregator
 from webqa_agent.executor.run.case_runner import CaseRunner
-from webqa_agent.utils import Display
+from webqa_agent.utils import Display, i18n
 from webqa_agent.utils.config import load_yaml_files
 from webqa_agent.utils.get_log import GetLog
 from webqa_agent.utils.log_icon import icon
@@ -170,7 +170,7 @@ class RunExecutor:
 
         test_config = TestConfiguration(
             test_id=str(uuid.uuid4()),
-            test_name='YAML Case Execution',
+            test_name=i18n.t(report_lang, 'tools.run_mode.test_name', 'Run Mode'),
             enabled=True,
             report_config=self.config.report_config.model_dump(),
             browser_config=browser_config,

@@ -100,7 +100,6 @@ class UIAssertTool(BaseTool):
                 }
                 logging.debug('Passing execution context to verify()')
 
-            start_time = datetime.datetime.now()  # noqa: F841
             execution_steps, result = await self.ui_tester_instance.verify(
                 assertion,
                 execution_context,
@@ -121,14 +120,14 @@ class UIAssertTool(BaseTool):
 
                 # Record the verify step
                 recorder.add_step(
-                    description=f'Verify: {assertion}',
+                    description=f'verify: {assertion}',
                     screenshots=screenshots,
                     screenshots_paths=screenshots_paths,
                     model_io=model_io,
                     actions=actions,
                     status=step_status,
                     step_type='verify',
-                    end_time=end_time.strftime('%Y-%m-%d %H:%M:%S')
+                    timestamp=end_time.strftime('%Y-%m-%dT%H:%M:%S')  # ISO 8601 format
                 )
                 logging.debug(f'Recorded verify step to CentralCaseRecorder: {assertion[:60]}...')
 

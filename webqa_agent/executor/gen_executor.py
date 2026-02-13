@@ -13,7 +13,7 @@ from webqa_agent.data import (ParallelTestSession, SubTestReport,
                               SubTestResult, SubTestScreenshot, SubTestStep,
                               TestCategory, TestResult, TestStatus)
 from webqa_agent.executor.result_aggregator import ResultAggregator
-from webqa_agent.utils import Display
+from webqa_agent.utils import Display, i18n
 from webqa_agent.utils.get_log import GetLog
 from webqa_agent.utils.log_icon import icon
 from webqa_agent.utils.reporting_utils import save_index_json
@@ -95,6 +95,9 @@ class GenExecutor:
 
             test_session.report_path = custom_report_dir
 
+            # Start session timing (CRITICAL: must be called before save_index_json)
+            test_session.start_session()
+
             # Configure screenshot saving
             ActionHandler.set_screenshot_config(
                 save_screenshots=self.config.report_config.save_screenshots
@@ -132,7 +135,11 @@ class GenExecutor:
             )
             test_session.llm_summary = llm_summary
 
-            # Final update of index.json
+            # Complete session BEFORE saving to ensure end_time is recorded
+            test_session.complete_session()
+            completed_session = test_session
+
+            # Final update of index.json (now includes end_time)
             save_index_json(
                 test_session=test_session,
                 report_dir=custom_report_dir,
@@ -144,14 +151,31 @@ class GenExecutor:
                 mode='gen'
             )
 
-            test_session.complete_session()
-            completed_session = test_session
-
         except BaseException as e:
             logger.error(f'Error in gen executor: {e}')
             run_error = e
 
         finally:
+            # Ensure session end_time is recorded even on exception
+            try:
+                if test_session and not test_session.end_time:
+                    test_session.complete_session()
+                    logger.info('Session end_time recorded in finally block')
+                    # Persist end_time to index.json on exception path
+                    if custom_report_dir:
+                        save_index_json(
+                            test_session=test_session,
+                            report_dir=custom_report_dir,
+                            result_count=result,
+                            llm_config=self.config.llm_config.model_dump(),
+                            browser_config=self.config.browser_config.model_dump(),
+                            report_lang=self.config.report_config.language,
+                            mode='gen'
+                        )
+                        logger.info('index.json updated with end_time in finally block')
+            except Exception as session_err:
+                logger.warning(f'Failed to complete session: {session_err}')
+
             # Cleanup browser session pool (CRITICAL)
             try:
                 if self.session_pool:
@@ -221,14 +245,6 @@ class GenExecutor:
             result
         )
 
-    def _get_enabled_custom_tools(self) -> List[str]:
-        """Get list of enabled custom tool step_types from config.
-
-        Returns:
-            List of custom tool step_types (e.g., ['lighthouse', 'nuclei', 'traverse_clickable_elements'])
-        """
-        return self.config.custom_tools.enabled
-
     async def _run_langgraph_workflow(self) -> TestResult:
         """Run LangGraph workflow for AI test generation.
 
@@ -238,7 +254,7 @@ class GenExecutor:
         from webqa_agent.executor.gen.graph import app
 
         # Get enabled custom tools
-        enabled_custom_tools = self._get_enabled_custom_tools()
+        enabled_custom_tools = self.config.custom_tools.enabled
 
         # Build state for LangGraph
         initial_state = {
@@ -278,20 +294,23 @@ class GenExecutor:
         recorded_cases = final_state.get('recorded_cases', [])
         logger.info(f'Retrieved {len(recorded_cases)} recorded cases from LangGraph')
 
-        # Extract completed cases for status mapping
+        # Extract completed cases for status mapping (keyed by case_id to avoid
+        # name collisions when multiple cases share the same display name)
         completed_cases = final_state.get('completed_cases', [])
         graph_case_status_map: Dict[str, str] = {}
-        for idx, case_res in enumerate(completed_cases):
-            case_name = case_res.get('case_name') or case_res.get('name') or f'Case_{idx + 1}'
-            graph_case_status_map[case_name] = case_res.get('status', 'failed').lower()
+        for case_res in completed_cases:
+            cid = case_res.get('case_id', '')
+            if cid:
+                graph_case_status_map[cid] = case_res.get('status', 'failed').lower()
 
         # Convert recorded_cases to SubTestResult list
         sub_tests = self._convert_recorded_cases_to_sub_tests(recorded_cases, graph_case_status_map)
 
         # Create TestResult
+        lang = self.config.report_config.language
         test_result = TestResult(
             test_id=str(uuid.uuid4()),
-            test_name='AI Function Test',
+            test_name=i18n.t(lang, 'tools.ai_function.display_text', 'Gen Mode'),
             category=TestCategory.FUNCTION,
             sub_tests=sub_tests
         )
@@ -338,14 +357,14 @@ class GenExecutor:
 
         Args:
             recorded_cases: List of recorded case dictionaries from LangGraph
-            graph_case_status_map: Mapping of case names to status strings
+            graph_case_status_map: Mapping of case_id to status strings
 
         Returns:
             List of SubTestResult instances
         """
         sub_tests = []
 
-        for i, recorded_case in enumerate(recorded_cases):
+        for recorded_case in recorded_cases:
             case_name = recorded_case.get(
                 'name',
                 f"Unnamed test case - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
@@ -368,11 +387,11 @@ class GenExecutor:
                     status=step_status,
                 ))
 
-            # Get case status
+            # Get case status (use case_id for lookup to avoid name collision)
             case_status_str = recorded_case.get('status', 'failed').lower()
-            # Prefer status from graph aggregation if available
-            if case_name in graph_case_status_map:
-                case_status_str = graph_case_status_map[case_name]
+            recorded_case_id = recorded_case.get('case_id', '')
+            if recorded_case_id and recorded_case_id in graph_case_status_map:
+                case_status_str = graph_case_status_map[recorded_case_id]
 
             status_enum = self._parse_case_status(case_status_str)
 
@@ -393,7 +412,7 @@ class GenExecutor:
 
             sub_tests.append(
                 SubTestResult(
-                    sub_test_id=recorded_case.get('case_info', {}).get('case_id', ''),
+                    sub_test_id=recorded_case.get('case_id', ''),
                     name=case_name,
                     status=status_enum,
                     metrics=case_metrics,

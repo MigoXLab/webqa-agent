@@ -139,10 +139,32 @@ class ActionHandler:
         self.page_data = {}
         self.page_element_buffer = {}  # page element buffer
         self.page = None
+        self.url_validator = None  # URL validator for preventing LLM hallucinations
 
     async def initialize(self, page: Page):
         self.page = page
         return self
+
+    def set_url_validator(self, base_url: str):
+        """Set URL validator based on test session's base URL.
+
+        This enables URL validation to prevent LLM hallucinations where
+        domain names are incorrectly reordered or modified.
+
+        Args:
+            base_url: The test session's starting URL (e.g., config.target_url)
+
+        Example:
+            handler.set_url_validator("https://discovery.intern-ai.org.cn/home")
+        """
+        from webqa_agent.utils.url_validator import URLValidator
+
+        try:
+            self.url_validator = URLValidator(base_url)
+            logging.info(f'URL validator initialized with base domain: {self.url_validator.base_domain}')
+        except ValueError as e:
+            logging.error(f'Failed to initialize URL validator: {e}')
+            self.url_validator = None
 
     def _get_current_page(self) -> Page:
         """Get current active page."""
@@ -232,6 +254,24 @@ class ActionHandler:
             # Get current page URL
             current_url = page.url
             logging.debug(f'Smart navigation check - Current URL: {current_url}, Target URL: {url}')
+
+            # URL Validation: Prevent LLM hallucinations (domain reordering, etc.)
+            if self.url_validator:
+                try:
+                    # Attempt to validate and auto-correct URL
+                    original_url = url
+                    url = self.url_validator.validate_or_fix(url)
+
+                    if original_url != url:
+                        logging.warning(
+                            f'URL auto-corrected by validator: {original_url} -> {url}'
+                        )
+                except ValueError as e:
+                    # URL validation failed and cannot be fixed
+                    logging.error(f'URL validation failed: {e}')
+                    return False  # Navigation failed due to invalid URL
+            else:
+                logging.debug('URL validator not initialized, skipping validation')
 
             # Enhanced URL normalization function to handle various domain variations
             def normalize_url(u):

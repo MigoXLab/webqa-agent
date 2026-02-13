@@ -15,17 +15,22 @@ from webqa_agent.utils import Display, i18n
 from webqa_agent.utils.log_icon import icon
 
 
-class WebAccessibilityTest:
+class _LocalizedTestBase:
+    """Base class providing i18n support for web test classes."""
+
     def __init__(self, report_config: dict = None):
         self.language = report_config.get('language', 'zh-CN') if report_config else 'zh-CN'
         self.localized_strings = {
-            'zh-CN': i18n.get_lang_data('zh-CN').get('testers', {}).get('basic', {}),
-            'en-US': i18n.get_lang_data('en-US').get('testers', {}).get('basic', {}),
+            'zh-CN': i18n.get_lang_data('zh-CN').get('tools', {}).get('basic', {}),
+            'en-US': i18n.get_lang_data('en-US').get('tools', {}).get('basic', {}),
         }
 
     def _get_text(self, key: str) -> str:
         """Get localized text for the given key."""
         return self.localized_strings.get(self.language, {}).get(key, key)
+
+
+class WebAccessibilityTest(_LocalizedTestBase):
 
     async def run(self, url: str, sub_links: list) -> SubTestResult:
         logging.debug(f'Starting combined HTTPS and status check for {url}')
@@ -65,7 +70,8 @@ class WebAccessibilityTest:
                             )
                         except Exception as e:
                             logging.error(f'Failed to check HTTPS for {link}: {str(e)}')
-                            sub_result['https'] = {'error': str(e)}
+                            sub_result['https_valid'] = False
+                            sub_result['https_reason'] = str(e)
                         try:
                             sub_result['status'] = await self.check_page_status(link)
                         except Exception as e:
@@ -143,11 +149,11 @@ class WebAccessibilityTest:
                 logging.debug(f"HTTPS certificate is {'valid' if result_valid else 'expired'} for {url}")
             except ssl.SSLCertVerificationError as ssl_error:
                 result_valid = False
-                result_reason = ssl_error
+                result_reason = str(ssl_error)
                 logging.error(f'SSL verification error: {ssl_error}')
             except Exception as e:
                 result_valid = False
-                result_reason = e
+                result_reason = str(e)
                 logging.error(f'Error checking certificate: {str(e)}')
             return result_valid, result_reason, result_expiry_date
 
@@ -173,21 +179,11 @@ class WebAccessibilityTest:
             raise Exception(error_message)
 
 
-class PageButtonTest:
-
-    def __init__(self, report_config: dict = None):
-        self.language = report_config.get('language', 'zh-CN') if report_config else 'zh-CN'
-        self.localized_strings = {
-            'zh-CN': i18n.get_lang_data('zh-CN').get('testers', {}).get('basic', {}),
-            'en-US': i18n.get_lang_data('en-US').get('testers', {}).get('basic', {}),
-        }
-
-    def _get_text(self, key: str) -> str:
-        """Get localized text for the given key."""
-        return self.localized_strings.get(self.language, {}).get(key, key)
+class PageButtonTest(_LocalizedTestBase):
 
     async def run(self, url: str, page: Page, clickable_elements: dict, **kwargs) -> SubTestResult:
-        """Run page button test using ActionHandler for enhanced error handling.
+        """Run page button test using ActionHandler for enhanced error
+        handling.
 
         Args:
             url: target url
@@ -204,7 +200,8 @@ class PageButtonTest:
         with Display.display(self._get_text('basic_test_display') + result.name):  # pylint: disable=not-callable
             try:
                 status = TestStatus.PASSED
-                from webqa_agent.actions.action_handler import ActionHandler, action_context_var
+                from webqa_agent.actions.action_handler import (
+                    ActionHandler, action_context_var)
 
                 # Initialize ActionHandler with element buffer
                 action_handler = ActionHandler()
@@ -287,7 +284,7 @@ class PageButtonTest:
                                 status = TestStatus.FAILED
 
                                 logging.warning(
-                                    f"Click failed for element {highlight_id}: "
+                                    f'Click failed for element {highlight_id}: '
                                     f"type={error_details.get('error_type')}, "
                                     f"reason={error_details.get('error_reason')}"
                                 )
@@ -301,6 +298,7 @@ class PageButtonTest:
                             step.status = TestStatus.FAILED
                             step.errors = str(e)
                             step.error_details = {'error_type': 'exception', 'error_reason': str(e)}
+                            total += 1
                             total_failed += 1
                             status = TestStatus.FAILED
                         finally:
@@ -314,13 +312,11 @@ class PageButtonTest:
                     )
                 )
 
-                logging.info(f"{icon['check']} Sub Test Completed: {result.name}")
-
             except Exception as e:
                 error_message = f'PageButtonTest error: {str(e)}'
                 logging.error(error_message)
                 status = TestStatus.FAILED
-                raise
+                result.messages = {'error': error_message}
 
             result.status = status
             result.steps = sub_test_results
