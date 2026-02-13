@@ -294,12 +294,14 @@ class GenExecutor:
         recorded_cases = final_state.get('recorded_cases', [])
         logger.info(f'Retrieved {len(recorded_cases)} recorded cases from LangGraph')
 
-        # Extract completed cases for status mapping
+        # Extract completed cases for status mapping (keyed by case_id to avoid
+        # name collisions when multiple cases share the same display name)
         completed_cases = final_state.get('completed_cases', [])
         graph_case_status_map: Dict[str, str] = {}
-        for idx, case_res in enumerate(completed_cases):
-            case_name = case_res.get('case_name') or case_res.get('name') or f'Case_{idx + 1}'
-            graph_case_status_map[case_name] = case_res.get('status', 'failed').lower()
+        for case_res in completed_cases:
+            cid = case_res.get('case_id', '')
+            if cid:
+                graph_case_status_map[cid] = case_res.get('status', 'failed').lower()
 
         # Convert recorded_cases to SubTestResult list
         sub_tests = self._convert_recorded_cases_to_sub_tests(recorded_cases, graph_case_status_map)
@@ -355,7 +357,7 @@ class GenExecutor:
 
         Args:
             recorded_cases: List of recorded case dictionaries from LangGraph
-            graph_case_status_map: Mapping of case names to status strings
+            graph_case_status_map: Mapping of case_id to status strings
 
         Returns:
             List of SubTestResult instances
@@ -385,11 +387,11 @@ class GenExecutor:
                     status=step_status,
                 ))
 
-            # Get case status
+            # Get case status (use case_id for lookup to avoid name collision)
             case_status_str = recorded_case.get('status', 'failed').lower()
-            # Prefer status from graph aggregation if available
-            if case_name in graph_case_status_map:
-                case_status_str = graph_case_status_map[case_name]
+            recorded_case_id = recorded_case.get('case_id', '')
+            if recorded_case_id and recorded_case_id in graph_case_status_map:
+                case_status_str = graph_case_status_map[recorded_case_id]
 
             status_enum = self._parse_case_status(case_status_str)
 
@@ -410,7 +412,7 @@ class GenExecutor:
 
             sub_tests.append(
                 SubTestResult(
-                    sub_test_id=recorded_case.get('case_info', {}).get('case_id', ''),
+                    sub_test_id=recorded_case.get('case_id', ''),
                     name=case_name,
                     status=status_enum,
                     metrics=case_metrics,
