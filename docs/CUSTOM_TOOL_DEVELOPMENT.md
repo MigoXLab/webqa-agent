@@ -394,10 +394,8 @@ test_config:
 
 # LLM Configuration
 llm_config:
-  model: claude-sonnet-4-5-20250929  # Or gpt-4, gemini-2.5-flash-lite
-  api_key: ${ANTHROPIC_API_KEY}  # Use environment variable
-  temperature: 1.0  # Required for Claude Extended Thinking
-  max_tokens: 20000  # Must be larger than reasoning.budget_tokens
+  model: gemini-3-flash-preview  # Or gpt-4o, claude-sonnet-4-5-20250929
+  api_key: your_api_key  # Set your API key here
 
 # Browser Configuration
 browser_config:

@@ -37,12 +37,10 @@ WebQA Agent 支持两种执行模式，分别针对不同的测试场景和工�
 
    ```yaml
    test_config:
-     function_test:
-       type: "ai"
-       dynamic_step_generation:
-         enabled: true                 # 主开关（默认：true）
-         max_dynamic_steps: 8          # 每次生成的最大步骤数（默认：8，范围：3-15）
-         min_elements_threshold: 2     # 触发生成的最小新元素数（默认：2，范围：1-5）
+     dynamic_step_generation:
+       enabled: true                   # 主开关（默认：true）
+       max_dynamic_steps: 8            # 每次生成的最大步骤数（默认：8，范围：3-15）
+       min_elements_threshold: 2       # 触发生成的最小新元素数（默认：2，范围：1-5）
    ```
 
    **参数说明：**
@@ -90,7 +88,7 @@ Gen 模式配置文件需包含 `test_config` 字段，用于定义需要执行�
 target:
   url: https://example.com              # 需要测试的网站 URL
   description: 网站质量保证测试
-  max_concurrent_tests: 2               # 可选，默认并发数 2
+  max_concurrent_tests: 2               # 可选，默认并发数 4
 
 test_config:
   business_objectives: 测试搜索功能，生成3个测试用例
@@ -108,7 +106,7 @@ test_config:
 target:
   url: https://example.com              # 需要测试的网站 URL
   description: 网站质量保证测试
-  max_concurrent_tests: 4               # 可选，默认并发数 2
+  max_concurrent_tests: 4               # 可选，默认并发数 4
 
 test_config:
   business_objectives: 综合测试，包括性能和安全分析

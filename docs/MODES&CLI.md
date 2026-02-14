@@ -37,12 +37,10 @@ This mode is suitable for exploratory testing and comprehensive quality evaluati
 
    ```yaml
    test_config:
-     function_test:
-       type: "ai"
-       dynamic_step_generation:
-         enabled: true                 # Master switch (default: true)
-         max_dynamic_steps: 8          # Max steps per generation (default: 8, range: 3-15)
-         min_elements_threshold: 2     # Min new elements to trigger (default: 2, range: 1-5)
+     dynamic_step_generation:
+       enabled: true                   # Master switch (default: true)
+       max_dynamic_steps: 8            # Max steps per generation (default: 8, range: 3-15)
+       min_elements_threshold: 2       # Min new elements to trigger (default: 2, range: 1-5)
    ```
 
    **Parameter Guide:**
@@ -88,7 +86,7 @@ This mode is suitable for exploratory testing and comprehensive quality evaluati
 target:
   url: https://example.com              # Website URL to test
   description: Website QA testing
-  max_concurrent_tests: 2               # Optional, default 2
+  max_concurrent_tests: 2               # Optional, default 4
 
 test_config:
   business_objectives: Test search functionality, generate 3 test cases
@@ -106,7 +104,7 @@ test_config:
 target:
   url: https://example.com              # Website URL to test
   description: Website QA testing
-  max_concurrent_tests: 4               # Optional, default 2
+  max_concurrent_tests: 4               # Optional, default 4
 
 test_config:
   business_objectives: Comprehensive testing with performance and security analysis

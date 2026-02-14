@@ -2,7 +2,7 @@
 
 ______________________________________________________________________
 
-## **DOCUMENT TYPE**: LLM Context / System Prompt **AUDIENCE**: Large Language Models (Claude, GPT-4, Gemini, etc.) **PURPOSE**: Provide complete project context for AI-assisted custom tool development **VERSION**: 0.1.0 **LAST_UPDATED**: 2025-12-31
+## **DOCUMENT TYPE**: LLM Context / System Prompt **AUDIENCE**: Large Language Models (Claude, GPT-4, Gemini, etc.) **PURPOSE**: Provide complete project context for AI-assisted custom tool development
 
 ## PROJECT CONTEXT
 
@@ -85,37 +85,60 @@ WebQA Agent is an autonomous web browser testing framework using AI-powered agen
 
 ```
 webqa_agent/
-├── testers/
-│   └── case_gen/
-│       ├── tools/
-│       │   ├── base.py              # WebQABaseTool, WebQAToolMetadata, ResponseTags
-│       │   ├── registry.py          # ToolRegistry singleton, @register_tool
-│       │   ├── action_tool.py  # Browser interaction patterns (UITool)
-│       │   ├── ux_tool.py          # UX testing tools
-│       │   ├── custom/              # ← YOUR CUSTOM TOOLS HERE
-│       │   │   ├── __init__.py
-│       │   │   ├── link_check_tool.py  # Example custom tool
-│       │   │   └── {{your_tool}}.py        # Place your tool here
-│       │   └── __init__.py
-│       ├── graph.py                # LangGraph workflow orchestration
-│       ├── agents/
-│       │   └── execute_agent.py    # Tool execution and control flow
-│       └── state/
-│           └── schemas.py          # State management schemas
+├── tools/                          # Unified tool system
+│   ├── base.py                    # WebQABaseTool, WebQAToolMetadata, ResponseTags
+│   ├── registry.py                # ToolRegistry singleton, @register_tool
+│   ├── action_tool.py             # Browser interaction patterns (UITool)
+│   ├── ux_tool.py                 # UX testing tools
+│   ├── verify_tool.py             # Verification/assertion tools
+│   ├── core/                      # Built-in implementations
+│   │   ├── ui_driver.py           # AI-powered UI testing (UITester)
+│   │   ├── web_checks.py          # Web page checks
+│   │   └── lighthouse.py          # Lighthouse integration
+│   ├── custom/                    # ← YOUR CUSTOM TOOLS HERE
+│   │   ├── __init__.py
+│   │   ├── link_check_tool.py     # Example: dynamic link detection
+│   │   ├── button_check_tool.py   # Example: clickable element traversal
+│   │   ├── lighthouse_tool.py     # Example: Lighthouse performance tool
+│   │   ├── nuclei_tool.py         # Example: Nuclei security scanning
+│   │   └── {{your_tool}}.py       # Place your tool here
+│   └── __init__.py
+├── executor/                      # Execution orchestration
+│   ├── gen/                       # Gen mode (AI-driven)
+│   │   ├── graph.py               # LangGraph workflow orchestration
+│   │   ├── agents/
+│   │   │   └── execute_agent.py   # Tool execution and control flow
+│   │   ├── state/
+│   │   │   └── schemas.py         # State management schemas
+│   │   └── utils/
+│   │       ├── case_recorder.py   # HTML report recording
+│   │       └── case_synchronizer.py # Case synchronization
+│   ├── run/                       # Run mode (YAML execution)
+│   │   └── case_runner.py         # YAML case execution
+│   ├── gen_executor.py            # Gen mode orchestrator
+│   └── run_executor.py            # Run mode orchestrator
+├── config_models/                 # Pydantic V2 configuration
+│   ├── base_config.py             # BrowserConfig, LLMConfig, ReportConfig
+│   ├── gen_config.py              # GenConfig (AI-driven mode)
+│   └── run_config.py              # RunConfig (YAML mode)
+├── prompts/                       # Centralized prompt templates
+│   ├── test_planning_prompts.py   # Test case planning and reflection
+│   ├── agent_execution_prompts.py # Agent execution guidance
+│   └── ui_automation_prompts.py   # UI automation and verification
 ├── browser/
-│   └── session.py                  # Browser session pool management
+│   └── session.py                 # Browser session pool management
 ├── llm/
-│   └── llm_api.py                  # Multi-provider LLM client
+│   └── llm_api.py                 # Multi-provider LLM client
 └── actions/
-    └── action_handler.py           # Browser action execution
+    └── action_handler.py          # Browser action execution
 
 tests/
-└── custom_tools/                   # ← YOUR TESTS HERE
+└── custom_tools/                  # ← YOUR TESTS HERE
     ├── __init__.py
-    └── test_{{your_tool}}.py       # Place your tests here
+    └── test_{{your_tool}}.py      # Place your tests here
 
 config/
-└── config.yaml                     # Main configuration file
+└── config.yaml                    # Main configuration file
 ```
 
 **Key Locations**:
@@ -474,7 +497,7 @@ ______________________________________________________________________
        enabled: []  # Your custom tool will be auto-discovered
    ```
 
-   Run: `webqa-agent run -c config.yaml`
+   Run: `webqa-agent gen -c config.yaml`
 
 ### Code Quality Standards
 

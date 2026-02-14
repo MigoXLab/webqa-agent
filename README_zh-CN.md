@@ -83,7 +83,8 @@ Vibecoding, Vibe coding, 网页测试自动化, 浏览器测试工具, AI驱动�
 
 - **性能测试**: 基于 Lighthouse 的性能测试
 - **安全测试**: Nuclei 漏洞扫描
-- **链接检测**: 动态链接发现
+- **链接检测**: 动态链接发现与验证
+- **元素遍历**: 可点击元素遍历测试
 
 在 `config.yaml` 中启用自定义工具：
 
@@ -93,6 +94,8 @@ test_config:
     enabled:
       - lighthouse
       - nuclei
+      - detect_dynamic_links
+      - traverse_clickable_elements
 ```
 
 ### 🧭 架构图
@@ -181,10 +184,13 @@ curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/start.sh 
 
 配置文件需包含 `test_config` 字段，用于定义需要执行的测试类型。
 
-- **业务目标**: 指定测试的业务目标，以指导 AI 规划测试重点和覆盖范围。
-- **自定义工具**: 可选启用性能（Lighthouse）、安全（Nuclei）、按钮检查、链接检测等工具。
-- **动态步骤生成**: 启用后，在执行过程中检测到新的 UI 元素时，会自动生成额外的测试步骤。
-- **过滤模型**: 配置一个轻量级模型，用于预过滤页面元素，从而提高规划效率。
+- **功能测试**: AI 驱动的测试，验证页面功能的正确性。可选配置：
+  1. business_objectives: 指定测试的业务目标，以指导 AI 规划测试重点和覆盖范围。
+  2. dynamic_step_generation: 启用后，在执行过程中检测到新的 UI 元素时，会自动生成额外的测试步骤。
+  3. filter_model: 配置一个轻量级模型，用于预过滤页面元素，从而提高规划效率。
+- **用户体验测试**: 评估视觉质量、排版/语法、布局渲染，并基于最佳实践提供优化建议。
+- **性能测试**（自定义工具）: 基于 Lighthouse，评估性能、SEO 等指标。
+- **安全测试**（自定义工具）: 基于 Nuclei，扫描 Web 安全漏洞和潜在风险。
 
 更多教程，请参考 [docs/MODES&CLI_zh-CN.md](docs/MODES&CLI_zh-CN.md)
 
@@ -197,20 +203,20 @@ test_config:
   business_objectives: 测试搜索功能，生成3个测试用例
   custom_tools:                         # 可选：启用自定义测试工具（通过 step_type）
     enabled:
-      # - lighthouse                    # Lighthouse 性能测试
-                                        # 需要：npm install lighthouse chrome-launcher（本地，推荐）
-                                        # 或：npm install -g lighthouse chrome-launcher（全局）
-      # - nuclei                        # Nuclei 安全扫描
-                                        # 需要：go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
-                                        # 或从以下地址下载：https://github.com/projectdiscovery/nuclei/releases
-      # - traverse_clickable_elements   # 可点击元素遍历测试
-      # - detect_dynamic_links          # 动态链接发现和验证
+      # - lighthouse                      # Lighthouse 性能测试
+                                          # 需要：npm install lighthouse chrome-launcher（本地，推荐）
+                                          # 或：npm install -g lighthouse chrome-launcher（全局）
+      # - nuclei                          # Nuclei 安全扫描
+                                          # 需要：go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+                                          # 或从以下地址下载：https://github.com/projectdiscovery/nuclei/releases
+      # - traverse_clickable_elements     # 可点击元素遍历测试
+      # - detect_dynamic_links            # 动态链接发现和验证
 
-llm_config:                             # LLM 配置，支持 OpenAI、Anthropic Claude、Google Gemini 以及 OpenAI 兼容格式模型（如豆包、通义千问等）
-  model: gpt-4.1-2025-04-14             # 主模型
-  filter_model: gpt-4o-mini             # 轻量级模型用于元素过滤（可选）
-  api_key: your_api_key                 # 或通过环境变量设置 (OPENAI_API_KEY)
-  base_url: https://api.openai.com/v1   # 可选，API 端点。对于 OpenAI 兼容格式模型（豆包、通义千问等），设置为对应的 API 端点
+llm_config:                               # LLM 配置，支持 OpenAI、Anthropic Claude、Google Gemini 以及 OpenAI 兼容格式模型（如豆包、通义千问等）
+  model: gemini-3-flash-preview           # 主模型（或 gpt-4o、claude-sonnet-4-5-20250929 等）
+  filter_model: gemini-2.5-flash-lite     # 轻量级模型用于元素过滤（可选）
+  api_key: your_api_key                   # OpenAI/兼容模型另支持 OPENAI_API_KEY 环境变量
+  base_url: https://api.openai.com/v1     # 可选，API 端点。对于 OpenAI 兼容格式模型（豆包、通义千问等），设置为对应的 API 端点
 
 browser_config:
   headless: False                       # Docker 环境自动设为 True
@@ -235,8 +241,7 @@ target:
   url: https://example.com              # 目标网站 URL
 
 llm_config:                             # LLM 配置
-  api: openai
-  model: gpt-4o-mini
+  model: gemini-3-flash-preview
   api_key: your_api_key_here
   base_url: https://api.openai.com/v1
 

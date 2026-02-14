@@ -164,11 +164,9 @@ WebQA Agent 是一个自主式 Web 浏览器代理,用于全面的网站测试(�
 - **可扩展工具系统** - 通过 WebQABaseTool 添加自定义工具
 - 全面的测试模式(功能、UX、性能、安全)
 
-**版本**: v0.2.x 系列(当前分支:`dev_0.2.4`,已发布:v0.2.3)
-
 ### 已移除的功能（待统一规划）
 
-**StateRestorer**（v0.2.4 移除）：
+**StateRestorer**：
 
 - 原功能：自动恢复 replanned case 的 URL 状态
 - 移除原因：将与 run 模式的 snapshot 功能统一规划
@@ -214,7 +212,7 @@ pre-commit run --all-files                        # Check/fix all files
 
 ## Architecture Essentials
 
-### Configuration Architecture (v0.2.4)
+### Configuration Architecture
 
 **Pydantic V2 Configuration Models** (`webqa_agent/config_models/`):
 
@@ -239,7 +237,7 @@ pre-commit run --all-files                        # Check/fix all files
 **Configuration Flow**:
 
 ```
-config.yaml → CLI → GenConfig/RunConfig → Executor → LangGraph/CaseExecutor → Tools
+config.yaml → CLI → GenConfig/RunConfig → Executor → LangGraph/CaseRunner → Tools
 ```
 
 ### Core Components
@@ -253,14 +251,14 @@ config.yaml → CLI → GenConfig/RunConfig → Executor → LangGraph/CaseExecu
 2. **LLM Integration** (`webqa_agent/llm/llm_api.py`)
 
    - Auto-detection: `claude-*` → Anthropic, `gemini-*` → Gemini, `gpt-*` → OpenAI
-   - Environment variables: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`
+   - Environment variables: `OPENAI_API_KEY` and `OPENAI_BASE_URL` (OpenAI/compatible only; other providers use `api_key` in config)
    - Provider-specific defaults (OpenAI temp=0.1, Anthropic/Gemini temp=1.0)
 
 3. **Test Execution** (`webqa_agent/executor/`)
 
-   - `GenExecutor` - Gen mode orchestration (AI-driven test generation)
-   - `RunExecutor` - Run mode orchestration (YAML case execution)
-   - `CaseExecutor` - Individual case execution with parallel support
+   - `GenExecutor` (`gen_executor.py`) - Gen mode orchestration (AI-driven test generation)
+   - `RunExecutor` (`run_executor.py`) - Run mode orchestration (YAML case execution)
+   - `CaseRunner` (`run/case_runner.py`) - Individual YAML case execution with parallel support
    - Session pool integration for resource management
 
 4. **Executor/Gen** (`webqa_agent/executor/gen/`)
@@ -269,7 +267,7 @@ config.yaml → CLI → GenConfig/RunConfig → Executor → LangGraph/CaseExecu
    - **Modular architecture:**
      - `agents/` - Execution agents (execute_agent.py)
      - `state/` - State schemas and management
-     - `utils/` - Case recorder and message converter
+     - `utils/` - Case recorder, case synchronizer, and message converter
 
 5. **Tools System** (`webqa_agent/tools/`)
 
@@ -347,7 +345,7 @@ uv run pytest tests/test_crawler.py --url https://example.com
 
 ```yaml
 llm_config:
-  model: gpt-4.1-2025-04-14
+  model: gpt-4o
   filter_model: gpt-4o-mini
   api_key: ${OPENAI_API_KEY}
   temperature: 0.1
@@ -359,7 +357,7 @@ llm_config:
 llm_config:
   model: claude-sonnet-4-5-20250929
   filter_model: claude-haiku-4-5-20251001
-  api_key: ${ANTHROPIC_API_KEY}
+  api_key: your_anthropic_api_key
   temperature: 1.0  # Default for Claude; REQUIRED when using Extended Thinking
   max_tokens: 20000  # Must be larger than budget_tokens
   reasoning:
@@ -382,13 +380,13 @@ llm_config:
 
 **Note**: The system automatically adjusts `budget_tokens` if it exceeds `max_tokens`, but proper configuration yields better results. Temperature is automatically enforced to 1.0 when Extended Thinking is enabled.
 
-**Google Gemini:**
+**Google Gemini (Recommended):**
 
 ```yaml
 llm_config:
   model: gemini-3-flash-preview
   filter_model: gemini-2.5-flash-lite
-  api_key: ${GEMINI_API_KEY}
+  api_key: your_gemini_api_key
   temperature: 1.0
 ```
 
@@ -403,7 +401,7 @@ test_config:
     enabled: ['lighthouse', 'nuclei']  # Optional custom tools: lighthouse, nuclei, traverse_clickable_elements, detect_dynamic_links
   dynamic_step_generation:
     enabled: true
-    max_dynamic_steps: 5
+    max_dynamic_steps: 8
     min_elements_threshold: 2
 ```
 
@@ -413,6 +411,9 @@ test_config:
 browser_config:
   viewport: {width: 1280, height: 720}
   headless: false  # Auto true in Docker
+  language: en-US
+
+report:
   language: en-US
   save_screenshots: false
 ```
@@ -523,11 +524,10 @@ uv run playwright install chromium
 **API key issues:**
 
 ```bash
+# OpenAI/compatible models: env var supported
 export OPENAI_API_KEY="your-key"
-# or
-export ANTHROPIC_API_KEY="your-key"
-# or
-export GEMINI_API_KEY="your-key"
+
+# Anthropic/Gemini: set api_key directly in config.yaml
 ```
 
 **Config not found:**

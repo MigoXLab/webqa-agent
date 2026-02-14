@@ -83,7 +83,8 @@ vibecoding, vibe coding, web evaluation, autonomous exploration, web testing aut
 
 - **Performance**: Lighthouse-based performance testing
 - **Security**: Nuclei vulnerability scanning
-- **Link Detection**: Dynamic link discovery
+- **Link Detection**: Dynamic link discovery and validation
+- **Element Traversal**: Clickable element traversal testing
 
 Enable custom tools in `config.yaml`:
 
@@ -93,6 +94,8 @@ test_config:
     enabled:
       - lighthouse
       - nuclei
+      - detect_dynamic_links
+      - traverse_clickable_elements
 ```
 
 ### 🧭 Architecture
@@ -181,14 +184,13 @@ curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/start.sh 
 
 The configuration file must include the `test_config` field to define test types.
 
-- **Functional Testing (AI type)**: Validates correctness of page functionality. Optional configurations:
+- **Functional Testing**: AI-driven testing that validates correctness of page functionality. Optional configurations:
   1. business_objectives: Specifies business goals to steer test focus and coverage.
   2. dynamic_step_generation: Enables automatic generation of additional steps when new UI elements are detected during execution.
   3. filter_model: Configures a lightweight model for pre-filtering page elements to improve planning efficiency.
-- **Functional Testing (default type)**: Does not rely on LLMs; focuses only on interaction success (clicks, navigation, etc.).
 - **User Experience Testing**: Evaluates visual quality, typography/grammar, layout rendering, and provides optimization suggestions based on best practices.
-- **Performance Testing**: Based on Lighthouse; evaluates performance, SEO, and related metrics.
-- **Security Testing**: Based on Nuclei, scans web security vulnerabilities and potential risks.
+- **Performance Testing** (custom tool): Based on Lighthouse; evaluates performance, SEO, and related metrics.
+- **Security Testing** (custom tool): Based on Nuclei, scans web security vulnerabilities and potential risks.
 
 For more details, please refer to [docs/MODES&CLI.md](docs/MODES&CLI.md)
 
@@ -201,20 +203,20 @@ test_config:
   business_objectives: Test search functionality, generate 3 test cases
   custom_tools:                         # Optional: Enable custom testing tools (by step_type)
     enabled:
-      # - lighthouse                    # Lighthouse performance testing
-                                        # Requires: npm install lighthouse chrome-launcher (local, recommended)
-                                        # or: npm install -g lighthouse chrome-launcher (global)
-      # - nuclei                        # Nuclei security scanning
-                                        # Requires: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
-                                        # or download from: https://github.com/projectdiscovery/nuclei/releases
-      # - traverse_clickable_elements   # Clickable element traversal testing
-      # - detect_dynamic_links          # Dynamic link discovery and validation
+      # - lighthouse                      # Lighthouse performance testing
+                                          # Requires: npm install lighthouse chrome-launcher (local, recommended)
+                                          # or: npm install -g lighthouse chrome-launcher (global)
+      # - nuclei                          # Nuclei security scanning
+                                          # Requires: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+                                          # or download from: https://github.com/projectdiscovery/nuclei/releases
+      # - traverse_clickable_elements     # Clickable element traversal testing
+      # - detect_dynamic_links            # Dynamic link discovery and validation
 
-llm_config:                             # LLM configuration, supports OpenAI, Anthropic Claude, Google Gemini, and OpenAI-compatible models (e.g., Doubao, Qwen)
-  model: gpt-4.1-2025-04-14             # Primary model
-  filter_model: gpt-4o-mini             # Lightweight model for element filtering (optional)
-  api_key: your_api_key                 # Or set via environment variable (OPENAI_API_KEY)
-  base_url: https://api.openai.com/v1   # Optional, API endpoint. For OpenAI-compatible models (Doubao, Qwen, etc.), set to their API endpoint
+llm_config:                               # LLM configuration, supports OpenAI, Anthropic Claude, Google Gemini, and OpenAI-compatible models (e.g., Doubao, Qwen)
+  model: gemini-3-flash-preview           # Primary model (or gpt-4o, claude-sonnet-4-5-20250929, etc.)
+  filter_model: gemini-2.5-flash-lite     # Lightweight model for element filtering (optional)
+  api_key: your_api_key                   # OpenAI/compatible models also support OPENAI_API_KEY env var
+  base_url: https://api.openai.com/v1     # Optional, API endpoint for OpenAI-compatible models (Doubao, Qwen, etc.)
 
 browser_config:
   headless: False                       # Auto True in Docker
@@ -239,8 +241,7 @@ target:
   url: https://example.com              # Target website URL
 
 llm_config:                             # LLM configuration
-  api: openai
-  model: gpt-4o-mini
+  model: gemini-3-flash-preview
   api_key: your_api_key_here
   base_url: https://api.openai.com/v1
 
