@@ -42,8 +42,23 @@ def generate_sso_cookies(username: str, password: str, env: str = 'prod') -> Tup
         raise
 
 
-def upload_report_to_oss(report_dir: str, execution_id: str) -> Optional[str]:
-    """上传报告目录到 OSS。"""
+def _time_id_prefix(execution_id: str, started_at=None) -> str:
+    """生成 OSS 路径用的「时间_id 的第一部分」：{YYYYMMDD_HHMMSS}_{exec_id 前 8 位}。"""
+    from datetime import datetime
+
+    id_part = (execution_id or '').replace('-', '')[:8]
+    if started_at:
+        if hasattr(started_at, 'strftime'):
+            time_part = started_at.strftime('%Y%m%d_%H%M%S')
+        else:
+            time_part = datetime.fromisoformat(str(started_at).replace('Z', '+00:00')).strftime('%Y%m%d_%H%M%S')
+    else:
+        time_part = datetime.now().strftime('%Y%m%d_%H%M%S')
+    return f'{time_part}_{id_part}'
+
+
+def upload_report_to_oss(report_dir: str, oss_key_dir: str) -> Optional[str]:
+    """上传报告目录到 OSS。oss_key_dir 建议使用「时间_id 的第一部分」如 20250227_143022_abc12345。"""
     if not report_dir or not os.path.exists(report_dir):
         logger.warning(f'[OSS] 报告目录不存在: {report_dir}')
         return None
@@ -51,8 +66,11 @@ def upload_report_to_oss(report_dir: str, execution_id: str) -> Optional[str]:
     try:
         from app.utils.oss_utils import upload_dir_to_oss
 
-        dir_name = os.path.basename(os.path.normpath(report_dir))
-        oss_key_prefix = f'test/webqa_agent/reports/{dir_name}'
+        # 兼容调用方仅传 execution_id 的情况，统一转换为时间前缀目录
+        normalized_oss_key_dir = (
+            oss_key_dir if oss_key_dir and '_' in oss_key_dir else _time_id_prefix(oss_key_dir)
+        )
+        oss_key_prefix = f'test/webqa_agent/reports/{normalized_oss_key_dir}'
 
         logger.info(f'[OSS] 开始上传: {report_dir} -> {oss_key_prefix}')
         uploaded_files = upload_dir_to_oss(report_dir, oss_key_prefix=oss_key_prefix)
@@ -74,7 +92,7 @@ def upload_report_to_oss(report_dir: str, execution_id: str) -> Optional[str]:
         return list(uploaded_files.values())[0]
 
     except Exception:
-        logger.exception(f'[OSS] 上传失败: report_dir={report_dir}, execution_id={execution_id}')
+        logger.exception(f'[OSS] 上传失败: report_dir={report_dir}, oss_key_dir={oss_key_dir}')
         return None
 
 

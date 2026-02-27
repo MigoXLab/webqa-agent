@@ -12,7 +12,7 @@ from app.models import Execution
 from app.models.business import Business
 from app.models.environment import Environment
 from app.models.scheduled_task import ScheduledTask
-from app.services.executor import upload_report_to_oss
+from app.services.executor import _time_id_prefix, upload_report_to_oss
 from app.services.feishu_notify import send_feishu_notification
 from app.services.progress_cache import refresh_progress_ttl, set_progress
 from app.utils.datetime_utils import now_with_tz
@@ -146,17 +146,18 @@ async def execution_complete(execution_id: str, request: ExecutionCompleteReques
             if request.report_path:
                 execution.local_report_path = request.report_path
 
-            # 上传报告到 OSS
+            # 上传报告到 OSS（路径使用「时间_id 的第一部分」：YYYYMMDD_HHMMSS_exec_id 前 8 位）
             oss_url = None
             if request.report_path and os.path.exists(request.report_path):
-                logger.info(f'[Internal] 开始上传报告到 OSS: {request.report_path}')
+                oss_key_dir = _time_id_prefix(execution_id, execution.started_at)
+                logger.info(f'[Internal] 开始上传报告到 OSS: {request.report_path} -> reports/{oss_key_dir}')
                 # 使用 run_in_executor 异步执行同步的 OSS 上传操作，避免阻塞异步事件循环
                 loop = asyncio.get_event_loop()
                 oss_url = await loop.run_in_executor(
                     None,
                     upload_report_to_oss,
                     request.report_path,
-                    execution_id
+                    oss_key_dir,
                 )
                 if oss_url:
                     execution.oss_report_url = oss_url

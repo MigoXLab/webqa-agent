@@ -101,6 +101,11 @@ export interface APIResponse<T> {
   data: T;
 }
 
+export interface EnvironmentCookiesResponse {
+  cookies: Array<Record<string, any>>;
+  source: 'sso' | 'environment' | 'none';
+}
+
 export interface ListResponse<T> {
   items: T[];
   total: number;
@@ -186,6 +191,12 @@ class APIClient {
   async deleteEnvironment(id: string): Promise<void> {
     await this.request(`/environments/${id}`, {
       method: 'DELETE',
+    });
+  }
+
+  async generateEnvironmentCookies(id: string): Promise<EnvironmentCookiesResponse> {
+    return this.request<EnvironmentCookiesResponse>(`/environments/${id}/generate-cookies`, {
+      method: 'POST',
     });
   }
 

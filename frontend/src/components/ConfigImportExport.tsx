@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Upload, Download, Loader2 } from 'lucide-react';
 import { TestCase, Business } from '../App';
 import { apiClient } from '../api/client';
+import yaml from 'js-yaml';
 
 type Props = {
   business: Business;
@@ -15,6 +16,10 @@ export function ConfigImportExport({ business, testCases, onImport, onClose }: P
   const [importedContent, setImportedContent] = useState('');
   const [parseError, setParseError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  const [generateCookiesOnExport, setGenerateCookiesOnExport] = useState(false);
+  const [selectedExportEnvId, setSelectedExportEnvId] = useState<string>(business.environments[0]?.id || '');
 
   // 弹窗打开时禁用背景滚动
   useEffect(() => {
@@ -23,6 +28,17 @@ export function ConfigImportExport({ business, testCases, onImport, onClose }: P
       document.body.style.overflow = '';
     };
   }, []);
+
+  useEffect(() => {
+    if (!business.environments.length) {
+      setSelectedExportEnvId('');
+      return;
+    }
+    const hasSelected = business.environments.some((env) => env.id === selectedExportEnvId);
+    if (!hasSelected) {
+      setSelectedExportEnvId(business.environments[0].id);
+    }
+  }, [business.environments, selectedExportEnvId]);
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -267,75 +283,158 @@ export function ConfigImportExport({ business, testCases, onImport, onClose }: P
     }
   };
 
-  const generateYAMLConfig = (): string => {
-    const env = business.environments[0];
-
-    let yaml = '';
-    yaml += 'target:\n';
-    yaml += `  url: ${env?.url || 'https://example.com'}\n\n`;
-
-    yaml += 'llm_config:\n';
-    yaml += '  api: openai\n';
-    yaml += '  model: gpt-5-mini-2025-08-07\n';
-    yaml += '  api_key: your_openai_api_key\n';
-    yaml += '  base_url: https://api.openai.com/v1\n';
-
-    yaml += 'browser_config:\n';
-    yaml += '  viewport: {"width": 1500, "height": 800}\n';
-    yaml += '  headless: False\n';
-    yaml += '  language: zh-CN\n';
-    yaml += '  # cookies: /path/to/cookie.json\n\n';
-
-    yaml += 'cases:\n';
-    testCases.forEach((testCase) => {
-      yaml += `  - name: ${testCase.name}\n`;
-      yaml += `    login_required: ${testCase.login_required ?? false}\n`;
-      if (testCase.snapshot) {
-        yaml += `    snapshot: ${testCase.snapshot}\n`;
-      }
-      if (testCase.use_snapshot) {
-        yaml += `    use_snapshot: ${testCase.use_snapshot}\n`;
-      }
-      yaml += '    steps:\n';
-
-      testCase.steps.forEach((step) => {
-        if (step.step_type === 'action' && step.action) {
-          yaml += `      - action: ${step.action.description}\n`;
-          if (step.action.args && Object.keys(step.action.args).length > 0) {
-            yaml += '        args:\n';
-            Object.entries(step.action.args).forEach(([key, value]) => {
-              if (value !== undefined && value !== null && (typeof value !== 'string' || value !== '')) {
-                yaml += `          ${key}: ${value}\n`;
-              }
-            });
-          }
-        } else if (step.step_type === 'verify' && step.verify) {
-          yaml += `      - verify: ${step.verify.assertion}\n`;
-          if (step.verify.args && Object.keys(step.verify.args).length > 0) {
-            yaml += '        args:\n';
-            Object.entries(step.verify.args).forEach(([key, value]) => {
-              if (value !== undefined && value !== null && (typeof value !== 'string' || value !== '')) {
-                yaml += `          ${key}: ${value}\n`;
-              }
-            });
-          }
-        }
-      });
-      yaml += '\n';
-    });
-
-    return yaml;
+  const getSelectedExportEnvironment = () => {
+    if (!business.environments.length) return undefined;
+    return business.environments.find((env) => env.id === selectedExportEnvId) || business.environments[0];
   };
 
-  const handleExport = () => {
-    const yamlContent = generateYAMLConfig();
-    const blob = new Blob([yamlContent], { type: 'text/yaml' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${business.name.replace(/\s+/g, '_')}_test_config.yaml`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const generateYAMLConfig = (
+    casesToExport: TestCase[] = testCases,
+    overrideCookies?: Record<string, any>[],
+    includeCookies: boolean = true,
+  ): string => {
+    const selectedEnv = getSelectedExportEnvironment();
+    const resolvedCookies = overrideCookies ?? (selectedEnv?.cookies || []);
+    const cookiesPlaceholder = '__WEBQA_COOKIES_PLACEHOLDER__';
+
+    const config: Record<string, any> = {
+      target: { url: selectedEnv?.url || 'https://example.com' },
+      llm_config: {
+        api: 'openai',
+        model: 'gpt-5-mini-2025-08-07',
+        api_key: 'your_openai_api_key',
+        base_url: 'https://api.openai.com/v1',
+      },
+      browser_config: {
+        viewport: selectedEnv?.browser_config?.viewport || { width: 1500, height: 800 },
+        headless: selectedEnv?.browser_config?.headless ?? false,
+        language: selectedEnv?.browser_config?.language || 'zh-CN',
+      },
+      cases: casesToExport.map((testCase) => ({
+        name: testCase.name,
+        login_required: testCase.login_required ?? false,
+        ...(testCase.snapshot ? { snapshot: testCase.snapshot } : {}),
+        ...(testCase.use_snapshot ? { use_snapshot: testCase.use_snapshot } : {}),
+        steps: testCase.steps
+          .map((step) => {
+            if (step.step_type === 'action' && step.action) {
+              const actionArgs = step.action.args
+                ? Object.fromEntries(
+                    Object.entries(step.action.args).filter(
+                      ([, value]) => value !== undefined && value !== null && (typeof value !== 'string' || value !== ''),
+                    ),
+                  )
+                : undefined;
+              return {
+                action: step.action.description,
+                ...(actionArgs && Object.keys(actionArgs).length ? { args: actionArgs } : {}),
+              };
+            }
+            if (step.step_type === 'verify' && step.verify) {
+              const verifyArgs = step.verify.args
+                ? Object.fromEntries(
+                    Object.entries(step.verify.args).filter(
+                      ([, value]) => value !== undefined && value !== null && (typeof value !== 'string' || value !== ''),
+                    ),
+                  )
+                : undefined;
+              return {
+                verify: step.verify.assertion,
+                ...(verifyArgs && Object.keys(verifyArgs).length ? { args: verifyArgs } : {}),
+              };
+            }
+            return null;
+          })
+          .filter(Boolean),
+      })),
+    };
+
+    const hasIgnoreRules =
+      !!selectedEnv?.ignore_rules &&
+      ((selectedEnv.ignore_rules.network?.length ?? 0) > 0 || (selectedEnv.ignore_rules.console?.length ?? 0) > 0);
+    if (hasIgnoreRules) config.ignore_rules = selectedEnv?.ignore_rules;
+
+    if (includeCookies) {
+      config.browser_config.cookies = cookiesPlaceholder;
+    }
+
+    const yamlText = yaml.dump(config, { lineWidth: -1, noRefs: true });
+    const withInlineViewport = yamlText.replace(
+      /(^\s*viewport:\s*\n)(\s*)width:\s*(\d+)\s*\n\2height:\s*(\d+)/m,
+      (_match, viewportLine: string, _childIndent: string, width: string, height: string) => {
+        const indentMatch = viewportLine.match(/^(\s*)viewport:/);
+        const indent = indentMatch?.[1] ?? '  ';
+        return `${indent}viewport: {"width": ${width}, "height": ${height}}`;
+      },
+    );
+    const withPythonBooleans = withInlineViewport.replace(
+      /:\s*(true|false)(\s*$)/gm,
+      (_match, boolValue: string, lineEnd: string) => `: ${boolValue === 'true' ? 'True' : 'False'}${lineEnd}`,
+    );
+
+    if (!includeCookies) return withPythonBooleans;
+
+    const cookiesInline = JSON.stringify(resolvedCookies);
+    return withPythonBooleans.replace(
+      new RegExp(`(^\\s*cookies:\\s*)${cookiesPlaceholder}\\s*$`, 'm'),
+      `$1${cookiesInline}`,
+    );
+  };
+
+  const handleExport = async () => {
+    setExportError('');
+    setIsExporting(true);
+    const selectedEnv = getSelectedExportEnvironment();
+    if (!selectedEnv) {
+      setExportError('请先选择导出环境');
+      setIsExporting(false);
+      return;
+    }
+
+    let cookiesForExport: Record<string, any>[] | undefined;
+    if (generateCookiesOnExport) {
+      try {
+        const cookieResult = await apiClient.generateEnvironmentCookies(selectedEnv.id);
+        cookiesForExport = cookieResult.cookies || [];
+      } catch (error: any) {
+        setExportError(`生成 cookies 失败：${error?.message || '未知错误'}`);
+        setIsExporting(false);
+        return;
+      }
+    }
+
+    const envName = selectedEnv.name?.trim() || 'default_env';
+    const businessName = business.name.replace(/\s+/g, '_');
+    const safeEnvName = envName.replace(/\s+/g, '_');
+    const loginRequiredCases = testCases.filter((testCase) => !!testCase.login_required);
+    const noLoginCases = testCases.filter((testCase) => !testCase.login_required);
+
+    const downloadYaml = (yamlContent: string, fileName: string) => {
+      const blob = new Blob([yamlContent], { type: 'text/yaml' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+
+    if (loginRequiredCases.length > 0) {
+      downloadYaml(
+        generateYAMLConfig(loginRequiredCases, cookiesForExport, true),
+        `${businessName}_${safeEnvName}_login_required_test_config.yaml`,
+      );
+    }
+    if (noLoginCases.length > 0) {
+      downloadYaml(
+        generateYAMLConfig(noLoginCases, undefined, false),
+        `${businessName}_${safeEnvName}_no_login_test_config.yaml`,
+      );
+    }
+    if (loginRequiredCases.length === 0 && noLoginCases.length === 0) {
+      alert('没有可导出的测试用例');
+    }
+    setIsExporting(false);
   };
 
   return (
@@ -357,7 +456,7 @@ export function ConfigImportExport({ business, testCases, onImport, onClose }: P
                   <button
                     onClick={handleImport}
                     disabled={!importedContent || isLoading}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium flex items-center gap-2"
+                    className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 border border-blue-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:border-gray-200 disabled:cursor-not-allowed transition-colors text-sm font-medium"
                   >
                     {isLoading && <Loader2 className="w-4 h-4 animate-spin" />}
                     {isLoading ? '导入中...' : '导入'}
@@ -365,9 +464,11 @@ export function ConfigImportExport({ business, testCases, onImport, onClose }: P
                 ) : (
                   <button
                     onClick={handleExport}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+                    disabled={isExporting}
+                    className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 border border-blue-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:border-gray-200 disabled:cursor-not-allowed transition-colors text-sm font-medium"
                   >
-                    导出YAML文件
+                    {isExporting && <Loader2 className="w-4 h-4 animate-spin" />}
+                    {isExporting ? '导出中...' : '导出YAML文件'}
                   </button>
                 )}
               </div>
@@ -384,7 +485,7 @@ export function ConfigImportExport({ business, testCases, onImport, onClose }: P
                   : 'text-gray-600 hover:text-gray-900'
               }`}
             >
-              <Upload className="w-4 h-4 sm:w-5 sm:h-5 inline mr-2" />
+              <Upload className="w-4 h-4 sm:w-5 sm:h-5 inline mr-2 text-blue-600" />
               导入配置
             </button>
             <button
@@ -395,7 +496,7 @@ export function ConfigImportExport({ business, testCases, onImport, onClose }: P
                   : 'text-gray-600 hover:text-gray-900'
               }`}
             >
-              <Download className="w-4 h-4 sm:w-5 sm:h-5 inline mr-2" />
+              <Download className="w-4 h-4 sm:w-5 sm:h-5 inline mr-2 text-blue-600" />
               导出配置
             </button>
           </div>
@@ -465,12 +566,50 @@ export function ConfigImportExport({ business, testCases, onImport, onClose }: P
 
               <div>
                 <label className="block text-sm mb-2 text-gray-700">
+                  选择导出环境
+                </label>
+                <select
+                  value={selectedExportEnvId}
+                  onChange={(e) => setSelectedExportEnvId(e.target.value)}
+                  className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-white"
+                  disabled={business.environments.length === 0}
+                >
+                  {business.environments.length === 0 ? (
+                    <option value="">暂无可用环境</option>
+                  ) : (
+                    business.environments.map((env) => (
+                      <option key={env.id} value={env.id}>
+                        {env.name} ({env.url || '未设置URL'})
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={generateCookiesOnExport}
+                  onChange={(e) => setGenerateCookiesOnExport(e.target.checked)}
+                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-sm text-gray-700">勾选后自动生成浏览器 cookies</span>
+              </label>
+
+              {exportError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
+                  {exportError}
+                </div>
+              )}
+
+              <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 sm:p-4">
+                <label className="block text-sm mb-2 text-purple-800">
                   预览YAML配置
                 </label>
                 <textarea
                   value={generateYAMLConfig()}
                   readOnly
-                  className="w-full px-3 py-2.5 border border-gray-300 rounded-lg bg-gray-50 font-mono text-xs sm:text-sm"
+                  className="w-full px-3 py-2.5 border border-purple-200 rounded-lg bg-purple-50 font-mono text-xs sm:text-sm text-purple-700"
                   rows={16}
                 />
               </div>

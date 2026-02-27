@@ -1267,12 +1267,12 @@ export function TestCaseManager({
     <div className="min-h-screen px-4 sm:px-6 py-4 sm:py-6 max-w-7xl mx-auto">
       {/* Layer 1: Navigation + Page Tabs */}
       <div className="mb-4">
-        <div className="flex items-center justify-between border-b border-gray-200">
+        <div className="flex items-center justify-between border-b border-blue-100 bg-gradient-to-r from-white via-blue-50/40 to-purple-50/30">
           {/* Left: Breadcrumb */}
           <div className="flex items-center gap-2 pb-2.5">
             <button
               onClick={onBack}
-              className="flex items-center gap-1.5 text-gray-500 hover:text-gray-900 transition-colors text-sm"
+              className="flex items-center gap-1.5 text-gray-500 hover:text-blue-700 transition-colors text-sm"
             >
               <ArrowLeft className="w-4 h-4" />
               返回
@@ -1287,7 +1287,7 @@ export function TestCaseManager({
               onClick={() => setActiveTab('cases')}
               className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === 'cases'
-                  ? 'border-blue-600 text-blue-600'
+                  ? 'border-blue-600 text-blue-700 bg-blue-50/70 rounded-t-md'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
             >
@@ -1298,7 +1298,7 @@ export function TestCaseManager({
               onClick={() => setActiveTab('schedules')}
               className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === 'schedules'
-                  ? 'border-blue-600 text-blue-600'
+                  ? 'border-blue-600 text-blue-700 bg-blue-50/70 rounded-t-md'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
             >
@@ -1310,7 +1310,7 @@ export function TestCaseManager({
               onClick={() => setActiveTab('settings')}
               className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === 'settings'
-                  ? 'border-blue-600 text-blue-600'
+                  ? 'border-blue-600 text-blue-700 bg-blue-50/70 rounded-t-md'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
               }`}
             >
@@ -1327,11 +1327,11 @@ export function TestCaseManager({
           <div className="mb-3">
             <div className="flex items-center gap-3">
               {/* View Mode Toggle */}
-              <div className="flex bg-gray-100 p-1 rounded-lg flex-shrink-0">
+              <div className="flex bg-blue-50/60 border border-blue-100 p-1 rounded-lg flex-shrink-0">
                 <button
                   onClick={() => setViewMode('cards')}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
-                    viewMode === 'cards' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                    viewMode === 'cards' ? 'bg-white text-blue-700 border border-blue-200 shadow-sm' : 'text-gray-600 hover:text-gray-900'
                   }`}
                 >
                   <LayoutList className="w-4 h-4" />
@@ -1340,7 +1340,7 @@ export function TestCaseManager({
                 <button
                   onClick={() => setViewMode('yaml')}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
-                    viewMode === 'yaml' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                    viewMode === 'yaml' ? 'bg-white text-blue-700 border border-blue-200 shadow-sm' : 'text-gray-600 hover:text-gray-900'
                   }`}
                 >
                   <Code className="w-4 h-4" />
@@ -1359,7 +1359,7 @@ export function TestCaseManager({
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       placeholder="搜索用例名称..."
-                      className="w-full pl-9 pr-7 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                      className="w-full pl-9 pr-7 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-400 text-sm bg-white"
                     />
                     {searchQuery && (
                       <button
@@ -1376,7 +1376,7 @@ export function TestCaseManager({
                     value={filterLogin}
                     onChange={(e) => setFilterLogin(e.target.value as any)}
                     className={`px-3 py-1.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm flex-shrink-0 cursor-pointer ${
-                      filterLogin !== 'all' ? 'border-blue-400 text-blue-600 bg-blue-50' : 'border-gray-300 text-gray-600'
+                      filterLogin !== 'all' ? 'border-blue-300 text-blue-700 bg-blue-50' : 'border-gray-300 text-gray-600'
                     }`}
                   >
                     <option value="all">登录状态: 全部</option>
@@ -1388,7 +1388,7 @@ export function TestCaseManager({
                     value={filterSnapshot}
                     onChange={(e) => setFilterSnapshot(e.target.value as any)}
                     className={`px-3 py-1.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm flex-shrink-0 cursor-pointer ${
-                      filterSnapshot !== 'all' ? 'border-blue-400 text-blue-600 bg-blue-50' : 'border-gray-300 text-gray-600'
+                      filterSnapshot !== 'all' ? 'border-blue-300 text-blue-700 bg-blue-50' : 'border-gray-300 text-gray-600'
                     }`}
                   >
                     <option value="all">快照状态: 全部</option>
@@ -1401,7 +1401,7 @@ export function TestCaseManager({
                     value={filterVersion}
                     onChange={(e) => setFilterVersion(e.target.value)}
                     className={`px-3 py-1.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm flex-shrink-0 cursor-pointer ${
-                      filterVersion !== 'all' ? 'border-blue-400 text-blue-600 bg-blue-50' : 'border-gray-300 text-gray-600'
+                      filterVersion !== 'all' ? 'border-blue-300 text-blue-700 bg-blue-50' : 'border-gray-300 text-gray-600'
                     }`}
                   >
                     <option value="all">用例版本: 全部</option>
@@ -1436,9 +1436,9 @@ export function TestCaseManager({
               {viewMode === 'yaml' && (
                 <button
                   onClick={() => setShowConfigModal(true)}
-                  className="flex items-center gap-2 px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-sm flex-shrink-0"
+                  className="flex items-center justify-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 border border-blue-200 transition-colors text-sm font-medium flex-shrink-0"
                 >
-                  <Download className="w-4 h-4 text-gray-500" />
+                  <Download className="w-4 h-4 text-blue-600" />
                   导入/导出 YAML
                 </button>
               )}
@@ -1509,7 +1509,11 @@ export function TestCaseManager({
                 <select
                   value={selectedEnv}
                   onChange={(e) => setSelectedEnv(e.target.value)}
-                  className="px-3 py-1.5 border border-blue-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm flex-shrink-0 bg-blue-50 text-blue-700"
+                  className={`px-3 py-1.5 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm flex-shrink-0 ${
+                    selectedEnv
+                      ? 'border-blue-200 bg-blue-50 text-blue-700'
+                      : 'border-gray-300 bg-white text-gray-600'
+                  }`}
                 >
                   <option value="">选择环境</option>
                   {business.environments.map(env => (
@@ -1540,7 +1544,7 @@ export function TestCaseManager({
                 <button
                   onClick={handleBatchRun}
                   disabled={selectedCases.length === 0 || !selectedEnv || executing}
-                  className="flex items-center justify-center gap-2 px-4 py-1.5 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 border border-blue-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:border-gray-200 disabled:cursor-not-allowed transition-colors text-sm font-medium flex-shrink-0"
+                  className="flex items-center justify-center gap-2 px-4 py-1.5 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 border border-green-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:border-gray-200 disabled:cursor-not-allowed transition-colors text-sm font-medium flex-shrink-0"
                   title={!selectedEnv ? '请先选择执行环境' : selectedCases.length === 0 ? '请先选择测试用例' : ''}
                 >
                   {executing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
@@ -1554,8 +1558,8 @@ export function TestCaseManager({
             {viewMode === 'cards' && (
               <>
               {testCases.length === 0 && (
-                <div className="text-center py-12 bg-white rounded-lg border border-gray-200 border-dashed">
-                    <FileText className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+                <div className="text-center py-12 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg border border-blue-100 border-dashed">
+                    <FileText className="w-12 h-12 text-blue-300 mx-auto mb-4" />
                     <p className="text-gray-500 mb-4">还没有测试用例</p>
                     <button
                     onClick={() => navigate(`/business/${business.id}/case/new`)}
@@ -1567,7 +1571,7 @@ export function TestCaseManager({
               )}
 
               {testCases.length > 0 && filteredTestCases.length === 0 && (
-                <div className="text-center py-8 bg-white rounded-lg border border-gray-200 border-dashed">
+                <div className="text-center py-8 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg border border-blue-100 border-dashed">
                     <p className="text-gray-500">没有符合筛选条件的用例</p>
                 </div>
               )}
@@ -1585,12 +1589,12 @@ export function TestCaseManager({
                 <SortableCaseCard key={testCase.id} id={testCase.id}>
                   {({ dragHandleProps }) => (
                 <div
-                    className="bg-white rounded-lg border border-gray-200 hover:shadow-md transition-shadow h-full flex"
+                    className="group bg-white rounded-lg border border-gray-200 hover:border-blue-200 hover:shadow-sm transition-all h-full flex"
                 >
                     {/* Drag handle — left edge strip */}
                     <button
                       type="button"
-                      className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 hover:bg-gray-50 touch-none flex items-center px-1.5 flex-shrink-0 rounded-l-lg transition-colors"
+                      className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-blue-500 hover:bg-blue-50/60 touch-none flex items-center px-1.5 flex-shrink-0 rounded-l-lg transition-colors"
                       {...dragHandleProps}
                     >
                       <GripVertical className="w-4 h-4" />
@@ -1607,7 +1611,9 @@ export function TestCaseManager({
                                 onChange={() => toggleCaseSelection(testCase.id)}
                                 className="w-4 h-4 rounded border-gray-300 flex-shrink-0"
                               />
-                              <h3 className="truncate font-semibold">{testCase.name}</h3>
+                              <h3 className="truncate text-base font-semibold text-gray-800">
+                                {testCase.name}
+                              </h3>
                             </div>
                             {testCase.description && (
                               <p className="text-sm text-gray-600 line-clamp-2">{testCase.description}</p>
@@ -1631,12 +1637,12 @@ export function TestCaseManager({
                                 </span>
                               )}
                               {testCase.snapshot && (
-                                <span className="px-2 py-1.5 bg-white text-yellow-600 rounded-lg text-xs font-medium flex-shrink-0 border border-yellow-100">
+                                <span className="px-2 py-1.5 text-gray-700 rounded-lg text-xs font-medium flex-shrink-0 border border-gray-300">
                                   📸 快照: {testCase.snapshot}
                                 </span>
                               )}
                               {testCase.use_snapshot && (
-                                <span className="px-2 py-1.5 bg-white text-green-600 rounded-lg text-xs font-medium flex-shrink-0 border border-green-200">
+                                <span className="px-2 py-1.5 text-gray-700 rounded-lg text-xs font-medium flex-shrink-0 border border-gray-300">
                                   🔄 使用: {testCase.use_snapshot}
                                 </span>
                               )}
@@ -1662,7 +1668,7 @@ export function TestCaseManager({
 
                         <div className="bg-gray-50 rounded-lg p-3 sm:p-4 flex-1">
                         <div className="flex items-center gap-2 mb-3 text-sm text-gray-600">
-                            <FileText className="w-4 h-4" />
+                            <FileText className="w-4 h-4 text-blue-600" />
                             <span>测试步骤 ({testCase.steps?.length || 0})</span>
                         </div>
                         <div className="space-y-2">

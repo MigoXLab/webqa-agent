@@ -50,3 +50,9 @@ class EnvironmentResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class EnvironmentCookiesResponse(BaseModel):
+    """Response schema for generated environment cookies."""
+    cookies: List[Dict[str, Any]] = Field(default_factory=list)
+    source: str = Field(default='none', pattern='^(sso|environment|none)$')
