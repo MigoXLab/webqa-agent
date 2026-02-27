@@ -275,7 +275,7 @@ function SortableStepItem({
           value={step.step_type}
           onChange={(e) => updateStepType(index, e.target.value as 'action' | 'verify')}
           className={`px-2 py-0.5 rounded text-xs font-medium border-0 cursor-pointer ${
-            step.step_type === 'action' ? 'bg-green-100 text-green-700' : 'bg-purple-100 text-purple-700'
+            step.step_type === 'action' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
           }`}
         >
           <option value="action">Action</option>
@@ -299,7 +299,7 @@ function SortableStepItem({
         <button
           type="button"
           onClick={() => setExpandedArgs(prev => ({ ...prev, [step.id]: !prev[step.id] }))}
-          className={`text-xs px-2 py-1 rounded ${expandedArgs[step.id] ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+          className={`text-xs px-2 py-1 rounded ${expandedArgs[step.id] ? 'bg-purple-100 text-purple-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
         >
           {expandedArgs[step.id] ? '▼ 参数' : '▶ 参数'}
         </button>
@@ -685,7 +685,7 @@ export function CaseEditorPage() {
 
     // Set info message in debug panel
     if (snapshotCase) {
-      setDebugInfo(`将先执行快照用例「${snapshotCase.name}」建立登录态，再执行当前用例`);
+      setDebugInfo(`将先执行快照用例「${snapshotCase.name}」，再执行当前用例`);
     } else if (dataToUse.login_required) {
       setDebugInfo('已开启登录，将注入环境 cookies');
     } else {
@@ -903,16 +903,16 @@ export function CaseEditorPage() {
             {business && <span className="text-gray-300">/</span>}
             <button
               onClick={handleBack}
-              className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
+              className="flex items-center gap-1.5 text-gray-500 hover:text-gray-900 transition-colors text-sm"
             >
-              <ArrowLeft className="w-5 h-5" />
+              <ArrowLeft className="w-4 h-4" />
               返回用例列表
             </button>
           </div>
 
           {/* Row 2: Title + Save button on the same line */}
           <div className="flex items-center justify-between gap-4 mb-4">
-            <h1 className="text-2xl font-bold text-gray-900">
+            <h1 className="text-xl font-semibold text-gray-900">
               {isNewCase ? '新建用例' : (formData.name || '编辑用例')}
             </h1>
             <div className="flex items-center gap-3 flex-shrink-0">
@@ -1009,7 +1009,7 @@ export function CaseEditorPage() {
                         {/* Tag summary — always visible */}
                         <div className="flex items-center gap-2 ml-2 flex-wrap">
                           {formData.login_required && (
-                            <span className="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg text-xs font-medium flex-shrink-0 border border-amber-200">
+                            <span className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-xs font-medium flex-shrink-0 border border-blue-200">
                               <Key className="w-3 h-3" />需登录
                             </span>
                           )}
@@ -1019,12 +1019,12 @@ export function CaseEditorPage() {
                             </span>
                           )}
                           {formData.snapshot && (
-                            <span className="px-3 py-1.5 bg-green-50 text-green-700 rounded-lg text-xs font-medium flex-shrink-0 border border-green-200">
+                            <span className="px-3 py-1.5 bg-gray-50 text-gray-500 rounded-lg text-xs font-medium flex-shrink-0 border border-gray-200">
                               📸 快照: {formData.snapshot}
                             </span>
                           )}
                           {formData.use_snapshot && (
-                            <span className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-xs font-medium flex-shrink-0 border border-blue-200">
+                            <span className="px-3 py-1.5 bg-gray-50 text-gray-500 rounded-lg text-xs font-medium flex-shrink-0 border border-gray-200">
                               🔄 使用: {formData.use_snapshot}
                             </span>
                           )}
@@ -1183,7 +1183,7 @@ export function CaseEditorPage() {
                   className="text-sm font-semibold text-gray-900 flex items-center gap-2"
                   style={{ width: '100%', minWidth: 0, overflow: 'hidden' }}
                 >
-                  <Play className="w-4 h-4 text-green-600 flex-shrink-0" />
+                  <Play className="w-4 h-4 text-blue-600 flex-shrink-0" />
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Debug 调试</span>
                 </h3>
                 {/* Env + Model + Debug Button — all on one line */}
@@ -1223,7 +1223,7 @@ export function CaseEditorPage() {
                     <button
                       onClick={startDebug}
                       disabled={!debugEnvironmentId}
-                      className="flex items-center justify-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
+                      className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 border border-blue-200 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
                     >
                       <Play className="w-4 h-4" />
                       调试
@@ -1343,7 +1343,7 @@ export function CaseEditorPage() {
                       </div>
                     ))
                   ) : (
-                    <div className="text-green-500 text-center py-8">
+                    <div className="text-gray-400 text-center py-8">
                       {debugState === 'running' ? '等待日志输出...' : '点击「调试」执行当前用例'}
                     </div>
                   )}

@@ -572,7 +572,7 @@ export function ScheduledTaskManager({
               {/* Header */}
               <div className="border-b border-gray-200 flex-shrink-0" style={{ padding: '16px 28px' }}>
                 <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-bold text-gray-900">{editingTask ? '编辑任务' : '创建任务'}</h2>
+                  <h2 className="text-lg font-semibold text-gray-900">{editingTask ? '编辑任务' : '创建任务'}</h2>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
@@ -678,17 +678,17 @@ export function ScheduledTaskManager({
                         <span className="truncate flex-1">{tc.name}</span>
                         <span className="flex items-center gap-2 flex-shrink-0">
                           {tc.login_required && (
-                            <span className="px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg text-xs font-medium border border-amber-200">
+                            <span className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-xs font-medium border border-blue-200">
                               需登录
                             </span>
                           )}
                           {tc.snapshot && (
-                            <span className="px-3 py-1.5 bg-green-50 text-green-700 rounded-lg text-xs font-medium border border-green-200">
+                            <span className="px-3 py-1.5 bg-gray-50 text-gray-500 rounded-lg text-xs font-medium border border-gray-200">
                               📸 快照: {tc.snapshot}
                             </span>
                           )}
                           {tc.use_snapshot && (
-                            <span className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-xs font-medium border border-blue-200">
+                            <span className="px-3 py-1.5 bg-gray-50 text-gray-500 rounded-lg text-xs font-medium border border-gray-200">
                               🔄 使用: {tc.use_snapshot}
                             </span>
                           )}

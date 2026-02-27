@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, PlayCircle, Edit, Trash2, FileText, Download, Calendar, Settings, Loader2, LayoutList, Code, Key, AlertCircle, Check, Search, X, GripVertical } from 'lucide-react';
+import { ArrowLeft, Plus, Play, Edit, Trash2, FileText, Download, Calendar, Settings, Loader2, LayoutList, Code, Key, AlertCircle, Check, Search, X, GripVertical } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -1278,7 +1278,7 @@ export function TestCaseManager({
               返回
             </button>
             <span className="text-gray-300">/</span>
-            <h1 className="text-base font-bold text-gray-900">{business.name}</h1>
+            <h1 className="text-xl font-semibold text-gray-900">{business.name}</h1>
           </div>
 
           {/* Right: Tabs + Management */}
@@ -1509,7 +1509,7 @@ export function TestCaseManager({
                 <select
                   value={selectedEnv}
                   onChange={(e) => setSelectedEnv(e.target.value)}
-                  className="px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm flex-shrink-0 bg-gray-50"
+                  className="px-3 py-1.5 border border-blue-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm flex-shrink-0 bg-blue-50 text-blue-700"
                 >
                   <option value="">选择环境</option>
                   {business.environments.map(env => (
@@ -1520,7 +1520,7 @@ export function TestCaseManager({
                 <select
                   value={selectedModel}
                   onChange={(e) => setSelectedModel(e.target.value)}
-                  className="px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm flex-shrink-0 bg-gray-50 max-w-[180px]"
+                  className="px-3 py-1.5 border border-blue-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm flex-shrink-0 bg-blue-50 text-blue-700 max-w-[180px]"
                 >
                   {availableModels.models.map(model => (
                     <option key={model} value={model}>{model}</option>
@@ -1530,7 +1530,7 @@ export function TestCaseManager({
                 <select
                   value={workers}
                   onChange={(e) => setWorkers(parseInt(e.target.value))}
-                  className="px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm flex-shrink-0 bg-gray-50"
+                  className="px-3 py-1.5 border border-blue-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm flex-shrink-0 bg-blue-50 text-blue-700"
                 >
                   {[1, 2, 3, 4, 5].map(n => (
                     <option key={n} value={n}>并发 {n}</option>
@@ -1540,10 +1540,10 @@ export function TestCaseManager({
                 <button
                   onClick={handleBatchRun}
                   disabled={selectedCases.length === 0 || !selectedEnv || executing}
-                  className="flex items-center justify-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm flex-shrink-0"
+                  className="flex items-center justify-center gap-2 px-4 py-1.5 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 border border-blue-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:border-gray-200 disabled:cursor-not-allowed transition-colors text-sm font-medium flex-shrink-0"
                   title={!selectedEnv ? '请先选择执行环境' : selectedCases.length === 0 ? '请先选择测试用例' : ''}
                 >
-                  {executing ? <Loader2 className="w-5 h-5 animate-spin" /> : <PlayCircle className="w-5 h-5" />}
+                  {executing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
                   {executing ? '执行中...' : '执行'}
                 </button>
               </div>
@@ -1617,26 +1617,26 @@ export function TestCaseManager({
                                 type="button"
                                 onClick={(e) => { e.stopPropagation(); handleToggleLoginRequired(testCase, e as any); }}
                                 title={testCase.login_required ? '点击关闭登录' : '点击开启登录'}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-medium flex-shrink-0 border transition-colors ${
+                                className={`px-2 py-1.5 rounded-lg text-xs font-medium flex-shrink-0 border transition-colors ${
                                   testCase.login_required
-                                    ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
-                                    : 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100 hover:text-gray-600'
+                                    ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'
+                                    : 'bg-white text-blue-600 border-blue-200 hover:bg-blue-50'
                                 }`}
                               >
                                 {testCase.login_required ? '🔑 需登录' : '🔓 免登录'}
                               </button>
                               {testCase.version && (
-                                <span className="px-3 py-1.5 bg-purple-50 text-purple-700 rounded-lg text-xs font-medium flex-shrink-0 border border-purple-200">
+                                <span className="px-2 py-1.5 bg-purple-50 text-purple-700 rounded-lg text-xs font-medium flex-shrink-0 border border-purple-200">
                                   🏷️ {testCase.version}
                                 </span>
                               )}
                               {testCase.snapshot && (
-                                <span className="px-3 py-1.5 bg-green-50 text-green-700 rounded-lg text-xs font-medium flex-shrink-0 border border-green-200">
+                                <span className="px-2 py-1.5 bg-white text-yellow-600 rounded-lg text-xs font-medium flex-shrink-0 border border-yellow-100">
                                   📸 快照: {testCase.snapshot}
                                 </span>
                               )}
                               {testCase.use_snapshot && (
-                                <span className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-xs font-medium flex-shrink-0 border border-blue-200">
+                                <span className="px-2 py-1.5 bg-white text-green-600 rounded-lg text-xs font-medium flex-shrink-0 border border-green-200">
                                   🔄 使用: {testCase.use_snapshot}
                                 </span>
                               )}
@@ -1839,7 +1839,7 @@ export function TestCaseManager({
               {/* Header */}
               <div className="border-b border-gray-200 flex-shrink-0" style={{ padding: '16px 28px' }}>
                 <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-bold text-gray-900">{editingCase ? '编辑测试用例' : '创建测试用例'}</h2>
+                  <h2 className="text-lg font-semibold text-gray-900">{editingCase ? '编辑测试用例' : '创建测试用例'}</h2>
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => {
@@ -1965,7 +1965,7 @@ export function TestCaseManager({
                                 onChange={(e) => updateStepType(index, e.target.value as 'action' | 'verify')}
                                 className={`px-2 py-0.5 rounded text-xs font-medium border-0 cursor-pointer ${
                                   step.step_type === 'action'
-                                    ? 'bg-green-100 text-green-700'
+                                    ? 'bg-blue-100 text-blue-700'
                                     : 'bg-purple-100 text-purple-700'
                                 }`}
                               >
@@ -2000,7 +2000,7 @@ export function TestCaseManager({
                                 onClick={() => toggleArgs(step.id)}
                                 className={`text-xs px-2 py-1 rounded ${
                                   expandedArgs[step.id]
-                                    ? 'bg-blue-100 text-blue-700'
+                                    ? 'bg-purple-100 text-purple-700'
                                     : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
                                 }`}
                               >
@@ -2016,7 +2016,7 @@ export function TestCaseManager({
                                 );
                               })()}
                               {step.step_type === 'verify' && step.verify?.args?.use_context && (
-                                <span className="px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">🔗</span>
+                                <span className="px-2 py-0.5 text-xs bg-purple-100 text-purple-700 rounded">🔗</span>
                               )}
                             </div>
 

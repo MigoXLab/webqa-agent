@@ -230,7 +230,7 @@ export function FileManager({ businessId, files, onFilesChange, onClose, inline 
           {/* Header */}
           <div className="border-b border-gray-200 flex-shrink-0" style={{ padding: '16px 28px' }}>
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-gray-900">文件管理</h2>
+              <h2 className="text-lg font-semibold text-gray-900">文件管理</h2>
               <button
                 onClick={onClose}
                 className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"

@@ -210,9 +210,9 @@ export function ExecutionDetail() {
           <div className="flex items-center gap-4">
             <button
               onClick={() => navigate('/history')}
-              className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
+              className="flex items-center gap-1.5 text-gray-500 hover:text-gray-900 transition-colors text-sm"
             >
-              <ArrowLeft className="w-5 h-5" />
+              <ArrowLeft className="w-4 h-4" />
               <span>返回执行列表</span>
             </button>
             <div className="h-6 w-px bg-gray-300" />

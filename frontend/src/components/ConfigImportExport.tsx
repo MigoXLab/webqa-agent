@@ -345,7 +345,7 @@ export function ConfigImportExport({ business, testCases, onImport, onClose }: P
           {/* Header */}
           <div className="border-b border-gray-200 flex-shrink-0" style={{ padding: '16px 28px' }}>
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-gray-900">配置导入/导出</h2>
+              <h2 className="text-lg font-semibold text-gray-900">配置导入/导出</h2>
               <div className="flex items-center gap-2">
                 <button
                   onClick={onClose}
@@ -438,9 +438,9 @@ export function ConfigImportExport({ business, testCases, onImport, onClose }: P
                 </div>
               )}
 
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 sm:p-4">
-                <p className="text-sm text-blue-800 mb-2">配置格式说明：</p>
-                <pre className="text-xs text-blue-700 overflow-x-auto">
+              <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 sm:p-4">
+                <p className="text-sm text-purple-800 mb-2">配置格式说明：</p>
+                <pre className="text-xs text-purple-700 overflow-x-auto">
 {`cases:
   - name: Baidu Image Upload
     login_required: true

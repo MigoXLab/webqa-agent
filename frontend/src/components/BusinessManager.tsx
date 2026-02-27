@@ -207,7 +207,7 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
       {/* Header */}
       {!inline && (
         <div className="border-b border-gray-200 flex items-center justify-between flex-shrink-0" style={{ padding: '16px 28px' }}>
-          <h2 className="text-lg font-bold text-gray-900">{editingBusiness ? '编辑业务' : '创建新业务'}</h2>
+          <h2 className="text-lg font-semibold text-gray-900">{editingBusiness ? '编辑业务' : '创建新业务'}</h2>
           <div className="flex items-center gap-2">
             <button
               type="button"

@@ -144,14 +144,14 @@ export function DebugPanel({ testCase, environment, business, onBack }: Props) {
       <div className="mb-4 sm:mb-6">
         <button
           onClick={onBack}
-          className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-4"
+          className="flex items-center gap-1.5 text-gray-500 hover:text-gray-900 transition-colors text-sm mb-4"
         >
-          <ArrowLeft className="w-5 h-5" />
+          <ArrowLeft className="w-4 h-4" />
           返回用例列表
         </button>
         <div className="flex flex-col gap-4">
           <div>
-            <h1 className="mb-2">{testCase.name}</h1>
+            <h1 className="text-xl font-semibold text-gray-900 mb-2">{testCase.name}</h1>
             <p className="text-gray-600 text-sm sm:text-base">
               {business.name} · {environment.name} ({environment.url})
             </p>
@@ -160,7 +160,7 @@ export function DebugPanel({ testCase, environment, business, onBack }: Props) {
             {!isRunning ? (
               <button
                 onClick={startExecution}
-                className="flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex-1 sm:flex-initial"
+                className="flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 border border-blue-200 transition-colors flex-1 sm:flex-initial font-medium"
               >
                 <Play className="w-5 h-5" />
                 开始调试
@@ -170,7 +170,7 @@ export function DebugPanel({ testCase, environment, business, onBack }: Props) {
                 {isPaused ? (
                   <button
                     onClick={resumeExecution}
-                    className="flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex-1 sm:flex-initial"
+                    className="flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 border border-blue-200 transition-colors flex-1 sm:flex-initial font-medium"
                   >
                     <Play className="w-5 h-5" />
                     继续

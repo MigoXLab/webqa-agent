@@ -104,7 +104,7 @@ export function ExecutionHistory({ businesses }: Props) {
   const getBusinessColor = (name?: string) => {
     if (!name) return 'bg-gray-100 text-gray-600';
     const colors = [
-      'bg-blue-100 text-blue-700',
+      'bg-purple-100 text-purple-700',
       'bg-green-100 text-green-700',
       'bg-purple-100 text-purple-700',
       'bg-orange-100 text-orange-700',
@@ -223,7 +223,7 @@ export function ExecutionHistory({ businesses }: Props) {
       {/* Header */}
       <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">执行历史</h1>
+          <h1 className="text-xl font-semibold text-gray-900">执行历史</h1>
           <p className="text-gray-600 mt-1">查看所有测试执行记录</p>
         </div>
       </div>
