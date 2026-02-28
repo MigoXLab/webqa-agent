@@ -354,6 +354,8 @@ export function ConfigImportExport({ business, testCases, onImport, onClose }: P
       ((selectedEnv.ignore_rules.network?.length ?? 0) > 0 || (selectedEnv.ignore_rules.console?.length ?? 0) > 0);
     if (hasIgnoreRules) config.ignore_rules = selectedEnv?.ignore_rules;
 
+    config.report = { language: 'zh-CN' };
+
     if (includeCookies) {
       config.browser_config.cookies = cookiesPlaceholder;
     }

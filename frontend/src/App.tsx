@@ -390,9 +390,9 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className="bg-gray-50 flex flex-col" style={{ height: '100vh', overflow: 'hidden' }}>
       {/* Header Navigation */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-40">
+      <header className="bg-white border-b border-gray-200" style={{ flexShrink: 0, zIndex: 40, position: 'relative' }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-16">
             <Link to="/" className="flex items-center gap-3 flex-shrink-0 hover:opacity-80 transition-opacity">
@@ -464,7 +464,10 @@ export default function App() {
       )}
 
       {/* Main Content */}
-      <main className={`flex-1 ${view === 'case_editor' ? 'overflow-hidden flex flex-col' : 'overflow-auto'}`}>
+      <main
+        className={`flex-1 ${view === 'case_editor' ? 'overflow-hidden flex flex-col' : ''}`}
+        style={{ position: 'relative', zIndex: 0, isolation: 'isolate', overflow: view === 'case_editor' ? undefined : 'auto' }}
+      >
         <Routes>
           <Route path="/" element={
             <BusinessManager

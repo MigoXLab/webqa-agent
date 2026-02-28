@@ -323,7 +323,7 @@ export function ExecutionHistory({ businesses }: Props) {
                   {/* Business & Environment */}
                   <td className="px-6 py-4">
                     <div className="flex flex-col">
-                      <span className={`text-sm font-medium text-gray-900 ${getBusinessColor(exec.business_name)}`}>
+                      <span className="text-sm font-medium text-gray-900">
                         {exec.business_name || '未知业务'}
                       </span>
                       {exec.environment_name && (
