@@ -202,6 +202,8 @@ class PageButtonTest(_LocalizedTestBase):
                 status = TestStatus.PASSED
                 from webqa_agent.actions.action_handler import (
                     ActionHandler, action_context_var)
+                from webqa_agent.browser.check import (ConsoleCheck,
+                                                       NetworkCheck)
 
                 # Initialize ActionHandler with element buffer
                 action_handler = ActionHandler()
@@ -210,6 +212,10 @@ class PageButtonTest(_LocalizedTestBase):
                 action_handler.page_element_buffer = {
                     str(k): v for k, v in clickable_elements.items()
                 }
+
+                # Initialize Checkers
+                network_check = NetworkCheck(page)
+                console_check = ConsoleCheck(page)
 
                 # count total passed / failed
                 total, total_failed = 0, 0
@@ -223,7 +229,8 @@ class PageButtonTest(_LocalizedTestBase):
                         step = SubTestStep(
                             id=int(highlight_id),
                             description=f"{self._get_text('click_element')}: {element_text}",
-                            screenshots=[]
+                            screenshots=[],
+                            actions=[]
                         )
 
                         try:
@@ -232,61 +239,96 @@ class PageButtonTest(_LocalizedTestBase):
                                 await page.goto(url)
                                 await asyncio.sleep(0.5)  # Wait for page to stabilize
 
+                            # Record existing errors count
+                            initial_console_errors = len(console_check.get_messages())
+                            initial_network_errors = len(network_check.get_messages().get('failed_requests', []))
+                            initial_responses = len(network_check.get_messages().get('responses', []))
+
                             # Use ActionHandler.click() for enhanced error handling
                             click_success = await action_handler.click(str(highlight_id))
 
                             # Get error context from ActionContext
                             ctx = action_context_var.get()
 
-                            if click_success:
-                                # Click succeeded, take screenshot
-                                await asyncio.sleep(1)  # Wait for page to update
-                                screenshot_b64, screenshot_path = await action_handler.b64_page_screenshot(
-                                    file_name=f'element_{highlight_id}_after_click',
-                                    context='test'
-                                )
-                                if screenshot_path:
-                                    step.screenshots.append(SubTestScreenshot(
-                                        type='path',
-                                        data=screenshot_path,
-                                        label='After Click'
-                                    ))
-                                elif screenshot_b64:
-                                    step.screenshots.append(SubTestScreenshot(
-                                        type='base64',
-                                        data=screenshot_b64,
-                                        label='After Click'
-                                    ))
+                            # Check for new browser errors
+                            await asyncio.sleep(1)
 
+                            current_console_errors = console_check.get_messages()
+                            new_console_errors = current_console_errors[initial_console_errors:]
+
+                            network_messages = network_check.get_messages()
+                            current_failed_requests = network_messages.get('failed_requests', [])
+                            new_network_failures = current_failed_requests[initial_network_errors:]
+
+                            current_responses = network_messages.get('responses', [])
+                            new_failed_responses = [resp for resp in current_responses[initial_responses:] if resp.get('status', 200) >= 400]
+
+                            has_browser_errors = len(new_console_errors) > 0 or len(new_network_failures) > 0 or len(new_failed_responses) > 0
+
+                            if has_browser_errors:
+                                browser_errors_summary = []
+                                if new_console_errors:
+                                    for err in new_console_errors:
+                                        browser_errors_summary.append(f"Console Error: {err.get('msg')}")
+                                if new_network_failures:
+                                    for err in new_network_failures:
+                                        browser_errors_summary.append(f"Network Failure: {err.get('url')} - {err.get('error')}")
+                                if new_failed_responses:
+                                    for err in new_failed_responses:
+                                        browser_errors_summary.append(f"Network Error Status: {err.get('url')} - {err.get('status')}")
+
+                            if click_success and not has_browser_errors:
                                 step.status = TestStatus.PASSED
                                 total += 1
 
                             else:
-                                # Click failed, collect detailed error information
-                                error_details = {}
-                                if ctx:
-                                    error_details = {
-                                        'error_type': ctx.error_type,
-                                        'error_reason': ctx.error_reason,
-                                        'attempted_strategies': ctx.attempted_strategies,
-                                        'element_info': ctx.element_info,
-                                        'scroll_attempts': ctx.scroll_attempts,
-                                        'max_scroll_attempts': ctx.max_scroll_attempts,
-                                        'playwright_error': ctx.playwright_error
-                                    }
+                                # Click failed or browser errors occurred
+                                # Take and append the 'after' screenshot (error scene)
+                                after_b64, after_path = await action_handler.b64_page_screenshot(
+                                    file_name=f'element_{highlight_id}_error_scene',
+                                    context='test'
+                                )
+                                if after_path:
+                                    step.screenshots.append(SubTestScreenshot(
+                                        type='path',
+                                        data=after_path,
+                                        label='Error Scene'
+                                    ))
+                                elif after_b64:
+                                    step.screenshots.append(SubTestScreenshot(
+                                        type='base64',
+                                        data=after_b64,
+                                        label='Error Scene'
+                                    ))
 
-                                # Store error details in step
-                                step.error_details = error_details
-                                step.errors = f"{error_details.get('error_type', 'unknown')}: {error_details.get('error_reason', 'Click failed')}"
+                                error_type = 'unknown'
+                                error_reason = 'Click failed or errors occurred'
+
+                                if not click_success and ctx:
+                                    error_type = ctx.error_type
+                                    error_reason = ctx.error_reason
+                                elif has_browser_errors:
+                                    error_type = 'browser_error'
+                                    error_reason = 'Console or Network errors occurred after click'
+
+                                error_msg_parts = [f'{error_type}: {error_reason}']
+
+                                if not click_success and ctx and ctx.playwright_error:
+                                    error_msg_parts.append(f'Details: {ctx.playwright_error}')
+
+                                if has_browser_errors and browser_errors_summary:
+                                    error_msg_parts.append('Browser Errors: ' + '; '.join(browser_errors_summary))
+
+                                step.errors = ' | '.join(error_msg_parts)
                                 step.status = TestStatus.FAILED
                                 total += 1
                                 total_failed += 1
                                 status = TestStatus.FAILED
 
                                 logging.warning(
-                                    f'Click failed for element {highlight_id}: '
-                                    f"type={error_details.get('error_type')}, "
-                                    f"reason={error_details.get('error_reason')}"
+                                    f'Click failed/errored for element {highlight_id}: '
+                                    f'type={error_type}, '
+                                    f'reason={error_reason}'
                                 )
 
                             # Brief pause between clicks
@@ -297,12 +339,15 @@ class PageButtonTest(_LocalizedTestBase):
                             logging.error(error_message)
                             step.status = TestStatus.FAILED
                             step.errors = str(e)
-                            step.error_details = {'error_type': 'exception', 'error_reason': str(e)}
                             total += 1
                             total_failed += 1
                             status = TestStatus.FAILED
                         finally:
                             sub_test_results.append(step)
+
+                    # Clean up listeners after traversal
+                    network_check.remove_listeners()
+                    console_check.remove_listeners()
 
                 logging.info(f"{icon['check']} Sub Test Completed: {result.name}")
                 result.report.append(
