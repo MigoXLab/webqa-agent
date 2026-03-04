@@ -115,10 +115,11 @@ class ButtonCheckTool(WebQABaseTool):
                 '  - Business logic success validation\n'
                 '  - Detailed pass/fail statistics\n\n'
                 'IMPORTANT NOTE FOR AGENT:\n'
-                '  - Any console errors or network errors found by this tool are EXPECTED behavior.\n'
-                '  - They represent discovered issues, NOT testing framework failures.\n'
+                '  - Any console errors or network errors found by this tool are VALID BUGS on the page.\n'
+                '  - They represent successfully discovered issues, NOT testing framework failures.\n'
                 '  - DO NOT trigger a REPLAN when this tool reports console or network errors.\n'
-                '  - Instead, document the findings in your summary and CONTINUE the execution.\n\n'
+                '  - Instead, you MUST output OBJECTIVE_ACHIEVED.\n'
+                '  - You MUST explicitly include the EXACT console and network errors found inside the OBJECTIVE_ACHIEVED reason itself.\n\n'
                 'Returns:\n'
                 '  - Total elements tested\n'
                 '  - Number of failures\n'
@@ -285,9 +286,7 @@ class ButtonCheckTool(WebQABaseTool):
                 {
                     'element_id': step.id,
                     'description': step.description,
-                    'error': step.errors if hasattr(step, 'errors') and step.errors else 'Unknown error',
-                    'element_info': step.error_details.get('element_info', {}) if hasattr(step, 'error_details') and step.error_details else {},
-                    'browser_errors': step.error_details.get('browser_errors', []) if hasattr(step, 'error_details') and step.error_details else []
+                    'error': step.errors if hasattr(step, 'errors') and step.errors else 'Unknown error'
                 }
                 for step in result.steps
                 if step.status == TestStatus.FAILED
@@ -377,6 +376,15 @@ class ButtonCheckTool(WebQABaseTool):
                         'Check if elements require authentication or permissions',
                         'Verify browser session is still active'
                     ]
+
+                # Add strong instruction for the Agent to include errors in achievement reason
+                recovery_hints.append(
+                    'IMPORTANT: Since console and network errors are VALID BUGS successfully discovered, YOU DO NOT TRIGGER A REPLAN. '
+                    'you MUST output OBJECTIVE_ACHIEVED. However, to ensure these bugs are recorded in the report, '
+                    'you MUST embed the EXACT errors into the objective_achieved reason itself.\n'
+                    'Format EXACTLY like this:\n'
+                    'OBJECTIVE_ACHIEVED: [Your reason] Discovered valid bugs: [List the exact console/network errors here]'
+                )
 
                 return self.format_failure(message, recovery_hints=recovery_hints)
 
