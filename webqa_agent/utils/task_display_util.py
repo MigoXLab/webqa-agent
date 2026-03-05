@@ -30,6 +30,7 @@ class TaskInfo:
     start: float
     end: Optional[float] = None
     error: Optional[str] = None
+    result: Optional[str] = None  # Test result: 'passed', 'failed', 'warning'
 
 
 class _Tracker:
@@ -39,6 +40,7 @@ class _Tracker:
         self.display_util = display_util
         self.name = name
         self.start_time = None
+        self.result: Optional[str] = None
 
     def __enter__(self):
         self.start_time = time.monotonic()
@@ -52,7 +54,8 @@ class _Tracker:
         with self.display_util.lock:
             self.display_util.running = [t for t in self.display_util.running if t.name != self.name]
             self.display_util.completed.append(
-                TaskInfo(name=self.name, start=self.start_time, end=end_time, error=error))
+                TaskInfo(name=self.name, start=self.start_time, end=end_time,
+                         error=error, result=self.result))
         return False
 
 
@@ -253,7 +256,8 @@ class _Display:
                         'name': t.name,
                         'duration': round(t.end - t.start, 2) if t.end else 0,
                         'status': 'success' if t.error is None else 'failed',
-                        'error': t.error
+                        'error': t.error,
+                        'result': t.result
                     }
                     for t in self.completed if t.end
                 ],
@@ -360,3 +364,16 @@ class _Display:
     def lock(self):
         """Thread lock for synchronizing access to task lists."""
         return self._lock
+
+    def update_task_result(self, task_name: str, result: str):
+        """Update the test result for a completed task.
+
+        Args:
+            task_name: Name of the task to update
+            result: Test result - 'passed', 'failed', or 'warning'
+        """
+        with self._lock:
+            for task in self.completed:
+                if task.name == task_name:
+                    task.result = result
+                    break

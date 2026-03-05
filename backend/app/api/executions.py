@@ -29,6 +29,7 @@ class TaskProgress(BaseModel):
     elapsed: Optional[float] = None
     status: Optional[str] = None
     error: Optional[str] = None
+    result: Optional[str] = None  # 测试结果: 'passed' | 'failed' | 'warning'
 
 
 class ExecutionProgress(BaseModel):

@@ -125,11 +125,13 @@ class CaseRunner:
                 default_timeout = int(os.getenv('WEBQA_CASE_TIMEOUT', '2400'))
                 case_timeout = case.get('_config', {}).get('case_timeout', default_timeout)
 
-                with Display.display(case_name):  # pylint: disable=not-callable
+                with Display.display(case_name) as tracker:  # pylint: disable=not-callable
                     case_result, raw_monitoring_data = await asyncio.wait_for(
                         self.execute_single_case(session=session, case=case, case_index=idx),
                         timeout=case_timeout
                     )
+                    # Set result on tracker so it's included when task moves to completed
+                    tracker.result = case_result.status.value
 
                 async with results_lock:
                     results.append(case_result)
@@ -259,11 +261,13 @@ class CaseRunner:
                     default_timeout = int(os.getenv('WEBQA_CASE_TIMEOUT', '2400'))
                     case_timeout = case.get('_config', {}).get('case_timeout', default_timeout)
 
-                    with Display.display(case_name):  # pylint: disable=not-callable
+                    with Display.display(case_name) as tracker:  # pylint: disable=not-callable
                         case_result, raw_monitoring_data = await asyncio.wait_for(
                             self.execute_single_case(session=session, case=case, case_index=idx),
                             timeout=case_timeout
                         )
+                        # Set result on tracker so it's included when task moves to completed
+                        tracker.result = case_result.status.value
 
                     async with results_lock:
                         results.append(case_result)

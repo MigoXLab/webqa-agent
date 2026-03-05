@@ -303,8 +303,9 @@ export function ExecutionDetail() {
                   <table className="w-full">
                     <thead>
                       <tr className="bg-gray-50">
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">状态</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">执行状态</th>
                         <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">用例名称</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">测试结果</th>
                         <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">耗时</th>
                         <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">错误信息</th>
                       </tr>
@@ -313,19 +314,42 @@ export function ExecutionDetail() {
                       {progress.completed.map((task, idx) => (
                         <tr key={idx} className="hover:bg-gray-50/50 transition-colors">
                           <td className="px-4 py-3">
-                            {task.status === 'success' ? (
-                              <span className="inline-flex items-center gap-1.5 text-green-600">
-                                <span className="text-sm font-medium">执行完成</span>
-                              </span>
-                            ) : (
+                            {task.status === 'failed' ? (
                               <span className="inline-flex items-center gap-1.5 text-red-600">
                                 <XCircle className="w-4 h-4" />
-                                <span className="text-sm font-medium">执行失败</span>
+                                <span className="text-sm font-medium">异常中断</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 text-green-600">
+                                <CheckCircle className="w-4 h-4" />
+                                <span className="text-sm font-medium">执行完成</span>
                               </span>
                             )}
                           </td>
                           <td className="px-4 py-3 text-sm text-gray-900 font-medium">
                             {task.name}
+                          </td>
+                          <td className="px-4 py-3">
+                            {task.status === 'failed' ? (
+                              <span className="text-sm text-gray-400">-</span>
+                            ) : task.result === 'passed' ? (
+                              <span className="inline-flex items-center gap-1.5 text-green-600">
+                                <CheckCircle className="w-4 h-4" />
+                                <span className="text-sm font-medium">Pass</span>
+                              </span>
+                            ) : task.result === 'warning' ? (
+                              <span className="inline-flex items-center gap-1.5 text-orange-500">
+                                <AlertTriangle className="w-4 h-4" />
+                                <span className="text-sm font-medium">Warning</span>
+                              </span>
+                            ) : task.result === 'failed' ? (
+                              <span className="inline-flex items-center gap-1.5 text-red-600">
+                                <XCircle className="w-4 h-4" />
+                                <span className="text-sm font-medium">Fail</span>
+                              </span>
+                            ) : (
+                              <span className="text-sm text-gray-400">-</span>
+                            )}
                           </td>
                           <td className="px-4 py-3">
                             <span className="text-sm text-gray-600 font-mono">

@@ -35,8 +35,9 @@ class TaskProgressItem(BaseModel):
     name: str
     duration: Optional[float] = None
     elapsed: Optional[float] = None
-    status: Optional[str] = None
+    status: Optional[str] = None  # 执行状态: 'success' | 'failed'
     error: Optional[str] = None
+    result: Optional[str] = None  # 测试结果: 'passed' | 'failed' | 'warning'
 
 
 class ProgressUpdateRequest(BaseModel):

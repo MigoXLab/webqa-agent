@@ -82,8 +82,9 @@ export interface TaskProgress {
   name: string;
   duration?: number;
   elapsed?: number;
-  status?: string;
+  status?: string;  // 执行状态: 'success' | 'failed'
   error?: string;
+  result?: string;  // 测试结果: 'passed' | 'failed' | 'warning'
 }
 
 export interface ExecutionProgress {
