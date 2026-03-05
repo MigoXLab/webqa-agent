@@ -128,7 +128,8 @@ class ClickHandler:
                         file_name=f'element_{element_index}_new_page',
                         context='test'
                     )
-                    click_result['new_page_screenshot'] = screenshot_b64
+                    save_locally = getattr(new_page_action_handler, '_save_screenshots_locally', False)
+                    click_result['new_page_screenshot'] = screenshot_b64 if not save_locally else None
                     click_result['new_page_screenshot_path'] = screenshot_path
                     logging.debug('New page screenshot saved')
 
@@ -142,7 +143,8 @@ class ClickHandler:
                     file_name=f'element_{element_index}_after_click',
                     context='test'
                 )
-                click_result['screenshot_after'] = screenshot_b64
+                save_locally = getattr(action_handler, '_save_screenshots_locally', False)
+                click_result['screenshot_after'] = screenshot_b64 if not save_locally else None
                 click_result['screenshot_after_path'] = screenshot_path
                 logging.debug('After click screenshot saved')
 

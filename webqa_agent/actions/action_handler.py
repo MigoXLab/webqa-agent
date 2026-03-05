@@ -1837,7 +1837,6 @@ class ActionHandler:
         screenshot_options = {
             'full_page': full_page,
             'timeout': timeout,
-            'animations': 'disabled',
             'caret': 'hide',
         }
         if file_path:

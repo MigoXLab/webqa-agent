@@ -285,8 +285,12 @@ class UITester:
             if diff_elems:
                 logging.debug(f'Diff element map after action: {diff_elems}')
 
+            # Check if local saving is enabled to avoid memory buildup with base64 strings
+            save_locally = getattr(self._actions, '_save_screenshots_locally', False)
+
             # Aggregate screenshots: include only valid (non-None) images in the correct chronological order
-            screenshots_list = [{'type': 'base64', 'data': ss} for ss in all_ordered_screenshots if ss]
+            # If local saving is enabled, DO NOT keep the huge base64 strings in memory
+            screenshots_list = [{'type': 'base64', 'data': ss} for ss in all_ordered_screenshots if ss] if not save_locally else []
             screenshots_paths_list = [{'type': 'path', 'data': path} for path in all_ordered_screenshots_paths if path]
 
             # Build structure for case step format
@@ -331,7 +335,8 @@ class UITester:
             end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
             # Build error case execution step dictionary structure
-            error_screenshots = [{'type': 'base64', 'data': ss} for ss in all_ordered_screenshots if ss]
+            save_locally = getattr(self._actions, '_save_screenshots_locally', False)
+            error_screenshots = [{'type': 'base64', 'data': ss} for ss in all_ordered_screenshots if ss] if not save_locally else []
             error_screenshots_paths = [{'type': 'path', 'data': path} for path in all_ordered_screenshots_paths if path]
 
             error_execution_steps = {
@@ -763,10 +768,11 @@ class UITester:
 
             end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
+            save_locally = getattr(self._actions, '_save_screenshots_locally', False)
             error_step = {
                 'description': f'verify: {assertion}',
                 'actions': [],
-                'screenshots': [{'type': 'base64', 'data': basic_screenshot}] if basic_screenshot else [],
+                'screenshots': [{'type': 'base64', 'data': basic_screenshot}] if basic_screenshot and not save_locally else [],
                 'screenshots_paths': [{'type': 'path', 'data': basic_screenshot_path}] if basic_screenshot_path else [],
                 'modelIO': '',
                 'status': 'failed',

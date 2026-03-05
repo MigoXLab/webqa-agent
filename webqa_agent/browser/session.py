@@ -108,6 +108,74 @@ class _BrowserSession:
         except Exception as e:
             logging.warning(f'[Session] Failed to clean state: {e}')
 
+    async def reset_context(self) -> None:
+        async with self._lock:
+            if self._is_closed:
+                return
+
+            # 1. Close old page and context
+            if self._page:
+                try:
+                    await self._page.close()
+                except Exception:
+                    pass
+                self._page = None
+
+            if self._context:
+                try:
+                    await self._context.close()
+                except Exception:
+                    pass
+                self._context = None
+
+            cfg = self.browser_config
+
+            # 2. Re-create context
+            if self._is_cloud_mode:
+                # AgentBay cloud mode usually operates differently with contexts
+                if self._browser and self._browser.contexts:
+                    self._context = self._browser.contexts[0]
+                    # Clear existing context state in cloud mode
+                    await self._context.clear_cookies()
+                else:
+                    self._context = await self._browser.new_context(
+                        viewport=cfg.get('viewport'),
+                        device_scale_factor=1,
+                        locale=cfg.get('language', 'en-US'),
+                    )
+            else:
+                self._context = await self._browser.new_context(
+                    viewport=cfg.get('viewport'),
+                    device_scale_factor=1,
+                    locale=cfg.get('language', 'en-US'),
+                )
+
+                # Reset local browser interceptors
+                abort = self._abort_route
+                for pattern in ('**/*.woff', '**/*.woff2', '**/*.ttf', '**/*.otf', '**/*.eot'):
+                    await self._context.route(pattern, abort)
+                await self._context.route('**fonts.googleapis.com/**', abort)
+                await self._context.route('**fonts.gstatic.com/**', abort)
+
+            # 3. Re-apply single-tab enforcement (Layer 0)
+            if not self.disable_tab_interception:
+                await self._enforce_single_tab_dom_preprocessing()
+
+            # 4. Create new page and bind events
+            self._page = await self._context.new_page()
+
+            if not self.disable_tab_interception:
+                await self._setup_tab_interception_listeners()
+
+            # Auto-handle dialogs
+            async def _handle_dialog(dialog):
+                dialog_type = dialog.type
+                message = dialog.message[:200] if dialog.message else ''
+                logging.info(f'[DIALOG] Auto-handled {dialog_type}: {message}')
+                await dialog.accept()
+
+            self._page.on('dialog', _handle_dialog)
+
     async def initialize(self) -> '_BrowserSession':
         async with self._lock:
             if self._is_closed:
@@ -655,12 +723,24 @@ class BrowserSessionPool:
         config_key = self._make_config_key(session.browser_config)
 
         try:
-            if failed or session.is_closed():
-                logging.info(f'[SessionPool] Recovering failed session: {session.session_id}')
+            # Check if the page itself has crashed or closed (even if failed wasn't explicitly set)
+            page_is_dead = False
+            if hasattr(session, 'page') and session.page:
+                try:
+                    page_is_dead = session.page.is_closed()
+                except Exception:
+                    page_is_dead = True
+
+            if failed or session.is_closed() or page_is_dead:
+                logging.info(f'[SessionPool] Recovering failed/crashed session: {session.session_id}')
                 await self._close_session_safe(session)
                 session = await self._create_session(session.browser_config)
             else:
                 await self._clean_session_state(session)
+                # If clean_session_state failed due to a crash, the session will be closed
+                if session.is_closed():
+                    logging.info(f'[SessionPool] Session crashed during clean state, recovering: {session.session_id}')
+                    session = await self._create_session(session.browser_config)
 
             async with self._lock:
                 self._idle_sessions.setdefault(config_key, []).append(session)
@@ -693,24 +773,27 @@ class BrowserSessionPool:
             logging.debug(f'[SessionPool] Failed to close session {session.session_id}', exc_info=True)
 
     async def _clean_session_state(self, session: _BrowserSession) -> None:
-        """Clean session state to prevent pollution between cases."""
+        """Clean session state to prevent pollution between cases.
+
+        Uses reset_context to completely drop the previous Page and Context to
+        avoid Chromium memory leak accumulations over multiple SPA navs.
+        """
         try:
-            context = session.context
-            if context is None:
+            # If the session is already closed (e.g. Target crashed), don't try to clean it
+            if session.is_closed():
+                logging.debug(f'[SessionPool] Skipping clean state for closed session: {session.session_id}')
                 return
 
-            await context.clear_cookies()
+            await session.reset_context()
+            logging.debug(f'[SessionPool] Reset context for memory release: {session.session_id}')
 
-            page = session.page
-            if page and not page.is_closed():
-                await page.evaluate('''() => {
-                    try { localStorage.clear(); } catch(e) {}
-                    try { sessionStorage.clear(); } catch(e) {}
-                }''')
-
-            logging.debug(f'[SessionPool] Cleaned state: {session.session_id}')
         except Exception as e:
-            logging.warning(f'[SessionPool] Failed to clean state: {e}')
+            logging.warning(f'[SessionPool] Failed to reset context: {e}')
+
+            # If cleaning state fails due to target crashed, the page is dead
+            if 'Target crashed' in str(e) or 'Page crashed' in str(e):
+                logging.error(f'[SessionPool] Marking session as closed due to crash during clean: {session.session_id}')
+                await self._close_session_safe(session)
 
     async def close_all(self) -> None:
         """Close all browser sessions."""
