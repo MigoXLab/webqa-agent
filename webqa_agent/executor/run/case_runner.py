@@ -631,6 +631,8 @@ class CaseRunner:
             if step_result.status == TestStatus.FAILED:
                 case_status = TestStatus.FAILED
                 error_messages.append(f'Step {step_idx} failed: {step_result.errors}')
+                logging.warning(f'Step {step_idx} failed, interrupting case execution.')
+                break
             elif step_result.status == TestStatus.WARNING and case_status == TestStatus.PASSED:
                 case_status = TestStatus.WARNING
 
