@@ -465,8 +465,8 @@ export default function App() {
 
       {/* Main Content */}
       <main
-        className={`flex-1 ${view === 'case_editor' ? 'overflow-hidden flex flex-col' : ''}`}
-        style={{ position: 'relative', zIndex: 0, isolation: 'isolate', overflow: view === 'case_editor' ? undefined : 'auto' }}
+        className="flex-1"
+        style={{ position: 'relative', overflow: 'auto' }}
       >
         <Routes>
           <Route path="/" element={
