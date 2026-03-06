@@ -528,7 +528,7 @@ async def _create_k8s_job(
                                 client.V1EnvVar(name='SHARED_STORAGE_PATH', value='/shared'),
                                 client.V1EnvVar(name='BACKEND_CALLBACK_URL', value=settings.BACKEND_CALLBACK_URL),
                                 client.V1EnvVar(name='OPENAI_API_KEY', value=api_key),
-                                client.V1EnvVar(name='OPENAI_BASE_URL', value=settings.LLM_BASE_URL),
+                                client.V1EnvVar(name='OPENAI_BASE_URL', value=base_url),
                                 client.V1EnvVar(name='WEBQA_CASE_TIMEOUT', value=str(settings.WEBQA_CASE_TIMEOUT)),
                             ],
                             resources=client.V1ResourceRequirements(
