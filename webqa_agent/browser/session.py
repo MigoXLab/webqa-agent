@@ -301,9 +301,10 @@ class _BrowserSession:
             # (WebSocket, SSE, analytics heartbeats).  Use a short timeout to
             # avoid wasting 60 s on every navigation in cluster environments.
             try:
-                await self._page.wait_for_load_state('networkidle', timeout=15000)
+                # Use a very short timeout to avoid wasting time on every navigation
+                await self._page.wait_for_load_state('networkidle', timeout=3000)
             except Exception:
-                logging.debug('networkidle not reached within 15 s; proceeding (domcontentloaded is sufficient)')
+                logging.debug('networkidle not reached within 3 s; proceeding (domcontentloaded is sufficient)')
             is_blank = await self._page.evaluate(
                 '!document.body || document.body.innerText.trim().length === 0'
             )
@@ -332,19 +333,14 @@ class _BrowserSession:
         self._browser = await self._playwright.chromium.launch(
             headless=cfg['headless'],
             args=[
-                '--disable-dev-shm-usage',
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-gpu',
                 '--force-device-scale-factor=1',
                 f'--window-size={cfg["viewport"]["width"]},{cfg["viewport"]["height"]}',
-                '--block-new-web-contents',
-                '--font-render-hinting=none',
             ],
         )
         self._context = await self._browser.new_context(
             viewport=cfg['viewport'],
             device_scale_factor=1,
+            is_mobile=False,
             locale=cfg.get('language', 'en-US'),
         )
 

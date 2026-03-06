@@ -235,7 +235,9 @@ class ActionHandler:
 
         await self.page.goto(url=url, wait_until='domcontentloaded', timeout=60000)
         try:
-            await self.page.wait_for_load_state('networkidle', timeout=15000)
+            # networkidle is often blocked by long-polling or analytics in clusters.
+            # We use a short timeout so we don't stall the tests unnecessarily.
+            await self.page.wait_for_load_state('networkidle', timeout=3000)
         except Exception as e:
             logging.warning(f'Wait for networkidle timed out: {e}. Proceeding since domcontentloaded is complete.')
 

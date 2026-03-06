@@ -491,7 +491,7 @@ class CaseRunner:
             # Reload page to apply storage
             await page.reload(wait_until='domcontentloaded')
             try:
-                await page.wait_for_load_state('networkidle', timeout=15000)
+                await page.wait_for_load_state('networkidle', timeout=3000)
             except Exception:
                 logging.debug(f"networkidle timed out after snapshot reload for '{snapshot_name}', proceeding")
             await asyncio.sleep(1)

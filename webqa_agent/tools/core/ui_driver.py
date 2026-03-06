@@ -993,7 +993,7 @@ class UITester:
                 # Wait for page to stabilize
                 self.page = self.browser_session.page
                 try:
-                    await self.page.wait_for_load_state('networkidle', timeout=10000)
+                    await self.page.wait_for_load_state('networkidle', timeout=3000)
                     await asyncio.sleep(1.5)
                 except Exception as e:
                     logging.warning(f'Page did not become network idle: {e}')
