@@ -219,11 +219,13 @@ async def _start_agent_subprocess(execution_id: str, case_data: Optional[Dict[st
                 return
 
             # 添加 LLM 配置到每个 config
+            api_key = settings.get_api_key_for_model(execution.model)
+            base_url = settings.get_base_url_for_model(execution.model)
             for config in configs:
                 config['llm_config'] = {
                     'api': settings.LLM_API,
-                    'api_key': settings.LLM_API_KEY,
-                    'base_url': settings.LLM_BASE_URL,
+                    'api_key': api_key,
+                    'base_url': base_url,
                     'model': execution.model,
                 }
 
@@ -258,8 +260,8 @@ async def _start_agent_subprocess(execution_id: str, case_data: Optional[Dict[st
             env['EXECUTION_ID'] = execution_id
             env['SHARED_STORAGE_PATH'] = settings.effective_shared_storage_path
             env['BACKEND_CALLBACK_URL'] = settings.BACKEND_CALLBACK_URL
-            env['OPENAI_API_KEY'] = settings.LLM_API_KEY
-            env['OPENAI_BASE_URL'] = settings.LLM_BASE_URL
+            env['OPENAI_API_KEY'] = api_key
+            env['OPENAI_BASE_URL'] = base_url
             env['WEBQA_CASE_TIMEOUT'] = str(settings.WEBQA_CASE_TIMEOUT)
 
             # 静默模式：输出直接打印到终端（方便 K8s Job 查看 kubectl logs）
@@ -467,11 +469,13 @@ async def _create_k8s_job(
         raise ValueError('没有可执行的测试用例')
 
     # 添加 LLM 配置
+    api_key = settings.get_api_key_for_model(model)
+    base_url = settings.get_base_url_for_model(model)
     for config in configs:
         config['llm_config'] = {
             'api': settings.LLM_API,
-            'api_key': settings.LLM_API_KEY,
-            'base_url': settings.LLM_BASE_URL,
+            'api_key': api_key,
+            'base_url': base_url,
             'model': model,
         }
 
@@ -523,7 +527,7 @@ async def _create_k8s_job(
                                 client.V1EnvVar(name='CONFIG_YAML', value=config_yaml),
                                 client.V1EnvVar(name='SHARED_STORAGE_PATH', value='/shared'),
                                 client.V1EnvVar(name='BACKEND_CALLBACK_URL', value=settings.BACKEND_CALLBACK_URL),
-                                client.V1EnvVar(name='OPENAI_API_KEY', value=settings.LLM_API_KEY),
+                                client.V1EnvVar(name='OPENAI_API_KEY', value=api_key),
                                 client.V1EnvVar(name='OPENAI_BASE_URL', value=settings.LLM_BASE_URL),
                                 client.V1EnvVar(name='WEBQA_CASE_TIMEOUT', value=str(settings.WEBQA_CASE_TIMEOUT)),
                             ],

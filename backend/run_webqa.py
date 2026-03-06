@@ -52,6 +52,7 @@ def save_yaml_file(yaml_path: str, data: Dict):
         yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
 
+
 def validate_and_build_llm_config(cfg):
     """Validate and build LLM configuration (from webqa-agent CLI).
 
@@ -69,11 +70,11 @@ def validate_and_build_llm_config(cfg):
                 llm_cfg_raw = cfg_item['llm_config']
                 break
 
-    # Environment variables take priority
+    # Environment variables take priority (executor.py pre-resolves per-model values)
     api = llm_cfg_raw.get('api', 'openai')
+    model = llm_cfg_raw.get('model', 'gpt-4o-mini')
     api_key = os.getenv('OPENAI_API_KEY') or llm_cfg_raw.get('api_key', '')
     base_url = os.getenv('OPENAI_BASE_URL') or llm_cfg_raw.get('base_url', '')
-    model = llm_cfg_raw.get('model', 'gpt-4o-mini')
     filter_model = llm_cfg_raw.get('filter_model', model)
     temperature = llm_cfg_raw.get('temperature')
     top_p = llm_cfg_raw.get('top_p')

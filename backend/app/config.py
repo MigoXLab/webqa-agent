@@ -1,9 +1,16 @@
 """Application configuration."""
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional
 
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
+
+# Load .env into os.environ so os.getenv() can access all keys,
+# including dynamic per-model keys like LLM_API_KEY_INTERN_S1_PRO.
+# pydantic_settings only populates declared fields, not os.environ.
+load_dotenv(override=False)
 
 # 项目根目录
 PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
@@ -103,6 +110,26 @@ class Settings(BaseSettings):
         """Get list of available models."""
         return [m.strip() for m in self.LLM_AVAILABLE_MODELS.split(',') if m.strip()]
 
+    def get_api_key_for_model(self, model: str) -> str:
+        """Get API key for a specific model.
+
+        Looks up LLM_API_KEY_<MODEL_NORMALIZED> env var first (e.g.
+        LLM_API_KEY_INTERN_S1_PRO for 'intern-s1-pro'), falls back
+        to LLM_API_KEY if not found.
+        """
+        normalized = model.upper().replace('-', '_').replace('.', '_')
+        return os.getenv(f'LLM_API_KEY_{normalized}', self.LLM_API_KEY)
+
+    def get_base_url_for_model(self, model: str) -> str:
+        """Get base URL for a specific model.
+
+        Looks up LLM_BASE_URL_<MODEL_NORMALIZED> env var first (e.g.
+        LLM_BASE_URL_INTERN_S1_PRO for 'intern-s1-pro'), falls back
+        to LLM_BASE_URL if not found.
+        """
+        normalized = model.upper().replace('-', '_').replace('.', '_')
+        return os.getenv(f'LLM_BASE_URL_{normalized}', self.LLM_BASE_URL)
+
     @property
     def is_kubernetes_mode(self) -> bool:
         """Check if running in Kubernetes mode."""
@@ -132,6 +159,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = '.env'
         env_file_encoding = 'utf-8'
+        extra = 'ignore'
 
 
 @lru_cache()

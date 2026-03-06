@@ -20,8 +20,11 @@ data:
   # LLM Configuration
   LLM_API: "openai"
   LLM_BASE_URL: "http://35.220.164.252:3888/v1"
-  LLM_AVAILABLE_MODELS: "gemini-3-flash-preview,gpt-5-mini-2025-08-07,gpt-4.1-mini-2025-04-14,qwen3-vl-plus,doubao-seed-1-6-251015"
+  LLM_AVAILABLE_MODELS: "gemini-3-flash-preview,gpt-5-mini-2025-08-07,gpt-4.1-mini-2025-04-14,qwen3-vl-plus,doubao-seed-1-6-251015,intern-s1-pro"
   LLM_DEFAULT_MODEL: "gemini-3-flash-preview"
+
+  # 按模型配置不同 Base URL（非敏感，放 ConfigMap）
+  LLM_BASE_URL_INTERN_S1_PRO: "https://chat.intern-ai.org.cn/api/v1"
 
   # Execution Control
   JOB_TIMEOUT_SECONDS: "7200"
