@@ -38,7 +38,8 @@ logger = logging.getLogger(__name__)
 class ButtonCheckToolSchema(BaseModel):
     """Schema for button check tool arguments.
 
-    LLM uses these Field descriptions to understand parameter usage.
+    This tool takes no parameters. The LLM should call it with empty
+    parameters.
     """
 
     pass  # No parameters needed - tests all clickable elements automatically
@@ -67,7 +68,10 @@ class ButtonCheckTool(WebQABaseTool):
     name: str = 'traverse_clickable_elements'
     description: str = (
         'Performs comprehensive testing of all clickable elements on the page. '
-        'Clicks each element, captures screenshots, and validates results.'
+        'Clicks each element, captures screenshots, and validates results. '
+        'IMPORTANT: This tool takes NO parameters. Call it with empty arguments {}. '
+        'NOTE: Console and network errors reported by this tool are EXPECTED discoveries '
+        'and should NOT trigger a REPLAN. Simply document the findings and CONTINUE.'
     )
     args_schema: Type[BaseModel] = ButtonCheckToolSchema
 
@@ -99,6 +103,7 @@ class ButtonCheckTool(WebQABaseTool):
             description_short='Comprehensive testing of all clickable elements',
             description_long=(
                 'Performs exhaustive testing of all clickable elements on the current page. '
+                'This tool takes NO PARAMETERS. '
                 'For each element:\n'
                 '  - Clicks the element and waits for response\n'
                 '  - Captures screenshots after click\n'
@@ -109,6 +114,12 @@ class ButtonCheckTool(WebQABaseTool):
                 '  - Screenshot capture for visual validation\n'
                 '  - Business logic success validation\n'
                 '  - Detailed pass/fail statistics\n\n'
+                'IMPORTANT NOTE FOR AGENT:\n'
+                '  - Any console errors or network errors found by this tool are VALID BUGS on the page.\n'
+                '  - They represent successfully discovered issues, NOT testing framework failures.\n'
+                '  - DO NOT trigger a REPLAN when this tool reports console or network errors.\n'
+                '  - Instead, you MUST output OBJECTIVE_ACHIEVED.\n'
+                '  - You MUST explicitly include the EXACT console and network errors found inside the OBJECTIVE_ACHIEVED reason itself.\n\n'
                 'Returns:\n'
                 '  - Total elements tested\n'
                 '  - Number of failures\n'
@@ -171,38 +182,7 @@ class ButtonCheckTool(WebQABaseTool):
             'llm_config': 'llm_config',
         }
 
-    def _build_failure_info(self, step: Any, error_details: Dict[str, Any]) -> str:
-        """Build detailed failure information string for a failed test step.
-
-        Args:
-            step: Failed test step with description and ID
-            error_details: Error details from ActionHandler context
-
-        Returns:
-            Formatted failure information string
-        """
-        error_type = error_details.get('error_type', 'unknown')
-        error_reason = error_details.get('error_reason', getattr(step, 'errors', 'Unknown error'))
-
-        failure_info = f'  - {step.description} (ID: {step.id}): {error_type}'
-
-        if error_reason:
-            failure_info += f' - {error_reason}'
-
-        # Add attempted strategies if available
-        attempted = error_details.get('attempted_strategies', [])
-        if attempted:
-            failure_info += f"\n    Attempted: {', '.join(attempted)}"
-
-        # Add scroll info if relevant
-        scroll_attempts = error_details.get('scroll_attempts', 0)
-        if scroll_attempts > 0:
-            max_attempts = error_details.get('max_scroll_attempts', 0)
-            failure_info += f' (scroll: {scroll_attempts}/{max_attempts} attempts)'
-
-        return failure_info
-
-    async def _arun(self) -> str:
+    async def _arun(self, **kwargs) -> str:
         """Execute comprehensive button testing.
 
         Workflow:
@@ -215,6 +195,10 @@ class ButtonCheckTool(WebQABaseTool):
         Returns:
             Formatted response with test results and statistics
         """
+        # Log a warning if the LLM provided unexpected kwargs, but continue execution
+        if kwargs:
+            logger.warning(f'Button Test Tool: Ignoring unexpected parameters provided by LLM: {kwargs}')
+
         try:
             # Step 1: Get current page
             page = await self.ui_tester_instance.get_current_page()
@@ -308,6 +292,12 @@ class ButtonCheckTool(WebQABaseTool):
                 if step.status == TestStatus.FAILED
             ]
 
+            # Extract all screenshots from the test steps
+            all_screenshots = []
+            for step in result.steps:
+                if hasattr(step, 'screenshots') and step.screenshots:
+                    all_screenshots.extend(step.screenshots)
+
             self.safe_record_step(
                 description=f'Traverse clickable elements (tested {total_elements})',
                 model_io_data={
@@ -317,6 +307,7 @@ class ButtonCheckTool(WebQABaseTool):
                     'failures': failures[:10],  # Limit to first 10 failures
                 },
                 status='passed' if result.status == TestStatus.PASSED else 'failed',
+                screenshots=all_screenshots,
             )
 
             # Step 7: Format response with detailed error context
@@ -332,18 +323,19 @@ class ButtonCheckTool(WebQABaseTool):
 
                 for step in result.steps:
                     if step.status == TestStatus.FAILED:
-                        # Extract error details from ActionHandler context
-                        error_details = {}
-                        if hasattr(step, 'error_details') and step.error_details:
-                            error_details = step.error_details
-
-                        error_type = error_details.get('error_type', 'unknown')
+                        error_type = 'unknown'
+                        # Try to extract error type from the new step.errors format: "error_type: error_reason | ..."
+                        if hasattr(step, 'errors') and step.errors and ':' in step.errors:
+                            potential_type = step.errors.split(':', 1)[0].strip()
+                            if ' ' not in potential_type:  # simple check to avoid picking up arbitrary sentences
+                                error_type = potential_type
 
                         # Count by error type
                         error_stats[error_type] = error_stats.get(error_type, 0) + 1
 
-                        # Build detailed failure info using helper
-                        failure_info = self._build_failure_info(step, error_details)
+                        # Build detailed failure info
+                        error_reason = getattr(step, 'errors', 'Unknown error')
+                        failure_info = f'  - Element ID {step.id} ({step.description}): {error_type}\n    Reason: {error_reason}'
                         detailed_failures.append(failure_info)
 
                 # Build error summary by type
@@ -384,6 +376,15 @@ class ButtonCheckTool(WebQABaseTool):
                         'Check if elements require authentication or permissions',
                         'Verify browser session is still active'
                     ]
+
+                # Add strong instruction for the Agent to include errors in achievement reason
+                recovery_hints.append(
+                    'IMPORTANT: Since console and network errors are VALID BUGS successfully discovered, YOU DO NOT TRIGGER A REPLAN. '
+                    'you MUST output OBJECTIVE_ACHIEVED. However, to ensure these bugs are recorded in the report, '
+                    'you MUST embed the EXACT errors into the objective_achieved reason itself.\n'
+                    'Format EXACTLY like this:\n'
+                    'OBJECTIVE_ACHIEVED: [Your reason] Discovered valid bugs: [List the exact console/network errors here]'
+                )
 
                 return self.format_failure(message, recovery_hints=recovery_hints)
 
