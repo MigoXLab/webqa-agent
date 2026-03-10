@@ -442,9 +442,9 @@ class LLMAPI:
             return content
 
         except Exception as e:
-            error_msg = f"Responses API request failed for model '{model}': {str(e)}"
+            error_msg = f"Responses API request failed for model '{model}': {e}"
             logging.error(error_msg)
-            raise ValueError(error_msg)
+            raise ValueError(error_msg) from e
 
     async def _call_chat_completions_api(
         self,
@@ -725,7 +725,7 @@ class LLMAPI:
                 error_msg = f"Anthropic Messages API request failed for model '{model}': {error_str}"
 
             logging.error(error_msg)
-            raise ValueError(error_msg)
+            raise ValueError(error_msg) from e
 
     def _map_effort_to_thinking(self, reasoning, model: str, max_tokens: int = None) -> dict:
         """Map reasoning.effort to Anthropic thinking configuration with
