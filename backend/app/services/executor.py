@@ -142,22 +142,27 @@ async def run_execution(execution_id: str, case_data: Optional[Dict[str, Any]] =
         gen_config_dict: Gen 模式的原始配置字典（不含 api_key，由 executor 注入）
     """
     # Check execution trigger_type first
+    trigger_type = None
     async with AsyncSessionLocal() as db:
         try:
             result = await db.execute(
                 select(Execution).where(Execution.id == UUID(execution_id))
             )
             execution = result.scalar_one_or_none()
-            if execution and execution.trigger_type == 'gen':
-                 await _start_gen_executor(execution_id, gen_config_dict)
-                 return
+            if execution:
+                trigger_type = execution.trigger_type
         except Exception as e:
             logger.exception(f'[Run] Failed to check execution type: {e}')
             return
 
     mode = settings.EXECUTION_MODE.lower()
 
-    if mode == 'kubernetes':
+    if trigger_type == 'gen':
+        if mode == 'kubernetes':
+            await _start_gen_k8s(execution_id, gen_config_dict)
+        else:
+            await _start_gen_executor(execution_id, gen_config_dict)
+    elif mode == 'kubernetes':
         await _start_agent_k8s(execution_id, case_data=case_data)
     else:
         # local 模式（默认）
@@ -165,12 +170,12 @@ async def run_execution(execution_id: str, case_data: Optional[Dict[str, Any]] =
 
 
 async def _start_gen_executor(execution_id: str, gen_config_dict: Optional[Dict[str, Any]] = None):
-    """Gen Mode: Start subprocess running run_gen_webqa.py.
+    """Gen Mode (local): Start subprocess running run_gen_webqa.py.
 
-    Accepts a raw config dict (without api_key). Secrets are injected
-    here from backend settings before constructing GenConfig.
+    Accepts a raw config dict (without api_key). Secrets are injected here from
+    backend settings before writing the config file.
     """
-    from webqa_agent.config_models.gen_config import GenConfig
+    import json
 
     async with AsyncSessionLocal() as db:
         try:
@@ -188,11 +193,11 @@ async def _start_gen_executor(execution_id: str, gen_config_dict: Optional[Dict[
                 gen_config_dict = execution.config
 
             if not gen_config_dict:
-                 execution.status = 'failed'
-                 execution.error_message = 'Gen configuration missing'
-                 execution.completed_at = now_with_tz()
-                 await db.commit()
-                 return
+                execution.status = 'failed'
+                execution.error_message = 'Gen configuration missing'
+                execution.completed_at = now_with_tz()
+                await db.commit()
+                return
 
             # Inject API key and base URL from backend settings
             llm_cfg = gen_config_dict.setdefault('llm_config', {})
@@ -202,24 +207,16 @@ async def _start_gen_executor(execution_id: str, gen_config_dict: Optional[Dict[
             if not llm_cfg.get('base_url'):
                 llm_cfg['base_url'] = settings.get_base_url_for_model(model_name)
 
-            # Construct and validate GenConfig with secrets filled in
-            try:
-                gen_config = GenConfig(**gen_config_dict)
-            except Exception as e:
-                logger.error(f'[Gen] Invalid gen config: {e}')
-                execution.status = 'failed'
-                execution.error_message = f'Invalid gen configuration: {e}'
-                execution.completed_at = now_with_tz()
-                await db.commit()
-                return
+            api_key = llm_cfg.get('api_key', '')
+            base_url = llm_cfg.get('base_url', '')
 
-            # Write config to file
+            # Write config to file (JSON format, compatible with GenConfig loading)
             config_dir = Path(settings.shared_reports_path) / f'exec_{execution_id}'
             config_dir.mkdir(parents=True, exist_ok=True)
             config_file = config_dir / 'config.yaml'
 
             with open(config_file, 'w', encoding='utf-8') as f:
-                f.write(gen_config.model_dump_json(indent=2))
+                json.dump(gen_config_dict, f, indent=2, ensure_ascii=False)
 
             config_path = str(config_file)
 
@@ -229,9 +226,6 @@ async def _start_gen_executor(execution_id: str, gen_config_dict: Optional[Dict[
             await db.commit()
 
             logger.info(f'[Gen] Starting subprocess: {execution_id}')
-
-            api_key = gen_config.llm_config.api_key
-            base_url = gen_config.llm_config.base_url
 
             env = os.environ.copy()
             env['EXECUTION_ID'] = execution_id
@@ -308,6 +302,211 @@ async def _start_gen_executor(execution_id: str, gen_config_dict: Optional[Dict[
                 await db.commit()
             except:
                 pass
+
+
+# =============================================================================
+# GEN + KUBERNETES MODE: 创建 K8s Job 运行 run_gen_webqa
+# =============================================================================
+
+async def _start_gen_k8s(execution_id: str, gen_config_dict: Optional[Dict[str, Any]] = None):
+    """Gen Mode (kubernetes): Create a K8s Job running run_gen_webqa.py.
+
+    Accepts a raw config dict (without api_key). Secrets are injected here from
+    backend settings before writing the config to shared storage and creating
+    the K8s Job. No webqa_agent imports are performed in the backend process —
+    all webqa_agent code runs inside the Job container.
+    """
+    import json
+
+    async with AsyncSessionLocal() as db:
+        try:
+            result = await db.execute(
+                select(Execution).where(Execution.id == UUID(execution_id))
+            )
+            execution = result.scalar_one_or_none()
+
+            if not execution:
+                logger.error(f'[Gen K8s] Execution not found: {execution_id}')
+                return
+
+            # If config dict is not passed (e.g. restart), load from execution.config
+            if not gen_config_dict and execution.config:
+                gen_config_dict = execution.config
+
+            if not gen_config_dict:
+                execution.status = 'failed'
+                execution.error_message = 'Gen configuration missing'
+                execution.completed_at = now_with_tz()
+                await db.commit()
+                return
+
+            # Inject API key and base URL from backend settings
+            llm_cfg = gen_config_dict.setdefault('llm_config', {})
+            model_name = llm_cfg.get('model', '')
+            if not llm_cfg.get('api_key'):
+                llm_cfg['api_key'] = settings.get_api_key_for_model(model_name)
+            if not llm_cfg.get('base_url'):
+                llm_cfg['base_url'] = settings.get_base_url_for_model(model_name)
+
+            api_key = llm_cfg.get('api_key', '')
+            base_url = llm_cfg.get('base_url', '')
+
+            # Write config to shared storage so the K8s Job container can read it
+            config_dir = Path(settings.shared_reports_path) / f'exec_{execution_id}'
+            config_dir.mkdir(parents=True, exist_ok=True)
+            config_file = config_dir / 'config.yaml'
+
+            with open(config_file, 'w', encoding='utf-8') as f:
+                json.dump(gen_config_dict, f, indent=2, ensure_ascii=False)
+
+            config_path = str(config_file)
+
+            # Update status
+            execution.status = 'running'
+            execution.started_at = now_with_tz()
+            await db.commit()
+
+            logger.info(f'[Gen K8s] Creating K8s Job: {execution_id}')
+
+            try:
+                job_name = await _create_gen_k8s_job(
+                    execution_id=execution_id,
+                    config_path=config_path,
+                    report_dir=str(config_dir),
+                    workers=execution.workers or 1,
+                    api_key=api_key,
+                    base_url=base_url,
+                )
+                logger.info(f'[Gen K8s] Job created: {job_name}')
+            except Exception as e:
+                logger.exception(f'[Gen K8s] Failed to create Job: {e}')
+                execution.status = 'failed'
+                execution.error_message = f'Failed to create K8s Gen Job: {e}'
+                execution.completed_at = now_with_tz()
+                await db.commit()
+
+        except Exception as e:
+            logger.exception(f'[Gen K8s] Start failed: {e}')
+            try:
+                execution.status = 'failed'
+                execution.error_message = f'Failed to start Gen execution: {e}'
+                execution.completed_at = now_with_tz()
+                await db.commit()
+            except Exception:
+                pass
+
+
+async def _create_gen_k8s_job(
+    execution_id: str,
+    config_path: str,
+    report_dir: str,
+    workers: int,
+    api_key: str,
+    base_url: str,
+) -> str:
+    """Create a Kubernetes Job that runs run_gen_webqa.py inside the agent
+    image."""
+    try:
+        from kubernetes import client
+        from kubernetes import config as k8s_config
+    except ImportError:
+        raise RuntimeError('kubernetes 库未安装，请运行: pip install kubernetes')
+
+    k8s_config_path = os.getenv('K8S_CONFIG_PATH')
+    if k8s_config_path:
+        k8s_config.load_kube_config(config_file=k8s_config_path)
+    else:
+        k8s_config.load_incluster_config()
+
+    batch_v1 = client.BatchV1Api()
+
+    k8s_namespace = os.getenv('K8S_NAMESPACE', 'cloud-staging')
+    k8s_job_image = os.getenv('K8S_JOB_IMAGE', 'eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/webqa-agent:latest')
+    k8s_pvc_name = os.getenv('K8S_PVC_NAME', 'webqa-pvc')
+    k8s_sa_name = os.getenv('K8S_JOB_SERVICE_ACCOUNT', 'webqa-agent-sa')
+    k8s_cpu_request = os.getenv('K8S_JOB_CPU_REQUEST', '0.5')
+    k8s_cpu_limit = os.getenv('K8S_JOB_CPU_LIMIT', '2')
+    k8s_memory_request = os.getenv('K8S_JOB_MEMORY_REQUEST', '1Gi')
+    k8s_memory_limit = os.getenv('K8S_JOB_MEMORY_LIMIT', '4Gi')
+
+    job_name = f'webqa-gen-{execution_id[:8]}'
+
+    job = client.V1Job(
+        api_version='batch/v1',
+        kind='Job',
+        metadata=client.V1ObjectMeta(
+            name=job_name,
+            namespace=k8s_namespace,
+            labels={
+                'app': 'webqa-agent',
+                'execution-id': execution_id,
+                'execution-type': 'gen',
+            },
+        ),
+        spec=client.V1JobSpec(
+            ttl_seconds_after_finished=7200,
+            active_deadline_seconds=settings.JOB_TIMEOUT_SECONDS,
+            backoff_limit=0,
+            template=client.V1PodTemplateSpec(
+                metadata=client.V1ObjectMeta(
+                    labels={'app': 'webqa-agent', 'execution-type': 'gen'},
+                ),
+                spec=client.V1PodSpec(
+                    restart_policy='Never',
+                    service_account_name=k8s_sa_name or None,
+                    image_pull_secrets=[
+                        client.V1LocalObjectReference(name='regcred-vpc')
+                    ],
+                    containers=[
+                        client.V1Container(
+                            name='webqa-agent',
+                            image=k8s_job_image,
+                            command=['python', '-m', 'backend.run_gen_webqa'],
+                            args=[
+                                '-c', config_path,
+                                '--execution-id', execution_id,
+                                '--report-dir', report_dir,
+                                '--stdout',
+                            ],
+                            env=[
+                                client.V1EnvVar(name='EXECUTION_ID', value=execution_id),
+                                client.V1EnvVar(name='SHARED_STORAGE_PATH', value='/shared'),
+                                client.V1EnvVar(name='BACKEND_CALLBACK_URL', value=settings.BACKEND_CALLBACK_URL),
+                                client.V1EnvVar(name='OPENAI_API_KEY', value=api_key),
+                                client.V1EnvVar(name='OPENAI_BASE_URL', value=base_url),
+                            ],
+                            resources=client.V1ResourceRequirements(
+                                requests={'cpu': k8s_cpu_request, 'memory': k8s_memory_request},
+                                limits={'cpu': k8s_cpu_limit, 'memory': k8s_memory_limit},
+                            ),
+                            volume_mounts=[
+                                client.V1VolumeMount(name='shared-storage', mount_path='/shared'),
+                                client.V1VolumeMount(name='dshm', mount_path='/dev/shm'),
+                            ],
+                        ),
+                    ],
+                    volumes=[
+                        client.V1Volume(
+                            name='shared-storage',
+                            persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
+                                claim_name=k8s_pvc_name,
+                            ),
+                        ),
+                        client.V1Volume(
+                            name='dshm',
+                            empty_dir=client.V1EmptyDirVolumeSource(
+                                medium='Memory',
+                                size_limit='256Mi',
+                            ),
+                        ),
+                    ],
+                ),
+            ),
+        ),
+    )
+
+    batch_v1.create_namespaced_job(namespace=k8s_namespace, body=job)
+    return job_name
 
 
 # =============================================================================
