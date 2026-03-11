@@ -58,5 +58,4 @@ data:
   # Kubernetes Job Resource Limits
   K8S_JOB_CPU_REQUEST: "0.5"
   K8S_JOB_CPU_LIMIT: "2"
-  K8S_JOB_MEMORY_REQUEST: "1Gi"
-  K8S_JOB_MEMORY_LIMIT: "6Gi"
+  K8S_MEMORY_PER_WORKER_GI: "2"  # 每个 worker 分配的内存（Gi），总内存 = workers * 此值

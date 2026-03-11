@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     DEFAULT_WORKERS: int = 1         # 单个 Job 内部的默认并行 Case 数
     MAX_WORKERS: int = 5             # 单个 Job 内部的最大并行 Case 数
     WEBQA_CASE_TIMEOUT: int = 2400   # 单个 Case 超时（秒），默认 40 分钟
+    K8S_MEMORY_PER_WORKER_GI: int = 2  # 每个 worker 分配的内存（Gi），总内存 = workers * 此值
 
     # Execution Mode: "local" / "docker" / "kubernetes"
     # - local: 启动子进程运行 Agent（本地开发）

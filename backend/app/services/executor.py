@@ -51,10 +51,64 @@ async def stop_execution(execution_id: str) -> bool:
             logger.error(f'[Executor] Failed to stop process: {e}')
             return False
 
-    # 2. If running in K8s, delete the Job (not implemented yet for this snippet)
-    # ...
+    # 2. K8s mode: delete the Job from cluster
+    if settings.is_kubernetes_mode:
+        return await _stop_k8s_job(execution_id)
 
     return False
+
+
+async def _stop_k8s_job(execution_id: str) -> bool:
+    """Delete K8s Job to stop a running execution."""
+    try:
+        from kubernetes import client
+        from kubernetes import config as k8s_config
+    except ImportError:
+        logger.error('[Executor] kubernetes package not installed')
+        return False
+
+    try:
+        k8s_config_path = os.getenv('K8S_CONFIG_PATH')
+        if k8s_config_path:
+            k8s_config.load_kube_config(config_file=k8s_config_path)
+        else:
+            k8s_config.load_incluster_config()
+
+        batch_v1 = client.BatchV1Api()
+        k8s_namespace = os.getenv('K8S_NAMESPACE', 'cloud-staging')
+
+        # 查询 execution 的 trigger_type 确定 Job 名前缀
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(Execution).where(Execution.id == UUID(execution_id))
+            )
+            execution = result.scalar_one_or_none()
+
+        if not execution:
+            logger.warning(f'[Executor] Execution not found for stop: {execution_id}')
+            return False
+
+        if execution.trigger_type == 'gen':
+            job_name = f'webqa-gen-{execution_id[:8]}'
+        else:
+            job_name = f'webqa-exec-{execution_id[:8]}'
+
+        # 删除 Job 及其 Pod（propagationPolicy=Background 会级联删除 Pod）
+        await asyncio.to_thread(
+            batch_v1.delete_namespaced_job,
+            job_name,
+            k8s_namespace,
+            propagation_policy='Background',
+        )
+        logger.info(f'[Executor] K8s Job deleted: {job_name}')
+        return True
+
+    except Exception as e:
+        if hasattr(e, 'status') and e.status == 404:
+            logger.warning(f'[Executor] K8s Job not found (already deleted): {execution_id[:8]}')
+            return True  # Job 已经不在了，视为成功
+        logger.error(f'[Executor] Failed to delete K8s Job: {e}')
+        return False
 
 
 def generate_sso_cookies(username: str, password: str, env: str = 'prod') -> Tuple[Optional[str], Optional[List[Dict]]]:
@@ -426,8 +480,12 @@ async def _create_gen_k8s_job(
     k8s_sa_name = os.getenv('K8S_JOB_SERVICE_ACCOUNT', 'webqa-agent-sa')
     k8s_cpu_request = os.getenv('K8S_JOB_CPU_REQUEST', '0.5')
     k8s_cpu_limit = os.getenv('K8S_JOB_CPU_LIMIT', '2')
-    k8s_memory_request = os.getenv('K8S_JOB_MEMORY_REQUEST', '1Gi')
-    k8s_memory_limit = os.getenv('K8S_JOB_MEMORY_LIMIT', '4Gi')
+    # 内存按并发数动态分配：每个 worker 2Gi
+    memory_gi = max(1, workers) * settings.K8S_MEMORY_PER_WORKER_GI
+    k8s_memory_request = f'{memory_gi}Gi'
+    k8s_memory_limit = f'{memory_gi}Gi'
+    # /dev/shm 按并发数扩容：每个 worker 512Mi，Chromium 渲染进程需要足够的共享内存
+    dshm_size = f'{max(1, workers)}Gi'
 
     job_name = f'webqa-gen-{execution_id[:8]}'
 
@@ -496,7 +554,7 @@ async def _create_gen_k8s_job(
                             name='dshm',
                             empty_dir=client.V1EmptyDirVolumeSource(
                                 medium='Memory',
-                                size_limit='256Mi',
+                                size_limit=dshm_size,
                             ),
                         ),
                     ],
@@ -842,11 +900,14 @@ async def _create_k8s_job(
     k8s_pvc_name = os.getenv('K8S_PVC_NAME', 'webqa-pvc')
     k8s_sa_name = os.getenv('K8S_JOB_SERVICE_ACCOUNT', 'webqa-agent-sa')
 
-    # K8s Job 资源配置 (Chromium rendering + screenshots are CPU/memory intensive)
+    # K8s Job 资源配置：内存按并发数动态分配，每个 worker 2Gi
     k8s_cpu_request = os.getenv('K8S_JOB_CPU_REQUEST', '0.5')
     k8s_cpu_limit = os.getenv('K8S_JOB_CPU_LIMIT', '2')
-    k8s_memory_request = os.getenv('K8S_JOB_MEMORY_REQUEST', '1Gi')
-    k8s_memory_limit = os.getenv('K8S_JOB_MEMORY_LIMIT', '4Gi')
+    memory_gi = max(1, workers) * settings.K8S_MEMORY_PER_WORKER_GI
+    k8s_memory_request = f'{memory_gi}Gi'
+    k8s_memory_limit = f'{memory_gi}Gi'
+    # /dev/shm 按并发数扩容：每个 worker 512Mi，Chromium 渲染进程需要足够的共享内存
+    dshm_size = f'{max(1, workers)}Gi'
 
     # 获取认证 cookies
     cookies = None
@@ -955,7 +1016,7 @@ async def _create_k8s_job(
                             name='dshm',
                             empty_dir=client.V1EmptyDirVolumeSource(
                                 medium='Memory',
-                                size_limit='256Mi',
+                                size_limit=dshm_size,
                             ),
                         ),
                     ],

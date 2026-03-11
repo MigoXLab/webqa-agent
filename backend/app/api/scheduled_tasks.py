@@ -266,8 +266,9 @@ async def update_scheduled_task(
         if not environment:
             raise HTTPException(status_code=404, detail='Environment not found or does not belong to business')
 
-    # Verify test cases if provided
+    # Verify test cases if provided, silently filter out deleted ones
     if 'test_case_ids' in update_data:
+        valid_case_ids = []
         for case_id in update_data['test_case_ids']:
             result = await db.execute(
                 select(TestCase).where(
@@ -276,9 +277,11 @@ async def update_scheduled_task(
                 )
             )
             case = result.scalar_one_or_none()
-            if not case:
-                raise HTTPException(status_code=404, detail=f'Test case {case_id} not found or does not belong to business')
-        update_data['test_case_ids'] = [str(case_id) for case_id in update_data['test_case_ids']]
+            if case:
+                valid_case_ids.append(str(case_id))
+            else:
+                logger.warning(f'[API] Scheduled task update: test case {case_id} not found, removing from list')
+        update_data['test_case_ids'] = valid_case_ids
 
     # Update next_run_at if cron expression changed
     if 'cron_expression' in update_data:
