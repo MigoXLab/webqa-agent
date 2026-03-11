@@ -71,3 +71,7 @@ class GenConfig(BaseModel):
     max_concurrent_tests: int = Field(
         default=4, ge=1, le=10, description='Maximum concurrent test execution'
     )
+
+    skip_reflection: bool = Field(
+        default=False, description='Skip reflection/self-correction phase'
+    )

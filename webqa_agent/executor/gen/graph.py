@@ -70,6 +70,32 @@ def _resolve_report_dir(state: Dict[str, Any]) -> str:
     return report_dir
 
 
+def _extract_json_from_response(response: str) -> list:
+    """Extract the first valid JSON array or object from an LLM response.
+
+    Uses json.JSONDecoder.raw_decode() to parse only the first complete JSON
+    value, which handles LLM outputs that contain duplicated content or
+    trailing garbage text (e.g. ``[...array1...]garbage[...array2...]``).
+    """
+    decoder = json.JSONDecoder()
+
+    # Try to find and parse starting from the first '[' or '{'
+    for start_char in ('[', '{'):
+        idx = response.find(start_char)
+        if idx == -1:
+            continue
+        try:
+            obj, _ = decoder.raw_decode(response, idx)
+            if isinstance(obj, dict):
+                return [obj]
+            if isinstance(obj, list):
+                return obj
+        except json.JSONDecodeError:
+            continue
+
+    raise ValueError('No JSON array or object found in the response.')
+
+
 async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any]]]:
     """Analyzes the initial page and generates test cases."""
     # 重置 case_id 计数器（每次新的测试运行从 case_1 开始）
@@ -328,38 +354,15 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
         try:
             # Extract only the JSON part of the response, ignoring the scratchpad
             json_part_match = re.search(r'```json\s*([\s\S]*?)\s*```', response)
-            if not json_part_match:
-                # Fallback for responses that might not have the json markdown
-                json_str = ''
-                # A more robust way to find the JSON array
-                start_bracket = response.find('[')
-                end_bracket = response.rfind(']')
-                if (
-                    start_bracket != -1
-                    and end_bracket != -1
-                    and end_bracket > start_bracket
-                ):
-                    json_str = response[start_bracket : end_bracket + 1]
-                else:  # Try with curly braces for single object
-                    start_brace = response.find('{')
-                    end_brace = response.rfind('}')
-                    if (
-                        start_brace != -1
-                        and end_brace != -1
-                        and end_brace > start_brace
-                    ):
-                        # Wrap in array brackets if it's a single object
-                        json_str = f'[{response[start_brace:end_brace + 1]}]'
-                if not json_str:
-                    raise ValueError('No JSON array or object found in the response.')
-            else:
+            if json_part_match:
                 json_str = json_part_match.group(1)
-
-            # Wrap single object in a list if necessary
-            if json_str.strip().startswith('{'):
-                json_str = f'[{json_str}]'
-
-            test_cases = json.loads(json_str)
+                if json_str.strip().startswith('{'):
+                    json_str = f'[{json_str}]'
+                test_cases = json.loads(json_str)
+            else:
+                # Fallback: use raw_decode to parse the first complete JSON value,
+                # which correctly handles LLM outputs with duplicated/trailing content
+                test_cases = _extract_json_from_response(response)
 
             for case in test_cases:
                 case['status'] = 'pending'
@@ -384,10 +387,9 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             )
             return {'test_cases': test_cases}
         except (json.JSONDecodeError, IndexError, ValueError) as e:
-            logging.error(
-                f'Failed to parse test cases from LLM response: {e}\nResponse: {response}'
-            )
-            return {'test_cases': []}
+            error_msg = f'Failed to parse test cases from LLM response: {e}'
+            logging.error(f'{error_msg}\nResponse: {response}')
+            return {'test_cases': [], 'planning_error': error_msg}
     finally:
         # Cleanup UITester resources (LLM client, browser listeners)
         if ui_tester:
@@ -522,7 +524,8 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
 
                 with Display.display(  # pylint: disable=not-callable
                     f'{display_prefix} - {case_name}'
-                ):
+                ) as tracker:
+                    tracker.result = 'failed'  # default; overridden on success
                     logging.debug(f"Worker {worker_id}: Executing '{case_name}'")
 
                     # Execute test case via agent worker
@@ -562,6 +565,7 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                             f"Worker {worker_id}: Case '{case_name}' timed out ({case_timeout_minutes} minutes)"
                         )
                         failed = True
+                        tracker.result = 'failed'
                         now_str = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
                         timeout_summary = f'Case timed out after {case_timeout_minutes} minutes'
 
@@ -644,9 +648,10 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                             f"Worker {worker_id}: Case '{case_name}' was modified with dynamic steps"
                         )
 
-                    # Check if this is a critical failure that should skip reflection
-                    skip_reflection = False
-                    if case_result and case_result.get('status') == 'failed':
+                    # Check if reflection should be skipped (global config or critical failure)
+                    skip_reflection = state.get('skip_reflection', False)
+
+                    if not skip_reflection and case_result and case_result.get('status') == 'failed':
                         failure_type = case_result.get('failure_type')
                         if failure_type == 'critical':
                             logging.warning(
@@ -730,6 +735,12 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                                         f"Worker {worker_id}: REPLAN requested by '{case_name}' but "
                                         f'max replan count ({max_replan_count}) reached, skipping'
                                     )
+
+                    # Set tracker result for progress reporting
+                    if case_result:
+                        tracker.result = case_result.get('status', 'failed')
+                    else:
+                        tracker.result = 'failed'
 
                     # 保存 case 结果
                     try:

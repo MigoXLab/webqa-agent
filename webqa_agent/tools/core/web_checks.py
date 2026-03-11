@@ -197,7 +197,8 @@ class PageButtonTest(_LocalizedTestBase):
         result = SubTestResult(name=self._get_text('clickable_element_check'), sub_test_id='basic_2')
         logging.info(f"{icon['running']} Running Sub Test: {result.name}")
         sub_test_results = []
-        with Display.display(self._get_text('basic_test_display') + result.name):  # pylint: disable=not-callable
+        # with Display.display(self._get_text('basic_test_display') + result.name):  # pylint: disable=not-callable
+        if True:
             try:
                 status = TestStatus.PASSED
                 from webqa_agent.actions.action_handler import (

@@ -32,3 +32,4 @@ class MainGraphState(TypedDict):
 
     # Output
     final_report: Optional[dict]
+    planning_error: Optional[str]

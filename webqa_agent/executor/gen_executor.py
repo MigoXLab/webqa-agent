@@ -271,7 +271,7 @@ class GenExecutor:
 
             # Control flags
             'generate_only': False,
-            'skip_reflection': False,
+            'skip_reflection': self.config.skip_reflection,
 
             # Feature configuration
             'dynamic_step_generation': self.config.dynamic_step_generation.model_dump(),
@@ -292,6 +292,7 @@ class GenExecutor:
 
         # Extract recorded cases from final state
         recorded_cases = final_state.get('recorded_cases', [])
+        planning_error = final_state.get('planning_error')
         logger.info(f'Retrieved {len(recorded_cases)} recorded cases from LangGraph')
 
         # Extract completed cases for status mapping (keyed by case_id to avoid
@@ -342,9 +343,14 @@ class GenExecutor:
                 test_result.status = TestStatus.FAILED
                 test_result.error_message = f'{failed_cases} out of {total_cases} test cases failed'
         else:
-            logger.error('No recorded_cases data found in LangGraph state')
-            test_result.status = TestStatus.FAILED
-            test_result.error_message = 'No test cases were executed'
+            if planning_error:
+                logger.error(f'Test planning failed: {planning_error}')
+                test_result.status = TestStatus.FAILED
+                test_result.error_message = f'Test planning failed: {planning_error}'
+            else:
+                logger.error('No recorded_cases data found in LangGraph state')
+                test_result.status = TestStatus.FAILED
+                test_result.error_message = 'No test cases were executed'
 
         return test_result
 
