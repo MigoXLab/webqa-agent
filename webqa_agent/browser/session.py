@@ -335,6 +335,12 @@ class _BrowserSession:
             args=[
                 '--force-device-scale-factor=1',
                 f'--window-size={cfg["viewport"]["width"]},{cfg["viewport"]["height"]}',
+                '--num-raster-threads=2',
+                '--js-flags=--max-old-space-size=512',
+                '--disk-cache-size=1',
+                '--media-cache-size=1',
+                '--disable-gpu',
+                '--disable-gpu-compositing',
             ],
         )
         self._context = await self._browser.new_context(
