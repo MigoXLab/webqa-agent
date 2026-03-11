@@ -1101,9 +1101,12 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
     ui_tester_instance = config['configurable']['ui_tester_instance']
 
-    # Create an independent case recorder (decoupled from UITester store)
-    case_recorder = CentralCaseRecorder()
-    case_recorder.start_case(case_name, case_data=case)
+    # Use externalized case recorder from graph.py (survives timeout),
+    # or create locally as fallback for backward compatibility
+    case_recorder = config.get('configurable', {}).get('case_recorder')
+    if case_recorder is None:
+        case_recorder = CentralCaseRecorder()
+        case_recorder.start_case(case_name, case_data=case)
 
     # Expose recorder to UITester so it can record action/verify steps automatically
     ui_tester_instance.central_case_recorder = case_recorder
@@ -1605,9 +1608,39 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             logging.debug(f'Step {i + 1} - Calling Agent to execute {step_type}...')
             start_time = datetime.datetime.now()
 
-            result = await agent_executor.ainvoke(
-                {'messages': pruned_messages},
-            )
+            # Step-level timeout: min(300s default, remaining case budget)
+            # Prevents a single step from consuming the entire case timeout
+            step_default_timeout = 300.0  # 5 minutes per step
+            case_start = state.get('_case_start_time')
+            case_timeout = state.get('_case_timeout', 1800.0)
+            if case_start is not None:
+                elapsed = (datetime.datetime.now() - case_start).total_seconds()
+                remaining_budget = max(case_timeout - elapsed, 30.0)  # At least 30s
+                step_timeout = min(step_default_timeout, remaining_budget)
+            else:
+                step_timeout = step_default_timeout
+
+            try:
+                result = await asyncio.wait_for(
+                    agent_executor.ainvoke(
+                        {'messages': pruned_messages},
+                    ),
+                    timeout=step_timeout,
+                )
+            except asyncio.TimeoutError:
+                logging.error(
+                    f'Step {i + 1} ({step_type}) timed out after {step_timeout:.0f}s'
+                )
+                # Record timeout as a failed step and skip to next step
+                case_recorder.add_step(
+                    description=instruction_to_execute or f'Step {i + 1}',
+                    status='failed',
+                    step_type=step_type.lower(),
+                    model_io=f'Step timed out after {step_timeout:.0f}s',
+                )
+                failed_steps.append(i + 1)
+                i += 1
+                continue
 
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()
