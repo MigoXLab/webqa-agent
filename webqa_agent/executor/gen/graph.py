@@ -21,6 +21,7 @@ from webqa_agent.crawler.deep_crawler import (DeepCrawler, ElementKey,
 from webqa_agent.crawler.feature_detector import detect_page_features
 from webqa_agent.executor.gen.agents.execute_agent import agent_worker_node
 from webqa_agent.executor.gen.state.schemas import MainGraphState
+from webqa_agent.executor.gen.utils.case_recorder import CentralCaseRecorder
 from webqa_agent.prompts.test_planning_prompts import (
     get_element_filtering_system_prompt, get_element_filtering_user_prompt,
     get_planning_prompt, get_reflection_prompt)
@@ -525,10 +526,18 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                     logging.debug(f"Worker {worker_id}: Executing '{case_name}'")
 
                     # Execute test case via agent worker
+                    case_timeout = 1800.0
+                    case_timeout_minutes = int(case_timeout / 60)
                     worker_input_state = {
-                        **state,  # Unpack complete state (includes all MainGraphState fields)
-                        'test_case': case,  # Override with single test case
+                        **state,
+                        'test_case': case,
+                        '_case_start_time': datetime.datetime.now(),  # For step budget calculation
+                        '_case_timeout': case_timeout,
                     }
+
+                    # Create case recorder OUTSIDE wait_for so it survives timeout
+                    case_recorder = CentralCaseRecorder()
+                    case_recorder.start_case(case_name, case_data=case)
 
                     # 执行 case 并添加超时
                     try:
@@ -539,36 +548,83 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                                     'configurable': {
                                         'ui_tester_instance': ui_tester,
                                         'results_lock': results_lock,  # Thread safety: Pass lock for state updates
+                                        'case_recorder': case_recorder,
                                     }
                                 },
                             ),
-                            timeout=1800,
+                            timeout=case_timeout,
                         )
                         logging.debug(
                             f"Worker {worker_id}: Case '{case_name}' completed"
                         )
                     except asyncio.TimeoutError:
                         logging.error(
-                            f"Worker {worker_id}: Case '{case_name}' timed out (30 minutes)"
+                            f"Worker {worker_id}: Case '{case_name}' timed out ({case_timeout_minutes} minutes)"
                         )
                         failed = True
                         now_str = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+                        timeout_summary = f'Case timed out after {case_timeout_minutes} minutes'
+
+                        # Harvest partial results from externalized recorder
+                        case_recorder.finish_case(
+                            final_status='timeout',
+                            final_summary=timeout_summary,
+                        )
+                        partial_data = case_recorder.get_case_data() or {}
+                        partial_steps = partial_data.get('steps', [])
+                        total_planned = len(case.get('steps', []))
+                        completed_count = len(partial_steps)
+
                         case_result = {
                             'case_name': case_name,
                             'case_id': case_id,
                             'status': 'failed',
                             'failure_type': 'timeout',
-                            'reason': 'Case execution timed out after 30 minutes',
+                            'reason': (
+                                f'{timeout_summary}. '
+                                f'{completed_count}/{total_planned} steps completed.'
+                            ),
                         }
                         timeout_recorded = {
                             'name': case_name,
                             'case_id': case_id,
-                            'status': 'failed',
-                            'steps': [],
-                            'final_summary': 'Case timed out after 30 minutes',
-                            'start_time': now_str,
+                            'status': 'timeout',
+                            'steps': partial_steps,
+                            'timed_out_at_step': completed_count + 1 if completed_count > 0 else None,
+                            'total_planned_steps': total_planned,
+                            'final_summary': (
+                                f'{timeout_summary}. '
+                                f'{completed_count} steps completed before timeout.'
+                            ),
+                            'start_time': partial_data.get('start_time', now_str),
                             'end_time': now_str,
                         }
+                        # Save timeout case result to disk (consistent with normal path)
+                        try:
+                            report_dir = _resolve_report_dir(state)
+                            try:
+                                case_idx = int(case_id.split('_')[1])
+                            except (IndexError, ValueError):
+                                case_idx = _completed_case_count + 1
+
+                            await asyncio.to_thread(
+                                save_test_result_json,
+                                test_result=timeout_recorded,
+                                report_dir=report_dir,
+                                index=case_idx,
+                                name=case_name,
+                                category='function',
+                                mode='gen',
+                                sub_test_id=case_id,
+                                llm_config=state.get('llm_config'),
+                                browser_config=state.get('browser_config', {}),
+                                target_url=state.get('url', ''),
+                            )
+                        except Exception as save_err:
+                            logging.error(
+                                f'Failed to save timeout case file for {case_name}: {save_err}'
+                            )
+
                         async with results_lock:
                             completed_cases.append(case_result)
                             recorded_cases.append(timeout_recorded)
