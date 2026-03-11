@@ -55,7 +55,10 @@ data:
   K8S_PVC_NAME: "webqa-pvc"
   K8S_JOB_SERVICE_ACCOUNT: "webqa-agent-sa"
 
-  # Kubernetes Job 资源按 workers 动态分配 (公式: workers + 1)
-  # CPU:    并发1→2c, 并发2→3c, 并发5→6c
-  # 内存:   并发1→2G, 并发2→3G, 并发5→6G
-  # /dev/shm: 每个 worker 1Gi
+  # Kubernetes Job 资源按 workers 动态分配 (内存 = /dev/shm(w Gi) + 进程(2Gi))
+  # workers │ CPU        │ 内存 │ /dev/shm │ 进程可用
+  # 1       │ 2c         │ 3Gi  │ 1Gi      │ 2Gi
+  # 2       │ 3c         │ 4Gi  │ 2Gi      │ 2Gi
+  # 3       │ 4c (上限)  │ 5Gi  │ 3Gi      │ 2Gi
+  # 4       │ 4c (上限)  │ 6Gi  │ 4Gi      │ 2Gi
+  # 5       │ 4c (上限)  │ 7Gi  │ 5Gi      │ 2Gi

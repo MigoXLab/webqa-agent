@@ -478,11 +478,17 @@ async def _create_gen_k8s_job(
     k8s_job_image = os.getenv('K8S_JOB_IMAGE', 'eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/webqa-agent:latest')
     k8s_pvc_name = os.getenv('K8S_PVC_NAME', 'webqa-pvc')
     k8s_sa_name = os.getenv('K8S_JOB_SERVICE_ACCOUNT', 'webqa-agent-sa')
-    # 资源按并发数动态分配: workers + 1
+    # 资源按并发数动态分配
+    # workers │ CPU │ 内存 │ /dev/shm │ 进程可用
+    # 1       │ 2c  │ 3Gi  │ 1Gi      │ 2Gi
+    # 2       │ 3c  │ 4Gi  │ 2Gi      │ 2Gi
+    # 3       │ 4c  │ 5Gi  │ 3Gi      │ 2Gi
+    # 4       │ 4c  │ 6Gi  │ 4Gi      │ 2Gi
+    # 5       │ 4c  │ 7Gi  │ 5Gi      │ 2Gi
     w = max(1, workers)
-    cpu_limit = w + 1       # 并发1→2c, 并发2→3c, 并发4→5c
-    memory_gi = w + 1       # 并发1→2G, 并发2→3G, 并发4→5G
-    dshm_size = f'{w}Gi'   # 每个 worker 1Gi /dev/shm
+    cpu_limit = min(w + 1, 4)   # 并发1→2c, 并发2→3c, 并发3+→4c
+    memory_gi = w + 2           # /dev/shm(w Gi) + 进程(2Gi) = w+2 Gi
+    dshm_size = f'{w}Gi'        # 每个 worker 1Gi /dev/shm
 
     job_name = f'webqa-gen-{execution_id[:8]}'
 
@@ -800,7 +806,6 @@ async def _start_agent_subprocess(execution_id: str, case_data: Optional[Dict[st
 # =============================================================================
 # KUBERNETES MODE: 创建 K8s Job
 # =============================================================================
-
 async def _start_agent_k8s(execution_id: str, case_data: Optional[Dict[str, Any]] = None):
     """Kubernetes 模式：创建 K8s Job 运行 Agent。"""
     async with AsyncSessionLocal() as db:
@@ -897,11 +902,17 @@ async def _create_k8s_job(
     k8s_pvc_name = os.getenv('K8S_PVC_NAME', 'webqa-pvc')
     k8s_sa_name = os.getenv('K8S_JOB_SERVICE_ACCOUNT', 'webqa-agent-sa')
 
-    # 资源按并发数动态分配: workers + 1
+    # 资源按并发数动态分配
+    # workers │ CPU │ 内存 │ /dev/shm │ 进程可用
+    # 1       │ 2c  │ 3Gi  │ 1Gi      │ 2Gi
+    # 2       │ 3c  │ 4Gi  │ 2Gi      │ 2Gi
+    # 3       │ 4c  │ 5Gi  │ 3Gi      │ 2Gi
+    # 4       │ 4c  │ 6Gi  │ 4Gi      │ 2Gi
+    # 5       │ 4c  │ 7Gi  │ 5Gi      │ 2Gi
     w = max(1, workers)
-    cpu_limit = w + 1       # 并发1→2c, 并发2→3c, 并发4→5c
-    memory_gi = w + 1       # 并发1→2G, 并发2→3G, 并发4→5G
-    dshm_size = f'{w}Gi'   # 每个 worker 1Gi /dev/shm
+    cpu_limit = min(w + 1, 4)   # 并发1→2c, 并发2→3c, 并发3+→4c
+    memory_gi = w + 2           # /dev/shm(w Gi) + 进程(2Gi) = w+2 Gi
+    dshm_size = f'{w}Gi'        # 每个 worker 1Gi /dev/shm
 
     # 获取认证 cookies
     cookies = None
