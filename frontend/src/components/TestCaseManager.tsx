@@ -685,17 +685,23 @@ export function TestCaseManager({
     if (selectedCases.length === 0) return;
     if (!confirm(`确定要删除选中的 ${selectedCases.length} 个用例吗？此操作不可撤销。`)) return;
     setBatchDeleting(true);
-    try {
-      for (const id of selectedCases) {
+    const failedIds: string[] = [];
+    for (const id of selectedCases) {
+      try {
         await apiClient.deleteTestCase(id);
+      } catch {
+        failedIds.push(id);
       }
-      setTestCases(testCases.filter(tc => !selectedCases.includes(tc.id)));
-      setSelectedCases([]);
-    } catch (err: any) {
-      alert('批量删除失败: ' + (err.message || '未知错误'));
-    } finally {
-      setBatchDeleting(false);
     }
+    const deletedIds = selectedCases.filter(id => !failedIds.includes(id));
+    if (deletedIds.length > 0) {
+      setTestCases(testCases.filter(tc => !deletedIds.includes(tc.id)));
+    }
+    setSelectedCases(failedIds);
+    if (failedIds.length > 0) {
+      alert(`${deletedIds.length} 个用例已删除，${failedIds.length} 个删除失败`);
+    }
+    setBatchDeleting(false);
   };
 
   const saveTestCase = async (data: Partial<TestCase>) => {
@@ -2179,7 +2185,7 @@ steps:
         />
       )}
 
-      
+
     </div>
   );
 }

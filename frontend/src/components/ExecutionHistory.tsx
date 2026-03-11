@@ -23,6 +23,8 @@ export function ExecutionHistory({ businesses }: Props) {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
+  const isGenFilter = selectedBusinessId === '__gen__';
+
   // Check if there are any active (pending/running) executions
   const hasActiveExecutions = executions.some(e =>
     e.status === 'pending' || e.status === 'running'
@@ -49,8 +51,8 @@ export function ExecutionHistory({ businesses }: Props) {
     try {
       if (showLoading) setLoading(true);
       const response = await apiClient.getExecutions({
-        business_id: selectedBusinessId || undefined,
-        trigger_type: selectedTriggerType || undefined,
+        business_id: (!selectedBusinessId || isGenFilter) ? undefined : selectedBusinessId,
+        trigger_type: isGenFilter ? 'gen' : (selectedTriggerType || undefined),
         limit: pageSize,
         offset: (currentPage - 1) * pageSize,
       });
@@ -223,7 +225,7 @@ export function ExecutionHistory({ businesses }: Props) {
       {/* Header */}
       <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">执行历史</h1>
+          <h1 className="text-xl font-semibold text-gray-900">执行记录</h1>
           <p className="text-gray-600 mt-1">查看所有测试执行记录</p>
         </div>
       </div>
@@ -254,11 +256,13 @@ export function ExecutionHistory({ businesses }: Props) {
                       value={selectedBusinessId}
                       onChange={(e) => {
                         setSelectedBusinessId(e.target.value);
+                        if (e.target.value === '__gen__') setSelectedTriggerType('');
                         setCurrentPage(1);
                       }}
                       className="cursor-pointer"
                     >
-                      <option value="">全部业务</option>
+                      <option value="">全部来源</option>
+                      <option value="__gen__">AI 探索</option>
                       {businesses.map(b => (
                         <option key={b.id} value={b.id}>{b.name}</option>
                       ))}
@@ -266,25 +270,31 @@ export function ExecutionHistory({ businesses }: Props) {
                     <Filter className={`w-3 h-3 ${selectedBusinessId ? 'text-blue-600' : 'text-gray-400'} group-hover:text-gray-600`} />
                   </div>
                 </th>
-                <th
-                  className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors relative group"
-                >
-                  <div className="flex items-center gap-2">
-                    <select
-                      value={selectedTriggerType}
-                      onChange={(e) => {
-                        setSelectedTriggerType(e.target.value);
-                        setCurrentPage(1);
-                      }}
-                      className="cursor-pointer"
-                    >
-                      <option value="">触发方式</option>
-                      <option value="manual">手动触发</option>
-                      <option value="scheduled">定时触发</option>
-                    </select>
-                    <Filter className={`w-3 h-3 ${selectedTriggerType ? 'text-blue-600' : 'text-gray-400'} group-hover:text-gray-600`} />
-                  </div>
-                </th>
+                {selectedBusinessId && (
+                  <th
+                    className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors relative group"
+                  >
+                    {isGenFilter ? (
+                      <span>目标网址</span>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={selectedTriggerType}
+                          onChange={(e) => {
+                            setSelectedTriggerType(e.target.value);
+                            setCurrentPage(1);
+                          }}
+                          className="cursor-pointer"
+                        >
+                          <option value="">触发方式</option>
+                          <option value="manual">手动触发</option>
+                          <option value="scheduled">定时触发</option>
+                        </select>
+                        <Filter className={`w-3 h-3 ${selectedTriggerType ? 'text-blue-600' : 'text-gray-400'}`} />
+                      </div>
+                    )}
+                  </th>
+                )}
                 <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   通过数
                 </th>
@@ -320,27 +330,61 @@ export function ExecutionHistory({ businesses }: Props) {
                     </span>
                   </td>
 
-                  {/* Business & Environment */}
+                  {/* Source */}
                   <td className="px-6 py-4">
-                    <div className="flex flex-col">
-                      <span className="text-sm font-medium text-gray-900">
-                        {exec.business_name || '未知业务'}
-                      </span>
-                      {exec.environment_name && (
-                        <div className="flex items-center gap-1.5 text-xs text-gray-500">
-                          <div className="w-1 h-1 rounded-full bg-gray-300" />
-                          {exec.environment_name}
-                        </div>
-                      )}
-                    </div>
+                    {exec.trigger_type === 'gen' ? (
+                      <div className="flex flex-col">
+                        <span className="text-sm font-medium text-purple-600">AI 探索</span>
+                        {!selectedBusinessId && exec.config?.target_url && (
+                          <span className="text-xs text-gray-500 truncate max-w-[200px]" title={exec.config.target_url}>
+                            {exec.config.target_url.replace(/^https?:\/\//, '').slice(0, 20)}
+                            {exec.config.target_url.replace(/^https?:\/\//, '').length > 20 ? '...' : ''}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex flex-col">
+                        <span className="text-sm font-medium text-gray-900">
+                          {exec.business_name || '-'}
+                        </span>
+                        {exec.environment_name && (
+                          <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                            <div className="w-1 h-1 rounded-full bg-gray-300" />
+                            {exec.environment_name}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </td>
 
-                  {/* Trigger Type */}
-                  <td className="px-6 py-4">
-                    <span className="text-sm text-gray-600">
-                      {exec.trigger_type === 'scheduled' ? '定时触发' : '手动触发'}
-                    </span>
-                  </td>
+                  {/* Trigger Type / Target URL — only when a source is selected */}
+                  {selectedBusinessId && (
+                    <td className="px-6 py-4">
+                      {exec.trigger_type === 'gen' ? (
+                        exec.config?.target_url ? (
+                          <div className="relative group/url">
+                            <span className="text-sm text-gray-900 cursor-default">
+                              {(() => {
+                                const short = exec.config.target_url.replace(/^https?:\/\//, '');
+                                return short.length > 20 ? short.slice(0, 20) + '...' : short;
+                              })()}
+                            </span>
+                            {exec.config.target_url.replace(/^https?:\/\//, '').length > 20 && (
+                              <div className="absolute left-0 bottom-full mb-1 hidden group-hover/url:block z-10 px-2 py-1 text-xs text-white bg-gray-800 rounded shadow-lg whitespace-nowrap">
+                                {exec.config.target_url}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-sm text-gray-400">-</span>
+                        )
+                      ) : (
+                        <span className="text-sm text-gray-600">
+                          {exec.trigger_type === 'scheduled' ? '定时触发' : '手动触发'}
+                        </span>
+                      )}
+                    </td>
+                  )}
 
                   {/* Passed Count */}
                   <td className="px-6 py-4">

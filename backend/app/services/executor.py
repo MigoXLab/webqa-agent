@@ -27,6 +27,36 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 
 
+# Store active processes for cancellation
+_active_processes: Dict[str, asyncio.subprocess.Process] = {}
+
+
+async def stop_execution(execution_id: str) -> bool:
+    """Stop a running execution."""
+    # 1. Try to stop local subprocess
+    if execution_id in _active_processes:
+        process = _active_processes[execution_id]
+        try:
+            logger.info(f'[Executor] Stopping process {process.pid} for execution {execution_id}')
+            process.terminate()
+            # Give it a chance to terminate gracefully
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                logger.warning(f'[Executor] Process {process.pid} did not terminate, killing...')
+                process.kill()
+
+            return True
+        except Exception as e:
+            logger.error(f'[Executor] Failed to stop process: {e}')
+            return False
+
+    # 2. If running in K8s, delete the Job (not implemented yet for this snippet)
+    # ...
+
+    return False
+
+
 def generate_sso_cookies(username: str, password: str, env: str = 'prod') -> Tuple[Optional[str], Optional[List[Dict]]]:
     """使用 SSO 账号生成 cookies。"""
     try:
@@ -96,7 +126,7 @@ def upload_report_to_oss(report_dir: str, oss_key_dir: str) -> Optional[str]:
         return None
 
 
-async def run_execution(execution_id: str, case_data: Optional[Dict[str, Any]] = None):
+async def run_execution(execution_id: str, case_data: Optional[Dict[str, Any]] = None, gen_config_dict: Optional[Dict[str, Any]] = None):
     """执行测试任务（入口函数）。
 
     根据 EXECUTION_MODE 配置选择启动方式：
@@ -109,7 +139,22 @@ async def run_execution(execution_id: str, case_data: Optional[Dict[str, Any]] =
         execution_id: 执行记录 ID
         case_data: Debug 模式下前端直传的 case 数据，不存 DB。
             格式: {case_id_str: {login_required: bool, name: str, steps: [...], ...}}
+        gen_config_dict: Gen 模式的原始配置字典（不含 api_key，由 executor 注入）
     """
+    # Check execution trigger_type first
+    async with AsyncSessionLocal() as db:
+        try:
+            result = await db.execute(
+                select(Execution).where(Execution.id == UUID(execution_id))
+            )
+            execution = result.scalar_one_or_none()
+            if execution and execution.trigger_type == 'gen':
+                 await _start_gen_executor(execution_id, gen_config_dict)
+                 return
+        except Exception as e:
+            logger.exception(f'[Run] Failed to check execution type: {e}')
+            return
+
     mode = settings.EXECUTION_MODE.lower()
 
     if mode == 'kubernetes':
@@ -117,6 +162,152 @@ async def run_execution(execution_id: str, case_data: Optional[Dict[str, Any]] =
     else:
         # local 模式（默认）
         await _start_agent_subprocess(execution_id, case_data=case_data)
+
+
+async def _start_gen_executor(execution_id: str, gen_config_dict: Optional[Dict[str, Any]] = None):
+    """Gen Mode: Start subprocess running run_gen_webqa.py.
+
+    Accepts a raw config dict (without api_key). Secrets are injected
+    here from backend settings before constructing GenConfig.
+    """
+    from webqa_agent.config_models.gen_config import GenConfig
+
+    async with AsyncSessionLocal() as db:
+        try:
+            result = await db.execute(
+                select(Execution).where(Execution.id == UUID(execution_id))
+            )
+            execution = result.scalar_one_or_none()
+
+            if not execution:
+                logger.error(f'[Gen] Execution not found: {execution_id}')
+                return
+
+            # If config dict is not passed (e.g. restart), load from execution.config
+            if not gen_config_dict and execution.config:
+                gen_config_dict = execution.config
+
+            if not gen_config_dict:
+                 execution.status = 'failed'
+                 execution.error_message = 'Gen configuration missing'
+                 execution.completed_at = now_with_tz()
+                 await db.commit()
+                 return
+
+            # Inject API key and base URL from backend settings
+            llm_cfg = gen_config_dict.setdefault('llm_config', {})
+            model_name = llm_cfg.get('model', '')
+            if not llm_cfg.get('api_key'):
+                llm_cfg['api_key'] = settings.get_api_key_for_model(model_name)
+            if not llm_cfg.get('base_url'):
+                llm_cfg['base_url'] = settings.get_base_url_for_model(model_name)
+
+            # Construct and validate GenConfig with secrets filled in
+            try:
+                gen_config = GenConfig(**gen_config_dict)
+            except Exception as e:
+                logger.error(f'[Gen] Invalid gen config: {e}')
+                execution.status = 'failed'
+                execution.error_message = f'Invalid gen configuration: {e}'
+                execution.completed_at = now_with_tz()
+                await db.commit()
+                return
+
+            # Write config to file
+            config_dir = Path(settings.shared_reports_path) / f'exec_{execution_id}'
+            config_dir.mkdir(parents=True, exist_ok=True)
+            config_file = config_dir / 'config.yaml'
+
+            with open(config_file, 'w', encoding='utf-8') as f:
+                f.write(gen_config.model_dump_json(indent=2))
+
+            config_path = str(config_file)
+
+            # Update status
+            execution.status = 'running'
+            execution.started_at = now_with_tz()
+            await db.commit()
+
+            logger.info(f'[Gen] Starting subprocess: {execution_id}')
+
+            api_key = gen_config.llm_config.api_key
+            base_url = gen_config.llm_config.base_url
+
+            env = os.environ.copy()
+            env['EXECUTION_ID'] = execution_id
+            env['SHARED_STORAGE_PATH'] = settings.effective_shared_storage_path
+            env['BACKEND_CALLBACK_URL'] = settings.BACKEND_CALLBACK_URL
+            if api_key:
+                env['OPENAI_API_KEY'] = api_key
+            if base_url:
+                env['OPENAI_BASE_URL'] = base_url
+
+            process = await asyncio.create_subprocess_exec(
+                'python', '-m', 'backend.run_gen_webqa',
+                '-c', config_path,
+                '--execution-id', execution_id,
+                '--report-dir', str(config_dir),
+                '--stdout',
+                cwd=str(PROJECT_ROOT),
+                env=env,
+            )
+
+            logger.info(f'[Gen] Subprocess started: PID={process.pid}')
+            _active_processes[execution_id] = process
+
+            # Monitor process (same as local mode)
+            async def monitor_process():
+                timeout_seconds = settings.JOB_TIMEOUT_SECONDS
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=timeout_seconds)
+                    logger.info(f'[Gen] Subprocess finished: PID={process.pid}, exit_code={process.returncode}')
+
+                    # Remove from active processes
+                    _active_processes.pop(execution_id, None)
+
+                    if process.returncode != 0:
+                        logger.warning(f'[Gen] Subprocess exited with error: {process.returncode}')
+                        await asyncio.sleep(2)
+                        async with AsyncSessionLocal() as db:
+                            result = await db.execute(select(Execution).where(Execution.id == UUID(execution_id)))
+                            exec_record = result.scalar_one_or_none()
+                            if exec_record and exec_record.status == 'running':
+                                exec_record.status = 'failed'
+                                exec_record.error_message = f'Agent exited with code {process.returncode}'
+                                exec_record.completed_at = now_with_tz()
+                                await db.commit()
+
+                except asyncio.TimeoutError:
+                    logger.warning(f'[Gen] Subprocess timeout: PID={process.pid}')
+                    process.terminate()
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=10)
+                    except:
+                        process.kill()
+
+                    async with AsyncSessionLocal() as db:
+                        result = await db.execute(select(Execution).where(Execution.id == UUID(execution_id)))
+                        exec_record = result.scalar_one_or_none()
+                        if exec_record and exec_record.status == 'running':
+                            exec_record.status = 'timeout'
+                            exec_record.error_message = 'Execution timed out'
+                            exec_record.completed_at = now_with_tz()
+                            await db.commit()
+
+                except Exception as e:
+                    logger.exception(f'[Gen] Monitor exception: {e}')
+
+            asyncio.create_task(monitor_process())
+
+        except Exception as e:
+            logger.exception(f'[Gen] Start failed: {e}')
+            try:
+                execution.status = 'failed'
+                execution.error_message = f'Failed to start process: {e}'
+                execution.completed_at = now_with_tz()
+                await db.commit()
+            except:
+                pass
 
 
 # =============================================================================
@@ -279,6 +470,7 @@ async def _start_agent_subprocess(execution_id: str, case_data: Optional[Dict[st
             )
 
             logger.info(f'[Local] 子进程已启动: PID={process.pid}')
+            _active_processes[execution_id] = process
 
             # 启动后台任务：监控进程并处理超时/崩溃
             async def monitor_process():
@@ -287,6 +479,9 @@ async def _start_agent_subprocess(execution_id: str, case_data: Optional[Dict[st
                     # 等待进程完成或超时
                     await asyncio.wait_for(process.wait(), timeout=timeout_seconds)
                     logger.info(f'[Local] 子进程结束: PID={process.pid}, exit_code={process.returncode}')
+
+                    # Remove from active processes
+                    _active_processes.pop(execution_id, None)
 
                     # 检查进程是否异常退出（非零退出码且未回调）
                     if process.returncode != 0:

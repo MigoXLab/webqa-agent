@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     LLM_BASE_URL: str = 'https://api.openai.com/v1'
     LLM_AVAILABLE_MODELS: str = 'gpt-4o-mini,gpt-4o'
     LLM_DEFAULT_MODEL: str = 'gpt-4o-mini'
+    LLM_GEN_MODELS: str = ''
+    LLM_GEN_DEFAULT_MODEL: str = ''
 
     # OSS Configuration
     OSS_ENDPOINT: str = ''
@@ -107,15 +109,33 @@ class Settings(BaseSettings):
 
     @property
     def available_models(self) -> List[str]:
-        """Get list of available models."""
+        """Get list of available models for Run mode."""
         return [m.strip() for m in self.LLM_AVAILABLE_MODELS.split(',') if m.strip()]
+
+    @property
+    def gen_models(self) -> List[str]:
+        """Get list of available models for Gen (AI探索) mode.
+
+        Falls back to available_models if LLM_GEN_MODELS is not set.
+        """
+        if self.LLM_GEN_MODELS.strip():
+            return [m.strip() for m in self.LLM_GEN_MODELS.split(',') if m.strip()]
+        return self.available_models
+
+    @property
+    def gen_default_model(self) -> str:
+        """Get default model for Gen mode.
+
+        Falls back to LLM_DEFAULT_MODEL if not set.
+        """
+        return self.LLM_GEN_DEFAULT_MODEL.strip() or self.LLM_DEFAULT_MODEL
 
     def get_api_key_for_model(self, model: str) -> str:
         """Get API key for a specific model.
 
         Looks up LLM_API_KEY_<MODEL_NORMALIZED> env var first (e.g.
-        LLM_API_KEY_INTERN_S1_PRO for 'intern-s1-pro'), falls back
-        to LLM_API_KEY if not found.
+        LLM_API_KEY_INTERN_S1_PRO for 'intern-s1-pro'), falls back to
+        LLM_API_KEY if not found.
         """
         normalized = model.upper().replace('-', '_').replace('.', '_')
         return os.getenv(f'LLM_API_KEY_{normalized}', self.LLM_API_KEY)
@@ -124,8 +144,8 @@ class Settings(BaseSettings):
         """Get base URL for a specific model.
 
         Looks up LLM_BASE_URL_<MODEL_NORMALIZED> env var first (e.g.
-        LLM_BASE_URL_INTERN_S1_PRO for 'intern-s1-pro'), falls back
-        to LLM_BASE_URL if not found.
+        LLM_BASE_URL_INTERN_S1_PRO for 'intern-s1-pro'), falls back to
+        LLM_BASE_URL if not found.
         """
         normalized = model.upper().replace('-', '_').replace('.', '_')
         return os.getenv(f'LLM_BASE_URL_{normalized}', self.LLM_BASE_URL)

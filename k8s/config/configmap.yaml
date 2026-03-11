@@ -26,6 +26,9 @@ data:
   # 按模型配置不同 Base URL（非敏感，放 ConfigMap）
   LLM_BASE_URL_INTERN_S1_PRO: "https://chat.intern-ai.org.cn/api/v1"
 
+LLM_GEN_MODELS=gemini-3.1-pro-preview,gemini-3-flash-preview,claude-sonnet-4-6,gpt-5.2
+LLM_GEN_DEFAULT_MODEL=gemini-3.1-pro-preview
+
   # Execution Control
   JOB_TIMEOUT_SECONDS: "7200"
   MAX_CONCURRENT_JOBS: "5"

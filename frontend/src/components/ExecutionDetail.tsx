@@ -10,7 +10,9 @@ import {
   ExternalLink,
   RefreshCw,
   Maximize2,
-  Minimize2
+  Minimize2,
+  StopCircle,
+  Sparkles
 } from 'lucide-react';
 import { apiClient, ExecutionProgress, Execution } from '../api/client';
 
@@ -22,6 +24,7 @@ export function ExecutionDetail() {
   const [progress, setProgress] = useState<ExecutionProgress | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [stopping, setStopping] = useState(false);
 
   // Calculate running time
   const [runningTime, setRunningTime] = useState<string>('');
@@ -171,6 +174,24 @@ export function ExecutionDetail() {
     }
   };
 
+  // Stop execution
+  const handleStop = async () => {
+    if (!executionId) return;
+    if (!confirm('确定要停止当前任务吗？')) return;
+
+    try {
+      setStopping(true);
+      await apiClient.stopExecution(executionId);
+      // Refresh data to show updated status
+      await loadData(false);
+    } catch (err) {
+      console.error('Failed to stop execution:', err);
+      alert('停止任务失败');
+    } finally {
+      setStopping(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -221,14 +242,28 @@ export function ExecutionDetail() {
             </h1>
           </div>
 
-          {/* Refresh button */}
-          <button
-            onClick={() => loadData(false)}
-            className="flex items-center gap-2 px-3 py-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
-          >
-            <RefreshCw className="w-4 h-4" />
-            刷新
-          </button>
+          <div className="flex items-center gap-3">
+            {/* Stop button */}
+            {isRunning && (
+              <button
+                onClick={handleStop}
+                disabled={stopping}
+                className="flex items-center gap-2 px-3 py-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors border border-red-200"
+              >
+                {stopping ? <Loader2 className="w-4 h-4 animate-spin" /> : <StopCircle className="w-4 h-4" />}
+                停止执行
+              </button>
+            )}
+
+            {/* Refresh button */}
+            <button
+              onClick={() => loadData(false)}
+              className="flex items-center gap-2 px-3 py-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <RefreshCw className="w-4 h-4" />
+              刷新
+            </button>
+          </div>
         </div>
 
         {/* Execution Overview Card */}
@@ -251,15 +286,35 @@ export function ExecutionDetail() {
             </div>
           </div>
 
-          <div className="px-10 py-8 flex gap-x-12 gap-y-6">
-              <div className="px-4 py-4">
-                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">业务</span>
-                <p className="mt-1 font-medium text-gray-900">{execution.business_name || '-'}</p>
-              </div>
-              <div className="px-4 py-4">
-                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">环境</span>
-                <p className="mt-1 font-medium text-gray-900">{execution.environment_name || '-'}</p>
-              </div>
+          <div className="px-10 py-8 flex gap-x-12 gap-y-6 flex-wrap">
+              {execution.trigger_type === 'gen' ? (
+                <>
+                  <div className="px-4 py-4">
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">类型</span>
+                    <p className="mt-1 font-medium text-purple-600 flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4" />
+                      AI 探索
+                    </p>
+                  </div>
+                  <div className="px-4 py-4">
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">目标网址</span>
+                    <p className="mt-1 font-medium text-gray-900" title={execution.config?.target_url}>
+                      {execution.config?.target_url || '-'}
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="px-4 py-4">
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">业务</span>
+                    <p className="mt-1 font-medium text-gray-900">{execution.business_name || '-'}</p>
+                  </div>
+                  <div className="px-4 py-4">
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">环境</span>
+                    <p className="mt-1 font-medium text-gray-900">{execution.environment_name || '-'}</p>
+                  </div>
+                </>
+              )}
               <div className="px-4 py-4">
                 <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">模型</span>
                 <p className="mt-1 font-medium text-gray-900">{execution.model}</p>
@@ -280,6 +335,16 @@ export function ExecutionDetail() {
                 </p>
               </div>
           </div>
+          {execution.trigger_type === 'gen' && execution.config?.business_objectives && (
+            <div className="px-10 py-8 flex gap-x-12 gap-y-6 flex-wrap">
+              <div className="px-4 py-4">
+                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">测试目标</span>
+                <p className="mt-1 text-sm pb-6 text-gray-900 whitespace-pre-line break-words">
+                  {execution.config.business_objectives}
+                </p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Real-time Progress Section */}

@@ -6,7 +6,8 @@ import { ScheduledTaskManager } from './components/ScheduledTaskManager';
 import { ExecutionHistory } from './components/ExecutionHistory';
 import { ExecutionDetail } from './components/ExecutionDetail';
 import { CaseEditorPage } from './components/CaseEditorPage';
-import { LayoutDashboard, History, Box, Loader2, Github } from 'lucide-react';
+import { GenPage } from './components/GenPage';
+import { LayoutDashboard, History, Box, Loader2, Github, Sparkles } from 'lucide-react';
 import { apiClient, Business as APIBusiness, TestCase as APITestCase, Execution as APIExecution } from './api/client';
 
 // Re-export types for backward compatibility
@@ -297,6 +298,7 @@ export default function App() {
   // Determine current view from route
   const isCaseEditor = /^\/business\/[^/]+\/case\//.test(location.pathname);
   const view = location.pathname === '/history' ? 'history' :
+               location.pathname === '/gen' ? 'gen' :
                isCaseEditor ? 'case_editor' :
                location.pathname.startsWith('/business/') ? 'business_detail' :
                location.pathname.startsWith('/execution/') ? 'execution_detail' : 'businesses';
@@ -361,8 +363,8 @@ export default function App() {
 
   const handleBatchExecute = (execution: BatchExecution) => {
     setExecutions([execution, ...executions]);
-    // Navigate to execution history
-    navigate('/history');
+    // Navigate to execution detail page directly
+    navigate(`/execution/${execution.id}`);
   };
 
   // Custom setter that syncs with API
@@ -407,6 +409,19 @@ export default function App() {
 
             <nav className="flex items-center gap-2">
               <Link
+                to="/gen"
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  view === 'gen'
+                    ? 'bg-gray-100 text-gray-900'
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-purple-600" />
+                  AI 探索
+                </div>
+              </Link>
+              <Link
                 to="/"
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   view === 'businesses' || view === 'business_detail' || view === 'case_editor'
@@ -429,7 +444,7 @@ export default function App() {
               >
                 <div className="flex items-center gap-2">
                   <History className="w-4 h-4" />
-                  执行历史
+                  执行记录
                 </div>
               </Link>
             </nav>
@@ -476,6 +491,7 @@ export default function App() {
               onSelectBusiness={handleSelectBusiness}
             />
           } />
+          <Route path="/gen" element={<GenPage />} />
           <Route path="/business/:businessId" element={
             <BusinessDetailWrapper
               businesses={businesses}

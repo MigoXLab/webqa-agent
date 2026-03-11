@@ -10,7 +10,7 @@ from app.models import Business, Environment, Execution, TestCase
 from app.schemas.common import APIResponse
 from app.schemas.execution import (ExecutionCreate, ExecutionListResponse,
                                    ExecutionResponse, ExecutionStatusResponse)
-from app.services.executor import run_execution
+from app.services.executor import run_execution, stop_execution
 from app.services.progress_cache import get_progress
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -79,40 +79,48 @@ async def create_execution(
         )
 
     # Verify business exists
-    business_result = await db.execute(
-        select(Business).where(Business.id == data.business_id)
-    )
-    business = business_result.scalar_one_or_none()
-    if not business:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={'code': 2001, 'message': '业务不存在'}
+    if data.business_id:
+        business_result = await db.execute(
+            select(Business).where(Business.id == data.business_id)
         )
+        business = business_result.scalar_one_or_none()
+        if not business:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={'code': 2001, 'message': '业务不存在'}
+            )
+    else:
+        business = None
 
     # Verify environment exists
-    env_result = await db.execute(
-        select(Environment).where(Environment.id == data.environment_id)
-    )
-    environment = env_result.scalar_one_or_none()
-    if not environment:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={'code': 2002, 'message': '环境不存在'}
+    if data.environment_id:
+        env_result = await db.execute(
+            select(Environment).where(Environment.id == data.environment_id)
         )
+        environment = env_result.scalar_one_or_none()
+        if not environment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={'code': 2002, 'message': '环境不存在'}
+            )
+    else:
+        environment = None
 
     # Verify all test cases exist (skip for cases with data provided inline)
     inline_ids = set(data.case_data.keys()) if data.case_data else set()
-    for case_id in data.test_case_ids:
-        if str(case_id) in inline_ids:
-            continue  # Data provided inline, no DB record needed
-        case_result = await db.execute(
-            select(TestCase).where(TestCase.id == case_id)
-        )
-        if not case_result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={'code': 2003, 'message': f'用例 {case_id} 不存在'}
+
+    if data.trigger_type != 'gen':
+        for case_id in data.test_case_ids:
+            if str(case_id) in inline_ids:
+                continue  # Data provided inline, no DB record needed
+            case_result = await db.execute(
+                select(TestCase).where(TestCase.id == case_id)
             )
+            if not case_result.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail={'code': 2003, 'message': f'用例 {case_id} 不存在'}
+                )
 
     # Debug mode: force workers=1
     workers = 1 if data.trigger_type == 'debug' else data.workers
@@ -124,8 +132,9 @@ async def create_execution(
         trigger_type=data.trigger_type,
         model=data.model,
         workers=workers,
-        test_case_ids=[str(cid) for cid in data.test_case_ids],
+        test_case_ids=[str(cid) for cid in data.test_case_ids] if data.test_case_ids else [],
         status='pending',
+        config=data.gen_config if data.gen_config else None,
     )
     db.add(execution)
     await db.commit()
@@ -133,7 +142,7 @@ async def create_execution(
 
     # Start execution in background using asyncio.create_task for true concurrency
     execution_id_str = str(execution.id)
-    task = asyncio.create_task(run_execution(execution_id_str, case_data=data.case_data))
+    task = asyncio.create_task(run_execution(execution_id_str, case_data=data.case_data, gen_config_dict=data.gen_config))
     _running_tasks[execution_id_str] = task
 
     # Clean up task reference when done
@@ -141,21 +150,22 @@ async def create_execution(
         _running_tasks.pop(execution_id_str, None)
     task.add_done_callback(cleanup_task)
 
-    logger.info(f'[API] Started execution: id={execution_id_str}, business={data.business_id}, env={data.environment_id}, cases={len(data.test_case_ids)}, model={data.model}, workers={data.workers}')
+    logger.info(f'[API] Started execution: id={execution_id_str}, business={data.business_id}, env={data.environment_id}, cases={len(data.test_case_ids) if data.test_case_ids else 0}, model={data.model}, workers={data.workers}')
 
     # Build response with names
     response = ExecutionResponse(
         id=execution.id,
         business_id=execution.business_id,
-        business_name=business.name,
+        business_name=business.name if business else None,
         environment_id=execution.environment_id,
-        environment_name=environment.name,
+        environment_name=environment.name if environment else None,
         trigger_type=execution.trigger_type,
         model=execution.model,
         workers=execution.workers,
         test_case_ids=execution.test_case_ids,
         status=execution.status,
         created_at=execution.created_at,
+        config=execution.config,
     )
 
     return APIResponse(data=response)
@@ -167,6 +177,7 @@ async def list_executions(
     business_id: Optional[UUID] = None,
     trigger_type: Optional[str] = None,
     status_filter: Optional[str] = None,
+    url_search: Optional[str] = None,
     exclude_debug: bool = True,
     limit: int = 50,
     offset: int = 0,
@@ -194,6 +205,10 @@ async def list_executions(
     if status_filter:
         query = query.where(Execution.status == status_filter)
         count_query = count_query.where(Execution.status == status_filter)
+    if url_search:
+        url_filter = Execution.config['target_url'].astext.ilike(f'%{url_search}%')
+        query = query.where(url_filter)
+        count_query = count_query.where(url_filter)
 
     # Get total count
     count_result = await db.execute(count_query)
@@ -236,6 +251,7 @@ async def list_executions(
             created_at=exc.created_at,
             error_message=exc.error_message,
             result_count=exc.result_count,
+            config=exc.config,
         ))
 
     return APIResponse(
@@ -284,9 +300,47 @@ async def get_execution(
         created_at=execution.created_at,
         error_message=execution.error_message,
         result_count=execution.result_count,
+        config=execution.config,
     )
 
     return APIResponse(data=response)
+
+
+@router.post('/{execution_id}/stop', status_code=status.HTTP_200_OK)
+async def stop_execution_endpoint(
+    execution_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Stop a running execution."""
+    # Check if execution exists
+    result = await db.execute(
+        select(Execution).where(Execution.id == execution_id)
+    )
+    execution = result.scalar_one_or_none()
+
+    if not execution:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={'code': 2004, 'message': '执行记录不存在'}
+        )
+
+    if execution.status not in ['pending', 'running']:
+        return APIResponse(data={'message': 'Execution is not running'})
+
+    # Try to stop via executor service
+    execution_id_str = str(execution_id)
+    stopped = await stop_execution(execution_id_str)
+
+    if not stopped:
+        # If not found in active processes (e.g. server restarted), just update DB status
+        logger.warning(f'[API] Could not find active process for {execution_id_str}, forcing status update')
+
+    # Update status in DB
+    execution.status = 'cancelled'
+    execution.error_message = 'User cancelled execution'
+    await db.commit()
+
+    return APIResponse(data={'message': 'Execution stopped'})
 
 
 @router.get('/{execution_id}/status', response_model=APIResponse[ExecutionStatusResponse])

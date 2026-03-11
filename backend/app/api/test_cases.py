@@ -194,6 +194,43 @@ async def import_cases_from_yaml(
             detail={'code': 1002, 'message': "YAML格式错误: 缺少 'cases' 字段"}
         )
 
+    # Check for duplicate names against existing cases in this business
+    import_names = [c.get('name', 'Unnamed Case') for c in data['cases']]
+
+    existing_result = await db.execute(
+        select(TestCase.name)
+        .where(TestCase.business_id == business_id)
+        .where(TestCase.name.in_(import_names))
+    )
+    existing_names = [row[0] for row in existing_result.all()]
+    if existing_names:
+        dup_list = '、'.join(existing_names[:5])
+        suffix = f' 等 {len(existing_names)} 个' if len(existing_names) > 5 else ''
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                'code': 1003,
+                'message': f'存在重名用例：{dup_list}{suffix}，请修改后重新导入',
+            }
+        )
+
+    # Check for duplicates within the import file itself
+    seen_names: set[str] = set()
+    dup_in_file = []
+    for name in import_names:
+        if name in seen_names:
+            dup_in_file.append(name)
+        seen_names.add(name)
+    if dup_in_file:
+        dup_list = '、'.join(list(set(dup_in_file))[:5])
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                'code': 1003,
+                'message': f'导入文件内存在重名用例：{dup_list}，请修改后重新导入',
+            }
+        )
+
     # Get current max sort_order for this business
     max_order_result = await db.execute(
         select(func.coalesce(func.max(TestCase.sort_order), 0))

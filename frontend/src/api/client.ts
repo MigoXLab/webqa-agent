@@ -53,11 +53,11 @@ export interface TestCase {
 
 export interface Execution {
   id: string;
-  business_id: string;
+  business_id?: string;
   business_name?: string;
   environment_id?: string;
   environment_name?: string;
-  trigger_type: 'manual' | 'scheduled' | 'debug';
+  trigger_type: 'manual' | 'scheduled' | 'debug' | 'gen';
   scheduled_task_id?: string;
   model: string;
   workers: number;
@@ -75,6 +75,7 @@ export interface Execution {
     failed: number;
     warning: number;
   };
+  config?: Record<string, any>;
 }
 
 // Progress types for real-time execution tracking
@@ -270,6 +271,7 @@ class APIClient {
     business_id?: string;
     trigger_type?: string;
     status?: string;
+    url_search?: string;
     limit?: number;
     offset?: number;
   }): Promise<ListResponse<Execution>> {
@@ -290,17 +292,49 @@ class APIClient {
   }
 
   async createExecution(data: {
-    business_id: string;
-    environment_id: string;
-    test_case_ids: string[];
+    business_id?: string;
+    environment_id?: string;
+    test_case_ids?: string[];
     model?: string;
     workers?: number;
-    trigger_type?: 'manual' | 'debug';
+    trigger_type?: 'manual' | 'debug' | 'gen';
     case_data?: Record<string, any>;
+    gen_config?: {
+      target_url: string;
+      llm_config: {
+        model: string;
+        api_key?: string;
+        [key: string]: any;
+      };
+      business_objectives?: string;
+      custom_tools?: {
+        enabled: string[];
+      };
+      skip_reflection?: boolean;
+      dynamic_step_generation?: {
+        enabled: boolean;
+      };
+      browser_config?: {
+        cookies?: Array<Record<string, any>>;
+        [key: string]: any;
+      };
+      [key: string]: any;
+    };
   }): Promise<Execution> {
+    // Ensure business_id/environment_id are not undefined if empty string passed
+    const payload = { ...data };
+    if (!payload.business_id) delete payload.business_id;
+    if (!payload.environment_id) delete payload.environment_id;
+
     return this.request<Execution>('/executions', {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async stopExecution(id: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(`/executions/${id}/stop`, {
+      method: 'POST',
     });
   }
 
@@ -319,11 +353,12 @@ class APIClient {
   }
 
   // Config APIs
-  async getAvailableModels(): Promise<{
+  async getAvailableModels(mode?: 'gen' | 'run'): Promise<{
     models: string[];
     default: string;
   }> {
-    return this.request('/config/models');
+    const params = mode ? `?mode=${mode}` : '';
+    return this.request(`/config/models${params}`);
   }
 
   // File APIs

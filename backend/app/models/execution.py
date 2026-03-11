@@ -24,10 +24,10 @@ class Execution(Base):
         primary_key=True,
         default=uuid.uuid4
     )
-    business_id: Mapped[uuid.UUID] = mapped_column(
+    business_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey('businesses.id', ondelete='CASCADE'),
-        nullable=False
+        nullable=True
     )
     environment_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -89,6 +89,9 @@ class Execution(Base):
 
     # Result statistics
     result_count: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+
+    # Execution configuration (for Gen mode or other dynamic configs)
+    config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
 
     # Relationships
     business: Mapped['Business'] = relationship(

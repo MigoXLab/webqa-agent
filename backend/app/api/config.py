@@ -1,4 +1,6 @@
 """Config API routes."""
+from typing import Optional
+
 from app.config import get_settings
 from app.schemas.common import APIResponse
 from fastapi import APIRouter
@@ -8,8 +10,19 @@ settings = get_settings()
 
 
 @router.get('/models')
-async def get_available_models():
-    """Get available LLM models."""
+async def get_available_models(mode: Optional[str] = None):
+    """Get available LLM models.
+
+    Args:
+        mode: 'gen' for AI探索 mode, otherwise returns Run mode models.
+    """
+    if mode == 'gen':
+        return APIResponse(
+            data={
+                'models': settings.gen_models,
+                'default': settings.gen_default_model,
+            }
+        )
     return APIResponse(
         data={
             'models': settings.available_models,
