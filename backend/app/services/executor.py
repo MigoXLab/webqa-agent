@@ -478,14 +478,11 @@ async def _create_gen_k8s_job(
     k8s_job_image = os.getenv('K8S_JOB_IMAGE', 'eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/webqa-agent:latest')
     k8s_pvc_name = os.getenv('K8S_PVC_NAME', 'webqa-pvc')
     k8s_sa_name = os.getenv('K8S_JOB_SERVICE_ACCOUNT', 'webqa-agent-sa')
-    k8s_cpu_request = os.getenv('K8S_JOB_CPU_REQUEST', '0.5')
-    k8s_cpu_limit = os.getenv('K8S_JOB_CPU_LIMIT', '2')
-    # 内存按并发数动态分配：每个 worker 2Gi
-    memory_gi = max(1, workers) * settings.K8S_MEMORY_PER_WORKER_GI
-    k8s_memory_request = f'{memory_gi}Gi'
-    k8s_memory_limit = f'{memory_gi}Gi'
-    # /dev/shm 按并发数扩容：每个 worker 512Mi，Chromium 渲染进程需要足够的共享内存
-    dshm_size = f'{max(1, workers)}Gi'
+    # 资源按并发数动态分配: workers + 1
+    w = max(1, workers)
+    cpu_limit = w + 1       # 并发1→2c, 并发2→3c, 并发4→5c
+    memory_gi = w + 1       # 并发1→2G, 并发2→3G, 并发4→5G
+    dshm_size = f'{w}Gi'   # 每个 worker 1Gi /dev/shm
 
     job_name = f'webqa-gen-{execution_id[:8]}'
 
@@ -534,8 +531,8 @@ async def _create_gen_k8s_job(
                                 client.V1EnvVar(name='OPENAI_BASE_URL', value=base_url),
                             ],
                             resources=client.V1ResourceRequirements(
-                                requests={'cpu': k8s_cpu_request, 'memory': k8s_memory_request},
-                                limits={'cpu': k8s_cpu_limit, 'memory': k8s_memory_limit},
+                                requests={'cpu': '0.5', 'memory': f'{memory_gi}Gi'},
+                                limits={'cpu': str(cpu_limit), 'memory': f'{memory_gi}Gi'},
                             ),
                             volume_mounts=[
                                 client.V1VolumeMount(name='shared-storage', mount_path='/shared'),
@@ -900,14 +897,11 @@ async def _create_k8s_job(
     k8s_pvc_name = os.getenv('K8S_PVC_NAME', 'webqa-pvc')
     k8s_sa_name = os.getenv('K8S_JOB_SERVICE_ACCOUNT', 'webqa-agent-sa')
 
-    # K8s Job 资源配置：内存按并发数动态分配，每个 worker 2Gi
-    k8s_cpu_request = os.getenv('K8S_JOB_CPU_REQUEST', '0.5')
-    k8s_cpu_limit = os.getenv('K8S_JOB_CPU_LIMIT', '2')
-    memory_gi = max(1, workers) * settings.K8S_MEMORY_PER_WORKER_GI
-    k8s_memory_request = f'{memory_gi}Gi'
-    k8s_memory_limit = f'{memory_gi}Gi'
-    # /dev/shm 按并发数扩容：每个 worker 512Mi，Chromium 渲染进程需要足够的共享内存
-    dshm_size = f'{max(1, workers)}Gi'
+    # 资源按并发数动态分配: workers + 1
+    w = max(1, workers)
+    cpu_limit = w + 1       # 并发1→2c, 并发2→3c, 并发4→5c
+    memory_gi = w + 1       # 并发1→2G, 并发2→3G, 并发4→5G
+    dshm_size = f'{w}Gi'   # 每个 worker 1Gi /dev/shm
 
     # 获取认证 cookies
     cookies = None
@@ -987,8 +981,8 @@ async def _create_k8s_job(
                                 client.V1EnvVar(name='WEBQA_CASE_TIMEOUT', value=str(settings.WEBQA_CASE_TIMEOUT)),
                             ],
                             resources=client.V1ResourceRequirements(
-                                requests={'cpu': k8s_cpu_request, 'memory': k8s_memory_request},
-                                limits={'cpu': k8s_cpu_limit, 'memory': k8s_memory_limit},
+                                requests={'cpu': '0.5', 'memory': f'{memory_gi}Gi'},
+                                limits={'cpu': str(cpu_limit), 'memory': f'{memory_gi}Gi'},
                             ),
                             volume_mounts=[
                                 client.V1VolumeMount(

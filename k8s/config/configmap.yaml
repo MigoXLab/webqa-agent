@@ -55,7 +55,7 @@ data:
   K8S_PVC_NAME: "webqa-pvc"
   K8S_JOB_SERVICE_ACCOUNT: "webqa-agent-sa"
 
-  # Kubernetes Job Resource Limits
-  K8S_JOB_CPU_REQUEST: "0.5"
-  K8S_JOB_CPU_LIMIT: "2"
-  K8S_MEMORY_PER_WORKER_GI: "2"  # 每个 worker 分配的内存（Gi），总内存 = workers * 此值
+  # Kubernetes Job 资源按 workers 动态分配 (公式: workers + 1)
+  # CPU:    并发1→2c, 并发2→3c, 并发5→6c
+  # 内存:   并发1→2G, 并发2→3G, 并发5→6G
+  # /dev/shm: 每个 worker 1Gi
