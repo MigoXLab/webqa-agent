@@ -119,7 +119,11 @@ class JobMonitor:
 
     async def _check_single_job(self, db, execution: Execution, namespace: str):
         """检查单个 Job 的状态。"""
-        job_name = f'webqa-exec-{str(execution.id)[:8]}'
+        # Gen 模式和 Run 模式使用不同的 Job 命名前缀
+        if execution.trigger_type == 'gen':
+            job_name = f'webqa-gen-{str(execution.id)[:8]}'
+        else:
+            job_name = f'webqa-exec-{str(execution.id)[:8]}'
 
         try:
             # 1. 获取 Job 状态
