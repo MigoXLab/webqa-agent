@@ -10,7 +10,7 @@ import datetime
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
@@ -29,6 +29,7 @@ except ImportError:
 from webqa_agent.actions.action_types import (ActionType,
                                               get_page_agnostic_keywords)
 from webqa_agent.crawler.deep_crawler import DeepCrawler
+from webqa_agent.data.gen_structures import StepOutcome, StepSeverity
 from webqa_agent.executor.gen.utils.case_recorder import CentralCaseRecorder
 from webqa_agent.executor.gen.utils.message_converter import \
     convert_intermediate_steps_to_messages
@@ -1476,8 +1477,15 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     final_summary = 'No summary provided.'
     case_steps = case.get('steps', [])  # Get reference to steps list
     total_steps = len(case_steps)
-    failed_steps = []  # Track failed steps for summary generation
+    step_outcomes: List[StepOutcome] = []  # Structured step results for verdict engine
+    objective_achieved = False       # Track objective achievement signal
     warning_steps = []  # Track steps with warnings (e.g., UX issues)
+
+    def _get_failed_step_indices() -> List[int]:
+        """Extract hard-failure step indices for summary generation (backward
+        compat)."""
+        return [o.step_index for o in step_outcomes
+                if o.severity in (StepSeverity.CRITICAL, StepSeverity.HARD_FAIL)]
     case_modified = False  # Track if case was modified with dynamic steps
     dynamic_generation_count = 0  # Track how many times dynamic generation occurred
     dom_diff_cache = (
@@ -1638,7 +1646,11 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     step_type=step_type.lower(),
                     model_io=f'Step timed out after {step_timeout:.0f}s',
                 )
-                failed_steps.append(i + 1)
+                step_outcomes.append(StepOutcome(
+                    step_index=i + 1,
+                    severity=StepSeverity.HARD_FAIL,
+                    description=f'Step timed out after {step_timeout:.0f}s',
+                ))
                 i += 1
                 continue
 
@@ -1711,12 +1723,16 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                             f'This operation is page-agnostic and continuing with limited functionality. '
                             f'Subsequent DOM-dependent operations will fail.'
                         )
-                        # Don't add to failed_steps, don't break - skip abort logic, continue execution
+                        # Don't record as failure, don't break - skip abort logic, continue execution
                         # No action needed here - just let execution continue normally
                         pass
                     else:
                         # DOM-dependent operation on unsupported page: Must abort
-                        failed_steps.append(i + 1)
+                        step_outcomes.append(StepOutcome(
+                            step_index=i + 1,
+                            severity=StepSeverity.CRITICAL,
+                            description='DOM-dependent operation on unsupported page type',
+                        ))
                         # P4: Get current executed step count for accurate error reporting
                         current_executed_step = len(case_recorder.current_case_steps)
                         final_summary = (
@@ -1734,7 +1750,11 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         break  # Abort test case immediately
                 else:
                     # Other types of critical errors (not unsupported page): Abort immediately
-                    failed_steps.append(i + 1)
+                    step_outcomes.append(StepOutcome(
+                        step_index=i + 1,
+                        severity=StepSeverity.CRITICAL,
+                        description=f'Critical error: {tool_output[:200]}',
+                    ))
                     # P4: Get current executed step count for accurate error reporting
                     current_executed_step = len(case_recorder.current_case_steps)
                     final_summary = (
@@ -1824,7 +1844,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                             if strategy == 'retry_modified':
                                 # Replace current step with adapted instruction
                                 new_steps = recovery_result.get('steps', [])
-                                if new_steps and len(new_steps) > 0:
+                                if new_steps:
                                     logging.info(
                                         f'Adapting step {i + 1} with new instruction (confidence: {confidence:.2f})'
                                     )
@@ -1842,7 +1862,13 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 logging.warning(
                                     f"Skipping step {i + 1} based on recovery analysis: {recovery_result.get('reason', 'N/A')}"
                                 )
-                                failed_steps.append(i + 1)
+                                step_outcomes.append(StepOutcome(
+                                    step_index=i + 1,
+                                    severity=StepSeverity.SKIPPED,
+                                    description='Skipped via ELEMENT_NOT_FOUND recovery',
+                                    recovery_strategy='skip',
+                                    recovery_reason=recovery_result.get('reason', 'N/A'),
+                                ))
                                 # i will increment normally, skip this step
 
                             elif strategy == 'abort':
@@ -1862,13 +1888,21 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
                         else:
                             # Already adapted but still failing - mark as failed and continue
-                            failed_steps.append(i + 1)
+                            step_outcomes.append(StepOutcome(
+                                step_index=i + 1,
+                                severity=StepSeverity.HARD_FAIL,
+                                description='Failed even after adaptation',
+                            ))
                             logging.error(
                                 f'Step {i + 1} failed even after adaptation, marking as failed'
                             )
                     else:
                         # Adaptive recovery disabled for ELEMENT_NOT_FOUND
-                        failed_steps.append(i + 1)
+                        step_outcomes.append(StepOutcome(
+                            step_index=i + 1,
+                            severity=StepSeverity.SOFT_FAIL,
+                            description='Element not found, adaptive recovery disabled',
+                        ))
                         logging.warning(
                             f'Step {i + 1} element not found, but adaptive recovery is disabled'
                         )
@@ -1893,7 +1927,11 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 f'[ADAPTIVE_RECOVERY] Step {i + 1} exceeded max recovery attempts (2), '
                                 f'marking as failed.'
                             )
-                            failed_steps.append(i + 1)
+                            step_outcomes.append(StepOutcome(
+                                step_index=i + 1,
+                                severity=StepSeverity.HARD_FAIL,
+                                description='Exceeded max recovery attempts (2)',
+                            ))
                         else:
                             logging.info(
                                 f'[ADAPTIVE_RECOVERY] Step {i + 1} failed with non-ELEMENT_NOT_FOUND error. '
@@ -1959,7 +1997,13 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                         f'[ADAPTIVE_RECOVERY] Skipping step {i + 1} as non-critical. '
                                         f'Reason: {reason}'
                                     )
-                                    failed_steps.append(i + 1)
+                                    step_outcomes.append(StepOutcome(
+                                        step_index=i + 1,
+                                        severity=StepSeverity.SKIPPED,
+                                        description='Skipped via non-ELEMENT_NOT_FOUND recovery',
+                                        recovery_strategy='skip',
+                                        recovery_reason=reason,
+                                    ))
                                     # Continue to next step (increment i at loop end)
 
                                 elif strategy == 'abort':
@@ -1972,7 +2016,13 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                         f'[ADAPTIVE_RECOVERY] Cannot recover from executed step {current_executed_step} '
                                         f'(planned step {i + 1}) failure. Aborting test. Reason: {reason}'
                                     )
-                                    failed_steps.append(i + 1)
+                                    step_outcomes.append(StepOutcome(
+                                        step_index=i + 1,
+                                        severity=StepSeverity.CRITICAL,
+                                        description=f'Abort recovery: {reason}',
+                                        recovery_strategy='abort',
+                                        recovery_reason=reason,
+                                    ))
                                     final_summary = (
                                         f'FINAL_SUMMARY: Unrecoverable failure at executed step {current_executed_step} '
                                         f'(planned step {i + 1}): '
@@ -1988,29 +2038,51 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                         f"[ADAPTIVE_RECOVERY] Unknown strategy '{strategy}', "
                                         f'marking step as failed.'
                                     )
-                                    failed_steps.append(i + 1)
+                                    step_outcomes.append(StepOutcome(
+                                        step_index=i + 1,
+                                        severity=StepSeverity.SOFT_FAIL,
+                                        description=f'Unknown recovery strategy: {strategy}',
+                                        recovery_strategy=strategy,
+                                    ))
 
                             except Exception as e:
                                 logging.error(
                                     f'[ADAPTIVE_RECOVERY] LLM recovery failed with exception: {e}. '
                                     f'Marking step as failed.'
                                 )
-                                failed_steps.append(i + 1)
+                                step_outcomes.append(StepOutcome(
+                                    step_index=i + 1,
+                                    severity=StepSeverity.SOFT_FAIL,
+                                    description=f'LLM recovery exception: {e}',
+                                ))
                     else:
                         # Adaptive recovery disabled - just mark as failed
-                        failed_steps.append(i + 1)
+                        step_outcomes.append(StepOutcome(
+                            step_index=i + 1,
+                            severity=StepSeverity.SOFT_FAIL,
+                            description='Non-element failure, adaptive recovery disabled',
+                        ))
 
             # Check for objective achievement signal
             is_achieved, achievement_reason = _is_objective_achieved(tool_output)
             if is_achieved:
+                objective_achieved = True
                 logging.info(
                     f'Test objective achieved at step {i + 1}: {achievement_reason}'
                 )
                 final_summary = f'FINAL_SUMMARY: Test case completed successfully with early termination at step {i + 1}. {achievement_reason}'
                 break
 
+            # Record PASSED outcome for successful steps (no prior outcome recorded)
+            step_already_recorded = any(o.step_index == i + 1 for o in step_outcomes)
+            if not step_already_recorded:
+                step_outcomes.append(StepOutcome(
+                    step_index=i + 1,
+                    severity=StepSeverity.PASSED,
+                ))
+
             logging.debug(
-                f"Step {i + 1} completed {'successfully' if (i + 1) not in failed_steps else 'with issues'}."
+                f"Step {i + 1} completed {'successfully' if (i + 1) not in _get_failed_step_indices() else 'with issues'}."
             )
 
             # --- Dynamic Step Generation ---
@@ -2056,8 +2128,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                             if i + 1 > LONG_STEPS:  # Long test indicator
                                 enhanced_objective += f' (Context: Test already has {i + 1} steps, consider if more steps add meaningful value)'
 
-                            # Determine if current step succeeded based on failed_steps list
-                            step_success = (i + 1) not in failed_steps
+                            # Determine if current step succeeded based on step_outcomes
+                            step_success = (i + 1) not in _get_failed_step_indices()
 
                             # Generate dynamic test steps with complete context and visual information
                             dynamic_result = await generate_dynamic_steps_with_llm(
@@ -2192,7 +2264,11 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
         except Exception as e:
             logging.error(f'Exception during step {i + 1} execution: {str(e)}')
-            failed_steps.append(i + 1)
+            step_outcomes.append(StepOutcome(
+                step_index=i + 1,
+                severity=StepSeverity.HARD_FAIL,
+                description=f'Step exception: {str(e)}',
+            ))
             final_summary = f"FINAL_SUMMARY: Step '{instruction_to_execute}' raised an exception: {str(e)}"
             break
 
@@ -2202,7 +2278,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     # If the loop finishes without an early exit, generate a final summary
     if 'final_summary:' not in final_summary.lower():
         logging.debug('All test steps completed, generating final summary')
-        logging.debug(f'Failed steps detected during execution: {failed_steps}')
+        logging.debug(f'Failed steps detected during execution: {_get_failed_step_indices()}')
 
         # P4 Enhancement: Get executed steps count from case_recorder
         # This provides accurate step count including UI Agent's sub-steps
@@ -2276,7 +2352,7 @@ Test Objective: {case.get('objective', 'Not specified')}
 Success Criteria: {case.get('success_criteria', ['Not specified'])}
 Planned Steps: {planned_steps_count} steps
 Executed Steps: {executed_steps_count} steps (expansion ratio: {step_expansion_ratio}x)
-Failed Steps: {failed_steps if failed_steps else 'None'}
+Failed Steps: {_get_failed_step_indices() or 'None'}
 
 **Important**: Use executed step numbers when referencing steps. The test had {planned_steps_count} planned steps,
 but the UI Agent executed {executed_steps_count} detailed steps (including sub-steps for element location, scrolling, etc.).
@@ -2351,7 +2427,7 @@ FINAL_SUMMARY: Test case "{case_name}" failed at executed step [X] (out of {exec
 
 Test case: {case_name}
 Total steps: {total_steps}
-Failed steps: {len(failed_steps) if failed_steps else 0}
+Failed steps: {len(_get_failed_step_indices())}
 
 Generate a brief summary without referencing specific execution details."""
                             await asyncio.sleep(0.5)  # Brief delay before retry
@@ -2379,7 +2455,7 @@ Generate a brief summary without referencing specific execution details."""
                 logging.debug(
                     'LLM summary missing FINAL_SUMMARY prefix, auto-formatting'
                 )
-                if not failed_steps:
+                if not _get_failed_step_indices():
                     # P4: Use executed steps count
                     final_summary = f'FINAL_SUMMARY: Test case "{case_name}" completed successfully. All {executed_steps_count} executed steps completed. {agent_output}'
                 else:
@@ -2400,83 +2476,42 @@ Generate a brief summary without referencing specific execution details."""
             logging.error(f'Exception during final summary generation: {str(e)}')
             # Provide a reasonable default summary based on what we know
             # P4: Use executed steps count
-            if not failed_steps:
+            if not _get_failed_step_indices():
                 final_summary = f'FINAL_SUMMARY: Test case "{case_name}" completed successfully. All {executed_steps_count} executed steps completed without detected failures.'
             else:
-                final_summary = f'FINAL_SUMMARY: Test case "{case_name}" completed with failures at steps {failed_steps}. Review execution logs for details.'
+                final_summary = f'FINAL_SUMMARY: Test case "{case_name}" completed with failures at steps {_get_failed_step_indices()}. Review execution logs for details.'
 
-    # Determine test case status with improved logic
-    final_summary_lower = final_summary.lower()
-
-    # More comprehensive success indicators
-    # Note: Listed in lowercase for case-insensitive matching via .lower()
-    success_indicators = [
-        '[success]',  # Tool tag (actual output: [SUCCESS])
-        'completed successfully',
-        'test objective achieved',
-        'success criteria met',
-        'all test steps executed',
-        'without critical errors',
-        'passed',
-    ]
-
-    failure_indicators = [
-        '[failure]',  # Tool tag (actual output: [FAILURE])
-        '[critical_error:',  # Structured tag prefix (e.g., [CRITICAL_ERROR:ELEMENT_NOT_FOUND])
-        '[cannot_verify]',  # Tool tag (actual output: [CANNOT_VERIFY])
-        'failed at step',
-        'test case failed',
-        'test objective not achieved',
-        'aborted at step',
-        'unrecoverable failure',
-    ]
-
-    warning_indicators = [
-        '[warning]',  # Tool tag (actual output: [WARNING])
-        'performance issue',  # Natural language
-        'degraded mode',  # Natural language
-    ]
-
-    # Check for indicators
-    has_success = any(
-        indicator in final_summary_lower for indicator in success_indicators
-    )
-    has_failure = any(
-        indicator in final_summary_lower for indicator in failure_indicators
-    )
-    has_warning = any(
-        indicator in final_summary_lower for indicator in warning_indicators
-    )
-
-    # Determine status with clear priority (most reliable first)
-    # Priority 1: Actual execution failures collected during test run
-    if failed_steps:
-        status = 'failed'
-    # Priority 2: Explicit failure indicators in summary
-    elif has_failure:
-        status = 'failed'
-    # Priority 3: Success indicators present
-    elif has_success:
-        status = 'passed'
-    # Priority 4: Default to passed if no failure signals
-    else:
-        status = 'passed'
-
-    # Check if there are warning steps - adjust status to "warning" if test passed but has warnings
-    if status == 'passed' and (warning_steps or has_warning):
-        status = 'warning'
-        logging.info(
-            f"Test case '{case_name}' passed but has warnings at steps: {warning_steps}"
-        )
+    # --- Verdict Engine ---
+    verdict_status, verdict_confidence, verdict_failure_type, verdict_reasoning = \
+        _compute_verdict(step_outcomes, warning_steps, objective_achieved)
+    status = verdict_status
 
     logging.debug(
-        f"Test case '{case_name}' final status: {status} (success indicators: {has_success}, failure indicators: {has_failure}, warning steps: {warning_steps})"
+        f"Verdict for '{case_name}': {status} "
+        f'(confidence={verdict_confidence:.1f}, type={verdict_failure_type}, '
+        f'reasoning={verdict_reasoning})'
     )
+
+    # Conservative guard: when verdict says passed but final_summary contains
+    # hard failure indicators (edge case: LLM summary reports failures not
+    # captured by step_outcomes), override to failed.
+    if status == 'passed' and verdict_confidence >= 0.9:
+        final_summary_lower = final_summary.lower()
+        hard_failure_indicators = [
+            '[critical_error:', 'test case failed',
+            'unrecoverable failure', 'aborted at step',
+        ]
+        if any(ind in final_summary_lower for ind in hard_failure_indicators):
+            status = 'failed'
+            verdict_failure_type = 'recoverable'
+            logging.warning(
+                f"Verdict overridden by hard failure indicators in summary for '{case_name}'"
+            )
 
     # Classify failure type if the test case failed
     failure_type = None
     if status == 'failed':
-        failure_type = _classify_failure_type(final_summary, failed_steps)
+        failure_type = _classify_failure_type(final_summary, verdict_failure_type)
         logging.info(f"Test case '{case_name}' failed with type: {failure_type}")
 
     logging.debug(f'=== Agent Worker Completed for {case_name}. ===')
@@ -2510,6 +2545,7 @@ Generate a brief summary without referencing specific execution details."""
             'passed_steps': metrics.get('passed_steps', 0),
             'failed_steps': metrics.get('failed_steps', 0),
             'warning_steps': metrics.get('warning_steps', 0),
+            'skipped_steps': metrics.get('skipped_steps', 0),
             'total_actions': metrics.get('total_actions', 0),
         },
         'failed_step_details': failed_step_details,
@@ -2630,20 +2666,76 @@ def _is_critical_failure_step(tool_output: str, intermediate_output: str = '') -
     return False
 
 
-def _classify_failure_type(final_summary: str, failed_steps: list = None) -> str:
-    """Classify failure as 'critical' or 'recoverable' based on structured
-    tags."""
+def _compute_verdict(
+    step_outcomes: List[StepOutcome],
+    warning_steps: List[int],
+    objective_achieved: bool,
+) -> Tuple[str, float, Optional[str], str]:
+    """Deterministic verdict engine for case status.
+
+    Returns (status, confidence, failure_type, reasoning).
+
+    Decision matrix (first match wins, top to bottom):
+    1. Any CRITICAL → failed / critical
+    2. Any HARD_FAIL → failed / product_defect
+    3. objective_achieved + no CRITICAL/HARD_FAIL → passed
+    4. Only SOFT_FAIL (no objective signal) → failed / infrastructure
+    5. Only SKIPPED → passed
+    6. warning_steps present → warning
+    7. All passed → passed
+    """
+    severities = {o.severity for o in step_outcomes} if step_outcomes else set()
+
+    # Rule 1: CRITICAL is absolute
+    if StepSeverity.CRITICAL in severities:
+        return ('failed', 1.0, 'critical', 'Unrecoverable critical failure detected')
+
+    # Rule 2: HARD_FAIL means product defect
+    if StepSeverity.HARD_FAIL in severities:
+        return ('failed', 0.9, 'product_defect', 'Product defect: hard failure in test steps')
+
+    # Rule 3: Objective achieved overrides SOFT_FAIL and SKIPPED
+    if objective_achieved:
+        return ('passed', 0.95, None, 'Test objective achieved despite skipped/soft-failed steps')
+
+    # Rule 4: SOFT_FAIL without objective signal
+    if StepSeverity.SOFT_FAIL in severities:
+        return ('failed', 0.7, 'infrastructure', 'Infrastructure/tool issue without objective achievement')
+
+    # Rule 5: Only SKIPPED (no hard/soft failures, no objective signal)
+    if severities and severities <= {StepSeverity.SKIPPED, StepSeverity.WARNING, StepSeverity.PASSED}:
+        if StepSeverity.SKIPPED in severities:
+            return ('passed', 0.85, None, 'All failures were intentionally skipped')
+
+    # Rule 6: Warning steps
+    if warning_steps:
+        return ('warning', 0.9, None, 'Passed with warnings')
+
+    # Rule 7: All passed
+    return ('passed', 1.0, None, 'All steps passed')
+
+
+def _classify_failure_type(
+    final_summary: str,
+    verdict_failure_type: Optional[str] = None,
+) -> str:
+    """Classify failure type using verdict engine result, with summary
+    fallback.
+
+    Args:
+        final_summary: The final summary text
+        verdict_failure_type: Failure type from _compute_verdict(), takes priority
+    """
+    if verdict_failure_type:
+        return verdict_failure_type
+
     if not final_summary:
         return 'recoverable'
 
     summary_lower = final_summary.lower()
-
-    if 'critical failure at step' in summary_lower:
-        logging.debug('Early critical failure exit detected')
-        return 'critical'
-
-    if '[critical_error:' in summary_lower:
-        logging.debug('Critical error tag found in summary')
+    critical_indicators = ('critical failure at step', '[critical_error:')
+    if any(indicator in summary_lower for indicator in critical_indicators):
+        logging.debug('Critical failure pattern detected in summary')
         return 'critical'
 
     return 'recoverable'

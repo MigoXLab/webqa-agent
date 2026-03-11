@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
@@ -27,6 +28,37 @@ class TestStatus(str, Enum):
     INCOMPLETED = 'incompleted'
     FAILED = 'failed'
     CANCELLED = 'cancelled'
+
+
+class StepSeverity(str, Enum):
+    """Step outcome severity classification for verdict engine.
+
+    Used by _compute_verdict() to determine case-level status from individual
+    step results. Ordered from most severe to least.
+    """
+
+    CRITICAL = 'critical'    # Unrecoverable: PAGE_CRASHED, PERMISSION_DENIED, unsupported page
+    HARD_FAIL = 'hard_fail'  # Product defect: assertion failure, retry exhausted, step exception
+    SOFT_FAIL = 'soft_fail'  # Infrastructure issue: recovery disabled, unknown strategy, LLM error
+    SKIPPED = 'skipped'      # Intentional skip: recovery skip strategy, redundant step
+    WARNING = 'warning'      # Non-blocking issue
+    PASSED = 'passed'        # Success
+
+
+@dataclass
+class StepOutcome:
+    """Structured result for a single step execution.
+
+    Replaces the raw ``failed_steps.append(i+1)`` pattern with rich
+    diagnostic data that the verdict engine can reason about.
+    """
+
+    step_index: int
+    severity: StepSeverity
+    description: str = ''
+    recovery_strategy: Optional[str] = None
+    recovery_reason: Optional[str] = None
+
 
 # ==============================================================
 # Test Config & Execution Context Structures

@@ -121,7 +121,7 @@ class CentralCaseRecorder:
         """Build metrics from recorded steps to keep JSON and aggregation
         aligned."""
         total_steps = len(self.current_case_steps)
-        passed = failed = warning = 0
+        passed = failed = warning = skipped = 0
         total_actions = 0
         for s in self.current_case_steps:
             status = (s.get('status') or '').lower()
@@ -129,6 +129,8 @@ class CentralCaseRecorder:
                 failed += 1
             elif status in ['warning', 'warn']:
                 warning += 1
+            elif status == 'skipped':
+                skipped += 1
             else:
                 passed += 1
             actions = s.get('actions', [])
@@ -139,6 +141,7 @@ class CentralCaseRecorder:
             'passed_steps': passed,
             'failed_steps': failed,
             'warning_steps': warning,
+            'skipped_steps': skipped,
             'total_actions': total_actions,
         }
 

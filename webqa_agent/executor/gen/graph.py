@@ -673,9 +673,9 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
 
                     if not skip_reflection and case_result and case_result.get('status') == 'failed':
                         failure_type = case_result.get('failure_type')
-                        if failure_type == 'critical':
+                        if failure_type in ('critical', 'infrastructure'):
                             logging.warning(
-                                f"Worker {worker_id}: Critical failure in '{case_name}', skipping reflection"
+                                f"Worker {worker_id}: {failure_type} failure in '{case_name}', skipping reflection"
                             )
                             skip_reflection = True
                         else:
