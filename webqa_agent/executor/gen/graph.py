@@ -34,6 +34,24 @@ from webqa_agent.utils.reporting_utils import save_test_result_json
 _completed_case_count = 0  # 全局已完成 case 计数
 
 
+def _case_signature(case: dict) -> str:
+    """Generate a dedup signature for a test case.
+
+    Key = normalized(name) + normalized(objective) + ordered steps text.
+    Used to detect duplicate replanned cases from concurrent reflections.
+    """
+    name = case.get('name', '').strip().lower()
+    objective = case.get('objective', '').strip().lower()
+    steps = case.get('steps', [])
+    step_texts = []
+    for s in steps:
+        if isinstance(s, dict):
+            text = s.get('action', s.get('verify', ''))
+            step_texts.append(str(text).strip().lower())
+    steps_sig = '|'.join(step_texts)
+    return f'{name}::{objective}::{steps_sig}'
+
+
 def _write_json_sync(filepath: str, data: Any) -> None:
     """Synchronous JSON write, intended to be called via
     asyncio.to_thread()."""
@@ -333,7 +351,6 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
 
         logging.info('Stage 2: Sending request to primary LLM...')
         start_time = datetime.datetime.now()
-
         # Get max_tokens from config or use default
         configured_max_tokens = ui_tester.llm.llm_config.get('max_tokens', 8192)
 
@@ -343,7 +360,6 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             images=screenshot,
             max_tokens=configured_max_tokens,  # Use config value for flexibility
         )
-
         end_time = datetime.datetime.now()
         stage2_duration = (end_time - start_time).total_seconds()
         total_duration = stage1_duration + stage2_duration
@@ -371,7 +387,6 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
                 case['case_id'] = (
                     await get_next_case_id()
                 )  # 为 graph 生成的 case 添加递增 ID
-
             try:
                 report_dir = _resolve_report_dir(state)
                 os.makedirs(report_dir, exist_ok=True)
@@ -447,6 +462,7 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
     completed_cases = []
     recorded_cases = []
     all_test_cases = list(test_cases)  # 跟踪所有 test cases（包括 replanned 的）
+    running_cases: set[str] = set()  # 当前正在执行的 case names（用于反思 prompt）
     replan_count = 0  # 全局 replan 计数
     results_lock = asyncio.Lock()
 
@@ -470,6 +486,10 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
             is_replanned = case.get(
                 '_is_replanned', False
             )  # 标记是否为 replan 生成的 case
+
+            # 跟踪正在执行的 case（用于反思 prompt，防止 replan 重复）
+            async with results_lock:
+                running_cases.add(case_name)
 
             # 设置日志上下文（case_id 用于 grep 和识别）
             log_context = f'Gen | {case_id}'
@@ -668,11 +688,12 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                         # Create a state copy with current case_result included
                         # This ensures reflection has access to enriched metrics
                         reflect_state = dict(state)
-                        if case_result:
-                            # Include current case result in completed_cases for reflection
-                            reflect_state['completed_cases'] = list(
-                                state.get('completed_cases', [])
-                            ) + [case_result]
+                        async with results_lock:
+                            reflect_state['test_cases'] = list(all_test_cases)
+                            reflect_state['completed_cases'] = (
+                                list(completed_cases) + ([case_result] if case_result else [])
+                            )
+                            reflect_state['running_cases'] = list(running_cases - {case_name})
 
                         reflect_result = await _do_reflection(
                             ui_tester, reflect_state, case_name
@@ -685,51 +706,68 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                             async with results_lock:
                                 if replan_count < max_replan_count:
                                     new_cases = reflect_result['replanned_cases']
-                                    replan_count += 1
 
-                                    # 为新 cases 添加元数据
-                                    for new_case in new_cases:
-                                        new_case['status'] = 'pending'
-                                        new_case['execution_steps'] = []
-                                        new_case['url'] = state['url']
-                                        new_case['case_id'] = (
-                                            await get_next_case_id()
-                                        )  # 为 replan 生成的 case 添加递增 ID
-                                        new_case['_is_replanned'] = (
-                                            True  # 标记为 replan 生成
+                                    # 硬约束：入队前去重（对照最新 all_test_cases）
+                                    existing_sigs = {_case_signature(c) for c in all_test_cases}
+                                    unique_cases = []
+                                    for nc in new_cases:
+                                        sig = _case_signature(nc)
+                                        if sig not in existing_sigs:
+                                            unique_cases.append(nc)
+                                            existing_sigs.add(sig)
+                                        else:
+                                            logging.info(
+                                                f"Worker {worker_id}: Skipped duplicate "
+                                                f"replanned case '{nc.get('name')}'"
+                                            )
+
+                                    if not unique_cases:
+                                        logging.info(
+                                            f"Worker {worker_id}: All replanned cases from "
+                                            f"'{case_name}' are duplicates, skipping"
                                         )
-                                        new_case['_replan_source'] = (
-                                            case_name  # 记录来源 case
+                                    else:
+                                        replan_count += 1
+
+                                        # 为新 cases 添加元数据
+                                        for new_case in unique_cases:
+                                            new_case['status'] = 'pending'
+                                            new_case['execution_steps'] = []
+                                            new_case['url'] = state['url']
+                                            new_case['case_id'] = (
+                                                await get_next_case_id()
+                                            )
+                                            new_case['_is_replanned'] = True
+                                            new_case['_replan_source'] = case_name
+
+                                        # 加入队列供 workers 消费
+                                        for new_case in unique_cases:
+                                            await case_queue.put(new_case)
+                                            all_test_cases.append(new_case)
+
+                                        logging.info(
+                                            f"Worker {worker_id}: REPLAN triggered by '{case_name}', "
+                                            f'added {len(unique_cases)} new cases to queue '
+                                            f'(replan #{replan_count}/{max_replan_count})'
                                         )
 
-                                    # 加入队列供 workers 消费
-                                    for new_case in new_cases:
-                                        await case_queue.put(new_case)  # 计数器+1
-                                        all_test_cases.append(new_case)
-
-                                    logging.info(
-                                        f"Worker {worker_id}: REPLAN triggered by '{case_name}', "
-                                        f'added {len(new_cases)} new cases to queue '
-                                        f'(replan #{replan_count}/{max_replan_count})'
-                                    )
-
-                                    # 保存更新后的 cases.json
-                                    try:
-                                        report_dir = _resolve_report_dir(state)
-                                        os.makedirs(report_dir, exist_ok=True)
-                                        cases_path = os.path.join(
-                                            report_dir, 'cases.json'
-                                        )
-                                        await asyncio.to_thread(
-                                            _write_json_sync, cases_path, list(all_test_cases)
-                                        )
-                                        logging.debug(
-                                            f'Saved updated test cases with replanned cases to {cases_path}'
-                                        )
-                                    except Exception as save_err:
-                                        logging.error(
-                                            f'Failed to save replanned cases: {save_err}'
-                                        )
+                                        # 保存更新后的 cases.json
+                                        try:
+                                            report_dir = _resolve_report_dir(state)
+                                            os.makedirs(report_dir, exist_ok=True)
+                                            cases_path = os.path.join(
+                                                report_dir, 'cases.json'
+                                            )
+                                            await asyncio.to_thread(
+                                                _write_json_sync, cases_path, list(all_test_cases)
+                                            )
+                                            logging.debug(
+                                                f'Saved updated test cases with replanned cases to {cases_path}'
+                                            )
+                                        except Exception as save_err:
+                                            logging.error(
+                                                f'Failed to save replanned cases: {save_err}'
+                                            )
                                 else:
                                     logging.warning(
                                         f"Worker {worker_id}: REPLAN requested by '{case_name}' but "
@@ -806,6 +844,10 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                     _completed_case_count += 1
 
             finally:
+                # 从运行列表中移除
+                async with results_lock:
+                    running_cases.discard(case_name)
+
                 # 重置日志上下文
                 test_id_var.reset(token)
                 screenshot_prefix_var.reset(prefix_token)
@@ -865,7 +907,6 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
         f'(initial: {len(test_cases)}, replanned: {len(all_test_cases) - len(test_cases)}, '
         f'replan count: {replan_count}/{max_replan_count})'
     )
-
     # Synchronize execution results to cases.json
     # This ensures cases.json reflects actual execution status
     try:
@@ -932,6 +973,7 @@ async def _do_reflection(ui_tester: UITester, state: dict, case_name: str) -> di
             page_content_summary=page_content_summary,
             language=language,
             enabled_custom_tools=enabled_custom_tools,
+            running_cases=state.get('running_cases', []),
         )
 
         logging.info(f'[{case_name}] Sending reflection request to LLM...')

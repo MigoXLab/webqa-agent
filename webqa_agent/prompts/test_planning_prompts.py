@@ -1454,6 +1454,7 @@ def get_reflection_user_prompt(
     current_plan: list,
     completed_cases: list,
     page_content_summary: dict = None,
+    running_cases: list[str] | None = None,
 ) -> str:
     """Generate user prompt for reflection and replanning (dynamic part).
 
@@ -1462,6 +1463,7 @@ def get_reflection_user_prompt(
         current_plan: Current test plan
         completed_cases: Completed test cases
         page_content_summary: Interactive element mapping (dict from ID to element info), optional
+        running_cases: Names of cases currently being executed by other workers.
 
     Returns:
         Formatted user prompt containing current test status and context information
@@ -1532,13 +1534,23 @@ The screenshot shows the ENTIRE webpage from top to bottom, not just the visible
 - **Enhanced Comprehensive Mode**: FINISH if all interactive elements are tested AND core functionalities are validated AND business processes are verified AND user experience is assessed
 """
 
+    # Build concurrent execution context
+    concurrent_context = ''
+    if running_cases:
+        running_json = json.dumps(running_cases, ensure_ascii=False)
+        concurrent_context = f"""
+- **Currently Running Cases** (DO NOT replan these - they are being tested right now):
+{running_json}
+
+**IMPORTANT**: When generating new_plan cases, you MUST NOT create cases that duplicate the objectives of currently running or already planned cases."""
+
     user_prompt = f"""{mode_context}
 
 ## Enhanced Execution Context Analysis
 - **Current Test Plan**:
 {current_plan_json}
 - **Completed Test Execution Summary**:
-{completed_summary}
+{completed_summary}{concurrent_context}
 
 ### Execution Metrics Guide
 Each completed case may include detailed metrics to help with REPLAN decisions:
@@ -1595,6 +1607,7 @@ def get_reflection_prompt(
     page_content_summary: dict = None,
     language: str = 'zh-CN',
     enabled_custom_tools: list[str] | None = None,
+    running_cases: list[str] | None = None,
 ) -> tuple[str, str]:
     """Generate prompts for reflection and replanning (returns system and user
     prompt).
@@ -1607,13 +1620,15 @@ def get_reflection_prompt(
         page_content_summary: Interactive element mapping (dict from ID to element info), optional
         enabled_custom_tools: List of enabled custom tool step_types to include.
                             If None, includes all custom tools.
+        running_cases: Names of cases currently being executed by other workers.
 
     Returns:
         tuple: (system_prompt, user_prompt)
     """
     system_prompt = get_reflection_system_prompt(language, enabled_custom_tools)
     user_prompt = get_reflection_user_prompt(
-        business_objectives, current_plan, completed_cases, page_content_summary
+        business_objectives, current_plan, completed_cases, page_content_summary,
+        running_cases=running_cases,
     )
     return system_prompt, user_prompt
 
