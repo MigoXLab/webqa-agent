@@ -2067,10 +2067,16 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             is_achieved, achievement_reason = _is_objective_achieved(tool_output)
             if is_achieved:
                 objective_achieved = True
+                current_executed_step = len(case_recorder.current_case_steps)
                 logging.info(
-                    f'Test objective achieved at step {i + 1}: {achievement_reason}'
+                    f'Test objective achieved at executed step {current_executed_step} '
+                    f'(planned step {i + 1}): {achievement_reason}'
                 )
-                final_summary = f'FINAL_SUMMARY: Test case completed successfully with early termination at step {i + 1}. {achievement_reason}'
+                final_summary = (
+                    f'FINAL_SUMMARY: Test case completed successfully with early '
+                    f'termination at executed step {current_executed_step} '
+                    f'(planned step {i + 1}/{total_steps}). {achievement_reason}'
+                )
                 break
 
             # Record PASSED outcome for successful steps (no prior outcome recorded)
