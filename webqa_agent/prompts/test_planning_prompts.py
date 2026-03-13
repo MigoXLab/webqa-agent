@@ -237,436 +237,496 @@ def get_shared_test_design_standards(language: str = 'zh-CN') -> str:
     name_language = '中文' if language == 'zh-CN' else 'English'
     # Get dynamic action types from registry (supports custom extensions)
     action_types_str = ActionTypes.get_prompt_string()
+    output_lang_instruction = '**所有字段内容（name、objective、steps 的 action/verify 描述、success_criteria 等）均使用中文输出。**' if language == 'zh-CN' else '**All field content (name, objective, step action/verify descriptions, success_criteria, etc.) must be written in English.**'
     return f"""## Test Case Design Standards
 
-### Test Case Granularity Principle (CRITICAL - HIGHEST PRIORITY)
-**Single Responsibility Rule**: Each test case MUST test ONE complete functional scenario.
-
-#### Core Granularity Definition:
-- **One Test Case = One Functional Scenario** (NOT just one single action)
-- A "Functional Scenario" typically includes: [Setup] → [User Actions] → [Verification]
-- Ideally, a test case validates one specific user goal or business rule.
-
-#### Granularity Guidelines:
-
-**✅ Correct Scope (One Functional Scenario)**:
-- "Verify searching for 'Python' returns results" (Includes: Input text → Click search → Verify results)
-- "Verify login with valid credentials" (Includes: Input user → Input pass → Click login → Verify dashboard)
-- "Verify 'Home' navigation" (Includes: Click Home → Verify URL & Content)
-- "verify Check A and Check B" (Includes: Check A + Check B)
-
-**Coverage Requirement for Navigation (MANDATORY)**:
-- **Generate a SEPARATE test case for EACH button/link in the navigation bar.**
-- **Full Coverage**: If the navigation bar has 5 links, you MUST generate 5 corresponding test cases. Do not skip any navigation items.
-
-**❌ Too Broad (Multiple Scenarios)**:
-- "Test all search functionality" (Combining exact match, no results, special chars in one case)
-- "Test entire checkout flow" (Better to split: Add to Cart, Update Cart, Checkout Form, Payment)
-
-**❌ Too Narrow (Fragmented Actions)**:
-- "Click search input" (Only clicking, no meaningful result)
-- "Type 'Python'" (Only typing, no search execution)
-- "Verify search button exists" (Static check, no interaction)
-
-**When to Split vs. Keep Together**:
-- **Split**: If you are testing different *outcomes* (e.g., success vs. failure) or different *inputs* (valid vs. invalid).
-- **Keep Together**: All steps required to achieve *one* specific outcome (e.g., filling a form requires multiple inputs).
-
-**Test Case Completeness Requirements**:
-- Every test case MUST include at least ONE meaningful user action sequence that leads to a verifiable result.
-- Avoid test cases that only verify initial state without interaction.
-
-### Test Case Granularity Principle (CRITICAL)
-Each test case must focus on ONE specific functionality:
-- ✅ One navigation link = One test case
-- ✅ One search scenario = One test case
-- ✅ One form field = One test case
-- ❌ All search scenarios = One test case (Too broad)
-
-- **`name`**: 简洁直观的测试名称，反映业务场景和测试目的 (使用{name_language}命名)
-- **`objective`**: Clear statement linking the test to specific business requirements and domain context
-- **`test_category`**: Enhanced classification including domain-specific categories (Ecommerce_Functional, Banking_Security, Healthcare_Compliance, etc.)
-- **`priority`**: Test priority level based on comprehensive impact assessment (Critical, High, Medium, Low):
-  - **Functional Criticality**: Core business functions, user-facing features, transaction-critical operations
-  - **Business Impact**: Revenue impact, customer experience, operational continuity
-  - **Domain Criticality**: Industry-specific requirements, compliance needs, regulatory validation
-  - **User Impact**: Usage frequency, user journey importance, accessibility needs
-  *(Note: The above are conceptual criteria for determining the `priority` field value, not separate database fields)*
-- **`business_context`**: Description of the business process or user scenario being validated
-- **`domain_specific_rules`**: Industry-specific validation requirements or compliance rules
-- **`test_data_requirements`**: Specification of domain-appropriate test data and setup conditions
-- **`steps`**: Detailed test execution steps with clear action/verification pairs that simulate real user behavior and scenarios
-  - `action`: User-scenario action instructions describing what a real user would do in natural language. **Available action types (core UI actions + custom tools)**: {action_types_str}.
-  - `verify`: User-expectation validation instructions describing what result a real user would expect to see
-  - **FORBIDDEN FIELDS**: Do NOT output `elementRef`, `elementId`, `domId`, or any other technical identifiers in the step objects. The system handles element resolution automatically based on your semantic description.
-- **`preamble_actions`**: Optional setup steps to establish required test preconditions
-- **`reset_session`**: Session management flag for test isolation strategy
-- **`success_criteria`**: Measurable, verifiable conditions that define test pass/fail status
-
-#### Step Decomposition Rules:
-1. **One Action Per Step**: Each step in the `steps` array must contain ONLY ONE atomic action, using one of the available action types: {action_types_str}.
-2. **Strict Element Correspondence**: Each action must strictly correspond to a real element or option on the page.
-3. **No Compound Instructions**: Never combine multiple UI interactions in a single step
-4. **Navigation Return Strategy**: When a step navigates to a new page (via link click, form submission, etc.) and subsequent steps require the original page context:
-   - Add an explicit `GoBack` action to return to the previous page
-   - Example scenario: Testing multiple footer links requires returning to homepage between each link test
-   - Use GoBack instead of GoToPage when the goal is to return to the immediate previous page (preserves browser history)
-   - GoBack works on all page types (HTML, PDF, etc.) since it's a browser-level operation
-   - Note: GoBack returns boolean indicating success (true if navigation occurred, false if no browser history exists)
-6. **Sequential Operations**: Multiple operations on the same or different elements must be separated into distinct steps
-7. **State Management**: Each step should account for potential page state changes after execution
-8. **Language State Awareness**: When testing internationalization features (language switchers, multi-language content), observe the current page language from the screenshot and DOM text BEFORE planning steps. Switch to the non-current language first to ensure observable changes. Use navigation menu text as primary language indicator (highest reliability), followed by headings and body content.
-
-#### Browser Environment: Single-Tab Mode
-**System Configuration**: This test execution environment enforces strict single-tab mode through 7-layer interception architecture. All browser navigation occurs exclusively within the current tab.
-
-**Critical Visual-Runtime Behavior Gap**:
-- **What you see in HTML/Screenshots**: `<a href="/page" target="_blank">` or "Open in new tab" links
-- **What actually happens at runtime**: The current tab navigates to the new URL (all `target="_blank"` attributes are intercepted and rewritten to `target="_self"`)
-- **How to design test steps**: Use standard click → verify → GoBack navigation pattern
-
-**Correct Single-Tab Navigation Pattern**:
-✅ **CORRECT Pattern**:
-```json
-[
-  {{"action": "Click the 'About Us' link in the footer"}},
-  {{"verify": "Verify the About Us page content is displayed"}},
-]
-```
-
-❌ **AVOID**: References to "new tab", "switch tab", "open in new window", "close tab" - these concepts do not exist in the execution environment.
-
-#### Visual Language Detection for I18n Testing
-
-When designing test cases for language switching or internationalization features:
-
-**Detection Methodology**:
-1. **Primary Indicators (50% weight)**: Navigation menu text (e.g., "首页" vs "Home", "产品" vs "Products")
-2. **Secondary Indicators (30% weight)**: Page headings and titles
-3. **Tertiary Indicators (15% weight)**: Body content and descriptions
-4. **Ignore**: Product names (often English regardless), technical terms (APIs, URLs), footer copyright (5%)
-
-**Mixed-Language Decision Rule**:
-- If Navigation + Headings are 70%+ in Language A → Page language = A
-- If mixed 50/50 → Use navigation menu as tiebreaker
-- Document detected language ratio in `business_context` field
-
-**Field Usage Guidelines**:
-- `name`: Include clear language switching indicator in test name (e.g., "中英文切换用户体验验证" or "Language Switcher Validation")
-- `objective`: Include detected current language with confidence level (e.g., "Validate language switcher functionality (detected current: Chinese from navigation text '首页', '产品', '关于我们' - confidence 90%)")
-- `business_context`: Document language state and switching strategy with visual indicators (e.g., "Page loads in Chinese based on navigation menu language (Chinese characters detected in primary nav elements). Test switches to English first to ensure observable content change (Chinese → English transition), then back to Chinese to verify bidirectional functionality. Product names may remain in English across language switches (expected behavior for international brands).")
-- `test_data_requirements`: Specify language detection methodology with weighted indicators (e.g., "Visual language detection from screenshot: Navigation menu (primary indicator - 50% weight), page headings (secondary - 30%), body content (tertiary - 15%). Ignore product names, technical terms, and footer text (5%).")
-- `domain_specific_rules`: Note expected behavior for mixed-language scenarios and edge cases (e.g., "Language switching should update navigation, headings, and body content. Product names and technical terms may remain in source language. Mixed-language scenarios common in e-commerce (nav in one language, product names in English).")
-- `success_criteria`: Include language-specific validation points (e.g., "Language switcher toggles between languages", "Navigation menu text updates correctly on language switch", "Content updates observable (excluding expected English product names)", "No mixed-language artifacts or layout breaks after switching")
-
-**Example Detection Scenarios**:
-
-**Scenario 1 - Clear Chinese Page**:
-- Navigation: 100% Chinese ("首页", "产品", "关于我们")
-- Headings: 80% Chinese, 20% English (product names)
-- Body: 70% Chinese
-- **Decision**: Page language = Chinese (navigation is decisive)
-- **Test Design**: Switch to English first, verify change, then back to Chinese
-
-**Scenario 2 - Mixed Language E-commerce**:
-- Navigation: 100% English ("Home", "Products", "About")
-- Headings: 60% English, 40% Chinese (bilingual titles)
-- Body: 50/50 mix
-- **Decision**: Page language = English (navigation tiebreaker)
-- **Test Design**: Switch to Chinese first for observable content change
-
-**Scenario 3 - E-commerce with English Product Names**:
-- Navigation: 100% Chinese ("首页", "商品")
-- Headings: 50% Chinese, 50% English (all product names are English: "iPhone", "MacBook")
-- Body: 60% Chinese, 40% English (product names)
-- **Decision**: Page language = Chinese (ignore product names per rule)
-- **Test Design**: Product names staying English after language switch is EXPECTED behavior, not a bug
-
-### Action Examples
-**✅ Good (User perspective, atomic)**:
-```json
-[
-{{"action": "Click the 'Products' navigation link in the top menu bar"}},
-{{"verify": "Verify the page successfully navigated to the Products page"}},
-{{"ux_verify": "Verify Products page renders correctly without layout breaks or text truncation in the viewport"}},
-]
-```
-
-**❌ Bad (Technical, compound)**:
-```json
-[
-{{"action": "Enter search keyword 'product' in the search input field"}},
-{{"action": "Click the search submit button (blue button with magnifying glass icon) next to the search input field"}},
-{{"verify": "Confirm search results list is displayed"}}
-]
-```
-
-### Robust Element Reference Guidelines
-
-**Core Principle**: Test steps must use semantic element descriptions that remain valid even when dynamic UI elements appear or DOM structure changes.
-
-#### Why Semantic Descriptions Matter
-When UI elements appear dynamically (dropdowns open, modals show, buttons reveal), element IDs often shift based on DOM traversal order. Positional or ID-based references break in these scenarios, causing test failures.
-
-**Common Problem Pattern**:
-```
-User Interaction → Dynamic UI Change → Element IDs Shift → Positional References Break
-```
-
-**Solution Pattern**:
-```
-Describe elements using STABLE SEMANTIC ATTRIBUTES that persist across DOM changes
-```
-
-#### Semantic Attribute Taxonomy
-
-Build element descriptions using stable attributes in priority order:
-
-| Priority | Category | Examples | Usage |
-|----------|----------|----------|-------|
-| **Highest** | Functional Role | "submit button", "email input", "search field", "dropdown menu" | ALWAYS include |
-| **High** | Visual Identifier | Text labels, icons, colors, styles ("blue button", "magnifying glass icon") | Include when visible |
-| **Medium** | Contextual Location | Container, semantic position ("in login form", "next to search input") | Include for disambiguation |
-| **Low** | State/Relationship | Conditional visibility, dynamic states ("appears when Business selected") | Include for complex scenarios |
-
-#### Element Description Composition Formula
-
-```
-MINIMUM: Functional Role + (Visual OR Contextual)
-RECOMMENDED: Functional + Visual + Contextual
-COMPLEX: Functional + Visual + Contextual + State
-```
-
-**Composition Examples**:
-- **Simple**: "the submit button (labeled 'Submit')" → Functional + Visual
-- **Better**: "the submit button (labeled 'Submit') in the login form" → Functional + Visual + Contextual
-- **Best**: "the primary submit button (blue, labeled 'Submit') at the bottom of the login form" → Functional + Visual + Visual + Contextual
-
-#### Few-Shot Examples: Fragile vs Robust Descriptions
-
-**Example 1 - Dropdown Selection**:
-```
-❌ FRAGILE: "Click element 36" or "Select the first option"
-✅ ROBUST: "Select 'California' (text: California) from the state dropdown menu"
-
-Why robust: Uses text content + container context, survives when new options appear
-```
-
-**Example 2 - Search Button (Dynamic UI)**:
-```
-❌ FRAGILE: "Click the search button" or "Click element 45"
-✅ ROBUST: "Click the search submit button (blue button with magnifying glass icon) next to the search input field"
-
-Why robust: Combines function + visual + relative position, remains valid when clear button appears
-```
-
-**Example 3 - Modal Form Field**:
-```
-❌ FRAGILE: "Enter email" or "Type in the third field"
-✅ ROBUST: "Enter email address in the 'Email' input field (labeled 'Email Address') within the registration modal dialog"
-
-Why robust: Specifies label + container, unambiguous even with multiple email fields on page
-```
-
-**Example 4 - Autocomplete Suggestion**:
-```
-❌ FRAGILE: "Click the suggestion" or "Select item 2"
-✅ ROBUST: "Select the autocomplete suggestion 'San Francisco, CA' (displaying population info) from the city search suggestions dropdown"
-
-Why robust: Uses exact text + distinguishing feature + container, survives suggestion order changes
-```
-
-**Example 5 - Conditional Form Field (State-Dependent)**:
-```
-❌ FRAGILE: "Fill the company field" or "Enter text in element 58"
-✅ ROBUST: "Enter company name in the 'Company' input field (appears when 'Business' account type is selected) in the registration form"
-
-Why robust: Includes trigger condition + semantic location, handles dynamic visibility
-```
-
-**Example 6 - Navigation Submenu**:
-```
-❌ FRAGILE: "Click Settings" or "Click the fourth item"
-✅ ROBUST: "Click the 'Privacy Settings' submenu item under the 'Account' parent menu in the top navigation bar"
-
-Why robust: Specifies hierarchy + location, remains valid when menu items reorder
-```
-
-#### Prohibited Anti-Patterns
-
-**DO NOT use these fragile reference patterns**:
-1. ❌ **Positional**: "the first button", "element at position 3", "the top one"
-2. ❌ **ID-based**: "element 36", "ID: search-btn-45", "component #12"
-3. ❌ **Vague**: "the button", "the link", "the input" (without qualifiers)
-4. ❌ **Index-only**: "option[2]", "the third item", "second dropdown"
-5. ❌ **Relative-only**: "the button below" (without other attributes)
-
-#### Self-Validation Checkpoint
-
-**IMPORTANT - Before finalizing test steps, verify each element description**:
-1. ✅ Uses semantic attributes (functional + visual + contextual)
-2. ✅ Avoids positional references ("first", "second", "element X")
-3. ✅ Would remain valid if new elements appear on the page
-4. ✅ Uniquely identifies the element among similar elements
-
-If any check fails, revise the description using the composition formula above.
-
-### Test Data Management Standards
-- **Realistic Data**: Use production-like data that reflects real user behavior
-- **Boundary Testing**: Include edge cases (minimum/maximum values, empty fields, special characters)
-- **Negative Testing**: Invalid data scenarios to test error handling
-- **Internationalization**: Multi-language and character set considerations where applicable
-
-### Enhanced Scenario-Specific Test Data Guidelines
-- **E-commerce Testing**: Use realistic product data, pricing scenarios, discount codes, payment methods, and shipping addresses
-- **Authentication Testing**: Use valid/invalid credential pairs, test accounts with different permission levels, MFA scenarios
-- **Search Functionality**: Use realistic search terms, ambiguous queries, and special characters. Search engines should return results for any input.
-- **Form Validation**: Test with valid data, empty fields, oversized input, special characters, and format violations
-- **File Operations**: Use various file formats, size limits, and naming conventions. Include valid and invalid file types.
-- **Data Operations**: Use unique test data to avoid conflicts, include special characters and unicode in text fields
-- **Pagination**: Test with data sets that span multiple pages, empty pages, and single page scenarios
-- **Banking/Finance**: Use realistic account numbers, transaction amounts, and financial scenarios with proper validation
-- **Healthcare**: Use realistic patient data, medical codes, and HIPAA-compliant test scenarios
-- **Social Media**: Use realistic user profiles, content types, and interaction patterns
-
-### Scroll vs Mouse Wheel - Usage Guidelines
-**CRITICAL**: Understand the difference between `Scroll` and `Mouse` wheel actions.
-
-#### Scroll Action (Element-based Navigation)
-- **Purpose**: Scroll the page to bring a specific element into view
-- **When to Use**: Navigate to elements outside the current viewport
-- **Format**: `{{"action": "Scroll to the footer target element"}}`
-- **Behavior**: The system automatically scrolls to center the target element in viewport
-
-### Mouse Action Usage Guidelines
-**IMPORTANT**: The Mouse action allows precise cursor positioning and mouse wheel scrolling.
-
-#### Mouse Action Format
-- **Mouse Move**: Use format `"Mouse"` action with value `"move:x,y"` where x,y are pixel coordinates
-  - Example: `{{"action": "Move mouse cursor to position (100, 200)"}}` with value `"move:100,200"`
-  - Use for: Precise cursor positioning, custom drawing areas, coordinate-based interactions
-
-- **Mouse Wheel**: Use format `"Mouse"` action with value `"wheel:deltaX,deltaY"`
-  - Example: `{{"action": "Scroll mouse wheel down 300 pixels"}}` with value `"wheel:0,300"`
-  - Use for: **Precise scroll distance control, horizontal scrolling, custom scroll behavior**
-  - **deltaX**: Horizontal scroll amount (positive = right, negative = left)
-  - **deltaY**: Vertical scroll amount (positive = down, negative = up)
-
-#### When to Use Mouse Action
-- **Coordinate-based interactions**: Canvas drawing, image mapping, coordinate systems
-- **Custom scroll needs**: Horizontal scrolling, specific scroll distances
-- **Specialized UIs**: Games, design tools, interactive visualizations
-
-#### Mouse Action Examples
-```json
-[
-  {{"action": "Move mouse to drawing area coordinates (150, 300)"}},
-  {{"verify": "Verify cursor position indicator updates"}},
-  {{"action": "Scroll horizontally 200 pixels to the right in the carousel"}},
-  {{"verify": "Verify next set of items is displayed"}},
-  {{"action": "Scroll down 500 pixels using mouse wheel"}},
-  {{"verify": "Verify more content is revealed"}}
-]
-```
-
-**Note**: Mouse action is for **advanced use cases only** (coordinate-based interactions, custom scroll behavior). For standard element interactions (clicking buttons, hovering over links), **always prefer** `Tap` and `Hover` actions which automatically locate elements by ID and handle viewport positioning. Only use Mouse when coordinate-level precision is explicitly required by the test scenario.
-
-### User-Scenario Step Design Standards
-**CRITICAL**: All test steps must be designed from the user's perspective to ensure realistic and actionable test scenarios:
-
-#### User Behavior Simulation Requirements
-1. **Natural User Actions**:
-   - Actions must describe what a real user would actually do (e.g., "Type email address in the signup form" instead of "Enter valid email address 'testuser@example.com' in the email field")
-   - Use natural language that reflects user thought processes and behavior patterns
-   - Consider user's visual attention flow and interaction sequence
-   - Include realistic user hesitation, exploration, and decision-making points
-
-2. **Scenario Coherence**:
-   - Steps must follow logical user workflow and mental models
-   - Each step should naturally lead to the next based on user expectations
-   - Account for user's prior knowledge and learning curve
-   - Consider user's emotional state and motivation during the process
-
-3. **User-Expectation Verification**:
-   - Verify steps must validate what users care about and expect to see
-   - Focus on user-perceivable results rather than technical implementation details
-   - Include both explicit user expectations and implicit user satisfaction criteria
-   - Consider user's tolerance levels and acceptance thresholds
-
-#### Step Quality Validation Criteria
-- **User Reality Check**: "Would a real user actually do this?" - If not, revise the step
-- **Action Clarity**: "Can a user understand and perform this action without technical knowledge?" - If not, simplify
-- **Result Relevance**: "Does this verification matter to the user experience?" - If not, remove or replace
-- **Scenario Completeness**: "Does this represent a complete user task or goal?" - If not, expand
-
-#### Examples of User-Scenario vs Technical Steps
-
-**❌ Technical Action Step (Avoid)**:
-```json
-{{"action": "Enter valid email address 'testuser@example.com' in the email field"}}
-```
-
-**✅ User-Scenario Action Step (Preferred)**:
-```json
-{{"action": "Type your email address in the signup form like you normally would"}}
-```
-
-**❌ Technical Verify Step (Avoid)**:
-```json
-{{"verify": "Record any exceptions, stack traces, or network request failures in browser console (screenshot and save logs)"}},
-{{"verify": "Check DOM element CSS properties and JavaScript event bindings"}},
-{{"verify": "Verify HTTP response status code is 200 and check response headers"}}
-```
-
-**✅ User-Scenario Verify Step (Preferred)**:
-```json
-{{"verify": "Confirm page displays 'Login successful' message"}},
-{{"verify": "Check if redirected to user homepage"}},
-{{"verify": "Confirm form displays error message 'Please enter a valid email'"}}
-```
-
-#### Verification Design Principles
-- **User-Observable Results**: Focus only on what users can see or experience, never include technical debugging like console logs, DOM inspection, or network monitoring
-- **Business Value Validation**: Verify business outcomes and UI changes visible to users, not internal system implementation details
-
-## Core Test Scenario Patterns
-
-### Common Test Patterns
-1. **Form Validation**: Test required fields, validation messages, error handling, and successful submission
-2. **Search & Discovery**: Test search functionality, filters, result relevance, and edge cases
-3. **Navigation**: Test user flows, link functionality, and page transitions
-4. **Data Operations**: Test CRUD operations, data consistency, and user feedback
-
-### Pattern Application Guidelines
-- **Forms**: Include empty field validation, valid data submission, and error message testing
-- **Search**: Test various search terms, filters, and result handling
-- **User Flows**: Design steps that reflect realistic user behavior and expectations
-- **Adapt patterns** to specific application domain and business requirements
-
-### Enhanced Business Context Integration
-- **Business Process Continuity**: Ensure test cases maintain business workflow integrity
-- **Domain-Specific Validation**: Include industry-specific validation rules and compliance requirements
-- **User Experience Focus**: Consider usability, accessibility, and user satisfaction in all test cases
-- **User Scenario Realism**: Design test steps from real user perspective with natural actions and expectations
-- **Business Value Alignment**: Ensure each test case validates specific business value and user benefits
-
-### UX Verification Guidelines
-**When to use `ux_verify`**:
-- After page navigation or URL changes (to check visual rendering)
-- After dynamic content loading or AJAX updates (to check layout integrity)
-- When testing responsive layouts or viewport changes (to check visual adaptation)
-- When validating text-heavy content (to check for typos and readability)
-
-**Key Distinction**:
-- `verify` → "Does it **WORK**?" (Functional Testing - behavior, data, logic)
-- `ux_verify` → "Does it **LOOK correct**?" (Visual Quality Testing - appearance, text accuracy, layout)
-
-### Navigation Optimization Guidelines
-**IMPORTANT**: When generating test cases, apply navigation optimization rules with business context:
-- **Minimize Navigation**: Prefer testing multiple features on the same page before navigating away
-- **Logical Flow**: Follow realistic user navigation patterns and business workflows
-- **State Preservation**: Consider page state changes and user context throughout navigation
-- **Business Journey**: Align navigation with typical business user journeys and workflows"""
+{output_lang_instruction}
+
+### 1. Granularity: One Test Case = One Functional Scenario
+- Includes: [Setup] → [User Actions] → [Verification]
+- Navigation bar: generate a **separate test case for EACH nav link**
+- ❌ Too broad: "Test all search functionality" in one case
+- ❌ Too narrow: "Click search input" with no follow-through
+- Every test case MUST include at least one meaningful action leading to a verifiable result
+
+### 2. Functional Activation — NEVER just observe, always USE the function
+- **Search/filter**: Input a realistic keyword → submit → verify results appear
+- **Chat/Q&A**: Type a real question → send → verify a response is shown
+- **Forms**: Fill ALL required fields with realistic data → submit → verify outcome
+- **Login/signup**: Enter realistic credentials → submit → verify redirect or error
+
+### 3. Field Reference
+- **`name`**: 简洁描述业务场景 (使用{name_language}命名)
+- **`objective`**: What business requirement this validates
+- **`test_category`**: e.g. Ecommerce_Functional, Auth_Security
+- **`priority`**: Critical / High / Medium / Low (based on business impact)
+- **`business_context`**: The user scenario being validated
+- **`domain_specific_rules`**: Industry-specific validation rules (if applicable)
+- **`test_data_requirements`**: What test data is needed (if applicable)
+- **`steps`**: Action/verify pairs. Available action types: {action_types_str}
+  - **FORBIDDEN in steps**: `elementRef`, `elementId`, `domId`
+- **`preamble_actions`**: Optional setup steps
+- **`reset_session`**: true/false for test isolation
+- **`success_criteria`**: Measurable pass/fail conditions
+
+### 4. Step Rules
+1. **One atomic action per step** — no compound instructions
+2. **Merge consecutive verifies (MANDATORY)**: Multiple verify steps with no action between them MUST be combined into one.
+   - ❌ `[{{"verify": "Title correct"}}, {{"verify": "Email input visible"}}, {{"verify": "Button present"}}]`
+   - ✅ `[{{"verify": "Title is correct, email input is visible, and submit button is present"}}]`
+3. **Element descriptions**: semantic role + visual label + context location
+   - ✅ `"Click the search submit button (magnifying glass icon) next to the search input"`
+   - ❌ `"Click element 36"` or `"Click the first button"`
+4. **Navigation return**: Use `GoBack` to return to previous page (preserves history); use `GoToPage` only for direct URL jumps
+5. **Single-tab environment**: all navigation happens in the current tab — no "new tab", "switch tab", "open in new window"
+6. **verify** = functional result a user would see (behavior, data, logic)
+   **ux_verify** = visual/layout quality (typos, alignment, rendering) — use after navigation or dynamic content load
+
+### 5. Test Data
+- Search: actual keywords relevant to the site domain
+- Forms: realistic names, emails (e.g. test@example.com), phone numbers
+- Auth: valid/invalid credential pairs
+- Edge cases: empty fields, oversized input, special characters where relevant
+
+### 6. Scroll vs Mouse
+- **Scroll**: scroll page to bring a **specific element** into view → `{{"action": "Scroll to the footer section"}}`
+- **Mouse wheel**: precise distance/direction control → `{{"action": "Scroll down 300 pixels using mouse wheel"}}` (value: `"wheel:0,300"`)
+- **Mouse move**: coordinate-based interaction (canvas, drawing) → `{{"action": "Move mouse to position (150, 300)"}}` (value: `"move:150,300"`)
+- For standard element clicks/hovers, always prefer `Tap`/`Hover` — only use Mouse when coordinate precision is required
+
+### 7. i18n Language Detection
+When testing language switching: use navigation menu text as the primary language indicator. Switch to the non-current language first to ensure observable change. Product names staying in English after switch is expected behavior."""
+
+# """
+# ### Test Case Granularity Principle (CRITICAL - HIGHEST PRIORITY)
+# **Single Responsibility Rule**: Each test case MUST test ONE complete functional scenario.
+
+# #### Core Granularity Definition:
+# - **One Test Case = One Functional Scenario** (NOT just one single action)
+# - A "Functional Scenario" typically includes: [Setup] → [User Actions] → [Verification]
+# - Ideally, a test case validates one specific user goal or business rule.
+
+# #### Granularity Guidelines:
+
+# **✅ Correct Scope (One Functional Scenario)**:
+# - "Verify searching for 'Python' returns results" (Includes: Input text → Click search → Verify results)
+# - "Verify login with valid credentials" (Includes: Input user → Input pass → Click login → Verify dashboard)
+# - "Verify 'Home' navigation" (Includes: Click Home → Verify URL & Content)
+# - "verify Check A and Check B" (Includes: Check A + Check B)
+
+# **Coverage Requirement for Navigation (MANDATORY)**:
+# - **Generate a SEPARATE test case for EACH button/link in the navigation bar.**
+# - **Full Coverage**: If the navigation bar has 5 links, you MUST generate 5 corresponding test cases. Do not skip any navigation items.
+
+# **❌ Too Broad (Multiple Scenarios)**:
+# - "Test all search functionality" (Combining exact match, no results, special chars in one case)
+# - "Test entire checkout flow" (Better to split: Add to Cart, Update Cart, Checkout Form, Payment)
+
+# **❌ Too Narrow (Fragmented Actions)**:
+# - "Click search input" (Only clicking, no meaningful result)
+# - "Type 'Python'" (Only typing, no search execution)
+# - "Verify search button exists" (Static check, no interaction)
+
+# **When to Split vs. Keep Together**:
+# - **Split**: If you are testing different *outcomes* (e.g., success vs. failure) or different *inputs* (valid vs. invalid).
+# - **Keep Together**: All steps required to achieve *one* specific outcome (e.g., filling a form requires multiple inputs).
+
+# **Test Case Completeness Requirements**:
+# - Every test case MUST include at least ONE meaningful user action sequence that leads to a verifiable result.
+# - Avoid test cases that only verify initial state without interaction.
+
+# ### Test Case Granularity Principle (CRITICAL)
+# Each test case must focus on ONE specific functionality:
+# - ✅ One navigation link = One test case
+# - ✅ One search scenario = One test case
+# - ✅ One form field = One test case
+# - ❌ All search scenarios = One test case (Too broad)
+
+# - **`name`**: 简洁直观的测试名称，反映业务场景和测试目的 (使用{name_language}命名)
+# - **`objective`**: Clear statement linking the test to specific business requirements and domain context
+# - **`test_category`**: Enhanced classification including domain-specific categories (Ecommerce_Functional, Banking_Security, Healthcare_Compliance, etc.)
+# - **`priority`**: Test priority level based on comprehensive impact assessment (Critical, High, Medium, Low):
+#   - **Functional Criticality**: Core business functions, user-facing features, transaction-critical operations
+#   - **Business Impact**: Revenue impact, customer experience, operational continuity
+#   - **Domain Criticality**: Industry-specific requirements, compliance needs, regulatory validation
+#   - **User Impact**: Usage frequency, user journey importance, accessibility needs
+#   *(Note: The above are conceptual criteria for determining the `priority` field value, not separate database fields)*
+# - **`business_context`**: Description of the business process or user scenario being validated
+# - **`domain_specific_rules`**: Industry-specific validation requirements or compliance rules
+# - **`test_data_requirements`**: Specification of domain-appropriate test data and setup conditions
+# - **`steps`**: Detailed test execution steps with clear action/verification pairs that simulate real user behavior and scenarios
+#   - `action`: User-scenario action instructions describing what a real user would do in natural language. **Available action types (core UI actions + custom tools)**: {action_types_str}.
+#   - `verify`: User-expectation validation instructions describing what result a real user would expect to see
+#   - **FORBIDDEN FIELDS**: Do NOT output `elementRef`, `elementId`, `domId`, or any other technical identifiers in the step objects. The system handles element resolution automatically based on your semantic description.
+# - **`preamble_actions`**: Optional setup steps to establish required test preconditions
+# - **`reset_session`**: Session management flag for test isolation strategy
+# - **`success_criteria`**: Measurable, verifiable conditions that define test pass/fail status
+
+# #### Step Decomposition Rules:
+# 1. **One Action Per Step**: Each step in the `steps` array must contain ONLY ONE atomic action, using one of the available action types: {action_types_str}.
+# 2. **Strict Element Correspondence**: Each action must strictly correspond to a real element or option on the page.
+# 3. **No Compound Instructions**: Never combine multiple UI interactions in a single step
+# 4. **Navigation Return Strategy**: When a step navigates to a new page (via link click, form submission, etc.) and subsequent steps require the original page context:
+#    - Add an explicit `GoBack` action to return to the previous page
+#    - Example scenario: Testing multiple footer links requires returning to homepage between each link test
+#    - Use GoBack instead of GoToPage when the goal is to return to the immediate previous page (preserves browser history)
+#    - GoBack works on all page types (HTML, PDF, etc.) since it's a browser-level operation
+#    - Note: GoBack returns boolean indicating success (true if navigation occurred, false if no browser history exists)
+# 6. **Sequential Operations**: Multiple operations on the same or different elements must be separated into distinct steps
+# 7. **State Management**: Each step should account for potential page state changes after execution
+# 8. **Language State Awareness**: When testing internationalization features (language switchers, multi-language content), observe the current page language from the screenshot and DOM text BEFORE planning steps. Switch to the non-current language first to ensure observable changes. Use navigation menu text as primary language indicator (highest reliability), followed by headings and body content.
+
+# #### Browser Environment: Single-Tab Mode
+# **System Configuration**: This test execution environment enforces strict single-tab mode through 7-layer interception architecture. All browser navigation occurs exclusively within the current tab.
+
+# **Critical Visual-Runtime Behavior Gap**:
+# - **What you see in HTML/Screenshots**: `<a href="/page" target="_blank">` or "Open in new tab" links
+# - **What actually happens at runtime**: The current tab navigates to the new URL (all `target="_blank"` attributes are intercepted and rewritten to `target="_self"`)
+# - **How to design test steps**: Use standard click → verify → GoBack navigation pattern
+
+# **Correct Single-Tab Navigation Pattern**:
+# ✅ **CORRECT Pattern**:
+# ```json
+# [
+#   {{"action": "Click the 'About Us' link in the footer"}},
+#   {{"verify": "Verify the About Us page content is displayed"}},
+# ]
+# ```
+
+# ❌ **AVOID**: References to "new tab", "switch tab", "open in new window", "close tab" - these concepts do not exist in the execution environment.
+
+# #### Visual Language Detection for I18n Testing
+
+# When designing test cases for language switching or internationalization features:
+
+# **Detection Methodology**:
+# 1. **Primary Indicators (50% weight)**: Navigation menu text (e.g., "首页" vs "Home", "产品" vs "Products")
+# 2. **Secondary Indicators (30% weight)**: Page headings and titles
+# 3. **Tertiary Indicators (15% weight)**: Body content and descriptions
+# 4. **Ignore**: Product names (often English regardless), technical terms (APIs, URLs), footer copyright (5%)
+
+# **Mixed-Language Decision Rule**:
+# - If Navigation + Headings are 70%+ in Language A → Page language = A
+# - If mixed 50/50 → Use navigation menu as tiebreaker
+# - Document detected language ratio in `business_context` field
+
+# **Field Usage Guidelines**:
+# - `name`: Include clear language switching indicator in test name (e.g., "中英文切换用户体验验证" or "Language Switcher Validation")
+# - `objective`: Include detected current language with confidence level (e.g., "Validate language switcher functionality (detected current: Chinese from navigation text '首页', '产品', '关于我们' - confidence 90%)")
+# - `business_context`: Document language state and switching strategy with visual indicators (e.g., "Page loads in Chinese based on navigation menu language (Chinese characters detected in primary nav elements). Test switches to English first to ensure observable content change (Chinese → English transition), then back to Chinese to verify bidirectional functionality. Product names may remain in English across language switches (expected behavior for international brands).")
+# - `test_data_requirements`: Specify language detection methodology with weighted indicators (e.g., "Visual language detection from screenshot: Navigation menu (primary indicator - 50% weight), page headings (secondary - 30%), body content (tertiary - 15%). Ignore product names, technical terms, and footer text (5%).")
+# - `domain_specific_rules`: Note expected behavior for mixed-language scenarios and edge cases (e.g., "Language switching should update navigation, headings, and body content. Product names and technical terms may remain in source language. Mixed-language scenarios common in e-commerce (nav in one language, product names in English).")
+# - `success_criteria`: Include language-specific validation points (e.g., "Language switcher toggles between languages", "Navigation menu text updates correctly on language switch", "Content updates observable (excluding expected English product names)", "No mixed-language artifacts or layout breaks after switching")
+
+# **Example Detection Scenarios**:
+
+# **Scenario 1 - Clear Chinese Page**:
+# - Navigation: 100% Chinese ("首页", "产品", "关于我们")
+# - Headings: 80% Chinese, 20% English (product names)
+# - Body: 70% Chinese
+# - **Decision**: Page language = Chinese (navigation is decisive)
+# - **Test Design**: Switch to English first, verify change, then back to Chinese
+
+# **Scenario 2 - Mixed Language E-commerce**:
+# - Navigation: 100% English ("Home", "Products", "About")
+# - Headings: 60% English, 40% Chinese (bilingual titles)
+# - Body: 50/50 mix
+# - **Decision**: Page language = English (navigation tiebreaker)
+# - **Test Design**: Switch to Chinese first for observable content change
+
+# **Scenario 3 - E-commerce with English Product Names**:
+# - Navigation: 100% Chinese ("首页", "商品")
+# - Headings: 50% Chinese, 50% English (all product names are English: "iPhone", "MacBook")
+# - Body: 60% Chinese, 40% English (product names)
+# - **Decision**: Page language = Chinese (ignore product names per rule)
+# - **Test Design**: Product names staying English after language switch is EXPECTED behavior, not a bug
+
+# ### Action Examples
+# **✅ Good (User perspective, atomic)**:
+# ```json
+# [
+# {{"action": "Click the 'Products' navigation link in the top menu bar"}},
+# {{"verify": "Verify the page successfully navigated to the Products page"}},
+# {{"ux_verify": "Verify Products page renders correctly without layout breaks or text truncation in the viewport"}},
+# ]
+# ```
+
+# **❌ Bad (Technical, compound)**:
+# ```json
+# [
+# {{"action": "Enter search keyword 'product' in the search input field"}},
+# {{"action": "Click the search submit button (blue button with magnifying glass icon) next to the search input field"}},
+# {{"verify": "Confirm search results list is displayed"}}
+# ]
+# ```
+
+# ### Robust Element Reference Guidelines
+
+# **Core Principle**: Test steps must use semantic element descriptions that remain valid even when dynamic UI elements appear or DOM structure changes.
+
+# #### Why Semantic Descriptions Matter
+# When UI elements appear dynamically (dropdowns open, modals show, buttons reveal), element IDs often shift based on DOM traversal order. Positional or ID-based references break in these scenarios, causing test failures.
+
+# **Common Problem Pattern**:
+# ```
+# User Interaction → Dynamic UI Change → Element IDs Shift → Positional References Break
+# ```
+
+# **Solution Pattern**:
+# ```
+# Describe elements using STABLE SEMANTIC ATTRIBUTES that persist across DOM changes
+# ```
+
+# #### Semantic Attribute Taxonomy
+
+# Build element descriptions using stable attributes in priority order:
+
+# | Priority | Category | Examples | Usage |
+# |----------|----------|----------|-------|
+# | **Highest** | Functional Role | "submit button", "email input", "search field", "dropdown menu" | ALWAYS include |
+# | **High** | Visual Identifier | Text labels, icons, colors, styles ("blue button", "magnifying glass icon") | Include when visible |
+# | **Medium** | Contextual Location | Container, semantic position ("in login form", "next to search input") | Include for disambiguation |
+# | **Low** | State/Relationship | Conditional visibility, dynamic states ("appears when Business selected") | Include for complex scenarios |
+
+# #### Element Description Composition Formula
+
+# ```
+# MINIMUM: Functional Role + (Visual OR Contextual)
+# RECOMMENDED: Functional + Visual + Contextual
+# COMPLEX: Functional + Visual + Contextual + State
+# ```
+
+# **Composition Examples**:
+# - **Simple**: "the submit button (labeled 'Submit')" → Functional + Visual
+# - **Better**: "the submit button (labeled 'Submit') in the login form" → Functional + Visual + Contextual
+# - **Best**: "the primary submit button (blue, labeled 'Submit') at the bottom of the login form" → Functional + Visual + Visual + Contextual
+
+# #### Few-Shot Examples: Fragile vs Robust Descriptions
+
+# **Example 1 - Dropdown Selection**:
+# ```
+# ❌ FRAGILE: "Click element 36" or "Select the first option"
+# ✅ ROBUST: "Select 'California' (text: California) from the state dropdown menu"
+
+# Why robust: Uses text content + container context, survives when new options appear
+# ```
+
+# **Example 2 - Search Button (Dynamic UI)**:
+# ```
+# ❌ FRAGILE: "Click the search button" or "Click element 45"
+# ✅ ROBUST: "Click the search submit button (blue button with magnifying glass icon) next to the search input field"
+
+# Why robust: Combines function + visual + relative position, remains valid when clear button appears
+# ```
+
+# **Example 3 - Modal Form Field**:
+# ```
+# ❌ FRAGILE: "Enter email" or "Type in the third field"
+# ✅ ROBUST: "Enter email address in the 'Email' input field (labeled 'Email Address') within the registration modal dialog"
+
+# Why robust: Specifies label + container, unambiguous even with multiple email fields on page
+# ```
+
+# **Example 4 - Autocomplete Suggestion**:
+# ```
+# ❌ FRAGILE: "Click the suggestion" or "Select item 2"
+# ✅ ROBUST: "Select the autocomplete suggestion 'San Francisco, CA' (displaying population info) from the city search suggestions dropdown"
+
+# Why robust: Uses exact text + distinguishing feature + container, survives suggestion order changes
+# ```
+
+# **Example 5 - Conditional Form Field (State-Dependent)**:
+# ```
+# ❌ FRAGILE: "Fill the company field" or "Enter text in element 58"
+# ✅ ROBUST: "Enter company name in the 'Company' input field (appears when 'Business' account type is selected) in the registration form"
+
+# Why robust: Includes trigger condition + semantic location, handles dynamic visibility
+# ```
+
+# **Example 6 - Navigation Submenu**:
+# ```
+# ❌ FRAGILE: "Click Settings" or "Click the fourth item"
+# ✅ ROBUST: "Click the 'Privacy Settings' submenu item under the 'Account' parent menu in the top navigation bar"
+
+# Why robust: Specifies hierarchy + location, remains valid when menu items reorder
+# ```
+
+# #### Prohibited Anti-Patterns
+
+# **DO NOT use these fragile reference patterns**:
+# 1. ❌ **Positional**: "the first button", "element at position 3", "the top one"
+# 2. ❌ **ID-based**: "element 36", "ID: search-btn-45", "component #12"
+# 3. ❌ **Vague**: "the button", "the link", "the input" (without qualifiers)
+# 4. ❌ **Index-only**: "option[2]", "the third item", "second dropdown"
+# 5. ❌ **Relative-only**: "the button below" (without other attributes)
+
+# #### Self-Validation Checkpoint
+
+# **IMPORTANT - Before finalizing test steps, verify each element description**:
+# 1. ✅ Uses semantic attributes (functional + visual + contextual)
+# 2. ✅ Avoids positional references ("first", "second", "element X")
+# 3. ✅ Would remain valid if new elements appear on the page
+# 4. ✅ Uniquely identifies the element among similar elements
+
+# If any check fails, revise the description using the composition formula above.
+
+# ### Test Data Management Standards
+# - **Realistic Data**: Use production-like data that reflects real user behavior
+# - **Boundary Testing**: Include edge cases (minimum/maximum values, empty fields, special characters)
+# - **Negative Testing**: Invalid data scenarios to test error handling
+# - **Internationalization**: Multi-language and character set considerations where applicable
+
+# ### Enhanced Scenario-Specific Test Data Guidelines
+# - **E-commerce Testing**: Use realistic product data, pricing scenarios, discount codes, payment methods, and shipping addresses
+# - **Authentication Testing**: Use valid/invalid credential pairs, test accounts with different permission levels, MFA scenarios
+# - **Search Functionality**: Use realistic search terms, ambiguous queries, and special characters. Search engines should return results for any input.
+# - **Form Validation**: Test with valid data, empty fields, oversized input, special characters, and format violations
+# - **File Operations**: Use various file formats, size limits, and naming conventions. Include valid and invalid file types.
+# - **Data Operations**: Use unique test data to avoid conflicts, include special characters and unicode in text fields
+# - **Pagination**: Test with data sets that span multiple pages, empty pages, and single page scenarios
+# - **Banking/Finance**: Use realistic account numbers, transaction amounts, and financial scenarios with proper validation
+# - **Healthcare**: Use realistic patient data, medical codes, and HIPAA-compliant test scenarios
+# - **Social Media**: Use realistic user profiles, content types, and interaction patterns
+
+# ### Scroll vs Mouse Wheel - Usage Guidelines
+# **CRITICAL**: Understand the difference between `Scroll` and `Mouse` wheel actions.
+
+# #### Scroll Action (Element-based Navigation)
+# - **Purpose**: Scroll the page to bring a specific element into view
+# - **When to Use**: Navigate to elements outside the current viewport
+# - **Format**: `{{"action": "Scroll to the footer target element"}}`
+# - **Behavior**: The system automatically scrolls to center the target element in viewport
+
+# ### Mouse Action Usage Guidelines
+# **IMPORTANT**: The Mouse action allows precise cursor positioning and mouse wheel scrolling.
+
+# #### Mouse Action Format
+# - **Mouse Move**: Use format `"Mouse"` action with value `"move:x,y"` where x,y are pixel coordinates
+#   - Example: `{{"action": "Move mouse cursor to position (100, 200)"}}` with value `"move:100,200"`
+#   - Use for: Precise cursor positioning, custom drawing areas, coordinate-based interactions
+
+# - **Mouse Wheel**: Use format `"Mouse"` action with value `"wheel:deltaX,deltaY"`
+#   - Example: `{{"action": "Scroll mouse wheel down 300 pixels"}}` with value `"wheel:0,300"`
+#   - Use for: **Precise scroll distance control, horizontal scrolling, custom scroll behavior**
+#   - **deltaX**: Horizontal scroll amount (positive = right, negative = left)
+#   - **deltaY**: Vertical scroll amount (positive = down, negative = up)
+
+# #### When to Use Mouse Action
+# - **Coordinate-based interactions**: Canvas drawing, image mapping, coordinate systems
+# - **Custom scroll needs**: Horizontal scrolling, specific scroll distances
+# - **Specialized UIs**: Games, design tools, interactive visualizations
+
+# #### Mouse Action Examples
+# ```json
+# [
+#   {{"action": "Move mouse to drawing area coordinates (150, 300)"}},
+#   {{"verify": "Verify cursor position indicator updates"}},
+#   {{"action": "Scroll horizontally 200 pixels to the right in the carousel"}},
+#   {{"verify": "Verify next set of items is displayed"}},
+#   {{"action": "Scroll down 500 pixels using mouse wheel"}},
+#   {{"verify": "Verify more content is revealed"}}
+# ]
+# ```
+
+# **Note**: Mouse action is for **advanced use cases only** (coordinate-based interactions, custom scroll behavior). For standard element interactions (clicking buttons, hovering over links), **always prefer** `Tap` and `Hover` actions which automatically locate elements by ID and handle viewport positioning. Only use Mouse when coordinate-level precision is explicitly required by the test scenario.
+
+# ### User-Scenario Step Design Standards
+# **CRITICAL**: All test steps must be designed from the user's perspective to ensure realistic and actionable test scenarios:
+
+# #### User Behavior Simulation Requirements
+# 1. **Natural User Actions**:
+#    - Actions must describe what a real user would actually do (e.g., "Type email address in the signup form" instead of "Enter valid email address 'testuser@example.com' in the email field")
+#    - Use natural language that reflects user thought processes and behavior patterns
+#    - Consider user's visual attention flow and interaction sequence
+#    - Include realistic user hesitation, exploration, and decision-making points
+
+# 2. **Scenario Coherence**:
+#    - Steps must follow logical user workflow and mental models
+#    - Each step should naturally lead to the next based on user expectations
+#    - Account for user's prior knowledge and learning curve
+#    - Consider user's emotional state and motivation during the process
+
+# 3. **User-Expectation Verification**:
+#    - Verify steps must validate what users care about and expect to see
+#    - Focus on user-perceivable results rather than technical implementation details
+#    - Include both explicit user expectations and implicit user satisfaction criteria
+#    - Consider user's tolerance levels and acceptance thresholds
+
+# #### Step Quality Validation Criteria
+# - **User Reality Check**: "Would a real user actually do this?" - If not, revise the step
+# - **Action Clarity**: "Can a user understand and perform this action without technical knowledge?" - If not, simplify
+# - **Result Relevance**: "Does this verification matter to the user experience?" - If not, remove or replace
+# - **Scenario Completeness**: "Does this represent a complete user task or goal?" - If not, expand
+
+# #### Examples of User-Scenario vs Technical Steps
+
+# **❌ Technical Action Step (Avoid)**:
+# ```json
+# {{"action": "Enter valid email address 'testuser@example.com' in the email field"}}
+# ```
+
+# **✅ User-Scenario Action Step (Preferred)**:
+# ```json
+# {{"action": "Type your email address in the signup form like you normally would"}}
+# ```
+
+# **❌ Technical Verify Step (Avoid)**:
+# ```json
+# {{"verify": "Record any exceptions, stack traces, or network request failures in browser console (screenshot and save logs)"}},
+# {{"verify": "Check DOM element CSS properties and JavaScript event bindings"}},
+# {{"verify": "Verify HTTP response status code is 200 and check response headers"}}
+# ```
+
+# **✅ User-Scenario Verify Step (Preferred)**:
+# ```json
+# {{"verify": "Confirm page displays 'Login successful' message"}},
+# {{"verify": "Check if redirected to user homepage"}},
+# {{"verify": "Confirm form displays error message 'Please enter a valid email'"}}
+# ```
+
+# #### Verification Design Principles
+# - **User-Observable Results**: Focus only on what users can see or experience, never include technical debugging like console logs, DOM inspection, or network monitoring
+# - **Business Value Validation**: Verify business outcomes and UI changes visible to users, not internal system implementation details
+
+# ## Core Test Scenario Patterns
+
+# ### Common Test Patterns
+# 1. **Form Validation**: Test required fields, validation messages, error handling, and successful submission
+# 2. **Search & Discovery**: Test search functionality, filters, result relevance, and edge cases
+# 3. **Navigation**: Test user flows, link functionality, and page transitions
+# 4. **Data Operations**: Test CRUD operations, data consistency, and user feedback
+
+# ### Pattern Application Guidelines
+# - **Forms**: Include empty field validation, valid data submission, and error message testing
+# - **Search**: Test various search terms, filters, and result handling
+# - **User Flows**: Design steps that reflect realistic user behavior and expectations
+# - **Adapt patterns** to specific application domain and business requirements
+
+# ### Enhanced Business Context Integration
+# - **Business Process Continuity**: Ensure test cases maintain business workflow integrity
+# - **Domain-Specific Validation**: Include industry-specific validation rules and compliance requirements
+# - **User Experience Focus**: Consider usability, accessibility, and user satisfaction in all test cases
+# - **User Scenario Realism**: Design test steps from real user perspective with natural actions and expectations
+# - **Business Value Alignment**: Ensure each test case validates specific business value and user benefits
+
+# ### UX Verification Guidelines
+# **When to use `ux_verify`**:
+# - After page navigation or URL changes (to check visual rendering)
+# - After dynamic content loading or AJAX updates (to check layout integrity)
+# - When testing responsive layouts or viewport changes (to check visual adaptation)
+# - When validating text-heavy content (to check for typos and readability)
+
+# **Key Distinction**:
+# - `verify` → "Does it **WORK**?" (Functional Testing - behavior, data, logic)
+# - `ux_verify` → "Does it **LOOK correct**?" (Visual Quality Testing - appearance, text accuracy, layout)
+
+# ### Navigation Optimization Guidelines
+# **IMPORTANT**: When generating test cases, apply navigation optimization rules with business context:
+# - **Minimize Navigation**: Prefer testing multiple features on the same page before navigating away
+# - **Logical Flow**: Follow realistic user navigation patterns and business workflows
+# - **State Preservation**: Consider page state changes and user context throughout navigation
+# - **Business Journey**: Align navigation with typical business user journeys and workflows"""
+# """
 
 
 def get_test_case_planning_system_prompt(

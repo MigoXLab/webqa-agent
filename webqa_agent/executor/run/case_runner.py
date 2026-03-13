@@ -523,11 +523,13 @@ class CaseRunner:
         from webqa_agent.tools.core.ui_driver import UITester
 
         _ignore_rules = ignore_rules or self.test_specific_config.get('ignore_rules', {})
+        report_lang = self.report_config.get('language', 'zh-CN') if self.report_config else 'zh-CN'
         tester = UITester(
             llm_config=self.llm_config,
             browser_session=session,
             ignore_rules=_ignore_rules,
-            execution_mode='run'  # RUN mode: trust user-specified operations in YAML
+            execution_mode='run',  # RUN mode: trust user-specified operations in YAML
+            language=report_lang,
         )
         await tester.initialize()
         tester.set_current_test_name(case_name)

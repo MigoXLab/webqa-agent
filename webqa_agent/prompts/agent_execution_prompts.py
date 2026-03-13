@@ -64,7 +64,7 @@ def get_custom_tools_prompt_section() -> str:
         return ''
 
 
-def get_execute_system_prompt(case: dict) -> str:
+def get_execute_system_prompt(case: dict, language: str = 'zh-CN') -> str:
     """Generate detailed system prompt for execution agent."""
 
     # Core fields (original)
@@ -77,6 +77,15 @@ def get_execute_system_prompt(case: dict) -> str:
     test_category = case.get('test_category', 'Functional_General')
     domain_specific_rules = case.get('domain_specific_rules', '')
     test_data_requirements = case.get('test_data_requirements', '')
+
+    output_lang_instruction = '**请你注意，所有输出内容均使用中文。**' if language == 'zh-CN' else '**All output must be in English.**'
+
+    if language == 'zh-CN':
+        final_summary_success_template = 'FINAL_SUMMARY: 测试用例"[case_name]"执行完成。共执行 [X] 个步骤，无严重错误。测试目标已达成：[简要说明]。所有验收标准均通过。'
+        final_summary_failure_template = 'FINAL_SUMMARY: 测试用例"[case_name]"在第 [X] 步失败。错误：[具体错误描述]。已尝试的恢复操作：[尝试方案]。建议：[修复建议或排查方向]。'
+    else:
+        final_summary_success_template = 'FINAL_SUMMARY: Test case "[case_name]" completed successfully. All [X] test steps executed without critical errors. Test objective achieved: [brief_confirmation]. All success criteria met.'
+        final_summary_failure_template = 'FINAL_SUMMARY: Test case "[case_name]" failed at step [X]. Error: [specific_error_description]. Recovery attempts: [attempted_solutions]. Recommendation: [suggested_fix_or_investigation].'
 
     system_prompt = f"""You are an intelligent UI test execution agent specialized in web application testing. Your role is to execute individual test cases by performing UI interactions and validations in a systematic, reliable manner following established QA best practices.
 
@@ -558,12 +567,13 @@ The system uses automatic viewport management. When you interact with elements (
 When all test steps are completed or an unrecoverable error occurs:
 
 **Success Completion**:
-`FINAL_SUMMARY: Test case "[case_name]" completed successfully. All [X] test steps executed without critical errors. Test objective achieved: [brief_confirmation]. All success criteria met.`
+{final_summary_success_template}
 
 **Failure Completion**:
-`FINAL_SUMMARY: Test case "[case_name]" failed at step [X]. Error: [specific_error_description]. Recovery attempts: [attempted_solutions]. Recommendation: [suggested_fix_or_investigation].`
+{final_summary_failure_template}
 
 ## Quality Assurance Standards
+{output_lang_instruction}
 - **Precision**: Every action must be purposeful and documented
 - **Reliability**: Consistent behavior across different UI states
 - **Traceability**: Clear audit trail of all actions and decisions

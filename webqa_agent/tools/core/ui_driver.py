@@ -23,7 +23,8 @@ class UITester:
         llm_config: Dict[str, Any],
         browser_session: BrowserSession = None,
         ignore_rules: Optional[Dict[str, List[Dict]]] = None,
-        execution_mode: str = 'gen'
+        execution_mode: str = 'gen',
+        language: str = 'zh-CN',
     ):
         """Initialize UITester.
 
@@ -35,6 +36,7 @@ class UITester:
                           - 'gen': Conservative approach, aborts on unsupported pages (PDF, plugins)
                           - 'run': Trusts user intent, allows degraded execution on unsupported pages
                           Default: 'gen' (backward compatible)
+            language: Output language for LLM responses ('zh-CN' or 'en-US'). Default: 'zh-CN'
         """
         self.llm_config = llm_config
         self.browser_session = browser_session
@@ -43,6 +45,7 @@ class UITester:
         self.console_check = None
         self.ignore_rules = ignore_rules or {}
         self.execution_mode = execution_mode  # Store execution mode for page-agnostic operation handling
+        self.language = language
 
         # Create component instances
         self._actions = ActionHandler()
@@ -67,6 +70,12 @@ class UITester:
         self.execution_history: List[Dict[str, Any]] = []
         self.current_test_objective: Optional[str] = None
         self.current_success_criteria: List[str] = []  # Store test success criteria
+
+    def _localize_system_prompt(self, system_prompt: str) -> str:
+        """Append language output instruction to a system prompt."""
+        if self.language == 'zh-CN':
+            return system_prompt + '\n\n**输出语言要求**: 所有分析、描述、结论均使用中文输出。'
+        return system_prompt
 
     async def initialize(self, browser_session: BrowserSession = None):
         if browser_session:
@@ -225,7 +234,7 @@ class UITester:
                 logging.debug(f'User prompt (iteration {iteration + 1}): {test_step + iterative_context}')
 
                 # Generate plan
-                plan_json = await self._generate_plan(LLMPrompt.planner_system_prompt, user_prompt, marker_screenshot)
+                plan_json = await self._generate_plan(self._localize_system_prompt(LLMPrompt.planner_system_prompt), user_prompt, marker_screenshot)
                 all_plans.append({
                     'iteration': iteration + 1,
                     'plan': plan_json
@@ -696,10 +705,10 @@ class UITester:
             # ========================================================================
             # Select appropriate system prompt based on mode
             if mode == 'comparison':
-                system_prompt = LLMPrompt.verification_system_prompt_comparison
+                system_prompt = self._localize_system_prompt(LLMPrompt.verification_system_prompt_comparison)
                 logging.debug('Using comparison-specific system prompt')
             else:
-                system_prompt = LLMPrompt.verification_system_prompt
+                system_prompt = self._localize_system_prompt(LLMPrompt.verification_system_prompt)
                 logging.debug('Using standard system prompt')
 
             result = await self.llm.get_llm_response(
@@ -1187,7 +1196,7 @@ class UITester:
             )
 
             # Call LLM
-            response = await self.llm.get_llm_response(LLMPrompt.check_system_prompt, prompt, images=marker_screenshot)
+            response = await self.llm.get_llm_response(self._localize_system_prompt(LLMPrompt.check_system_prompt), prompt, images=marker_screenshot)
 
             if isinstance(response, str):
                 try:

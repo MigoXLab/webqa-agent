@@ -1083,6 +1083,11 @@ def _contains_failure_indicators(text: str) -> bool:
 
 
 # The node function that will be used in the graph
+
+def _make_final_summary(language: str, template_zh: str, template_en: str) -> str:
+    """Return language-appropriate FINAL_SUMMARY string."""
+    return template_zh if language == 'zh-CN' else template_en
+
 async def agent_worker_node(state: dict, config: dict) -> dict:
     """Dynamically creates and invokes the execution agent for a single test
     case.
@@ -1115,7 +1120,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     # case_steps[i] = new_steps[0] modifies the list in-place, corrupting the original plan
     original_planned_steps = copy.deepcopy(case.get('steps', []))
 
-    system_prompt_string = get_execute_system_prompt(case)
+    language = state.get('language', 'zh-CN')
+    system_prompt_string = get_execute_system_prompt(case, language=language)
     logging.debug(
         f'Generated system prompt length: {len(system_prompt_string)} characters'
     )
@@ -1400,7 +1406,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 if _contains_failure_indicators(
                     intermediate_output
                 ) or _contains_failure_indicators(tool_output):
-                    final_summary = f"FINAL_SUMMARY: Preamble action '{instruction_to_execute}' failed, cannot proceed with the test case. Error: {tool_output}"
+                    final_summary = _make_final_summary(language,
+                        f"FINAL_SUMMARY: 前置动作 '{instruction_to_execute}' 失败，无法继续执行测试用例。错误：{tool_output}",
+                        f"FINAL_SUMMARY: Preamble action '{instruction_to_execute}' failed, cannot proceed with the test case. Error: {tool_output}")
                     logging.error(f'Preamble action {i + 1} failed, aborting test case')
                     # Ensure time data is recorded even on early failure
                     case_recorder.finish_case(final_status='failed', final_summary=final_summary)
@@ -1434,7 +1442,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 logging.debug(f'Preamble action {i + 1} completed successfully')
             except Exception as e:
                 logging.error(f'Exception during preamble action {i + 1}: {str(e)}')
-                final_summary = f"FINAL_SUMMARY: Preamble action '{instruction_to_execute}' raised exception: {str(e)}"
+                final_summary = _make_final_summary(language,
+                f"FINAL_SUMMARY: 前置动作 '{instruction_to_execute}' 发生异常：{str(e)}",
+                f"FINAL_SUMMARY: Preamble action '{instruction_to_execute}' raised exception: {str(e)}")
                 # Ensure time data is recorded even on exception
                 case_recorder.finish_case(final_status='failed', final_summary=final_summary)
                 recorded_case_data = case_recorder.get_case_data()
@@ -1719,13 +1729,15 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         failed_steps.append(i + 1)
                         # P4: Get current executed step count for accurate error reporting
                         current_executed_step = len(case_recorder.current_case_steps)
-                        final_summary = (
+                        final_summary = _make_final_summary(language,
+                            f'FINAL_SUMMARY: 严重错误，已执行步骤 {current_executed_step}（计划步骤 {i + 1}）：'
+                            f"'{instruction_to_execute}'。"
+                            f'DOM 操作无法在不支持的页面类型上执行。错误详情：{tool_output}',
                             f'FINAL_SUMMARY: Critical failure at executed step {current_executed_step} '
                             f'(planned step {i + 1}): '
                             f"'{instruction_to_execute}'. "
                             f'DOM-dependent operation cannot execute on unsupported page type. '
-                            f'Error details: {tool_output}'
-                        )
+                            f'Error details: {tool_output}')
                         logging.error(
                             f'[CRITICAL] Executed step {current_executed_step} (planned step {i + 1}) '
                             f'requires DOM elements but page is unsupported (PDF/plugin). '
@@ -1737,12 +1749,13 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     failed_steps.append(i + 1)
                     # P4: Get current executed step count for accurate error reporting
                     current_executed_step = len(case_recorder.current_case_steps)
-                    final_summary = (
+                    final_summary = _make_final_summary(language,
+                        f'FINAL_SUMMARY: 严重错误，已执行步骤 {current_executed_step}（计划步骤 {i + 1}）：'
+                        f"'{instruction_to_execute}'。错误详情：{tool_output}",
                         f'FINAL_SUMMARY: Critical failure at executed step {current_executed_step} '
                         f'(planned step {i + 1}): '
                         f"'{instruction_to_execute}'. "
-                        f'Error details: {tool_output}'
-                    )
+                        f'Error details: {tool_output}')
                     logging.error(
                         f'[CRITICAL] Executed step {current_executed_step} (planned step {i + 1}) '
                         f'encountered critical failure. '
@@ -1854,10 +1867,11 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                     f'Aborting test at executed step {current_executed_step} (planned step {i + 1}) '
                                     f"based on recovery analysis: {recovery_result.get('reason', 'N/A')}"
                                 )
-                                final_summary = (
+                                final_summary = _make_final_summary(language,
+                                    f'FINAL_SUMMARY: 测试在已执行步骤 {current_executed_step}（计划步骤 {i + 1}）中止。'
+                                    f"{recovery_result.get('reason', '严重错误')}",
                                     f'FINAL_SUMMARY: Test aborted at executed step {current_executed_step} '
-                                    f"(planned step {i + 1}). {recovery_result.get('reason', 'Critical failure')}"
-                                )
+                                    f"(planned step {i + 1}). {recovery_result.get('reason', 'Critical failure')}")
                                 break
 
                         else:
@@ -1973,13 +1987,14 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                         f'(planned step {i + 1}) failure. Aborting test. Reason: {reason}'
                                     )
                                     failed_steps.append(i + 1)
-                                    final_summary = (
+                                    final_summary = _make_final_summary(language,
+                                        f'FINAL_SUMMARY: 不可恢复的失败，已执行步骤 {current_executed_step}（计划步骤 {i + 1}）：'
+                                        f"'{instruction_to_execute}'。LLM 自适应恢复判断必须终止。原因：{reason}",
                                         f'FINAL_SUMMARY: Unrecoverable failure at executed step {current_executed_step} '
                                         f'(planned step {i + 1}): '
                                         f"'{instruction_to_execute}'. "
                                         f'LLM adaptive recovery determined abortion necessary. '
-                                        f'Reason: {reason}'
-                                    )
+                                        f'Reason: {reason}')
                                     break  # Abort test case
 
                                 else:
@@ -2006,7 +2021,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 logging.info(
                     f'Test objective achieved at step {i + 1}: {achievement_reason}'
                 )
-                final_summary = f'FINAL_SUMMARY: Test case completed successfully with early termination at step {i + 1}. {achievement_reason}'
+                final_summary = _make_final_summary(language,
+                f'FINAL_SUMMARY: 测试用例提前终止于第 {i + 1} 步，执行成功。{achievement_reason}',
+                f'FINAL_SUMMARY: Test case completed successfully with early termination at step {i + 1}. {achievement_reason}')
                 break
 
             logging.debug(
@@ -2193,7 +2210,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         except Exception as e:
             logging.error(f'Exception during step {i + 1} execution: {str(e)}')
             failed_steps.append(i + 1)
-            final_summary = f"FINAL_SUMMARY: Step '{instruction_to_execute}' raised an exception: {str(e)}"
+            final_summary = _make_final_summary(language,
+            f"FINAL_SUMMARY: 步骤 '{instruction_to_execute}' 发生异常：{str(e)}",
+            f"FINAL_SUMMARY: Step '{instruction_to_execute}' raised an exception: {str(e)}")
             break
 
         # Move to next step
@@ -2270,7 +2289,27 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         try:
             # Prepare context for summary generation
             # P4 Enhancement: Use executed steps count for accurate reporting
-            summary_prompt = f"""Based on the test execution of case "{case_name}", generate a summary.
+            if language == 'zh-CN':
+                summary_prompt = f"""根据测试用例"{case_name}"的执行情况，生成一份摘要。
+
+测试目标：{case.get('objective', '未指定')}
+成功标准：{case.get('success_criteria', ['未指定'])}
+计划步骤数：{planned_steps_count} 步
+实际执行步骤数：{executed_steps_count} 步（扩展比例：{step_expansion_ratio}x）
+失败步骤：{failed_steps if failed_steps else '无'}
+
+**重要**：引用步骤时请使用实际执行的步骤编号。测试计划了 {planned_steps_count} 步，但 UI Agent 实际执行了 {executed_steps_count} 步（包含元素定位、滚动等子步骤）。
+
+请用以下格式生成测试摘要（使用中文）：
+FINAL_SUMMARY: 测试用例"{case_name}"[状态]。[执行详情]。[目标达成情况]。
+
+若所有步骤均通过：
+FINAL_SUMMARY: 测试用例"{case_name}"执行完成。共执行 {executed_steps_count} 个步骤，均未出现严重错误。测试目标已达成：[确认说明]。所有成功标准均已满足。
+
+若存在失败步骤：
+FINAL_SUMMARY: 测试用例"{case_name}"在第 [X] 步（共 {executed_steps_count} 步）失败。错误：[描述]。恢复尝试：[如有]。建议：[修复方案]。"""
+            else:
+                summary_prompt = f"""Based on the test execution of case "{case_name}", generate a summary.
 
 Test Objective: {case.get('objective', 'Not specified')}
 Success Criteria: {case.get('success_criteria', ['Not specified'])}
@@ -2381,17 +2420,23 @@ Generate a brief summary without referencing specific execution details."""
                 )
                 if not failed_steps:
                     # P4: Use executed steps count
-                    final_summary = f'FINAL_SUMMARY: Test case "{case_name}" completed successfully. All {executed_steps_count} executed steps completed. {agent_output}'
+                    final_summary = _make_final_summary(language,
+                    f'FINAL_SUMMARY: 测试用例"{case_name}"执行完成。共执行 {executed_steps_count} 个步骤。{agent_output}',
+                    f'FINAL_SUMMARY: Test case "{case_name}" completed successfully. All {executed_steps_count} executed steps completed. {agent_output}')
                 else:
                     final_summary = (
-                        f'FINAL_SUMMARY: Test case "{case_name}" failed. {agent_output}'
+                        _make_final_summary(language,
+                        f'FINAL_SUMMARY: 测试用例"{case_name}"失败。{agent_output}',
+                        f'FINAL_SUMMARY: Test case "{case_name}" failed. {agent_output}')
                     )
             else:
                 # P4: Use executed steps count
                 final_summary = (
                     agent_output
                     if agent_output
-                    else f'FINAL_SUMMARY: Test case "{case_name}" completed all {executed_steps_count} executed steps.'
+                    else _make_final_summary(language,
+                    f'FINAL_SUMMARY: 测试用例"{case_name}"已完成全部 {executed_steps_count} 个步骤。',
+                    f'FINAL_SUMMARY: Test case "{case_name}" completed all {executed_steps_count} executed steps.')
                 )
 
             logging.debug(f'Final summary generated: {final_summary}')
@@ -2401,9 +2446,13 @@ Generate a brief summary without referencing specific execution details."""
             # Provide a reasonable default summary based on what we know
             # P4: Use executed steps count
             if not failed_steps:
-                final_summary = f'FINAL_SUMMARY: Test case "{case_name}" completed successfully. All {executed_steps_count} executed steps completed without detected failures.'
+                final_summary = _make_final_summary(language,
+                f'FINAL_SUMMARY: 测试用例"{case_name}"执行完成。共执行 {executed_steps_count} 个步骤，未检测到失败。',
+                f'FINAL_SUMMARY: Test case "{case_name}" completed successfully. All {executed_steps_count} executed steps completed without detected failures.')
             else:
-                final_summary = f'FINAL_SUMMARY: Test case "{case_name}" completed with failures at steps {failed_steps}. Review execution logs for details.'
+                final_summary = _make_final_summary(language,
+                f'FINAL_SUMMARY: 测试用例"{case_name}"完成，以下步骤失败：{failed_steps}，请查看执行日志。',
+                f'FINAL_SUMMARY: Test case "{case_name}" completed with failures at steps {failed_steps}. Review execution logs for details.')
 
     # Determine test case status with improved logic
     final_summary_lower = final_summary.lower()

@@ -50,7 +50,7 @@ class BrowserConfig(BaseModel):
 class ReportConfig(BaseModel):
     """Report configuration for test results."""
 
-    language: str = Field(default='en-US', description='Report language (en-US or zh-CN)')
+    language: str = Field(default='zh-CN', description='Report language (en-US or zh-CN)')
     report_dir: Optional[str] = Field(
         default=None, description='Custom report directory (auto-generated if None)'
     )
