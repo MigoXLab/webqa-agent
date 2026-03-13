@@ -20,7 +20,7 @@ data:
   # LLM Configuration
   LLM_API: "openai"
   LLM_BASE_URL: "http://35.220.164.252:3888/v1"
-  LLM_AVAILABLE_MODELS: "gemini-3-flash-preview,gpt-5-mini-2025-08-07,gpt-4.1-mini-2025-04-14,qwen3-vl-plus,doubao-seed-1-6-251015,intern-s1-pro"
+  LLM_AVAILABLE_MODELS: "gemini-3-flash-preview,gemini-3.1-flash-lite-preview,gpt-5-mini-2025-08-07,gpt-4.1-mini-2025-04-14,qwen3-vl-plus,doubao-seed-1-6-251015,intern-s1-pro"
   LLM_DEFAULT_MODEL: "gemini-3-flash-preview"
 
   # 按模型配置不同 Base URL（非敏感，放 ConfigMap）
@@ -55,10 +55,19 @@ data:
   K8S_PVC_NAME: "webqa-pvc"
   K8S_JOB_SERVICE_ACCOUNT: "webqa-agent-sa"
 
-  # Kubernetes Job 资源按 workers 动态分配 (内存 = /dev/shm(w Gi) + 进程(2Gi))
-  # workers │ CPU        │ 内存 │ /dev/shm │ 进程可用
-  # 1       │ 2c         │ 3Gi  │ 1Gi      │ 2Gi
-  # 2       │ 3c         │ 4Gi  │ 2Gi      │ 2Gi
-  # 3       │ 4c (上限)  │ 5Gi  │ 3Gi      │ 2Gi
-  # 4       │ 4c (上限)  │ 6Gi  │ 4Gi      │ 2Gi
-  # 5       │ 4c (上限)  │ 7Gi  │ 5Gi      │ 2Gi
+  # 高内存业务 (AI 对话等流式渲染场景，每 worker 分配更多内存/CPU)
+  # 逗号分隔的 business UUID 列表
+  HEAVY_RESOURCE_BUSINESS_IDS: "3ebdd771-d772-496a-8b6a-176ffc88f87a"  # 书生
+
+  # Kubernetes Job 资源按 workers 动态分配 (Chromium --disable-dev-shm-usage，无需 /dev/shm)
+  # 标准模式：每 worker 1Gi + 1Gi 基础
+  # workers │ CPU        │ 内存
+  # 1       │ 2c         │ 2Gi
+  # 2       │ 3c         │ 3Gi
+  # 3       │ 4c (上限)  │ 4Gi
+  #
+  # 高内存模式 (HEAVY_RESOURCE_BUSINESS_IDS)：每 worker 2Gi + 2Gi 基础
+  # workers │ CPU │ 内存
+  # 1       │ 2c  │ 4Gi
+  # 2       │ 4c  │ 6Gi
+  # 3       │ 6c  │ 8Gi
