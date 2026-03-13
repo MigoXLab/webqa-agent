@@ -20,7 +20,7 @@ data:
   # LLM Configuration
   LLM_API: "openai"
   LLM_BASE_URL: "http://35.220.164.252:3888/v1"
-  LLM_AVAILABLE_MODELS: "gemini-3-flash-preview,gemini-3.1-flash-lite-preview,gpt-5-mini-2025-08-07,qwen3-vl-plus,doubao-seed-1-6-251015,intern-s1-pro"
+  LLM_AVAILABLE_MODELS: "gemini-3-flash-preview,gemini-3.1-flash-lite-preview,gpt-5-mini-2025-08-07,qwen3-vl-plus,doubao-seed-2-0-pro-260215,intern-s1-pro"
   LLM_DEFAULT_MODEL: "gemini-3-flash-preview"
 
   # 按模型配置不同 Base URL（非敏感，放 ConfigMap）
