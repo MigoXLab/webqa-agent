@@ -1488,6 +1488,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     total_steps = len(case_steps)
     failed_steps = []  # Track failed steps for summary generation
     warning_steps = []  # Track steps with warnings (e.g., UX issues)
+    objective_achieved = False  # True when test objective achieved via early termination
     case_modified = False  # Track if case was modified with dynamic steps
     dynamic_generation_count = 0  # Track how many times dynamic generation occurred
     dom_diff_cache = (
@@ -2024,6 +2025,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 final_summary = _make_final_summary(language,
                 f'FINAL_SUMMARY: 测试用例提前终止于第 {i + 1} 步，执行成功。{achievement_reason}',
                 f'FINAL_SUMMARY: Test case completed successfully with early termination at step {i + 1}. {achievement_reason}')
+                objective_achieved = True  # Objective met — overrides any prior step failures
                 break
 
             logging.debug(
@@ -2498,16 +2500,20 @@ Generate a brief summary without referencing specific execution details."""
     )
 
     # Determine status with clear priority (most reliable first)
-    # Priority 1: Actual execution failures collected during test run
-    if failed_steps:
+    # Priority 1: Objective achieved via early termination — overrides any prior step failures
+    # because the test goal was ultimately met
+    if objective_achieved:
+        status = 'passed'
+    # Priority 2: Actual execution failures collected during test run
+    elif failed_steps:
         status = 'failed'
-    # Priority 2: Explicit failure indicators in summary
+    # Priority 3: Explicit failure indicators in summary
     elif has_failure:
         status = 'failed'
-    # Priority 3: Success indicators present
+    # Priority 4: Success indicators present
     elif has_success:
         status = 'passed'
-    # Priority 4: Default to passed if no failure signals
+    # Priority 5: Default to passed if no failure signals
     else:
         status = 'passed'
 
