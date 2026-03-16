@@ -127,13 +127,8 @@ class GenExecutor:
             test_results = [test_result]
             result = ResultAggregator.compute_counts_from_tests(test_results)
 
-            # Generate LLM summary
-            llm_summary = await self.result_aggregator.generate_llm_summary(
-                test_results=test_results,
-                llm_config=self.config.llm_config.model_dump(),
-                report_lang=self.config.report_config.language
-            )
-            test_session.llm_summary = llm_summary
+            # LLM summary disabled — output was hard to read and added noise to reports
+            test_session.llm_summary = ''
 
             # Complete session BEFORE saving to ensure end_time is recorded
             test_session.complete_session()
