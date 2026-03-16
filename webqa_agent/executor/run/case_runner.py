@@ -616,6 +616,17 @@ class CaseRunner:
         prev_step_context: Optional[StepContext] = None
 
         for step_idx, step in enumerate(steps, 1):
+            # Fast-fail: check if the browser page has crashed before executing the next step
+            try:
+                page = tester.browser_session.page
+                if page.is_closed():
+                    raise RuntimeError('Page is closed')
+            except Exception:
+                logging.error('Browser page crashed, aborting remaining steps.')
+                case_status = TestStatus.FAILED
+                error_messages.append(f'Step {step_idx}: Browser page crashed (Target crashed)')
+                break
+
             parsed_step = CaseStep.model_validate(step)
 
             if parsed_step.step_type == 'action':
