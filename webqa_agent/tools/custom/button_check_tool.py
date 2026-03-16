@@ -23,7 +23,7 @@ Example test step:
 """
 import logging
 from datetime import datetime
-from typing import Any, Dict, Type
+from typing import Any, Dict, List, Type
 
 from pydantic import BaseModel, Field
 
@@ -33,6 +33,174 @@ from webqa_agent.tools.core.web_checks import PageButtonTest
 from webqa_agent.tools.registry import register_tool
 
 logger = logging.getLogger(__name__)
+
+# HTML tag name → human-readable label (zh-CN, en-US)
+_TAG_LABELS: Dict[str, tuple] = {
+    'a': ('链接', 'Link'),
+    'button': ('按钮', 'Button'),
+    'input': ('输入框', 'Input'),
+    'textarea': ('文本输入框', 'Text Input'),
+    'select': ('下拉选择', 'Dropdown'),
+    'div': ('区块', 'Block'),
+    'span': ('文本区域', 'Text Span'),
+    'img': ('图片', 'Image'),
+    'svg': ('图标', 'Icon'),
+    'label': ('标签', 'Label'),
+    'li': ('列表项', 'List Item'),
+    'td': ('表格单元', 'Table Cell'),
+    'tr': ('表格行', 'Table Row'),
+    'th': ('表头', 'Table Header'),
+    'form': ('表单', 'Form'),
+    'nav': ('导航', 'Navigation'),
+    'header': ('页头', 'Header'),
+    'footer': ('页脚', 'Footer'),
+}
+
+# Common browser error codes → human-readable translations (zh-CN, en-US)
+_ERROR_TRANSLATIONS: Dict[str, tuple] = {
+    'net::err_failed': ('网络资源加载失败', 'Network resource loading failed'),
+    'net::err_connection_refused': ('服务器拒绝连接', 'Server connection refused'),
+    'net::err_name_not_resolved': ('域名解析失败', 'DNS resolution failed'),
+    'net::err_connection_reset': ('连接被重置', 'Connection reset'),
+    'net::err_timed_out': ('连接超时', 'Connection timed out'),
+    'net::err_aborted': ('请求被中止', 'Request aborted'),
+    'net::err_cert': ('证书错误', 'Certificate error'),
+    'net::err_ssl': ('SSL 错误', 'SSL error'),
+    '404': ('页面不存在(404)', 'Page not found (404)'),
+    '500': ('服务器内部错误(500)', 'Internal server error (500)'),
+    '502': ('网关错误(502)', 'Bad gateway (502)'),
+    '503': ('服务不可用(503)', 'Service unavailable (503)'),
+}
+
+
+def _humanize_element(description: str, element_id: int, language: str = 'zh-CN') -> str:
+    """Convert CSS selector description to a human-readable label.
+
+    Args:
+        description: Step description like "Click Element: textarea.ant-input.css-xxx"
+        element_id: Numeric element ID
+        language: 'zh-CN' or 'en-US'
+
+    Returns:
+        Human-readable string like "文本输入框(#18)" or "Text Input (#18)"
+    """
+    lang_idx = 0 if language == 'zh-CN' else 1
+
+    # Extract the part after ':'  (e.g. "textarea.ant-input.css-xxx")
+    raw = description
+    if ':' in raw:
+        raw = raw.split(':', 1)[-1].strip()
+
+    # Get the tag name (first segment before '.' or '#' or '[')
+    tag = raw
+    for sep in ('.', '#', '[', ' '):
+        tag = tag.split(sep)[0]
+    tag = tag.strip().lower()
+
+    label = _TAG_LABELS.get(tag, (tag, tag))[lang_idx] if tag else str(element_id)
+    return f'{label}(#{element_id})'
+
+
+def _humanize_error(error_text: str, language: str = 'zh-CN') -> str:
+    """Translate low-level error messages to human-readable descriptions.
+
+    Args:
+        error_text: Raw error string (e.g. "browser_error: ... net::ERR_FAILED ...")
+        language: 'zh-CN' or 'en-US'
+
+    Returns:
+        Human-readable error description
+    """
+    lang_idx = 0 if language == 'zh-CN' else 1
+    text_lower = error_text.lower()
+
+    # Try to match known error patterns
+    for pattern, labels in _ERROR_TRANSLATIONS.items():
+        if pattern in text_lower:
+            return labels[lang_idx]
+
+    # Fallback: simplify common prefixes
+    if 'console error' in text_lower:
+        return '控制台报错' if language == 'zh-CN' else 'Console error'
+    if 'network failure' in text_lower or 'network error' in text_lower:
+        return '网络请求失败' if language == 'zh-CN' else 'Network request failed'
+    if 'element_not_found' in text_lower:
+        return '元素未找到' if language == 'zh-CN' else 'Element not found'
+    if 'element_not_clickable' in text_lower:
+        return '元素无法点击' if language == 'zh-CN' else 'Element not clickable'
+    if 'element_obscured' in text_lower:
+        return '元素被遮挡' if language == 'zh-CN' else 'Element obscured'
+    if 'scroll_timeout' in text_lower:
+        return '滚动超时' if language == 'zh-CN' else 'Scroll timeout'
+    if 'playwright_error' in text_lower:
+        return '浏览器操作异常' if language == 'zh-CN' else 'Browser operation error'
+
+    # Last resort: truncate raw text
+    short = error_text[:80]
+    if len(error_text) > 80:
+        short += '...'
+    return short
+
+
+def _build_human_readable_summary(
+    total_elements: int,
+    passed_count: int,
+    failed_count: int,
+    failed_steps: List,
+    language: str = 'zh-CN',
+) -> str:
+    """Build a structured, human-readable traversal test summary.
+
+    Args:
+        total_elements: Total clickable elements tested
+        passed_count: Number of elements that passed
+        failed_count: Number of elements that failed
+        failed_steps: List of failed SubTestStep objects
+        language: 'zh-CN' or 'en-US'
+
+    Returns:
+        Formatted summary string
+    """
+    if language == 'zh-CN':
+        header = (
+            f'遍历测试完成：共检测 {total_elements} 个交互元素，'
+            f'{passed_count} 个正常，{failed_count} 个发现问题。'
+        )
+        if failed_count == 0:
+            return header
+
+        lines = [header, '发现的问题：']
+        for i, step in enumerate(failed_steps[:10], 1):
+            elem_label = _humanize_element(
+                step.description or '', step.id, language
+            )
+            error_desc = _humanize_error(
+                getattr(step, 'errors', '') or '', language
+            )
+            lines.append(f'{i}. {elem_label}：{error_desc}')
+        if failed_count > 10:
+            lines.append(f'...及其他 {failed_count - 10} 个问题')
+        return '\n'.join(lines)
+    else:
+        header = (
+            f'Traversal test completed: {total_elements} elements tested, '
+            f'{passed_count} passed, {failed_count} issues found.'
+        )
+        if failed_count == 0:
+            return header
+
+        lines = [header, 'Issues:']
+        for i, step in enumerate(failed_steps[:10], 1):
+            elem_label = _humanize_element(
+                step.description or '', step.id, language
+            )
+            error_desc = _humanize_error(
+                getattr(step, 'errors', '') or '', language
+            )
+            lines.append(f'{i}. {elem_label}: {error_desc}')
+        if failed_count > 10:
+            lines.append(f'...and {failed_count - 10} more issues')
+        return '\n'.join(lines)
 
 
 class ButtonCheckToolSchema(BaseModel):
@@ -117,13 +285,13 @@ class ButtonCheckTool(WebQABaseTool):
                 'IMPORTANT NOTE FOR AGENT:\n'
                 '  - Any console errors or network errors found by this tool are VALID BUGS on the page.\n'
                 '  - They represent successfully discovered issues, NOT testing framework failures.\n'
-                '  - DO NOT trigger a REPLAN when this tool reports console or network errors.\n'
-                '  - Instead, you MUST output OBJECTIVE_ACHIEVED.\n'
-                '  - You MUST explicitly include the EXACT console and network errors found inside the OBJECTIVE_ACHIEVED reason itself.\n\n'
+                '  - When issues are found, the tool returns a [FAILURE] with a human-readable summary.\n'
+                '  - DO NOT trigger a REPLAN for these failures — they are expected test findings.\n'
+                '  - If the tool itself crashes (system error), it returns [WARNING] instead.\n\n'
                 'Returns:\n'
                 '  - Total elements tested\n'
                 '  - Number of failures\n'
-                '  - Detailed error information for failed elements'
+                '  - Human-readable error descriptions for failed elements'
             ),
             examples=[
                 '{{"action": "traverse_clickable_elements", "params": {{}}}}',
@@ -181,6 +349,11 @@ class ButtonCheckTool(WebQABaseTool):
             'case_recorder': 'case_recorder',
             'llm_config': 'llm_config',
         }
+
+    def _get_report_language(self) -> str:
+        """Get the report language from llm_config."""
+        report_config = self.llm_config.get('report_config', {})
+        return report_config.get('language', 'en-US')
 
     async def _arun(self, **kwargs) -> str:
         """Execute comprehensive button testing.
@@ -281,14 +454,9 @@ class ButtonCheckTool(WebQABaseTool):
             )
 
             # Step 6: Record to case_recorder (using safe_record_step helper)
-            # Extract failure details for logging
-            failures = [
-                {
-                    'element_id': step.id,
-                    'description': step.description,
-                    'error': step.errors if hasattr(step, 'errors') and step.errors else 'Unknown error'
-                }
-                for step in result.steps
+            language = self._get_report_language()
+            failed_steps = [
+                step for step in result.steps
                 if step.status == TestStatus.FAILED
             ]
 
@@ -298,95 +466,34 @@ class ButtonCheckTool(WebQABaseTool):
                 if hasattr(step, 'screenshots') and step.screenshots:
                     all_screenshots.extend(step.screenshots)
 
+            # Build human-readable summary
+            readable_summary = _build_human_readable_summary(
+                total_elements, passed_count, failed_count,
+                failed_steps, language
+            )
+
             self.safe_record_step(
                 description=f'Traverse clickable elements (tested {total_elements})',
                 model_io_data={
                     'total_elements': total_elements,
                     'passed': passed_count,
                     'failed': failed_count,
-                    'failures': failures[:10],  # Limit to first 10 failures
+                    'summary': readable_summary,
                 },
                 status='passed' if result.status == TestStatus.PASSED else 'failed',
                 screenshots=all_screenshots,
             )
 
-            # Step 7: Format response with detailed error context
+            # Step 7: Format response for LLM
             if result.status == TestStatus.PASSED:
                 return self.format_success(
                     f'All {total_elements} clickable elements passed testing',
                     page_state=f'Tested buttons/links on {url}'
                 )
             else:
-                # Categorize failures by error type
-                error_stats = {}
-                detailed_failures = []
-
-                for step in result.steps:
-                    if step.status == TestStatus.FAILED:
-                        error_type = 'unknown'
-                        # Try to extract error type from the new step.errors format: "error_type: error_reason | ..."
-                        if hasattr(step, 'errors') and step.errors and ':' in step.errors:
-                            potential_type = step.errors.split(':', 1)[0].strip()
-                            if ' ' not in potential_type:  # simple check to avoid picking up arbitrary sentences
-                                error_type = potential_type
-
-                        # Count by error type
-                        error_stats[error_type] = error_stats.get(error_type, 0) + 1
-
-                        # Build detailed failure info
-                        error_reason = getattr(step, 'errors', 'Unknown error')
-                        failure_info = f'  - Element ID {step.id} ({step.description}): {error_type}\n    Reason: {error_reason}'
-                        detailed_failures.append(failure_info)
-
-                # Build error summary by type
-                error_summary_parts = []
-                for error_type, count in sorted(error_stats.items(), key=lambda x: x[1], reverse=True):
-                    error_summary_parts.append(f'  - {error_type}: {count} elements')
-                error_summary = '\n'.join(error_summary_parts)
-
-                # Show first 5 detailed failures
-                failure_summary = '\n'.join(detailed_failures[:5])
-                if failed_count > 5:
-                    failure_summary += f'\n  ... and {failed_count - 5} more failures'
-
-                # Build full message
-                message = (
-                    f'{failed_count} of {total_elements} elements failed:\n\n'
-                    f'{failure_summary}\n\n'
-                    f'Summary by failure type:\n{error_summary}'
-                )
-
-                # Generate targeted recovery hints based on error types
-                recovery_hints = []
-                if 'scroll_timeout' in error_stats or 'scroll_timeout_lazy_loading' in error_stats:
-                    recovery_hints.append('For scroll timeouts: Increase wait time or check lazy-loading implementation')
-                if 'element_not_found' in error_stats:
-                    recovery_hints.append('For not found errors: Verify element selectors are correct and elements exist')
-                if 'element_not_clickable' in error_stats:
-                    recovery_hints.append('For not clickable errors: Check if elements are obscured by overlays or z-index issues')
-                if 'element_obscured' in error_stats:
-                    recovery_hints.append('For obscured elements: Check for modal dialogs, fixed headers, or overlapping elements')
-                if 'playwright_error' in error_stats:
-                    recovery_hints.append('For Playwright errors: Review page structure and Playwright locator strategies')
-
-                # Add general hints if no specific ones
-                if not recovery_hints:
-                    recovery_hints = [
-                        'Review failed elements for broken functionality',
-                        'Check if elements require authentication or permissions',
-                        'Verify browser session is still active'
-                    ]
-
-                # Add strong instruction for the Agent to include errors in achievement reason
-                recovery_hints.append(
-                    'IMPORTANT: Since console and network errors are VALID BUGS successfully discovered, YOU DO NOT TRIGGER A REPLAN. '
-                    'you MUST output OBJECTIVE_ACHIEVED. However, to ensure these bugs are recorded in the report, '
-                    'you MUST embed the EXACT errors into the objective_achieved reason itself.\n'
-                    'Format EXACTLY like this:\n'
-                    'OBJECTIVE_ACHIEVED: [Your reason] Discovered valid bugs: [List the exact console/network errors here]'
-                )
-
-                return self.format_failure(message, recovery_hints=recovery_hints)
+                # Issues found (page bugs) — return as FAILURE
+                # These are real bugs discovered by the test
+                return self.format_failure(readable_summary)
 
         except Exception as e:
             # Record failed step (using safe_record_step helper)
@@ -396,18 +503,18 @@ class ButtonCheckTool(WebQABaseTool):
                     'error': str(e),
                     'error_type': type(e).__name__
                 },
-                status='failed',
+                status='warning',
             )
 
-            # Update context to indicate failure
+            # Update context to indicate system error
             self.update_action_context(
                 self.ui_tester_instance,
                 {
-                    'description': 'Traverse clickable elements (failed)',
+                    'description': 'Traverse clickable elements (system error)',
                     'action_type': 'ButtonTraversal',
-                    'status': 'failed',
+                    'status': 'warning',
                     'result': {
-                        'message': f'Button traversal failed: {str(e)}',
+                        'message': f'Button traversal system error: {str(e)}',
                         'error_details': {
                             'error_type': type(e).__name__,
                         }
@@ -417,12 +524,6 @@ class ButtonCheckTool(WebQABaseTool):
             )
 
             logger.error(f'Button Test Tool: Unexpected error: {e}', exc_info=True)
-            return self.format_failure(
-                f'Button traversal test failed: {str(e)}',
-                recovery_hints=[
-                    'Ensure the page has finished loading',
-                    'Check if the page is accessible (not PDF/plugin)',
-                    'Verify browser session is still active',
-                    'Try testing specific elements individually instead'
-                ]
+            return self.format_warning(
+                f'Button traversal tool encountered a system error: {str(e)}'
             )
