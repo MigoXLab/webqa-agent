@@ -6,13 +6,15 @@ ENV PYTHONUNBUFFERED=1
 # 避免 Playwright 截图时等待字体加载导致超时
 ENV PW_TEST_SCREENSHOT_NO_FONTS_READY=1
 
-# 安装 Node.js 18 和 lighthouse
+# 安装 Node.js 18
 RUN apt-get update && apt-get install -y curl unzip \
     && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
     && apt-get install -y nodejs \
-    && npm install -g lighthouse chrome-launcher \
     && apt-get purge -y curl && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
+
+# 安装 lighthouse 到 /app（代码通过 node_modules 查找，需要本地安装而非 -g）
+RUN npm install lighthouse chrome-launcher
 
 # 安装 nuclei（从本地预下载的安装包）
 COPY vendor/nuclei_3.3.7_linux_amd64.zip /tmp/nuclei.zip
