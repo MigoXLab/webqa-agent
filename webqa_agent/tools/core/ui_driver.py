@@ -579,11 +579,11 @@ class UITester:
 
             if mode == 'comparison':
                 # ====================================================================
-                # COMPARISON MODE: Use before + after screenshots
+                # COMPARISON MODE: Use before + after + current screenshots
                 # ====================================================================
                 logging.debug('Using comparison mode with before/after screenshots')
 
-                # Prepare images list for LLM (chronological order: before, then after)
+                # Prepare images list for LLM (chronological order: before, after, current)
                 images_for_llm = [before_screenshot, after_screenshot]
 
                 # Use saved context from action execution time (time-consistent verification)
@@ -605,8 +605,41 @@ class UITester:
                     page_structure = dp.get_text()
                     logging.warning('Saved action context not available, using current page state (may cause time mismatch)')
 
+                # Capture current screenshot (real-time state at verification time)
+                current_screenshot = None
+                current_screenshot_path = None
+                current_page_structure = None
+                current_url = None
+                current_title = None
+                try:
+                    current_screenshot, current_screenshot_path = await self._actions.b64_page_screenshot(
+                        full_page=full_page,
+                        file_name='verification_current',
+                        context='verify'
+                    )
+                    if current_screenshot:
+                        images_for_llm.append(current_screenshot)
+                        # Get current page info for context
+                        current_url, current_title = await self.browser_session.get_url()
+                        dp = DeepCrawler(self.page)
+                        await dp.crawl(highlight=False, filter_text=True, viewport_only=viewport_only)
+                        current_page_structure = dp.get_text()
+                        logging.debug(f'Current screenshot captured for comparison: {current_url}')
+                except Exception as e:
+                    logging.warning(f'Failed to capture current screenshot, falling back to 2-screenshot mode: {e}')
+
                 # Prepare LLM input with comparison instructions
                 page_info = f'url: {page_url}, title: {page_title}'
+                if current_url and current_url != page_url:
+                    page_info += f'\ncurrent url: {current_url}, current title: {current_title}'
+
+                # Build page structure section with both saved and current
+                combined_page_structure = page_structure
+                if current_page_structure and current_page_structure != page_structure:
+                    combined_page_structure = (
+                        f'[After-Action Page Structure]:\n{page_structure}\n\n'
+                        f'[Current Page Structure]:\n{current_page_structure}'
+                    )
 
                 # Add focus region guidance if specified
                 region_guidance = ''
@@ -621,13 +654,13 @@ class UITester:
                         execution_context=self._format_execution_context(execution_context)
                     )
                     user_prompt = self._prepare_prompt_verify(
-                        f'assertion: {assertion}', page_info, comparison_base_prompt, page_structure
+                        f'assertion: {assertion}', page_info, comparison_base_prompt, combined_page_structure
                     )
                 else:
                     # Use standard comparison prompt
                     comparison_base_prompt = LLMPrompt.verification_prompt_comparison
                     user_prompt = self._prepare_prompt_verify(
-                        f'assertion: {assertion}', page_info, comparison_base_prompt, page_structure
+                        f'assertion: {assertion}', page_info, comparison_base_prompt, combined_page_structure
                     )
 
                 # Add region guidance if specified
@@ -640,12 +673,16 @@ class UITester:
                     verification_screenshots.append({'type': 'base64', 'data': before_screenshot, 'label': 'Before Action'})
                 if after_screenshot:
                     verification_screenshots.append({'type': 'base64', 'data': after_screenshot, 'label': 'After Action'})
+                if current_screenshot:
+                    verification_screenshots.append({'type': 'base64', 'data': current_screenshot, 'label': 'Current State'})
 
                 verification_screenshots_paths = []
                 if before_screenshot_path:
                     verification_screenshots_paths.append({'type': 'path', 'data': before_screenshot_path, 'label': 'Before Action'})
                 if after_screenshot_path:
                     verification_screenshots_paths.append({'type': 'path', 'data': after_screenshot_path, 'label': 'After Action'})
+                if current_screenshot_path:
+                    verification_screenshots_paths.append({'type': 'path', 'data': current_screenshot_path, 'label': 'Current State'})
 
             else:
                 # ====================================================================

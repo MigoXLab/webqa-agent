@@ -1672,10 +1672,17 @@ class LLMPrompt:
 
   ## Using Execution Context with Screenshot Comparison
 
-  You have THREE sources of information to correlate:
+  You have up to FOUR sources of information to correlate:
   1. **Execution Context**: Action type, status, DOM diff
-  2. **Before-Action Screenshot** (first image): Visual state before action
-  3. **After-Action Screenshot** (second image): Visual state after action
+  2. **Before-Action Screenshot** (1st image): Visual state before action
+  3. **After-Action Screenshot** (2nd image): Visual state immediately after action
+  4. **Current State Screenshot** (3rd image, if provided): Visual state at verification time (may differ from after-action due to animations, async loading, timers, etc.)
+
+  **When 3 screenshots are provided**:
+  - Compare after-action vs current to assess state stability
+  - If they are identical: state is stable, proceed normally
+  - If they differ: analyze whether changes are expected (animation completed, content loaded) or unexpected (page navigated away, error appeared)
+  - Use the CURRENT state as primary ground truth for verification
 
   **Correlation Patterns**:
 
@@ -1703,6 +1710,12 @@ class LLMPrompt:
   - DOM diff confirms cart-count element text changed
   - Correlation: DOM changes validate subtle visual changes
   - Conclusion: Action succeeded, verify if assertion is satisfied
+
+  ### Pattern 5: After-Action Incomplete + Current State Complete
+  - After-action shows loading spinner or partial content
+  - Current state shows fully loaded content
+  - Correlation: Async loading completed between action and verification
+  - Conclusion: Use current state for assertion validation
 
   ## DOM Diff Pattern Recognition
 
@@ -1742,16 +1755,23 @@ class LLMPrompt:
      - If previous action succeeded: Proceed to verify assertion
 
   2. **Compare Visual States**
-     - Analyze before-action (first) and after-action (second) screenshots
+     - Analyze before-action (1st) and after-action (2nd) screenshots
      - Identify what changed visually
      - Correlate visual changes with DOM diff from execution context
 
-  3. **Validate Assertion with Context**
+  3. **Assess State Stability (if 3rd screenshot provided)**
+     - Compare after-action (2nd) and current (3rd) screenshots
+     - If identical: state is stable, proceed with after-action analysis
+     - If different: determine if changes are expected progression or unexpected regression
+     - Use current state as the primary ground truth for assertion validation
+
+  4. **Validate Assertion with Context**
      - Determine if the observed changes satisfy the assertion
      - Use execution context to understand expected behavior
      - Consider action type hints (Click → expect navigation/modal, Input → expect validation)
+     - When current state is available, validate against it rather than after-action
 
-  4. **Classify Failure Type (if verification fails)**
+  5. **Classify Failure Type (if verification fails)**
      - ACTION_EXECUTION_FAILURE: Prerequisite action didn't work (no expected changes)
      - BUSINESS_REQUIREMENT_FAILURE: Action worked but requirement not met (wrong changes)
 
@@ -1763,8 +1783,9 @@ class LLMPrompt:
     "Failure Type": "ACTION_EXECUTION_FAILURE",
     "Details": [
       "Previous action '{{action_description}}' failed: {{failure_reason}}",
-      "Before state: <description from first screenshot>",
-      "After state: <description from second screenshot>",
+      "Before state: <description from 1st screenshot>",
+      "After state: <description from 2nd screenshot>",
+      "Current state: <description from 3rd screenshot, if provided>",
       "Visual change: <what changed or didn't change>",
       "Verification cannot proceed without successful action execution"
     ],
@@ -1777,8 +1798,9 @@ class LLMPrompt:
     "Failure Type": null,
     "Details": [
       "Previous action '{{action_description}}' succeeded",
-      "Before state: <description from first screenshot>",
-      "After state: <description from second screenshot>",
+      "Before state: <description from 1st screenshot>",
+      "After state: <description from 2nd screenshot>",
+      "Current state: <description from 3rd screenshot, if provided>",
       "Visual change: <what changed between screenshots>",
       "DOM changes: <relevant DOM diff from execution context>",
       "Correlation: <how DOM changes match visual changes>",
@@ -1794,8 +1816,9 @@ class LLMPrompt:
     "Failure Type": "BUSINESS_REQUIREMENT_FAILURE",
     "Details": [
       "Previous action '{{action_description}}' succeeded",
-      "Before state: <description from first screenshot>",
-      "After state: <description from second screenshot>",
+      "Before state: <description from 1st screenshot>",
+      "After state: <description from 2nd screenshot>",
+      "Current state: <description from 3rd screenshot, if provided>",
       "Visual change: <what changed between screenshots>",
       "DOM changes: <relevant DOM diff from execution context>",
       "Expected: <what should have happened per assertion>",
