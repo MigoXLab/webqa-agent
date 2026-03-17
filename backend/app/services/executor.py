@@ -27,6 +27,43 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 
 
+def _compute_k8s_resources(workers: int, business_id: Optional[UUID] = None) -> tuple[int, int]:
+    """计算 K8s Job 的资源配额。
+
+    Chromium 使用 --disable-dev-shm-usage，不再需要 /dev/shm emptyDir volume，
+    内存随 worker 数线性扩展。
+
+    高内存业务（HEAVY_RESOURCE_BUSINESS_IDS）每个 worker 分配更多内存，
+    适合 AI 对话等流式渲染（JS heap 可达 1.5Gi/实例）场景。
+
+    Returns:
+        (cpu_limit, memory_gi)
+    """
+    heavy_ids_raw = os.getenv('HEAVY_RESOURCE_BUSINESS_IDS', '')
+    heavy_ids = {s.strip() for s in heavy_ids_raw.split(',') if s.strip()}
+    is_heavy = business_id is not None and str(business_id) in heavy_ids
+
+    w = max(1, workers)
+    if is_heavy:
+        # 高内存模式：每 worker 2Gi（JS heap 重）+ 2Gi Python/基础开销
+        # workers │ CPU │ 内存
+        # 1       │ 2c  │ 4Gi
+        # 2       │ 4c  │ 6Gi
+        # 3       │ 6c  │ 8Gi
+        cpu_limit = w * 2
+        memory_gi = w * 2 + 2
+    else:
+        # 标准模式：每 worker 1Gi + 1Gi Python/基础开销
+        # workers │ CPU │ 内存
+        # 1       │ 2c  │ 2Gi
+        # 2       │ 3c  │ 3Gi
+        # 3       │ 4c  │ 4Gi
+        cpu_limit = min(w + 1, 4)
+        memory_gi = w + 1
+
+    return cpu_limit, memory_gi
+
+
 # Store active processes for cancellation
 _active_processes: Dict[str, asyncio.subprocess.Process] = {}
 
@@ -430,6 +467,7 @@ async def _start_gen_k8s(execution_id: str, gen_config_dict: Optional[Dict[str, 
                     workers=execution.workers or 1,
                     api_key=api_key,
                     base_url=base_url,
+                    business_id=execution.business_id,
                 )
                 logger.info(f'[Gen K8s] Job created: {job_name}')
             except Exception as e:
@@ -457,6 +495,7 @@ async def _create_gen_k8s_job(
     workers: int,
     api_key: str,
     base_url: str,
+    business_id: Optional[UUID] = None,
 ) -> str:
     """Create a Kubernetes Job that runs run_gen_webqa.py inside the agent
     image."""
@@ -478,17 +517,7 @@ async def _create_gen_k8s_job(
     k8s_job_image = os.getenv('K8S_JOB_IMAGE', 'eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/webqa-agent:latest')
     k8s_pvc_name = os.getenv('K8S_PVC_NAME', 'webqa-pvc')
     k8s_sa_name = os.getenv('K8S_JOB_SERVICE_ACCOUNT', 'webqa-agent-sa')
-    # 资源按并发数动态分配
-    # workers │ CPU │ 内存 │ /dev/shm │ 进程可用
-    # 1       │ 2c  │ 3Gi  │ 1Gi      │ 2Gi
-    # 2       │ 3c  │ 4Gi  │ 2Gi      │ 2Gi
-    # 3       │ 4c  │ 5Gi  │ 3Gi      │ 2Gi
-    # 4       │ 4c  │ 6Gi  │ 4Gi      │ 2Gi
-    # 5       │ 4c  │ 7Gi  │ 5Gi      │ 2Gi
-    w = max(1, workers)
-    cpu_limit = min(w + 1, 4)   # 并发1→2c, 并发2→3c, 并发3+→4c
-    memory_gi = w + 2           # /dev/shm(w Gi) + 进程(2Gi) = w+2 Gi
-    dshm_size = f'{w}Gi'        # 每个 worker 1Gi /dev/shm
+    cpu_limit, memory_gi = _compute_k8s_resources(workers, business_id)
 
     job_name = f'webqa-gen-{execution_id[:8]}'
 
@@ -542,7 +571,6 @@ async def _create_gen_k8s_job(
                             ),
                             volume_mounts=[
                                 client.V1VolumeMount(name='shared-storage', mount_path='/shared'),
-                                client.V1VolumeMount(name='dshm', mount_path='/dev/shm'),
                             ],
                         ),
                     ],
@@ -551,13 +579,6 @@ async def _create_gen_k8s_job(
                             name='shared-storage',
                             persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
                                 claim_name=k8s_pvc_name,
-                            ),
-                        ),
-                        client.V1Volume(
-                            name='dshm',
-                            empty_dir=client.V1EmptyDirVolumeSource(
-                                medium='Memory',
-                                size_limit=dshm_size,
                             ),
                         ),
                     ],
@@ -858,6 +879,7 @@ async def _start_agent_k8s(execution_id: str, case_data: Optional[Dict[str, Any]
                     test_cases=test_cases,
                     model=execution.model,
                     workers=execution.workers,
+                    business_id=execution.business_id,
                 )
 
                 logger.info(f'[K8s] Job 创建成功: {job_name}')
@@ -879,6 +901,7 @@ async def _create_k8s_job(
     test_cases: List[TestCase],
     model: str,
     workers: int,
+    business_id: Optional[UUID] = None,
 ) -> str:
     """创建 Kubernetes Job 来运行 webqa-agent。"""
     try:
@@ -902,17 +925,7 @@ async def _create_k8s_job(
     k8s_pvc_name = os.getenv('K8S_PVC_NAME', 'webqa-pvc')
     k8s_sa_name = os.getenv('K8S_JOB_SERVICE_ACCOUNT', 'webqa-agent-sa')
 
-    # 资源按并发数动态分配
-    # workers │ CPU │ 内存 │ /dev/shm │ 进程可用
-    # 1       │ 2c  │ 3Gi  │ 1Gi      │ 2Gi
-    # 2       │ 3c  │ 4Gi  │ 2Gi      │ 2Gi
-    # 3       │ 4c  │ 5Gi  │ 3Gi      │ 2Gi
-    # 4       │ 4c  │ 6Gi  │ 4Gi      │ 2Gi
-    # 5       │ 4c  │ 7Gi  │ 5Gi      │ 2Gi
-    w = max(1, workers)
-    cpu_limit = min(w + 1, 4)   # 并发1→2c, 并发2→3c, 并发3+→4c
-    memory_gi = w + 2           # /dev/shm(w Gi) + 进程(2Gi) = w+2 Gi
-    dshm_size = f'{w}Gi'        # 每个 worker 1Gi /dev/shm
+    cpu_limit, memory_gi = _compute_k8s_resources(workers, business_id)
 
     # 获取认证 cookies
     cookies = None
@@ -1000,12 +1013,6 @@ async def _create_k8s_job(
                                     name='shared-storage',
                                     mount_path='/shared',
                                 ),
-                                # Chromium uses /dev/shm for shared memory; the K8s
-                                # default of 64 MB causes renderer crashes / hangs.
-                                client.V1VolumeMount(
-                                    name='dshm',
-                                    mount_path='/dev/shm',
-                                ),
                             ],
                         ),
                     ],
@@ -1014,14 +1021,6 @@ async def _create_k8s_job(
                             name='shared-storage',
                             persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
                                 claim_name=k8s_pvc_name,
-                            ),
-                        ),
-
-                        client.V1Volume(
-                            name='dshm',
-                            empty_dir=client.V1EmptyDirVolumeSource(
-                                medium='Memory',
-                                size_limit=dshm_size,
                             ),
                         ),
                     ],

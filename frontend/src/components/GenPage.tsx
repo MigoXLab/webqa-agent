@@ -19,7 +19,7 @@ import { apiClient } from '../api/client';
 
 const TEST_ITEMS = [
   { key: 'functional' as const, label: '功能测试', icon: Target },
-  { key: 'performance' as const, label: '性能分析', icon: Zap },
+  { key: 'performance' as const, label: '前端性能', icon: Zap },
   { key: 'traverse' as const, label: '遍历测试', icon: Search },
   { key: 'links' as const, label: '链接检查', icon: Link },
   { key: 'security' as const, label: '安全扫描', icon: Shield },
@@ -86,7 +86,14 @@ export function GenPage() {
       if (testItems.security) enabledTools.push('nuclei');
 
       let finalBusinessObjectives = businessObjectives;
-      if (!testItems.functional) {
+      if (testItems.functional) {
+        const functionalInstruction = `
+测试要求：以真实用户视角对每个功能模块进行完整的端到端测试，必须执行完整的交互流程（如：表单需填写并提交、对话功能需发送消息并验证回复、搜索功能需输入关键词并验证结果），禁止仅点击入口而不完成完整操作流程。
+`;
+        finalBusinessObjectives = finalBusinessObjectives
+          ? `${finalBusinessObjectives}\n${functionalInstruction}`
+          : functionalInstruction;
+      } else {
         const enabledToolNames = enabledTools.length > 0
           ? enabledTools.join(', ')
           : 'none';
@@ -124,6 +131,7 @@ export function GenPage() {
           target_url: targetUrl,
           llm_config: { model: selectedModel },
           business_objectives: finalBusinessObjectives,
+          _display_objectives: businessObjectives || undefined,
           custom_tools: { enabled: enabledTools },
           browser_config: { cookies: parsedCookies },
           report_config: { language: 'zh-CN', save_screenshots: true },

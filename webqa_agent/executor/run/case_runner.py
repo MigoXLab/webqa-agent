@@ -523,11 +523,13 @@ class CaseRunner:
         from webqa_agent.tools.core.ui_driver import UITester
 
         _ignore_rules = ignore_rules or self.test_specific_config.get('ignore_rules', {})
+        report_lang = self.report_config.get('language', 'zh-CN') if self.report_config else 'zh-CN'
         tester = UITester(
             llm_config=self.llm_config,
             browser_session=session,
             ignore_rules=_ignore_rules,
-            execution_mode='run'  # RUN mode: trust user-specified operations in YAML
+            execution_mode='run',  # RUN mode: trust user-specified operations in YAML
+            language=report_lang,
         )
         await tester.initialize()
         tester.set_current_test_name(case_name)
@@ -614,6 +616,17 @@ class CaseRunner:
         prev_step_context: Optional[StepContext] = None
 
         for step_idx, step in enumerate(steps, 1):
+            # Fast-fail: check if the browser page has crashed before executing the next step
+            try:
+                page = tester.browser_session.page
+                if page.is_closed():
+                    raise RuntimeError('Page is closed')
+            except Exception:
+                logging.error('Browser page crashed, aborting remaining steps.')
+                case_status = TestStatus.FAILED
+                error_messages.append(f'Step {step_idx}: Browser page crashed (Target crashed)')
+                break
+
             parsed_step = CaseStep.model_validate(step)
 
             if parsed_step.step_type == 'action':

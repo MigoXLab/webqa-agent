@@ -37,8 +37,8 @@ _completed_case_count = 0  # 全局已完成 case 计数
 def _case_signature(case: dict) -> str:
     """Generate a dedup signature for a test case.
 
-    Key = normalized(name) + normalized(objective) + ordered steps text.
-    Used to detect duplicate replanned cases from concurrent reflections.
+    Key = normalized(name) + normalized(objective) + ordered steps text. Used
+    to detect duplicate replanned cases from concurrent reflections.
     """
     name = case.get('name', '').strip().lower()
     objective = case.get('objective', '').strip().lower()
@@ -142,6 +142,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             llm_config=llm_cfg,
             browser_session=s,
             execution_mode='gen',  # GEN mode: conservative approach for AI exploration
+            language=language,
         )
         await ui_tester.initialize()
 
@@ -521,6 +522,7 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                     llm_config=state['llm_config'],
                     browser_session=s,
                     execution_mode='gen',  # GEN mode: conservative approach for AI exploration
+                    language=state.get('language', 'zh-CN'),
                 )
                 await ui_tester.initialize()
 
@@ -717,13 +719,13 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                                             existing_sigs.add(sig)
                                         else:
                                             logging.info(
-                                                f"Worker {worker_id}: Skipped duplicate "
+                                                f'Worker {worker_id}: Skipped duplicate '
                                                 f"replanned case '{nc.get('name')}'"
                                             )
 
                                     if not unique_cases:
                                         logging.info(
-                                            f"Worker {worker_id}: All replanned cases from "
+                                            f'Worker {worker_id}: All replanned cases from '
                                             f"'{case_name}' are duplicates, skipping"
                                         )
                                     else:

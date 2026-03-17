@@ -23,7 +23,8 @@ class UITester:
         llm_config: Dict[str, Any],
         browser_session: BrowserSession = None,
         ignore_rules: Optional[Dict[str, List[Dict]]] = None,
-        execution_mode: str = 'gen'
+        execution_mode: str = 'gen',
+        language: str = 'zh-CN',
     ):
         """Initialize UITester.
 
@@ -35,6 +36,7 @@ class UITester:
                           - 'gen': Conservative approach, aborts on unsupported pages (PDF, plugins)
                           - 'run': Trusts user intent, allows degraded execution on unsupported pages
                           Default: 'gen' (backward compatible)
+            language: Output language for LLM responses ('zh-CN' or 'en-US'). Default: 'zh-CN'
         """
         self.llm_config = llm_config
         self.browser_session = browser_session
@@ -43,6 +45,7 @@ class UITester:
         self.console_check = None
         self.ignore_rules = ignore_rules or {}
         self.execution_mode = execution_mode  # Store execution mode for page-agnostic operation handling
+        self.language = language
 
         # Create component instances
         self._actions = ActionHandler()
@@ -67,6 +70,12 @@ class UITester:
         self.execution_history: List[Dict[str, Any]] = []
         self.current_test_objective: Optional[str] = None
         self.current_success_criteria: List[str] = []  # Store test success criteria
+
+    def _localize_system_prompt(self, system_prompt: str) -> str:
+        """Append language output instruction to a system prompt."""
+        if self.language == 'zh-CN':
+            return system_prompt + '\n\n**输出语言要求**: 所有分析、描述、结论均使用中文输出。'
+        return system_prompt
 
     async def initialize(self, browser_session: BrowserSession = None):
         if browser_session:
@@ -225,7 +234,7 @@ class UITester:
                 logging.debug(f'User prompt (iteration {iteration + 1}): {test_step + iterative_context}')
 
                 # Generate plan
-                plan_json = await self._generate_plan(LLMPrompt.planner_system_prompt, user_prompt, marker_screenshot)
+                plan_json = await self._generate_plan(self._localize_system_prompt(LLMPrompt.planner_system_prompt), user_prompt, marker_screenshot)
                 all_plans.append({
                     'iteration': iteration + 1,
                     'plan': plan_json
@@ -570,11 +579,11 @@ class UITester:
 
             if mode == 'comparison':
                 # ====================================================================
-                # COMPARISON MODE: Use before + after screenshots
+                # COMPARISON MODE: Use before + after + current screenshots
                 # ====================================================================
                 logging.debug('Using comparison mode with before/after screenshots')
 
-                # Prepare images list for LLM (chronological order: before, then after)
+                # Prepare images list for LLM (chronological order: before, after, current)
                 images_for_llm = [before_screenshot, after_screenshot]
 
                 # Use saved context from action execution time (time-consistent verification)
@@ -596,8 +605,41 @@ class UITester:
                     page_structure = dp.get_text()
                     logging.warning('Saved action context not available, using current page state (may cause time mismatch)')
 
+                # Capture current screenshot (real-time state at verification time)
+                current_screenshot = None
+                current_screenshot_path = None
+                current_page_structure = None
+                current_url = None
+                current_title = None
+                try:
+                    current_screenshot, current_screenshot_path = await self._actions.b64_page_screenshot(
+                        full_page=full_page,
+                        file_name='verification_current',
+                        context='verify'
+                    )
+                    if current_screenshot:
+                        images_for_llm.append(current_screenshot)
+                        # Get current page info for context
+                        current_url, current_title = await self.browser_session.get_url()
+                        dp = DeepCrawler(self.page)
+                        await dp.crawl(highlight=False, filter_text=True, viewport_only=viewport_only)
+                        current_page_structure = dp.get_text()
+                        logging.debug(f'Current screenshot captured for comparison: {current_url}')
+                except Exception as e:
+                    logging.warning(f'Failed to capture current screenshot, falling back to 2-screenshot mode: {e}')
+
                 # Prepare LLM input with comparison instructions
                 page_info = f'url: {page_url}, title: {page_title}'
+                if current_url and current_url != page_url:
+                    page_info += f'\ncurrent url: {current_url}, current title: {current_title}'
+
+                # Build page structure section with both saved and current
+                combined_page_structure = page_structure
+                if current_page_structure and current_page_structure != page_structure:
+                    combined_page_structure = (
+                        f'[After-Action Page Structure]:\n{page_structure}\n\n'
+                        f'[Current Page Structure]:\n{current_page_structure}'
+                    )
 
                 # Add focus region guidance if specified
                 region_guidance = ''
@@ -612,13 +654,13 @@ class UITester:
                         execution_context=self._format_execution_context(execution_context)
                     )
                     user_prompt = self._prepare_prompt_verify(
-                        f'assertion: {assertion}', page_info, comparison_base_prompt, page_structure
+                        f'assertion: {assertion}', page_info, comparison_base_prompt, combined_page_structure
                     )
                 else:
                     # Use standard comparison prompt
                     comparison_base_prompt = LLMPrompt.verification_prompt_comparison
                     user_prompt = self._prepare_prompt_verify(
-                        f'assertion: {assertion}', page_info, comparison_base_prompt, page_structure
+                        f'assertion: {assertion}', page_info, comparison_base_prompt, combined_page_structure
                     )
 
                 # Add region guidance if specified
@@ -631,12 +673,16 @@ class UITester:
                     verification_screenshots.append({'type': 'base64', 'data': before_screenshot, 'label': 'Before Action'})
                 if after_screenshot:
                     verification_screenshots.append({'type': 'base64', 'data': after_screenshot, 'label': 'After Action'})
+                if current_screenshot:
+                    verification_screenshots.append({'type': 'base64', 'data': current_screenshot, 'label': 'Current State'})
 
                 verification_screenshots_paths = []
                 if before_screenshot_path:
                     verification_screenshots_paths.append({'type': 'path', 'data': before_screenshot_path, 'label': 'Before Action'})
                 if after_screenshot_path:
                     verification_screenshots_paths.append({'type': 'path', 'data': after_screenshot_path, 'label': 'After Action'})
+                if current_screenshot_path:
+                    verification_screenshots_paths.append({'type': 'path', 'data': current_screenshot_path, 'label': 'Current State'})
 
             else:
                 # ====================================================================
@@ -696,10 +742,10 @@ class UITester:
             # ========================================================================
             # Select appropriate system prompt based on mode
             if mode == 'comparison':
-                system_prompt = LLMPrompt.verification_system_prompt_comparison
+                system_prompt = self._localize_system_prompt(LLMPrompt.verification_system_prompt_comparison)
                 logging.debug('Using comparison-specific system prompt')
             else:
-                system_prompt = LLMPrompt.verification_system_prompt
+                system_prompt = self._localize_system_prompt(LLMPrompt.verification_system_prompt)
                 logging.debug('Using standard system prompt')
 
             result = await self.llm.get_llm_response(
@@ -1187,7 +1233,7 @@ class UITester:
             )
 
             # Call LLM
-            response = await self.llm.get_llm_response(LLMPrompt.check_system_prompt, prompt, images=marker_screenshot)
+            response = await self.llm.get_llm_response(self._localize_system_prompt(LLMPrompt.check_system_prompt), prompt, images=marker_screenshot)
 
             if isinstance(response, str):
                 try:

@@ -335,12 +335,12 @@ export function ExecutionDetail() {
                 </p>
               </div>
           </div>
-          {execution.trigger_type === 'gen' && execution.config?.business_objectives && (
+          {execution.trigger_type === 'gen' && execution.config?._display_objectives && (
             <div className="px-10 py-8 flex gap-x-12 gap-y-6 flex-wrap">
               <div className="px-4 py-4">
                 <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">测试目标</span>
                 <p className="mt-1 text-sm pb-6 text-gray-900 whitespace-pre-line break-words">
-                  {execution.config.business_objectives}
+                  {execution.config._display_objectives}
                 </p>
               </div>
             </div>

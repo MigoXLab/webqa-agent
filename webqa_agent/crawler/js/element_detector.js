@@ -263,6 +263,17 @@
                 // If checking listeners fails, rely on other checks
             }
 
+            // Check cursor: pointer — the universal web convention for "this is clickable".
+            // Only match the outermost element that introduces cursor:pointer to avoid
+            // false positives from CSS inheritance.
+            const cursorStyle = getCachedStyle(element);
+            if (cursorStyle && cursorStyle.cursor === 'pointer') {
+                const parentStyle = element.parentElement ? getCachedStyle(element.parentElement) : null;
+                if (!parentStyle || parentStyle.cursor !== 'pointer') {
+                    return true;
+                }
+            }
+
             // if the element is not strictly interactive but appears clickable based on heuristic signals
             if (isHeuristicallyInteractive(element)) {
                 return true;

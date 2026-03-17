@@ -106,6 +106,11 @@ class _BrowserSession:
                     try { sessionStorage.clear(); } catch(e) {}
                 }''')
         except Exception as e:
+            err_str = str(e)
+            if 'Target crashed' in err_str or 'Page crashed' in err_str:
+                # Session is dead — propagate so the caller (worker) can release it as failed
+                logging.warning(f'[Session] clean_state detected crash, propagating: {e}')
+                raise
             logging.warning(f'[Session] Failed to clean state: {e}')
 
     async def reset_context(self) -> None:
@@ -336,11 +341,11 @@ class _BrowserSession:
                 '--force-device-scale-factor=1',
                 f'--window-size={cfg["viewport"]["width"]},{cfg["viewport"]["height"]}',
                 '--num-raster-threads=2',
-                '--js-flags=--max-old-space-size=512',
                 '--disk-cache-size=1',
                 '--media-cache-size=1',
                 '--disable-gpu',
                 '--disable-gpu-compositing',
+                '--disable-dev-shm-usage',  # 使用 /tmp 代替 /dev/shm，避免容器内 64MB 限制
             ],
         )
         self._context = await self._browser.new_context(
