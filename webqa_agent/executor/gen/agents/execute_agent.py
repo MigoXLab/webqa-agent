@@ -1491,6 +1491,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     step_outcomes: List[StepOutcome] = []  # Structured step results for verdict engine
     objective_achieved = False       # Track objective achievement signal
     warning_steps = []  # Track steps with warnings (e.g., UX issues)
+    code_determined_status: Optional[str] = None   # Set by break/abort paths
+    code_failure_type: Optional[str] = None        # Set alongside code_determined_status
 
     def _get_failed_step_indices() -> List[int]:
         """Extract hard-failure step indices for summary generation (backward
@@ -1760,6 +1762,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                             f'requires DOM elements but page is unsupported (PDF/plugin). '
                             f'Aborting remaining {len(case_steps) - i - 1} planned steps to conserve resources.'
                         )
+                        code_determined_status = 'failed'
+                        code_failure_type = 'critical'
                         break  # Abort test case immediately
                 else:
                     # Other types of critical errors (not unsupported page): Abort immediately
@@ -1782,6 +1786,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         f'encountered critical failure. '
                         f'Aborting remaining {len(case_steps) - i - 1} planned steps to conserve resources.'
                     )
+                    code_determined_status = 'failed'
+                    code_failure_type = 'critical'
                     break  # Abort test case immediately
 
             # ===================================================================
@@ -1899,6 +1905,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                                                     f"{recovery_result.get('reason', '严重错误')}",
                                                                     f'FINAL_SUMMARY: Test aborted at executed step {current_executed_step} '
                                                                     f"(planned step {i + 1}). {recovery_result.get('reason', 'Critical failure')}")
+                                code_determined_status = 'failed'
+                                code_failure_type = 'recoverable'
                                 break
 
                         else:
@@ -2046,6 +2054,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                                                         f"'{instruction_to_execute}'. "
                                                                         f'LLM adaptive recovery determined abortion necessary. '
                                                                         f'Reason: {reason}')
+                                    code_determined_status = 'failed'
+                                    code_failure_type = 'critical'
                                     break  # Abort test case
 
                                 else:
@@ -2093,6 +2103,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                                     f'FINAL_SUMMARY: Test case completed successfully with early '
                                                     f'termination at executed step {current_executed_step} '
                                                     f'(planned step {i + 1}/{total_steps}). {achievement_reason}')
+                code_determined_status = 'passed'
+                code_failure_type = None
                 break
 
             # Record PASSED outcome for successful steps (no prior outcome recorded)
@@ -2294,6 +2306,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             final_summary = _make_final_summary(language,
                                                 f"FINAL_SUMMARY: 步骤 '{instruction_to_execute}' 发生异常：{str(e)}",
                                                 f"FINAL_SUMMARY: Step '{instruction_to_execute}' raised an exception: {str(e)}")
+            code_determined_status = 'failed'
+            code_failure_type = 'recoverable'
             break
 
         # Move to next step
@@ -2370,6 +2384,16 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         try:
             # Prepare context for summary generation
             # P4 Enhancement: Use executed steps count for accurate reporting
+            # Build step severity summary for LLM context
+            severity_summary = {
+                'critical': len([o for o in step_outcomes if o.severity == StepSeverity.CRITICAL]),
+                'hard_fail': len([o for o in step_outcomes if o.severity == StepSeverity.HARD_FAIL]),
+                'soft_fail': len([o for o in step_outcomes if o.severity == StepSeverity.SOFT_FAIL]),
+                'skipped': len([o for o in step_outcomes if o.severity == StepSeverity.SKIPPED]),
+                'warning': len(warning_steps),
+                'passed': len([o for o in step_outcomes if o.severity == StepSeverity.PASSED]),
+            }
+
             if language == 'zh-CN':
                 summary_prompt = f"""根据测试用例"{case_name}"的执行情况，生成一份摘要。
 
@@ -2379,16 +2403,39 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 实际执行步骤数：{executed_steps_count} 步（扩展比例：{step_expansion_ratio}x）
 失败步骤：{_get_failed_step_indices() or '无'}
 
+步骤执行结果统计：
+- 严重错误(CRITICAL): {severity_summary['critical']} 个
+- 产品缺陷(HARD_FAIL): {severity_summary['hard_fail']} 个
+- 基础设施问题(SOFT_FAIL): {severity_summary['soft_fail']} 个（非产品缺陷，如网络超时、工具异常）
+- 跳过(SKIPPED): {severity_summary['skipped']} 个
+- 警告(WARNING): {severity_summary['warning']} 个
+- 通过(PASSED): {severity_summary['passed']} 个
+测试目标提前达成: {'是' if objective_achieved else '否'}
+
 **重要**：引用步骤时请使用实际执行的步骤编号。测试计划了 {planned_steps_count} 步，但 UI Agent 实际执行了 {executed_steps_count} 步（包含元素定位、滚动等子步骤）。
 
-请用以下格式生成测试摘要（使用中文）：
-FINAL_SUMMARY: 测试用例"{case_name}"[状态]。[执行详情]。[目标达成情况]。
+请先在第一行输出测试结果状态，然后输出详细摘要：
 
-若所有步骤均通过：
+STATUS: passed（所有成功标准已验证通过，测试目标完全达成）
+STATUS: failed（存在关键步骤失败、成功标准未满足、或核心功能缺陷）
+STATUS: warning（核心功能正常，但存在非关键的视觉或体验问题）
+
+判定规则：
+- 有 CRITICAL 或 HARD_FAIL → STATUS: failed
+- 仅有 SOFT_FAIL 且测试目标未达成 → STATUS: failed
+- 测试目标达成且无 CRITICAL/HARD_FAIL → STATUS: passed
+- 无失败但有 WARNING → STATUS: warning
+- 全部通过 → STATUS: passed
+
+示例输出格式：
+STATUS: passed
 FINAL_SUMMARY: 测试用例"{case_name}"执行完成。共执行 {executed_steps_count} 个步骤，均未出现严重错误。测试目标已达成：[确认说明]。所有成功标准均已满足。
 
-若存在失败步骤：
-FINAL_SUMMARY: 测试用例"{case_name}"在第 [X] 步（共 {executed_steps_count} 步）失败。错误：[描述]。恢复尝试：[如有]。建议：[修复方案]。"""
+STATUS: failed
+FINAL_SUMMARY: 测试用例"{case_name}"在第 [X] 步（共 {executed_steps_count} 步）失败。错误：[描述]。恢复尝试：[如有]。建议：[修复方案]。
+
+STATUS: warning
+FINAL_SUMMARY: 测试用例"{case_name}"执行完成。核心功能正常，但检测到非关键问题：[问题描述]。"""
             else:
                 summary_prompt = f"""Based on the test execution of case "{case_name}", generate a summary.
 
@@ -2398,17 +2445,40 @@ Planned Steps: {planned_steps_count} steps
 Executed Steps: {executed_steps_count} steps (expansion ratio: {step_expansion_ratio}x)
 Failed Steps: {_get_failed_step_indices() or 'None'}
 
+Step Execution Results:
+- Critical errors (CRITICAL): {severity_summary['critical']}
+- Product defects (HARD_FAIL): {severity_summary['hard_fail']}
+- Infrastructure issues (SOFT_FAIL): {severity_summary['soft_fail']} (not product defects, e.g., network timeout, tool errors)
+- Skipped (SKIPPED): {severity_summary['skipped']}
+- Warnings (WARNING): {severity_summary['warning']}
+- Passed (PASSED): {severity_summary['passed']}
+Objective achieved early: {'Yes' if objective_achieved else 'No'}
+
 **Important**: Use executed step numbers when referencing steps. The test had {planned_steps_count} planned steps,
 but the UI Agent executed {executed_steps_count} detailed steps (including sub-steps for element location, scrolling, etc.).
 
-Generate a test summary in this format:
-FINAL_SUMMARY: Test case "{case_name}" [status]. [details about execution]. [objective achievement status].
+Output the test result status on the first line, followed by the detailed summary:
 
-If all steps passed without failures:
+STATUS: passed (all success criteria verified, test objective fully achieved)
+STATUS: failed (critical step failures, unmet success criteria, or core functionality defects)
+STATUS: warning (core functionality works, but non-critical visual or UX issues detected)
+
+Decision rules:
+- CRITICAL or HARD_FAIL present → STATUS: failed
+- Only SOFT_FAIL and objective not achieved → STATUS: failed
+- Objective achieved with no CRITICAL/HARD_FAIL → STATUS: passed
+- No failures but WARNING present → STATUS: warning
+- All passed → STATUS: passed
+
+Example output format:
+STATUS: passed
 FINAL_SUMMARY: Test case "{case_name}" completed successfully. All {executed_steps_count} executed steps completed without critical errors. Test objective achieved: [confirmation]. All success criteria met.
 
-If there were failures:
-FINAL_SUMMARY: Test case "{case_name}" failed at executed step [X] (out of {executed_steps_count} total executed steps). Error: [description]. Recovery attempts: [if any]. Recommendation: [suggested fix]."""
+STATUS: failed
+FINAL_SUMMARY: Test case "{case_name}" failed at executed step [X] (out of {executed_steps_count} total executed steps). Error: [description]. Recovery attempts: [if any]. Recommendation: [suggested fix].
+
+STATUS: warning
+FINAL_SUMMARY: Test case "{case_name}" completed. Core functionality works, but non-critical issues detected: [issue description]."""
 
             # Get and sanitize recent messages (reduced from 6 to 4 to minimize content filter risk)
             recent_messages = []
@@ -2530,43 +2600,63 @@ Generate a brief summary without referencing specific execution details."""
                 final_summary = _make_final_summary(language,
                                                     f'FINAL_SUMMARY: 测试用例"{case_name}"执行完成。共执行 {executed_steps_count} 个步骤，未检测到失败。',
                                                     f'FINAL_SUMMARY: Test case "{case_name}" completed successfully. All {executed_steps_count} executed steps completed without detected failures.')
+                code_determined_status = 'passed'
             else:
                 failed_indices = _get_failed_step_indices()
                 final_summary = _make_final_summary(language,
                                                     f'FINAL_SUMMARY: 测试用例"{case_name}"完成，以下步骤失败：{failed_indices}，请查看执行日志。',
                                                     f'FINAL_SUMMARY: Test case "{case_name}" completed with failures at steps {failed_indices}. Review execution logs for details.')
+                code_determined_status = 'failed'
+                code_failure_type = _derive_failure_type_from_outcomes(step_outcomes)
 
-    # --- Verdict Engine ---
-    verdict_status, verdict_confidence, verdict_failure_type, verdict_reasoning = \
-        _compute_verdict(step_outcomes, warning_steps, objective_achieved)
-    status = verdict_status
-
-    logging.debug(
-        f"Verdict for '{case_name}': {status} "
-        f'(confidence={verdict_confidence:.1f}, type={verdict_failure_type}, '
-        f'reasoning={verdict_reasoning})'
-    )
-
-    # Conservative guard: when verdict says passed but final_summary contains
-    # hard failure indicators (edge case: LLM summary reports failures not
-    # captured by step_outcomes), override to failed.
-    if status == 'passed' and verdict_confidence >= 0.9:
-        final_summary_lower = final_summary.lower()
-        hard_failure_indicators = [
-            '[critical_error:', 'test case failed',
-            'unrecoverable failure', 'aborted at step',
-        ]
-        if any(ind in final_summary_lower for ind in hard_failure_indicators):
-            status = 'failed'
-            verdict_failure_type = 'recoverable'
+    # --- Status Determination: LLM-first + Safety Guard ---
+    if code_determined_status is not None:
+        # Path A: Code-deterministic (critical, abort, exception, objective)
+        status = _apply_safety_guard(code_determined_status, step_outcomes)
+        failure_type = code_failure_type
+        if status == 'failed' and not failure_type:
+            failure_type = _derive_failure_type_from_outcomes(step_outcomes)
+        logging.debug(
+            f"Code-determined status for '{case_name}': {status} "
+            f'(failure_type={failure_type})'
+        )
+    else:
+        # Path B: Normal completion — LLM STATUS with safety guard + verdict fallback
+        llm_status = _parse_llm_status(final_summary)
+        if llm_status:
+            status = _apply_safety_guard(llm_status, step_outcomes)
+            if status != llm_status:
+                logging.warning(
+                    f"Safety guard overrode LLM status '{llm_status}' → '{status}' "
+                    f"for '{case_name}'"
+                )
+            else:
+                logging.debug(f"LLM-determined status for '{case_name}': {status}")
+        else:
+            # Fallback: use deterministic verdict
+            status, _fallback_failure_type = _verdict_fallback(
+                step_outcomes, warning_steps, objective_achieved
+            )
             logging.warning(
-                f"Verdict overridden by hard failure indicators in summary for '{case_name}'"
+                f"LLM did not output valid STATUS for '{case_name}', "
+                f'using verdict fallback: {status}'
             )
 
-    # Classify failure type if the test case failed
-    failure_type = None
+        # Determine failure_type
+        failure_type = None
+        if status == 'failed':
+            failure_type = _derive_failure_type_from_outcomes(step_outcomes)
+
+    # Diagnostic: step outcomes summary
+    severity_counts: Dict[str, int] = {}
+    for o in step_outcomes:
+        severity_counts[o.severity.value] = severity_counts.get(o.severity.value, 0) + 1
+    logging.debug(
+        f"Step outcomes for '{case_name}': {severity_counts}, "
+        f'warning_steps={warning_steps}, objective_achieved={objective_achieved}'
+    )
+
     if status == 'failed':
-        failure_type = _classify_failure_type(final_summary, verdict_failure_type)
         logging.info(f"Test case '{case_name}' failed with type: {failure_type}")
 
     logging.debug(f'=== Agent Worker Completed for {case_name}. ===')
@@ -2721,79 +2811,97 @@ def _is_critical_failure_step(tool_output: str, intermediate_output: str = '') -
     return False
 
 
-def _compute_verdict(
+# ============================================================================
+# Status Determination: LLM-first + Safety Guard helpers
+# ============================================================================
+
+_STATUS_PATTERN = re.compile(
+    r'STATUS:\s*(passed|failed|warning|pass|fail|success|failure)\b',
+    re.IGNORECASE,
+)
+_STATUS_NORMALIZE = {
+    'passed': 'passed', 'pass': 'passed', 'success': 'passed',
+    'failed': 'failed', 'fail': 'failed', 'failure': 'failed',
+    'warning': 'warning',
+}
+
+
+def _parse_llm_status(llm_output: str) -> Optional[str]:
+    """Parse STATUS field from LLM output with tolerant regex + normalization.
+
+    Supports common variants: passed/pass/success → 'passed',
+    failed/fail/failure → 'failed', warning → 'warning'.
+
+    Returns:
+        Normalized status string ('passed', 'failed', 'warning') or None if not found.
+    """
+    if not llm_output:
+        return None
+    match = _STATUS_PATTERN.search(llm_output)
+    if match:
+        return _STATUS_NORMALIZE.get(match.group(1).lower())
+    return None
+
+
+def _derive_failure_type_from_outcomes(step_outcomes: List[StepOutcome]) -> str:
+    """Derive failure_type from step outcomes for reflection skip decisions.
+
+    Returns:
+        'critical', 'product_defect', 'infrastructure', or 'recoverable'.
+    """
+    severities = {o.severity for o in step_outcomes} if step_outcomes else set()
+    if StepSeverity.CRITICAL in severities:
+        return 'critical'
+    if StepSeverity.HARD_FAIL in severities:
+        return 'product_defect'
+    if StepSeverity.SOFT_FAIL in severities:
+        return 'infrastructure'
+    return 'recoverable'
+
+
+def _apply_safety_guard(status: str, step_outcomes: List[StepOutcome]) -> str:
+    """Prevent LLM from upgrading CRITICAL/HARD_FAIL to passed.
+
+    Rules:
+    - CRITICAL exists → must be 'failed' (any other status overridden)
+    - HARD_FAIL exists → 'passed' overridden to 'failed' (warning/failed kept)
+    """
+    severities = {o.severity for o in step_outcomes} if step_outcomes else set()
+    if StepSeverity.CRITICAL in severities and status != 'failed':
+        logging.warning(
+            f"Safety guard: CRITICAL exists, overriding '{status}' → 'failed'"
+        )
+        return 'failed'
+    if StepSeverity.HARD_FAIL in severities and status == 'passed':
+        logging.warning(
+            "Safety guard: HARD_FAIL exists, overriding 'passed' → 'failed'"
+        )
+        return 'failed'
+    return status
+
+
+def _verdict_fallback(
     step_outcomes: List[StepOutcome],
     warning_steps: List[int],
     objective_achieved: bool,
-) -> Tuple[str, float, Optional[str], str]:
-    """Deterministic verdict engine for case status.
+) -> Tuple[str, Optional[str]]:
+    """Deterministic fallback when LLM STATUS is missing.
 
-    Returns (status, confidence, failure_type, reasoning).
-
-    Decision matrix (first match wins, top to bottom):
-    1. Any CRITICAL → failed / critical
-    2. Any HARD_FAIL → failed / product_defect
-    3. objective_achieved + no CRITICAL/HARD_FAIL → passed
-    4. Only SOFT_FAIL (no objective signal) → failed / infrastructure
-    5. Only SKIPPED → passed
-    6. warning_steps present → warning
-    7. All passed → passed
+    Returns:
+        (status, failure_type) tuple.
     """
     severities = {o.severity for o in step_outcomes} if step_outcomes else set()
-
-    # Rule 1: CRITICAL is absolute
     if StepSeverity.CRITICAL in severities:
-        return ('failed', 1.0, 'critical', 'Unrecoverable critical failure detected')
-
-    # Rule 2: HARD_FAIL means product defect
+        return ('failed', 'critical')
     if StepSeverity.HARD_FAIL in severities:
-        return ('failed', 0.9, 'product_defect', 'Product defect: hard failure in test steps')
-
-    # Rule 3: Objective achieved overrides SOFT_FAIL and SKIPPED
+        return ('failed', 'product_defect')
     if objective_achieved:
-        return ('passed', 0.95, None, 'Test objective achieved despite skipped/soft-failed steps')
-
-    # Rule 4: SOFT_FAIL without objective signal
+        return ('passed', None)
     if StepSeverity.SOFT_FAIL in severities:
-        return ('failed', 0.7, 'infrastructure', 'Infrastructure/tool issue without objective achievement')
-
-    # Rule 5: Only SKIPPED (no hard/soft failures, no objective signal)
-    if severities and severities <= {StepSeverity.SKIPPED, StepSeverity.WARNING, StepSeverity.PASSED}:
-        if StepSeverity.SKIPPED in severities:
-            return ('passed', 0.85, None, 'All failures were intentionally skipped')
-
-    # Rule 6: Warning steps
+        return ('failed', 'infrastructure')
     if warning_steps:
-        return ('warning', 0.9, None, 'Passed with warnings')
-
-    # Rule 7: All passed
-    return ('passed', 1.0, None, 'All steps passed')
-
-
-def _classify_failure_type(
-    final_summary: str,
-    verdict_failure_type: Optional[str] = None,
-) -> str:
-    """Classify failure type using verdict engine result, with summary
-    fallback.
-
-    Args:
-        final_summary: The final summary text
-        verdict_failure_type: Failure type from _compute_verdict(), takes priority
-    """
-    if verdict_failure_type:
-        return verdict_failure_type
-
-    if not final_summary:
-        return 'recoverable'
-
-    summary_lower = final_summary.lower()
-    critical_indicators = ('critical failure at step', '[critical_error:')
-    if any(indicator in summary_lower for indicator in critical_indicators):
-        logging.debug('Critical failure pattern detected in summary')
-        return 'critical'
-
-    return 'recoverable'
+        return ('warning', None)
+    return ('passed', None)
 
 
 def _extract_failed_step_details(
