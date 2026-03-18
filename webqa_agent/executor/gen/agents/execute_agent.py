@@ -10,9 +10,11 @@ import datetime
 import json
 import logging
 import re
+import time
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
@@ -37,7 +39,9 @@ from webqa_agent.executor.gen.utils.message_converter import \
     convert_intermediate_steps_to_messages
 from webqa_agent.executor.gen.utils.summary_utils import (i18n_select,
                                                           make_user_summary)
-from webqa_agent.llm.llm_api import EXTENDED_THINKING_EFFORT_MAPPING
+from webqa_agent.llm.llm_api import (
+    EXTENDED_THINKING_EFFORT_MAPPING, extract_usage_details,
+    get_llm_duration_stats, reset_llm_duration_stats)
 from webqa_agent.prompts.agent_execution_prompts import \
     get_execute_system_prompt
 from webqa_agent.prompts.test_planning_prompts import \
@@ -47,11 +51,153 @@ from webqa_agent.tools.base import ActionTypes
 from webqa_agent.tools.registry import get_registry
 from webqa_agent.tools.ux_tool import UIUXViewportTool
 from webqa_agent.tools.verify_tool import UIAssertTool
+from webqa_agent.utils.data_flow_reporter import (
+    record_data_flow_event, serialize_intermediate_steps,
+    serialize_langchain_message)
 from webqa_agent.utils.log_icon import icon
+from webqa_agent.utils.timing_breakdown import (get_tool_timing_bucket,
+                                                reset_tool_timing_bucket)
 
 LONG_STEPS = 30
 RETRY_STABILIZATION_DELAY = 1.0
 MIN_RECOVERY_CONFIDENCE = 0.7
+
+
+class StepLLMTimingCallback(BaseCallbackHandler):
+    """Collect llm call durations for one step execution."""
+
+    def __init__(self) -> None:
+        self._starts: dict[str, float] = {}
+        self._duration_seconds: float = 0.0
+
+    def reset_step(self) -> None:
+        self._starts.clear()
+        self._duration_seconds = 0.0
+
+    def consume_step_duration(self) -> float:
+        duration = self._duration_seconds
+        self.reset_step()
+        return duration
+
+    def on_llm_start(self, serialized: dict[str, Any], prompts: list[str], **kwargs: Any) -> None:
+        _ = serialized
+        _ = prompts
+        run_id = kwargs.get('run_id')
+        if run_id is not None:
+            self._starts[str(run_id)] = time.perf_counter()
+
+    def on_llm_end(self, response: Any, **kwargs: Any) -> None:
+        _ = response
+        run_id = kwargs.get('run_id')
+        if run_id is None:
+            return
+        start = self._starts.pop(str(run_id), None)
+        if start is not None:
+            self._duration_seconds += max(time.perf_counter() - start, 0.0)
+
+    def on_llm_error(self, error: BaseException, **kwargs: Any) -> None:
+        _ = error
+        run_id = kwargs.get('run_id')
+        if run_id is not None:
+            self._starts.pop(str(run_id), None)
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float:
+    """Compute safe ratio with zero guard."""
+    if denominator <= 0:
+        return 0.0
+    return max(numerator / denominator, 0.0)
+
+
+def _build_time_breakdown(
+    *,
+    e2e_duration_seconds: float,
+    llm_duration_seconds: float,
+    message_prep_seconds: float,
+    screenshot_seconds: float,
+    tool_execution_seconds: float,
+    browser_action_seconds: float,
+) -> dict[str, Any]:
+    """Build normalized time breakdown for one step."""
+    e2e = max(float(e2e_duration_seconds), 0.0)
+    llm = max(float(llm_duration_seconds), 0.0)
+    message_prep = max(float(message_prep_seconds), 0.0)
+    screenshot = max(float(screenshot_seconds), 0.0)
+    tool_total = max(float(tool_execution_seconds), 0.0)
+    browser_total = max(float(browser_action_seconds), 0.0)
+
+    system_total = max(e2e - llm, 0.0)
+    message_effective = min(message_prep, system_total)
+    after_message = max(system_total - message_effective, 0.0)
+    screenshot_effective = min(screenshot, after_message)
+    after_screenshot = max(after_message - screenshot_effective, 0.0)
+    tool_effective = min(tool_total, after_screenshot)
+    orchestration_overhead = max(after_screenshot - tool_effective, 0.0)
+
+    return {
+        'e2e_duration_seconds': e2e,
+        'llm_duration_seconds': llm,
+        'system_total_seconds': system_total,
+        'system_breakdown': {
+            'message_prep_seconds': message_effective,
+            'screenshot_seconds': screenshot_effective,
+            'tool_execution_seconds': tool_effective,
+            'browser_action_seconds': min(browser_total, tool_effective),
+            'orchestration_overhead_seconds': orchestration_overhead,
+        },
+        'ratio': {
+            'llm_ratio': _safe_ratio(llm, e2e),
+            'system_ratio': _safe_ratio(system_total, e2e),
+            'message_prep_ratio': _safe_ratio(message_prep, e2e),
+            'screenshot_ratio': _safe_ratio(screenshot, e2e),
+            'tool_execution_ratio': _safe_ratio(tool_effective, e2e),
+            'orchestration_overhead_ratio': _safe_ratio(orchestration_overhead, e2e),
+        },
+    }
+
+
+def _extract_langchain_usage(response: Any) -> tuple[dict[str, int], dict[str, Any]]:
+    """Extract token usage from LangChain AIMessage-compatible responses."""
+    usage_source = getattr(response, 'usage_metadata', None)
+
+    if usage_source is None:
+        response_metadata = getattr(response, 'response_metadata', None)
+        if isinstance(response_metadata, dict):
+            usage_source = (
+                response_metadata.get('token_usage')
+                or response_metadata.get('usage')
+                or response_metadata.get('usage_metadata')
+            )
+
+    return extract_usage_details(usage_source)
+
+
+async def _instrumented_ainvoke(
+    runnable: Any,
+    invoke_input: Any,
+    *,
+    model_name: str,
+    capture_metrics: bool = False,
+) -> Any:
+    """Invoke a Runnable and optionally capture timing/usage metrics."""
+    original_ainvoke = getattr(runnable, 'ainvoke', None)
+    if not callable(original_ainvoke):
+        raise AttributeError(f'{type(runnable).__name__} does not support ainvoke')
+
+    start_ts = time.perf_counter()
+    response = await original_ainvoke(invoke_input)
+    if capture_metrics:
+        usage_details, usage_raw = _extract_langchain_usage(response)
+        duration_ms = int((time.perf_counter() - start_ts) * 1000)
+        invoke_metrics = {
+            'model': model_name,
+            'duration_ms': duration_ms,
+            'duration_seconds': duration_ms / 1000.0,
+            'token_usage': usage_details,
+            'usage_raw': usage_raw,
+        }
+        return response, invoke_metrics
+    return response
 
 
 # ============================================================================
@@ -536,6 +682,12 @@ async def generate_dynamic_steps_with_llm(
                 'steps': [],
                 'confidence': 0.0,
             }
+        case_payload = {}
+        if isinstance(current_case, dict):
+            case_payload = {
+                'case_id': current_case.get('case_id', ''),
+                'case_name': current_case.get('name', ''),
+            }
 
         try:
             # Build failure recovery prompt
@@ -658,7 +810,6 @@ Use this logic to select strategy:
 □ Is confidence realistic (not always 0.9)?
 □ Does reason explain the root cause?
 """
-
             # Call LLM with multi-modal context
             if screenshot:
                 messages = [
@@ -686,7 +837,23 @@ Use this logic to select strategy:
                     {'role': 'user', 'content': failure_prompt},
                 ]
 
-            response = await llm.ainvoke(messages)
+            record_data_flow_event(
+                stage='dynamic_steps',
+                event_type='failure_recovery_request',
+                payload={
+                    **case_payload,
+                    'failed_instruction': failed_instruction,
+                    'error_message': error_message,
+                    'executed_steps': executed_steps,
+                    'messages': messages,
+                },
+            )
+            response, llm_metrics = await _instrumented_ainvoke(
+                llm,
+                messages,
+                model_name=getattr(llm, 'model_name', 'unknown-model'),
+                capture_metrics=True,
+            )
             response_text = (
                 response.content if hasattr(response, 'content') else str(response)
             )
@@ -781,6 +948,19 @@ Use this logic to select strategy:
                     f'Failure recovery strategy: {strategy} (confidence: {confidence:.2f})'
                 )
                 logging.debug(f"Recovery reason: {result.get('reason', 'N/A')}")
+                record_data_flow_event(
+                    stage='dynamic_steps',
+                    event_type='failure_recovery_response',
+                    payload={
+                        **case_payload,
+                        'strategy': strategy,
+                        'reason': result.get('reason', 'No reason provided'),
+                        'steps': result.get('steps', []),
+                        'confidence': confidence,
+                        'llm_metrics': llm_metrics,
+                        'raw_response': response_text,
+                    },
+                )
 
                 return {
                     'strategy': strategy,
@@ -791,6 +971,18 @@ Use this logic to select strategy:
 
             except json.JSONDecodeError as e:
                 logging.error(f'Failed to parse failure recovery LLM response: {e}')
+                record_data_flow_event(
+                    stage='dynamic_steps',
+                    event_type='failure_recovery_response',
+                    payload={
+                        **case_payload,
+                        'strategy': 'abort',
+                        'reason': 'JSON parsing failed',
+                        'error': str(e),
+                        'llm_metrics': llm_metrics,
+                        'raw_response': response_text,
+                    },
+                )
                 return {
                     'strategy': 'abort',
                     'reason': 'JSON parsing failed',
@@ -800,6 +992,16 @@ Use this logic to select strategy:
 
         except Exception as e:
             logging.error(f'Error in failure recovery mode: {e}')
+            record_data_flow_event(
+                stage='dynamic_steps',
+                event_type='failure_recovery_response',
+                payload={
+                    **case_payload,
+                    'strategy': 'abort',
+                    'reason': f'Recovery failed: {str(e)}',
+                    'error': str(e),
+                },
+            )
             return {
                 'strategy': 'abort',
                 'reason': f'Recovery failed: {str(e)}',
@@ -810,6 +1012,12 @@ Use this logic to select strategy:
     # === DOM CHANGE MODE (Original Logic) ===
     if not dom_diff:
         return {'strategy': 'insert', 'reason': 'No new elements detected', 'steps': []}
+    case_payload = {}
+    if isinstance(current_case, dict):
+        case_payload = {
+            'case_id': current_case.get('case_id', ''),
+            'case_name': current_case.get('name', ''),
+        }
 
     try:
         # Prepare new element information
@@ -931,7 +1139,23 @@ Please analyze these new UI elements using the QAG methodology and generate appr
                 {'role': 'user', 'content': user_prompt},
             ]
 
-        response = await llm.ainvoke(messages)
+        record_data_flow_event(
+            stage='dynamic_steps',
+            event_type='dom_change_request',
+            payload={
+                **case_payload,
+                'last_action': last_action,
+                'step_success': step_success,
+                'new_elements_count': len(new_elements),
+                'messages': messages,
+            },
+        )
+        response, llm_metrics = await _instrumented_ainvoke(
+            llm,
+            messages,
+            model_name=getattr(llm, 'model_name', 'unknown-model'),
+            capture_metrics=True,
+        )
 
         # Parse response
         if hasattr(response, 'content'):
@@ -1041,11 +1265,36 @@ Please analyze these new UI elements using the QAG methodology and generate appr
                         'q3_remaining_redundant': q3_remaining_redundant,
                         'q4_abstraction_gap': q4_abstraction_gap,
                     }
+                record_data_flow_event(
+                    stage='dynamic_steps',
+                    event_type='dom_change_response',
+                    payload={
+                        **case_payload,
+                        'strategy': strategy,
+                        'reason': reason,
+                        'steps': valid_steps,
+                        'analysis': result_data.get('analysis'),
+                        'llm_metrics': llm_metrics,
+                        'raw_response': response_text,
+                    },
+                )
 
                 return result_data
             else:
                 logging.warning(
                     'LLM response missing required fields (strategy, steps)'
+                )
+                record_data_flow_event(
+                    stage='dynamic_steps',
+                    event_type='dom_change_response',
+                    payload={
+                        **case_payload,
+                        'strategy': 'insert',
+                        'reason': 'Invalid response format',
+                        'steps': [],
+                        'llm_metrics': llm_metrics,
+                        'raw_response': response_text,
+                    },
                 )
                 return {
                     'strategy': 'insert',
@@ -1059,10 +1308,39 @@ Please analyze these new UI elements using the QAG methodology and generate appr
             logging.debug(
                 f'Extracted JSON content: {extract_json_from_response(response_text)[:500]}...'
             )
+            record_data_flow_event(
+                stage='dynamic_steps',
+                event_type='dom_change_response',
+                payload={
+                    **case_payload,
+                    'strategy': 'insert',
+                    'reason': 'JSON parsing failed',
+                    'steps': [],
+                    'error': str(e),
+                    'llm_metrics': llm_metrics,
+                    'raw_response': response_text,
+                },
+            )
             return {'strategy': 'insert', 'reason': 'JSON parsing failed', 'steps': []}
 
     except Exception as e:
         logging.error(f'Error generating dynamic steps with LLM: {e}')
+        record_data_flow_event(
+            stage='dynamic_steps',
+            event_type='dom_change_response',
+            payload={
+                'case_id': current_case.get('case_id', '')
+                if isinstance(current_case, dict)
+                else '',
+                'case_name': current_case.get('name', '')
+                if isinstance(current_case, dict)
+                else '',
+                'strategy': 'insert',
+                'reason': f'Generation failed: {str(e)}',
+                'steps': [],
+                'error': str(e),
+            },
+        )
         return {
             'strategy': 'insert',
             'reason': f'Generation failed: {str(e)}',
@@ -1132,7 +1410,19 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     """
     case = state['test_case']
     case_name = case.get('name', 'Unnamed Test Case')
+    report_dir = state.get('report_config', {}).get('report_dir')
     completed_cases = state.get('completed_cases', [])
+    record_data_flow_event(
+        stage='agent_execution',
+        event_type='case_execution_start',
+        payload={
+            'case_id': case.get('case_id', ''),
+            'case_name': case_name,
+            'case': case,
+            'completed_case_count': len(completed_cases),
+        },
+        report_dir=report_dir,
+    )
 
     logging.debug(f'=== Starting Agent Worker for Test Case: {case_name} ===')
     logging.debug(f"Test case objective: {case.get('objective', 'Not specified')}")
@@ -1141,19 +1431,14 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     logging.debug(f'Previously completed cases: {len(completed_cases)}')
 
     ui_tester_instance = config['configurable']['ui_tester_instance']
+    ui_tester_instance.report_dir = report_dir
 
-    # Use externalized case recorder from graph.py (survives timeout),
-    # or create locally as fallback for backward compatibility
     case_recorder = config.get('configurable', {}).get('case_recorder')
     if case_recorder is None:
         case_recorder = CentralCaseRecorder()
         case_recorder.start_case(case_name, case_data=case)
 
-    # Expose recorder to UITester so it can record action/verify steps automatically
     ui_tester_instance.central_case_recorder = case_recorder
-
-    # Deep-copy original steps BEFORE any execution or adaptive recovery
-    # case_steps[i] = new_steps[0] modifies the list in-place, corrupting the original plan
     original_planned_steps = copy.deepcopy(case.get('steps', []))
 
     language = state.get('language', 'zh-CN')
@@ -1164,69 +1449,44 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     )
 
     llm_config = ui_tester_instance.llm.llm_config
-
     logging.info(f"{icon['running']} Agent worker for test case started: {case_name}")
 
-    # Detect provider based on model name for LangChain integration
     model_name = llm_config.get('model', 'gpt-4o-mini')
     provider = _detect_llm_provider(model_name)
-
-    # Build LLM kwargs based on provider
     llm_kwargs = {
         'model': model_name,
         'api_key': llm_config.get('api_key'),
     }
 
-    # Add base_url with provider-specific handling
     base_url = llm_config.get('base_url')
     if base_url:
-        # OpenAI, Gemini, and Anthropic support base_url directly
         llm_kwargs['base_url'] = base_url
-    else:
-        # Set default base_url for Gemini if not explicitly configured
-        if provider == 'gemini':
-            llm_kwargs['base_url'] = (
-                'https://generativelanguage.googleapis.com/v1beta/openai/'
-            )
-            logging.debug('Gemini using official OpenAI compatibility endpoint')
+    elif provider == 'gemini':
+        llm_kwargs['base_url'] = (
+            'https://generativelanguage.googleapis.com/v1beta/openai/'
+        )
+        logging.debug('Gemini using official OpenAI compatibility endpoint')
 
-    # Add temperature with provider-specific defaults
-    # Claude and Gemini default to 1.0, OpenAI defaults to 0.1
-    if provider in ('anthropic', 'gemini'):
-        default_temp = 1.0
-    else:
-        default_temp = 0.1
+    default_temp = 1.0 if provider in ('anthropic', 'gemini') else 0.1
     cfg_temp = llm_config.get('temperature', default_temp)
     llm_kwargs['temperature'] = cfg_temp
 
-    # Add top_p if specified
     cfg_top_p = llm_config.get('top_p')
     if cfg_top_p is not None:
         llm_kwargs['top_p'] = cfg_top_p
 
-    # Add max_tokens if specified (with provider-specific defaults)
-    # Claude and Gemini default to 4096, OpenAI defaults to 4096
     cfg_max_tokens = llm_config.get('max_tokens', 4096)
     llm_kwargs['max_tokens'] = cfg_max_tokens
 
-    # For Claude: Maps reasoning.effort → thinking.budget_tokens
-    # Claude uses Extended Thinking API with token budgets (1K-20K tokens)
-    # This is Claude-specific: thinking={"type": "enabled", "budget_tokens": N}
-    # Ref: https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking
     if provider == 'anthropic':
         reasoning_config = llm_config.get('reasoning')
         if isinstance(reasoning_config, dict):
             effort = reasoning_config.get('effort')
             if effort:
-                # Use shared effort mapping constant for Extended Thinking configuration
-                # Format: {"type": "enabled", "budget_tokens": N}
                 budget = EXTENDED_THINKING_EFFORT_MAPPING.get(effort.lower())
                 if budget:
-                    # Validate: budget_tokens must be < max_tokens (Anthropic API requirement)
                     if budget >= cfg_max_tokens:
-                        recommended_max = int(
-                            budget / 0.5
-                        )  # 50% ratio as middle ground
+                        recommended_max = int(budget / 0.5)
                         logging.warning(
                             f'Extended Thinking: budget_tokens ({budget}) >= max_tokens ({cfg_max_tokens}). '
                             f'Auto-adjusting budget to {cfg_max_tokens - 1}. '
@@ -1242,40 +1502,31 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         f'Claude thinking enabled with budget_tokens={budget} based on effort={effort}'
                     )
 
-    # For OpenAI and Gemini: Maps reasoning.effort → reasoning_effort parameter
-    # Both providers use OpenAI SDK format but with different implementations:
-    # - OpenAI: Native reasoning models (o1, o3) with built-in reasoning
-    # - Gemini: OpenAI compatibility layer (generativelanguage.googleapis.com/v1beta/openai/)
-    # Ref: https://ai.google.dev/gemini-api/docs/openai (Gemini OpenAI compatibility)
     if provider in ('openai', 'gemini'):
         reasoning_config = llm_config.get('reasoning')
         if isinstance(reasoning_config, dict):
             effort = reasoning_config.get('effort')
             if effort:
-                # Map effort to reasoning_effort for ChatOpenAI (OpenAI/Gemini compatible)
-                # OpenAI o1/o3 and Gemini 2.5/3.x support: low, medium, high
-                # We map 'minimal' → 'low' since OpenAI doesn't support 'minimal'
                 effort_mapping = {
-                    'minimal': 'low',  # Map minimal to low (OpenAI doesn't have 'minimal')
+                    'minimal': 'low',
                     'low': 'low',
                     'medium': 'medium',
                     'high': 'high',
                 }
                 reasoning_effort = effort_mapping.get(effort.lower())
                 if reasoning_effort:
-                    # Use model_kwargs for ChatOpenAI extra parameters
-                    if 'model_kwargs' not in llm_kwargs:
-                        llm_kwargs['model_kwargs'] = {}
+                    llm_kwargs.setdefault('model_kwargs', {})
                     llm_kwargs['model_kwargs']['reasoning_effort'] = reasoning_effort
                     logging.debug(
                         f'{provider.capitalize()} reasoning_effort set to {reasoning_effort} based on effort={effort}'
                     )
 
-    # Add request timeout to prevent indefinite hangs during concurrent execution
     cfg_timeout = llm_config.get('timeout') or 360
     logging.debug(f'LLM request timeout set to {cfg_timeout}s')
+    step_llm_timing_callback = StepLLMTimingCallback()
+    llm_kwargs.setdefault('callbacks', [])
+    llm_kwargs['callbacks'].append(step_llm_timing_callback)
 
-    # Instantiate appropriate LangChain chat model
     if provider == 'anthropic':
         if not LANGCHAIN_ANTHROPIC_AVAILABLE:
             raise ImportError(
@@ -1286,7 +1537,6 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         llm = ChatAnthropic(**llm_kwargs)
         logging.debug('Using ChatAnthropic for LangChain integration')
     else:
-        # OpenAI and Gemini models use ChatOpenAI (via OpenAI SDK)
         llm_kwargs['timeout'] = cfg_timeout
         llm = ChatOpenAI(**llm_kwargs)
         logging.debug(
@@ -1302,17 +1552,14 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         f"LLM configured: {llm_config.get('model')} at {llm_config.get('base_url')}"
     )
 
-    # Extract enabled_custom_tools from state (passed from GenExecutor via LangGraph)
     enabled_custom_tools = state.get('enabled_custom_tools', [])
     logging.debug(f'Enabled custom tools from config: {enabled_custom_tools}')
 
-    # Instantiate tools via registry with custom tools filtering
     tools = _get_tools(
         ui_tester_instance, llm_config, case_recorder, enabled_custom_tools
     )
     logging.debug(f'Tools initialized: {[tool.name for tool in tools]}')
 
-    # The prompt now includes the system message
     prompt = ChatPromptTemplate.from_messages(
         [
             ('system', system_prompt_string),
@@ -1321,7 +1568,6 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         ]
     )
 
-    # Create the agent
     agent = create_tool_calling_agent(llm, tools, prompt)
     agent_executor = AgentExecutor(
         agent=agent,
@@ -1405,13 +1651,25 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     content=f'Now, execute this preamble action: {instruction_to_execute}'
                 )
             )
+            record_data_flow_event(
+                stage='agent_execution',
+                event_type='preamble_request',
+                payload={
+                    'case_id': case.get('case_id', ''),
+                    'case_name': case_name,
+                    'preamble_step_index': i + 1,
+                    'instruction': instruction_to_execute,
+                },
+                report_dir=report_dir,
+            )
 
             try:
                 # Use a simple invoke, as preamble steps should be straightforward
                 logging.debug(f'Executing preamble action {i + 1} - Calling Agent...')
                 start_time = datetime.datetime.now()
-
-                result = await agent_executor.ainvoke({'messages': preamble_messages})
+                result = await agent_executor.ainvoke(
+                    {'messages': preamble_messages}
+                )
 
                 preamble_messages = result.get('messages', preamble_messages)
                 # AgentExecutor may not return messages, check for intermediate_steps instead
@@ -1434,6 +1692,23 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 )
                 logging.debug(f'Preamble action {i + 1} result: {tool_output[:200]}...')
                 preamble_messages.append(AIMessage(content=tool_output))
+                record_data_flow_event(
+                    stage='agent_execution',
+                    event_type='preamble_response',
+                    payload={
+                        'case_id': case.get('case_id', ''),
+                        'case_name': case_name,
+                        'preamble_step_index': i + 1,
+                        'instruction': instruction_to_execute,
+                        'status': 'ok',
+                        'duration_seconds': duration,
+                        'output': tool_output,
+                        'intermediate_steps': serialize_intermediate_steps(
+                            result.get('intermediate_steps')
+                        ),
+                    },
+                    report_dir=report_dir,
+                )
 
                 # Safely check for failure in intermediate steps
                 intermediate_output = safe_get_intermediate_step(
@@ -1481,6 +1756,20 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         },
                         'failed_step_details': failed_step_details,
                     }
+                    record_data_flow_event(
+                        stage='agent_execution',
+                        event_type='preamble_response',
+                        payload={
+                            'case_id': case.get('case_id', ''),
+                            'case_name': case_name,
+                            'preamble_step_index': i + 1,
+                            'instruction': instruction_to_execute,
+                            'status': 'failed',
+                            'output': tool_output,
+                            'case_result': case_result,
+                        },
+                        report_dir=report_dir,
+                    )
                     return {
                         'case_result': case_result,
                         'current_case_steps': [],
@@ -1533,6 +1822,20 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     },
                     'failed_step_details': failed_step_details,
                 }
+                record_data_flow_event(
+                    stage='agent_execution',
+                    event_type='preamble_response',
+                    payload={
+                        'case_id': case.get('case_id', ''),
+                        'case_name': case_name,
+                        'preamble_step_index': i + 1,
+                        'instruction': instruction_to_execute,
+                        'status': 'exception',
+                        'error': str(e),
+                        'case_result': case_result,
+                    },
+                    report_dir=report_dir,
+                )
                 return {
                     'case_result': case_result,
                     'current_case_steps': [],
@@ -1642,6 +1945,19 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         logging.info(
             f'Executing Step {i + 1}/{total_steps} ({step_type}), step instruction: {instruction_to_execute}'
         )
+        record_data_flow_event(
+            stage='agent_execution',
+            event_type='step_request',
+            payload={
+                'case_id': case.get('case_id', ''),
+                'case_name': case_name,
+                'planned_step_index': i + 1,
+                'step_type': step_type,
+                'instruction': instruction_to_execute,
+                'messages': [serialize_langchain_message(msg) for msg in messages],
+            },
+            report_dir=report_dir,
+        )
 
         # Define instruction templates for variation
         instruction_templates = [
@@ -1655,14 +1971,20 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         formatted_instruction = prompt_template.format(
             instruction=instruction_to_execute
         )
+        reset_tool_timing_bucket()
+        reset_llm_duration_stats()
+        step_llm_timing_callback.reset_step()
 
         # --- Multi-Modal Context Generation ---
+        prep_started = time.perf_counter()
         page = ui_tester_instance.browser_session.page
         dp = DeepCrawler(page)
+        screenshot_started = time.perf_counter()
         await dp.crawl(highlight=True, viewport_only=True)
         screenshot, _ = await ui_tester_instance._actions.b64_page_screenshot(
             file_name=f'step_{i + 1}_vision', context='agent'
         )
+        screenshot_seconds = max(time.perf_counter() - screenshot_started, 0.0)
         await dp.remove_marker()
         logging.debug('Generated highlighted screenshot for the agent.')
         # ------------------------------------
@@ -1708,6 +2030,29 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         logging.debug(
             f'Pruned message history for token optimization. Original length: {len(current_messages)}, Pruned length: {len(pruned_messages)}'
         )
+        message_prep_seconds = max(time.perf_counter() - prep_started, 0.0)
+        record_data_flow_event(
+            stage='agent_execution',
+            event_type='step_input_sent',
+            payload={
+                'case_id': case.get('case_id', ''),
+                'case_name': case_name,
+                'planned_step_index': i + 1,
+                'step_type': step_type,
+                'instruction': instruction_to_execute,
+                'messages_with_step': [
+                    serialize_langchain_message(msg) for msg in current_messages
+                ],
+                'messages_sent_to_agent': [
+                    serialize_langchain_message(msg) for msg in pruned_messages
+                ],
+                'timing_hints': {
+                    'message_prep_seconds': message_prep_seconds,
+                    'screenshot_seconds': screenshot_seconds,
+                },
+            },
+            report_dir=report_dir,
+        )
         # ---------------------------------------------
 
         # Reset per-step; prevents post-loop from using stale output on timeout/exception
@@ -1741,6 +2086,14 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 logging.error(
                     f'Step {i + 1} ({step_type}) timed out after {step_timeout:.0f}s'
                 )
+                timeout_breakdown = _build_time_breakdown(
+                    e2e_duration_seconds=step_timeout,
+                    llm_duration_seconds=0.0,
+                    message_prep_seconds=message_prep_seconds,
+                    screenshot_seconds=screenshot_seconds,
+                    tool_execution_seconds=0.0,
+                    browser_action_seconds=0.0,
+                )
                 case_recorder.add_step(
                     description=instruction_to_execute or f'Step {i + 1}',
                     status='warning',
@@ -1752,6 +2105,21 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     severity=StepSeverity.HARD_FAIL,
                     description=f'System timeout: step timed out after {step_timeout:.0f}s',
                 ))
+                record_data_flow_event(
+                    stage='agent_execution',
+                    event_type='step_response',
+                    payload={
+                        'case_id': case.get('case_id', ''),
+                        'case_name': case_name,
+                        'planned_step_index': i + 1,
+                        'step_type': step_type,
+                        'instruction': instruction_to_execute,
+                        'status': 'timeout',
+                        'duration_seconds': step_timeout,
+                        'time_breakdown': timeout_breakdown,
+                    },
+                    report_dir=report_dir,
+                )
                 # System error: abort case immediately
                 _timeout_exc = asyncio.TimeoutError(f'Step timed out after {step_timeout:.0f}s')
                 final_summary = get_system_error_summary(_timeout_exc, language)
@@ -1789,12 +2157,58 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             raw_output = result.get('output', '')
             # Extract text content for string operations
             tool_output = extract_text_content(raw_output)
+            llm_api_stats = get_llm_duration_stats()
+            llm_callback_seconds = step_llm_timing_callback.consume_step_duration()
+            # Use max() instead of sum to avoid double-counting when both
+            # LangChain callback and LLMAPI accumulator measure overlapping calls.
+            llm_duration_seconds = max(
+                float(llm_callback_seconds),
+                float(llm_api_stats.get('duration_seconds', 0.0)),
+                0.0,
+            )
+            llm_token_usage = dict(llm_api_stats.get('token_usage', {}))
+
+            tool_timing_bucket = get_tool_timing_bucket()
+            tool_execution_seconds = float(tool_timing_bucket.get('tool_execution_seconds', 0.0))
+            browser_action_seconds = float(tool_timing_bucket.get('browser_action_seconds', 0.0))
+            time_breakdown = _build_time_breakdown(
+                e2e_duration_seconds=duration,
+                llm_duration_seconds=llm_duration_seconds,
+                message_prep_seconds=message_prep_seconds,
+                screenshot_seconds=screenshot_seconds,
+                tool_execution_seconds=tool_execution_seconds,
+                browser_action_seconds=browser_action_seconds,
+            )
 
             logging.debug(
                 f'Step {i + 1} {step_type} completed in {duration:.2f} seconds'
             )
             logging.debug(f'Step {i + 1} tool output: {tool_output}')
             messages.append(AIMessage(content=tool_output))
+            record_data_flow_event(
+                stage='agent_execution',
+                event_type='step_response',
+                payload={
+                    'case_id': case.get('case_id', ''),
+                    'case_name': case_name,
+                    'planned_step_index': i + 1,
+                    'step_type': step_type,
+                    'instruction': instruction_to_execute,
+                    'status': 'ok',
+                    'duration_seconds': duration,
+                    'llm_metrics': {
+                        'duration_seconds': llm_duration_seconds,
+                        'token_usage': llm_token_usage,
+                    },
+                    'tool_timing': tool_timing_bucket,
+                    'time_breakdown': time_breakdown,
+                    'output': tool_output,
+                    'intermediate_steps': serialize_intermediate_steps(
+                        result.get('intermediate_steps')
+                    ),
+                },
+                report_dir=report_dir,
+            )
 
             # Check for warnings in the tool output (e.g., UX issues)
             # Check both agent output and raw tool result from intermediate steps
@@ -2708,7 +3122,11 @@ USER_SUMMARY: [Feature name] mostly works, but [user-perceivable non-critical is
                     logging.debug(
                         f'Attempting summary generation (attempt {attempt + 1}/{max_retries})'
                     )
-                    response = await llm.ainvoke(full_prompt)
+                    response = await _instrumented_ainvoke(
+                        llm,
+                        full_prompt,
+                        model_name=getattr(llm, 'model_name', 'unknown-model'),
+                    )
 
                     # Successfully got response
                     if hasattr(response, 'content'):
@@ -2948,6 +3366,16 @@ Generate a brief summary without referencing specific execution details."""
         },
         'failed_step_details': failed_step_details,
     }
+    record_data_flow_event(
+        stage='agent_execution',
+        event_type='case_execution_result',
+        payload={
+            'case_id': case.get('case_id', ''),
+            'case_name': case_name,
+            'case_result': case_result,
+        },
+        report_dir=report_dir,
+    )
 
     # Include the modified case if dynamic steps were added
     result = {'case_result': case_result}

@@ -25,11 +25,13 @@ from webqa_agent.executor.gen.utils.case_recorder import CentralCaseRecorder
 from webqa_agent.executor.gen.utils.error_classifier import is_system_error
 from webqa_agent.executor.gen.utils.summary_utils import (i18n_select,
                                                           make_user_summary)
+from webqa_agent.llm.llm_api import get_last_llm_call_metrics
 from webqa_agent.prompts.test_planning_prompts import (
     get_element_filtering_system_prompt, get_element_filtering_user_prompt,
     get_planning_prompt, get_reflection_prompt)
 from webqa_agent.tools.core.ui_driver import UITester
 from webqa_agent.utils import Display, i18n
+from webqa_agent.utils.data_flow_reporter import record_data_flow_event
 from webqa_agent.utils.get_log import test_id_var
 from webqa_agent.utils.log_icon import icon
 from webqa_agent.utils.reporting_utils import save_test_result_json
@@ -131,6 +133,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
         'business_objectives', 'No specific business objectives provided.'
     )
     language = state.get('language', 'zh-CN')
+    report_dir = _resolve_report_dir(state)
 
     logging.debug(
         '=== Stage 0: Generating initial test plan with two-stage architecture ==='
@@ -229,6 +232,19 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             elements=filtered_elements_for_llm,
             max_elements=50,
         )
+        record_data_flow_event(
+            stage='planning',
+            event_type='stage1_filter_request',
+            payload={
+                'url': state['url'],
+                'business_objectives': business_objectives,
+                'filter_model': ui_tester.llm.filter_model,
+                'system_prompt': filter_system,
+                'user_prompt': filter_user,
+                'interactive_elements_count': len(all_elements),
+            },
+            report_dir=report_dir,
+        )
 
         # Use lightweight model for filtering (cost-effective)
         filter_model = ui_tester.llm.filter_model
@@ -248,6 +264,18 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             model_override=filter_model,
         )
         stage1_duration = (datetime.datetime.now() - stage1_start).total_seconds()
+        stage1_llm_metrics = get_last_llm_call_metrics() or {}
+        record_data_flow_event(
+            stage='planning',
+            event_type='stage1_filter_response',
+            payload={
+                'url': state['url'],
+                'response': filter_response,
+                'duration_seconds': stage1_duration,
+                'llm_metrics': stage1_llm_metrics,
+            },
+            report_dir=report_dir,
+        )
         logging.debug(f'Stage 1 completed in {stage1_duration:.2f} seconds')
 
         # Parse filtering result
@@ -352,6 +380,18 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             navigation_map=navigation_map,
             enabled_custom_tools=enabled_custom_tools,
         )
+        record_data_flow_event(
+            stage='planning',
+            event_type='stage2_case_planning_request',
+            payload={
+                'url': state['url'],
+                'business_objectives': enhanced_business_objectives,
+                'system_prompt': system_prompt,
+                'user_prompt': user_prompt,
+                'has_screenshot': bool(screenshot),
+            },
+            report_dir=report_dir,
+        )
 
         logging.info('Stage 2: Sending request to primary LLM...')
         start_time = datetime.datetime.now()
@@ -367,6 +407,19 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
         end_time = datetime.datetime.now()
         stage2_duration = (end_time - start_time).total_seconds()
         total_duration = stage1_duration + stage2_duration
+        stage2_llm_metrics = get_last_llm_call_metrics() or {}
+        record_data_flow_event(
+            stage='planning',
+            event_type='stage2_case_planning_response',
+            payload={
+                'url': state['url'],
+                'response': response,
+                'duration_seconds': stage2_duration,
+                'total_duration_seconds': total_duration,
+                'llm_metrics': stage2_llm_metrics,
+            },
+            report_dir=report_dir,
+        )
         logging.info(
             f'Two-stage planning completed: Stage 1 ({stage1_duration:.2f}s) + Stage 2 ({stage2_duration:.2f}s) = Total {total_duration:.2f}s'
         )
@@ -401,6 +454,16 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
                 logging.error(f'Failed to save initial test cases to file: {e}')
 
             logging.debug(f'Generated {len(test_cases)} test cases.')
+            record_data_flow_event(
+                stage='planning',
+                event_type='planned_test_cases',
+                payload={
+                    'url': state['url'],
+                    'test_cases_count': len(test_cases),
+                    'test_cases': test_cases,
+                },
+                report_dir=report_dir,
+            )
             logging.info(
                 f"{icon['rocket']} Designed {len(test_cases)} functional test cases"
             )
@@ -408,6 +471,17 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
         except (json.JSONDecodeError, IndexError, ValueError) as e:
             error_msg = f'Failed to parse test cases from LLM response: {e}'
             logging.error(f'{error_msg}\nResponse: {response}')
+            record_data_flow_event(
+                stage='planning',
+                event_type='stage2_case_planning_parse_error',
+                payload={
+                    'url': state['url'],
+                    'error': str(e),
+                    'response': response,
+                    'llm_metrics': stage2_llm_metrics,
+                },
+                report_dir=report_dir,
+            )
             return {'test_cases': [], 'planning_error': error_msg}
     finally:
         # Cleanup UITester resources (LLM client, browser listeners)
@@ -537,6 +611,8 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                     )
 
                 # Set testcase context
+                ui_tester.current_case_data = case
+                ui_tester.current_test_name = case_name
                 ui_tester.current_test_objective = case.get(
                     'objective', case.get('name')
                 )
@@ -720,7 +796,7 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                             reflect_state['running_cases'] = list(running_cases - {case_name})
 
                         reflect_result = await _do_reflection(
-                            ui_tester, reflect_state, case_name
+                            ui_tester, reflect_state, case_name, case_id
                         )
 
                         # 处理 REPLAN 结果：将新 cases 加入队列
@@ -768,6 +844,19 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                                         for new_case in unique_cases:
                                             await case_queue.put(new_case)
                                             all_test_cases.append(new_case)
+                                        record_data_flow_event(
+                                            stage='agent_execution',
+                                            event_type='replan_enqueue',
+                                            payload={
+                                                'case_id': case_id,
+                                                'case_name': case_name,
+                                                'replan_count': replan_count,
+                                                'max_replan_count': max_replan_count,
+                                                'new_cases_count': len(unique_cases),
+                                                'new_cases': unique_cases,
+                                            },
+                                            report_dir=_resolve_report_dir(state),
+                                        )
 
                                         logging.info(
                                             f"Worker {worker_id}: REPLAN triggered by '{case_name}', "
@@ -1001,6 +1090,21 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
         f'(initial: {len(test_cases)}, replanned: {len(all_test_cases) - len(test_cases)}, '
         f'replan count: {replan_count}/{max_replan_count})'
     )
+    record_data_flow_event(
+        stage='summary',
+        event_type='run_test_cases_summary',
+        payload={
+            'initial_test_cases_count': len(test_cases),
+            'all_test_cases_count': len(all_test_cases),
+            'completed_cases_count': len(completed_cases),
+            'recorded_cases_count': len(recorded_cases),
+            'replan_count': replan_count,
+            'max_replan_count': max_replan_count,
+            'all_test_cases': all_test_cases,
+            'completed_cases': completed_cases,
+        },
+        report_dir=_resolve_report_dir(state),
+    )
     # Synchronize execution results to cases.json
     # This ensures cases.json reflects actual execution status
     try:
@@ -1038,7 +1142,9 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
     }
 
 
-async def _do_reflection(ui_tester: UITester, state: dict, case_name: str) -> dict:
+async def _do_reflection(
+    ui_tester: UITester, state: dict, case_name: str, case_id: str
+) -> dict:
     """单个 case 的反思分析，在 execute_single_case 内部调用实现并发反思。"""
     try:
         page = await ui_tester.get_current_page()
@@ -1069,15 +1175,43 @@ async def _do_reflection(ui_tester: UITester, state: dict, case_name: str) -> di
             enabled_custom_tools=enabled_custom_tools,
             running_cases=state.get('running_cases', []),
         )
+        report_dir = _resolve_report_dir(state)
+        record_data_flow_event(
+            stage='planning',
+            event_type='reflection_request',
+            payload={
+                'case_id': case_id,
+                'case_name': case_name,
+                'system_prompt': system_prompt,
+                'user_prompt': user_prompt,
+            },
+            report_dir=report_dir,
+        )
 
         logging.info(f'[{case_name}] Sending reflection request to LLM...')
+        reflection_start = datetime.datetime.now()
         response_str = await ui_tester.llm.get_llm_response(
             system_prompt=system_prompt, prompt=user_prompt, images=screenshot
         )
+        reflection_duration = (datetime.datetime.now() - reflection_start).total_seconds()
+        reflection_llm_metrics = get_last_llm_call_metrics() or {}
 
         decision_data = json.loads(response_str)
         decision = decision_data.get('decision', 'CONTINUE').upper()
         logging.debug(f'[{case_name}] Reflection decision: {decision}')
+        record_data_flow_event(
+            stage='planning',
+            event_type='reflection_response',
+            payload={
+                'case_id': case_id,
+                'case_name': case_name,
+                'decision': decision,
+                'response': decision_data,
+                'duration_seconds': reflection_duration,
+                'llm_metrics': reflection_llm_metrics,
+            },
+            report_dir=report_dir,
+        )
 
         result = {'reflection_history': [decision_data]}
         if decision == 'REPLAN' and decision_data.get('new_plan'):
@@ -1090,6 +1224,17 @@ async def _do_reflection(ui_tester: UITester, state: dict, case_name: str) -> di
 
     except json.JSONDecodeError as e:
         logging.error(f'[{case_name}] Failed to parse reflection response: {e}')
+        record_data_flow_event(
+            stage='planning',
+            event_type='reflection_response',
+            payload={
+                'case_id': case_id,
+                'case_name': case_name,
+                'decision': 'CONTINUE',
+                'error': str(e),
+            },
+            report_dir=_resolve_report_dir(state),
+        )
         return {
             'reflection_history': [
                 {
@@ -1101,6 +1246,17 @@ async def _do_reflection(ui_tester: UITester, state: dict, case_name: str) -> di
         }
     except Exception as e:
         logging.error(f'[{case_name}] Reflection error: {e}')
+        record_data_flow_event(
+            stage='planning',
+            event_type='reflection_response',
+            payload={
+                'case_id': case_id,
+                'case_name': case_name,
+                'decision': 'CONTINUE',
+                'error': str(e),
+            },
+            report_dir=_resolve_report_dir(state),
+        )
         return {
             'reflection_history': [
                 {'decision': 'CONTINUE', 'reasoning': str(e), 'new_plan': []}

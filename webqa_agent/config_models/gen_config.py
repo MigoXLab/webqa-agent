@@ -33,6 +33,15 @@ class CustomToolsConfig(BaseModel):
     )
 
 
+class TelemetryConfig(BaseModel):
+    """Telemetry configuration for data-flow time instrumentation."""
+
+    enabled: bool = Field(
+        default=True,
+        description='Whether data-flow telemetry should be recorded.',
+    )
+
+
 class GenConfig(BaseModel):
     """Complete configuration for Gen mode (AI-driven test generation).
 
@@ -66,6 +75,9 @@ class GenConfig(BaseModel):
     )
     custom_tools: CustomToolsConfig = Field(
         default_factory=CustomToolsConfig, description='Custom tools to enable'
+    )
+    telemetry: TelemetryConfig = Field(
+        default_factory=TelemetryConfig, description='Telemetry and observability settings'
     )
 
     max_concurrent_tests: int = Field(

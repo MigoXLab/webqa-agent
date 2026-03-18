@@ -3,7 +3,8 @@
 from webqa_agent.config_models.base_config import (BrowserConfig, LLMConfig,
                                                    LogConfig, ReportConfig)
 from webqa_agent.config_models.gen_config import (CustomToolsConfig,
-                                                  DynamicStepConfig, GenConfig)
+                                                  DynamicStepConfig, GenConfig,
+                                                  TelemetryConfig)
 from webqa_agent.config_models.run_config import RunConfig
 
 __all__ = [
@@ -13,6 +14,7 @@ __all__ = [
     'ReportConfig',
     'CustomToolsConfig',
     'DynamicStepConfig',
+    'TelemetryConfig',
     'GenConfig',
     'RunConfig',
 ]

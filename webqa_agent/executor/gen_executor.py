@@ -14,6 +14,7 @@ from webqa_agent.data import (ParallelTestSession, SubTestReport,
                               TestCategory, TestResult, TestStatus)
 from webqa_agent.executor.gen.utils.case_recorder import get_report_summary
 from webqa_agent.executor.result_aggregator import ResultAggregator
+from webqa_agent.utils.data_flow_reporter import generate_data_flow_report
 from webqa_agent.utils import Display, i18n
 from webqa_agent.utils.get_log import GetLog
 from webqa_agent.utils.log_icon import icon
@@ -119,7 +120,7 @@ class GenExecutor:
             )
 
             # Run LangGraph workflow (AI test generation + execution)
-            test_result = await self._run_langgraph_workflow()
+            test_result = await self._run_langgraph_workflow(custom_report_dir)
 
             # Add result to session
             test_session.test_results[test_result.test_id] = test_result
@@ -216,6 +217,13 @@ class GenExecutor:
             except Exception as agg_err:
                 logger.warning(f'Failed to aggregate/generate report: {agg_err}')
 
+            # Render data flow markdown report from captured JSONL events.
+            if custom_report_dir:
+                try:
+                    generate_data_flow_report(custom_report_dir)
+                except Exception as dataflow_err:
+                    logger.warning(f'Failed to generate data flow report: {dataflow_err}')
+
             # Cleanup Display
             try:
                 await Display.display.stop()
@@ -241,8 +249,11 @@ class GenExecutor:
             result
         )
 
-    async def _run_langgraph_workflow(self) -> TestResult:
+    async def _run_langgraph_workflow(self, report_dir: str) -> TestResult:
         """Run LangGraph workflow for AI test generation.
+
+        Args:
+            report_dir: Active report directory used by data flow instrumentation.
 
         Returns:
             TestResult from LangGraph execution
@@ -277,7 +288,10 @@ class GenExecutor:
             'session_pool': self.session_pool,  # BrowserSessionPool instance
             'llm_config': self.config.llm_config.model_dump(),
             'browser_config': self.config.browser_config.model_dump(),
-            'report_config': self.config.report_config.model_dump(),
+            'report_config': {
+                **self.config.report_config.model_dump(),
+                'report_dir': report_dir,
+            },
         }
 
         graph_config = {'recursion_limit': 100}
