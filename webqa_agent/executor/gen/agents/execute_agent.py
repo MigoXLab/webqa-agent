@@ -2356,6 +2356,12 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     severity=StepSeverity.HARD_FAIL,
                     description=f'Step exception: {str(e)}',
                 ))
+                case_recorder.add_step(
+                    description=instruction_to_execute or f'Step {i + 1}',
+                    status='failed',
+                    step_type=step_type.lower() if step_type else 'action',
+                    model_io=f'Exception: {str(e)}',
+                )
                 final_summary = _make_final_summary(language,
                                                     f"FINAL_SUMMARY: 步骤 '{instruction_to_execute}' 发生异常：{str(e)}",
                                                     f"FINAL_SUMMARY: Step '{instruction_to_execute}' raised an exception: {str(e)}")
