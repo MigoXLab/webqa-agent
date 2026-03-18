@@ -113,6 +113,7 @@ class LinkCheckTool(WebQABaseTool):
             name='detect_dynamic_links',
             category='custom',  # Custom tool - marks as user-defined
             step_type='detect_dynamic_links',  # Explicit step type for planning
+            step_timeout=600.0,  # 10 min — full-site link scanning
             description_short='Detects new links appearing after user interactions (fast: typically <5s)',
             description_long=(
                 'Identifies and validates new links that appear dynamically after user '

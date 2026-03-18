@@ -260,8 +260,8 @@ class CaseJsonSynchronizer:
             if field in recorded:
                 updated_case[field] = recorded[field]
 
-        # Optionally add error information for failed cases
-        if recorded.get('status') == 'failed':
+        # Add error information for failed/warning cases
+        if recorded.get('status') in ('failed', 'warning'):
             for field in ('error', 'failure_type'):
                 if field in recorded:
                     updated_case[field] = recorded[field]

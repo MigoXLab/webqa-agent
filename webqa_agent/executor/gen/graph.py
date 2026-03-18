@@ -22,6 +22,7 @@ from webqa_agent.crawler.feature_detector import detect_page_features
 from webqa_agent.executor.gen.agents.execute_agent import agent_worker_node
 from webqa_agent.executor.gen.state.schemas import MainGraphState
 from webqa_agent.executor.gen.utils.case_recorder import CentralCaseRecorder
+from webqa_agent.executor.gen.utils.error_classifier import is_system_error
 from webqa_agent.prompts.test_planning_prompts import (
     get_element_filtering_system_prompt, get_element_filtering_user_prompt,
     get_planning_prompt, get_reflection_prompt)
@@ -673,14 +674,21 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                     # Check if reflection should be skipped (global config or critical failure)
                     skip_reflection = state.get('skip_reflection', False)
 
-                    if not skip_reflection and case_result and case_result.get('status') == 'failed':
+                    if not skip_reflection and case_result:
                         failure_type = case_result.get('failure_type')
-                        if failure_type in ('critical', 'infrastructure'):
+                        case_status = case_result.get('status')
+
+                        if failure_type == 'system_error':
+                            logging.warning(
+                                f"Worker {worker_id}: System error in '{case_name}', skipping reflection"
+                            )
+                            skip_reflection = True
+                        elif case_status == 'failed' and failure_type in ('critical', 'infrastructure'):
                             logging.warning(
                                 f"Worker {worker_id}: {failure_type} failure in '{case_name}', skipping reflection"
                             )
                             skip_reflection = True
-                        else:
+                        elif case_status == 'failed':
                             logging.info(
                                 f"Worker {worker_id}: Recoverable failure in '{case_name}', will reflect"
                             )
@@ -833,14 +841,18 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                     exc_info=True,
                 )
                 failed = True
+                err_status, err_failure_type = (
+                    ('warning', 'system_error') if is_system_error(e)
+                    else ('failed', 'unexpected_error')
+                )
                 async with results_lock:
                     completed_cases.append(
                         {
                             'case_name': case_name,
                             'case_id': case_id,
-                            'status': 'failed',
-                            'failure_type': 'unexpected_error',
-                            'reason': f'Unexpected error: {str(e)}',
+                            'status': err_status,
+                            'failure_type': err_failure_type,
+                            'reason': f'{type(e).__name__}: {str(e)}',
                         }
                     )
                     _completed_case_count += 1

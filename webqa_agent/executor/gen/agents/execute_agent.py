@@ -31,6 +31,8 @@ from webqa_agent.actions.action_types import (ActionType,
 from webqa_agent.crawler.deep_crawler import DeepCrawler
 from webqa_agent.data.gen_structures import StepOutcome, StepSeverity
 from webqa_agent.executor.gen.utils.case_recorder import CentralCaseRecorder
+from webqa_agent.executor.gen.utils.error_classifier import (
+    get_system_error_summary, is_system_error)
 from webqa_agent.executor.gen.utils.message_converter import \
     convert_intermediate_steps_to_messages
 from webqa_agent.llm.llm_api import EXTENDED_THINKING_EFFORT_MAPPING
@@ -1444,11 +1446,22 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 logging.debug(f'Preamble action {i + 1} completed successfully')
             except Exception as e:
                 logging.error(f'Exception during preamble action {i + 1}: {str(e)}')
-                final_summary = _make_final_summary(language,
-                                                    f"FINAL_SUMMARY: 前置动作 '{instruction_to_execute}' 发生异常：{str(e)}",
-                                                    f"FINAL_SUMMARY: Preamble action '{instruction_to_execute}' raised exception: {str(e)}")
+                if is_system_error(e):
+                    logging.warning(
+                        f'System error during preamble action {i + 1}: '
+                        f'{type(e).__name__}: {e}'
+                    )
+                    final_summary = get_system_error_summary(e, language)
+                    preamble_status = 'warning'
+                    preamble_failure_type = 'system_error'
+                else:
+                    final_summary = _make_final_summary(language,
+                                                        f"FINAL_SUMMARY: 前置动作 '{instruction_to_execute}' 发生异常：{str(e)}",
+                                                        f"FINAL_SUMMARY: Preamble action '{instruction_to_execute}' raised exception: {str(e)}")
+                    preamble_status = 'failed'
+                    preamble_failure_type = 'preamble_exception'
                 # Ensure time data is recorded even on exception
-                case_recorder.finish_case(final_status='failed', final_summary=final_summary)
+                case_recorder.finish_case(final_status=preamble_status, final_summary=final_summary)
                 recorded_case_data = case_recorder.get_case_data()
                 if recorded_case_data is not None:
                     recorded_case_data['original_planned_steps'] = original_planned_steps
@@ -1459,8 +1472,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     'case_name': case_name,
                     'case_id': case.get('case_id', ''),
                     'final_summary': final_summary,
-                    'status': 'failed',
-                    'failure_type': 'preamble_exception',
+                    'status': preamble_status,
+                    'failure_type': preamble_failure_type,
                     'metrics': {
                         'total_steps': metrics.get('total_steps', 0),
                         'passed_steps': metrics.get('passed_steps', 0),
@@ -1525,6 +1538,17 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     # Cache custom tool names for unified format detection (outside loop for performance)
     registry = get_registry()
     custom_tool_names = set(registry.get_tool_names())
+
+    # Build step_type → timeout mapping from tool metadata
+    # Tools can declare step_timeout in their metadata (e.g. 600s for element traversal)
+    step_timeout_map: Dict[str, float] = {}
+    try:
+        for _tool_name in registry.get_tool_names():
+            _meta = registry.get_metadata(_tool_name)
+            if _meta and _meta.step_type and getattr(_meta, 'step_timeout', None):
+                step_timeout_map[_meta.step_type] = _meta.step_timeout
+    except Exception as exc:
+        logging.warning(f'Failed to build step timeout map from registry: {exc}')
 
     i = 0
     while i < len(case_steps):
@@ -1629,17 +1653,17 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             logging.debug(f'Step {i + 1} - Calling Agent to execute {step_type}...')
             start_time = datetime.datetime.now()
 
-            # Step-level timeout: min(300s default, remaining case budget)
-            # Prevents a single step from consuming the entire case timeout
-            step_default_timeout = 300.0  # 5 minutes per step
+            # Step-level timeout: tool-specific or 300s default, capped by remaining case budget
+            # Tools can override via step_timeout in their metadata (e.g. 600s for traversal)
+            tool_timeout = step_timeout_map.get(step_type, 300.0)
             case_start = state.get('_case_start_time')
             case_timeout = state.get('_case_timeout', 1800.0)
             if case_start is not None:
                 elapsed = (datetime.datetime.now() - case_start).total_seconds()
                 remaining_budget = max(case_timeout - elapsed, 30.0)  # At least 30s
-                step_timeout = min(step_default_timeout, remaining_budget)
+                step_timeout = min(tool_timeout, remaining_budget)
             else:
-                step_timeout = step_default_timeout
+                step_timeout = tool_timeout
 
             try:
                 result = await asyncio.wait_for(
@@ -1652,20 +1676,28 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 logging.error(
                     f'Step {i + 1} ({step_type}) timed out after {step_timeout:.0f}s'
                 )
-                # Record timeout as a failed step and skip to next step
                 case_recorder.add_step(
                     description=instruction_to_execute or f'Step {i + 1}',
-                    status='failed',
+                    status='warning',
                     step_type=step_type.lower(),
                     model_io=f'Step timed out after {step_timeout:.0f}s',
                 )
                 step_outcomes.append(StepOutcome(
                     step_index=i + 1,
                     severity=StepSeverity.HARD_FAIL,
-                    description=f'Step timed out after {step_timeout:.0f}s',
+                    description=f'System timeout: step timed out after {step_timeout:.0f}s',
                 ))
-                i += 1
-                continue
+                # System error: abort case immediately
+                final_summary = get_system_error_summary(
+                    asyncio.TimeoutError(f'Step timed out after {step_timeout:.0f}s'),
+                    language,
+                )
+                code_determined_status = 'warning'
+                code_failure_type = 'system_error'
+                logging.warning(
+                    f'System timeout at step {i + 1}, aborting case as warning'
+                )
+                break
 
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()
@@ -2298,16 +2330,37 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
         except Exception as e:
             logging.error(f'Exception during step {i + 1} execution: {str(e)}')
-            step_outcomes.append(StepOutcome(
-                step_index=i + 1,
-                severity=StepSeverity.HARD_FAIL,
-                description=f'Step exception: {str(e)}',
-            ))
-            final_summary = _make_final_summary(language,
-                                                f"FINAL_SUMMARY: 步骤 '{instruction_to_execute}' 发生异常：{str(e)}",
-                                                f"FINAL_SUMMARY: Step '{instruction_to_execute}' raised an exception: {str(e)}")
-            code_determined_status = 'failed'
-            code_failure_type = 'recoverable'
+            if is_system_error(e):
+                # System-level error: mark warning, neutral summary, abort
+                logging.warning(
+                    f'System error at step {i + 1}: {type(e).__name__}: {e}'
+                )
+                step_outcomes.append(StepOutcome(
+                    step_index=i + 1,
+                    severity=StepSeverity.HARD_FAIL,
+                    description=f'System error: {str(e)}',
+                ))
+                case_recorder.add_step(
+                    description=instruction_to_execute or f'Step {i + 1}',
+                    status='warning',
+                    step_type=step_type.lower() if step_type else 'action',
+                    model_io=f'System error: {str(e)}',
+                )
+                final_summary = get_system_error_summary(e, language)
+                code_determined_status = 'warning'
+                code_failure_type = 'system_error'
+            else:
+                # Non-system error: keep existing failed logic
+                step_outcomes.append(StepOutcome(
+                    step_index=i + 1,
+                    severity=StepSeverity.HARD_FAIL,
+                    description=f'Step exception: {str(e)}',
+                ))
+                final_summary = _make_final_summary(language,
+                                                    f"FINAL_SUMMARY: 步骤 '{instruction_to_execute}' 发生异常：{str(e)}",
+                                                    f"FINAL_SUMMARY: Step '{instruction_to_execute}' raised an exception: {str(e)}")
+                code_determined_status = 'failed'
+                code_failure_type = 'recoverable'
             break
 
         # Move to next step
@@ -2420,12 +2473,13 @@ STATUS: passed（所有成功标准已验证通过，测试目标完全达成）
 STATUS: failed（存在关键步骤失败、成功标准未满足、或核心功能缺陷）
 STATUS: warning（核心功能正常，但存在非关键的视觉或体验问题）
 
-判定规则：
+判定规则（严格遵守，不可偏离）：
 - 有 CRITICAL 或 HARD_FAIL → STATUS: failed
 - 仅有 SOFT_FAIL 且测试目标未达成 → STATUS: failed
 - 测试目标达成且无 CRITICAL/HARD_FAIL → STATUS: passed
 - 无失败但有 WARNING → STATUS: warning
 - 全部通过 → STATUS: passed
+- **禁止规则：如果 CRITICAL=0 且 HARD_FAIL=0 且 SOFT_FAIL=0，则禁止输出 STATUS: failed**
 
 示例输出格式：
 STATUS: passed
@@ -2463,12 +2517,13 @@ STATUS: passed (all success criteria verified, test objective fully achieved)
 STATUS: failed (critical step failures, unmet success criteria, or core functionality defects)
 STATUS: warning (core functionality works, but non-critical visual or UX issues detected)
 
-Decision rules:
+Decision rules (strictly follow, no deviation):
 - CRITICAL or HARD_FAIL present → STATUS: failed
 - Only SOFT_FAIL and objective not achieved → STATUS: failed
 - Objective achieved with no CRITICAL/HARD_FAIL → STATUS: passed
 - No failures but WARNING present → STATUS: warning
 - All passed → STATUS: passed
+- **Prohibition: If CRITICAL=0 AND HARD_FAIL=0 AND SOFT_FAIL=0, you MUST NOT output STATUS: failed**
 
 Example output format:
 STATUS: passed
@@ -2564,7 +2619,16 @@ Generate a brief summary without referencing specific execution details."""
                 raise Exception('LLM summary generation failed after retries')
 
             # Ensure the summary has the correct format
-            if agent_output and not agent_output.strip().startswith('FINAL_SUMMARY:'):
+            # LLM may output "STATUS: passed\nFINAL_SUMMARY: ..." — strip STATUS
+            # line before checking prefix to avoid wrapping an already-formatted
+            # summary (which would produce a double FINAL_SUMMARY).
+            _summary_output = agent_output
+            if agent_output and agent_output.strip().startswith('STATUS:'):
+                lines = agent_output.strip().split('\n', 1)
+                if len(lines) > 1:
+                    _summary_output = lines[1].strip()
+
+            if _summary_output and not _summary_output.startswith('FINAL_SUMMARY:'):
                 # Auto-format the response if it doesn't follow the expected format
                 logging.debug(
                     'LLM summary missing FINAL_SUMMARY prefix, auto-formatting'
@@ -2581,7 +2645,8 @@ Generate a brief summary without referencing specific execution details."""
                                             f'FINAL_SUMMARY: Test case "{case_name}" failed. {agent_output}')
                     )
             else:
-                # P4: Use executed steps count
+                # Use agent_output (not _summary_output) to preserve STATUS line
+                # for _parse_llm_status; stripped post-determination below.
                 final_summary = (
                     agent_output
                     if agent_output
@@ -2594,9 +2659,13 @@ Generate a brief summary without referencing specific execution details."""
 
         except Exception as e:
             logging.error(f'Exception during final summary generation: {str(e)}')
-            # Provide a reasonable default summary based on what we know
-            # P4: Use executed steps count
-            if not _get_failed_step_indices():
+            if is_system_error(e):
+                # Summary LLM itself failed → system error
+                final_summary = get_system_error_summary(e, language)
+                code_determined_status = 'warning'
+                code_failure_type = 'system_error'
+            elif not _get_failed_step_indices():
+                # P4: Use executed steps count
                 final_summary = _make_final_summary(language,
                                                     f'FINAL_SUMMARY: 测试用例"{case_name}"执行完成。共执行 {executed_steps_count} 个步骤，未检测到失败。',
                                                     f'FINAL_SUMMARY: Test case "{case_name}" completed successfully. All {executed_steps_count} executed steps completed without detected failures.')
@@ -2612,7 +2681,15 @@ Generate a brief summary without referencing specific execution details."""
     # --- Status Determination: LLM-first + Safety Guard ---
     if code_determined_status is not None:
         # Path A: Code-deterministic (critical, abort, exception, objective)
-        status = _apply_safety_guard(code_determined_status, step_outcomes)
+        if code_failure_type == 'system_error':
+            # System error bypasses safety guard — HARD_FAIL is system-caused
+            status = code_determined_status
+            logging.debug(
+                f"System error bypass: '{case_name}' status='{status}', "
+                f'skipping safety guard'
+            )
+        else:
+            status = _apply_safety_guard(code_determined_status, step_outcomes)
         failure_type = code_failure_type
         if status == 'failed' and not failure_type:
             failure_type = _derive_failure_type_from_outcomes(step_outcomes)
@@ -2646,6 +2723,13 @@ Generate a brief summary without referencing specific execution details."""
         failure_type = None
         if status == 'failed':
             failure_type = _derive_failure_type_from_outcomes(step_outcomes)
+
+    # Strip STATUS: line from final_summary — it was only needed for
+    # _parse_llm_status() and should not appear in user-facing reports.
+    if final_summary and final_summary.strip().startswith('STATUS:'):
+        _fs_lines = final_summary.strip().split('\n', 1)
+        if len(_fs_lines) > 1:
+            final_summary = _fs_lines[1].strip()
 
     # Diagnostic: step outcomes summary
     severity_counts: Dict[str, int] = {}
@@ -2860,11 +2944,11 @@ def _derive_failure_type_from_outcomes(step_outcomes: List[StepOutcome]) -> str:
 
 
 def _apply_safety_guard(status: str, step_outcomes: List[StepOutcome]) -> str:
-    """Prevent LLM from upgrading CRITICAL/HARD_FAIL to passed.
+    """Prevent LLM from downplaying CRITICAL/HARD_FAIL severity.
 
     Rules:
     - CRITICAL exists → must be 'failed' (any other status overridden)
-    - HARD_FAIL exists → 'passed' overridden to 'failed' (warning/failed kept)
+    - HARD_FAIL exists → must be 'failed' (passed/warning overridden)
     """
     severities = {o.severity for o in step_outcomes} if step_outcomes else set()
     if StepSeverity.CRITICAL in severities and status != 'failed':
@@ -2872,9 +2956,9 @@ def _apply_safety_guard(status: str, step_outcomes: List[StepOutcome]) -> str:
             f"Safety guard: CRITICAL exists, overriding '{status}' → 'failed'"
         )
         return 'failed'
-    if StepSeverity.HARD_FAIL in severities and status == 'passed':
+    if StepSeverity.HARD_FAIL in severities and status != 'failed':
         logging.warning(
-            "Safety guard: HARD_FAIL exists, overriding 'passed' → 'failed'"
+            f"Safety guard: HARD_FAIL exists, overriding '{status}' → 'failed'"
         )
         return 'failed'
     return status

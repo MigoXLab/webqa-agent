@@ -240,6 +240,14 @@ class WebQAToolMetadata(BaseModel):
         )
     )
 
+    # Per-step timeout override (seconds). Tools that scan many elements
+    # (e.g. traverse_clickable_elements, detect_dynamic_links) need longer
+    # than the default 300s. None = use default step timeout.
+    step_timeout: Optional[float] = Field(
+        default=None,
+        description='Per-step timeout in seconds. None = use default (300s).',
+    )
+
     model_config = ConfigDict(extra='allow')  # Allow additional fields for future extension
 
 
