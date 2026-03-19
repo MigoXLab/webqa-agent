@@ -373,7 +373,7 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
                                         name={`sso_env_${index}`}
                                         value="prod"
                                         checked={(env.sso_env || 'prod') === 'prod'}
-                                        onChange={(e) => updateEnvironment(index, { sso_env: e.target.value as 'prod' | 'staging' })}
+                                        onChange={(e) => updateEnvironment(index, { sso_env: e.target.value as 'prod' | 'staging' | 'dev' })}
                                         className="text-blue-600"
                                       />
                                       <span className="text-sm text-gray-700">生产环境 (prod)</span>
@@ -384,10 +384,21 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
                                         name={`sso_env_${index}`}
                                         value="staging"
                                         checked={env.sso_env === 'staging'}
-                                        onChange={(e) => updateEnvironment(index, { sso_env: e.target.value as 'prod' | 'staging' })}
+                                        onChange={(e) => updateEnvironment(index, { sso_env: e.target.value as 'prod' | 'staging' | 'dev' })}
                                         className="text-blue-600"
                                       />
                                       <span className="text-sm text-gray-700">测试环境 (staging)</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                      <input
+                                        type="radio"
+                                        name={`sso_env_${index}`}
+                                        value="dev"
+                                        checked={env.sso_env === 'dev'}
+                                        onChange={(e) => updateEnvironment(index, { sso_env: e.target.value as 'prod' | 'staging' | 'dev' })}
+                                        className="text-blue-600"
+                                      />
+                                      <span className="text-sm text-gray-700">开发环境 (dev)</span>
                                     </label>
                                   </div>
                                 </div>

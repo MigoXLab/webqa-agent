@@ -57,7 +57,7 @@ class Environment(Base):
     sso_env: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
-        default='prod'  # prod / staging
+        default='prod'  # prod / staging / dev
     )
     cookies: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(
         JSONB,

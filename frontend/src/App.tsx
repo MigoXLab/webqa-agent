@@ -18,7 +18,7 @@ export type Environment = {
   auth_type?: 'none' | 'sso' | 'cookies';
   sso_username?: string;
   sso_password?: string;
-  sso_env?: 'prod' | 'staging';
+  sso_env?: 'prod' | 'staging' | 'dev';
   cookies?: any[];
   ignore_rules?: {
     network?: Array<{ pattern: string; type: string }>;

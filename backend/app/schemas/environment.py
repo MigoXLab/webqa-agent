@@ -16,7 +16,7 @@ class EnvironmentCreate(BaseModel):
     auth_type: str = Field(default='none', pattern='^(none|sso|cookies)$')
     sso_username: Optional[str] = None
     sso_password: Optional[str] = None
-    sso_env: str = Field(default='prod', pattern='^(prod|staging)$')
+    sso_env: str = Field(default='prod', pattern='^(prod|staging|dev)$')
     cookies: Optional[List[Dict[str, Any]]] = None
 
 
@@ -29,7 +29,7 @@ class EnvironmentUpdate(BaseModel):
     auth_type: Optional[str] = Field(None, pattern='^(none|sso|cookies)$')
     sso_username: Optional[str] = None
     sso_password: Optional[str] = None
-    sso_env: Optional[str] = Field(None, pattern='^(prod|staging)$')
+    sso_env: Optional[str] = Field(None, pattern='^(prod|staging|dev)$')
     cookies: Optional[List[Dict[str, Any]]] = None
 
 

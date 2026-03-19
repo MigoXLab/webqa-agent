@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 SSO_HOST = 'https://sso.openxlab.org.cn'
 SSO_STAGING_HOST = 'https://sso.staging.openxlab.org.cn'
+SSO_DEV_HOST = 'https://sso.dev.openxlab.org.cn'
 puyu_host = 'https://intern.openxlab.org.cn'
 internlm_host = 'https://internlm.intern-ai.org.cn/'
 
@@ -119,8 +120,10 @@ def get_sso_token_sync(username: str = 'ui_test@pjlab.org.cn', password: str = '
         sso_host = SSO_HOST
     elif env == 'staging':
         sso_host = SSO_STAGING_HOST
+    elif env == 'dev':
+        sso_host = SSO_DEV_HOST
     else:
-        raise ValueError('Invalid sso_host')
+        raise ValueError(f'Invalid sso env: {env!r}. Must be one of: prod, staging, dev')
 
     try:
         res_rsa = requests.post(
