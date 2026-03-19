@@ -19,9 +19,9 @@ import { apiClient } from '../api/client';
 
 const TEST_ITEMS = [
   { key: 'functional' as const, label: '功能测试', icon: Target },
-  { key: 'performance' as const, label: '前端性能', icon: Zap },
-  { key: 'traverse' as const, label: '遍历测试', icon: Search },
-  { key: 'links' as const, label: '链接检查', icon: Link },
+  { key: 'performance' as const, label: '网站性能', icon: Zap },
+  { key: 'traverse' as const, label: '暴力点击', icon: Search },
+  { key: 'links' as const, label: '网站内容', icon: Link },
   { key: 'security' as const, label: '安全扫描', icon: Shield },
 ];
 
@@ -275,14 +275,15 @@ export function GenPage() {
                   {/* Workers */}
                   <div>
                     <label className="block text-sm font-medium mb-1.5 text-gray-700">并发数</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="10"
-                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm"
+                    <select
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm bg-white"
                       value={workers}
-                      onChange={(e) => setWorkers(parseInt(e.target.value) || 1)}
-                    />
+                      onChange={(e) => setWorkers(parseInt(e.target.value))}
+                    >
+                      {[1, 2, 3, 4, 5].map((n) => (
+                        <option key={n} value={n}>{n}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
                 {/* Cookies */}
@@ -326,12 +327,12 @@ export function GenPage() {
                 <div className="flex items-center gap-2 ml-2 flex-wrap">
                   {dynamicStepGeneration && (
                     <span className="px-2 py-0.5 bg-purple-50 border border-purple-200 rounded text-xs text-purple-600">
-                      动态步骤
+                      智能规划
                     </span>
                   )}
                   {enableReflection && (
                     <span className="px-2 py-0.5 bg-purple-50 border border-purple-200 rounded text-xs text-purple-600">
-                      自我修正
+                      智能修正
                     </span>
                   )}
                 </div>
@@ -348,7 +349,7 @@ export function GenPage() {
                     className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500 flex-shrink-0"
                   />
                   <div>
-                    <span className="text-sm text-gray-700 font-medium">动态步骤生成</span>
+                    <span className="text-sm text-gray-700 font-medium">智能规划</span>
                     <p className="text-xs text-gray-500 mt-0.5">
                       遇到弹窗、遮挡等障碍时，Agent 自动插入临时步骤来恢复执行，会增加执行时间和 token 消耗
                     </p>
@@ -363,7 +364,7 @@ export function GenPage() {
                     className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500 flex-shrink-0"
                   />
                   <div>
-                    <span className="text-sm text-gray-700 font-medium">反思与自我修正</span>
+                    <span className="text-sm text-gray-700 font-medium">智能修正</span>
                     <p className="text-xs text-gray-500 mt-0.5">
                       失败时触发 LLM 分析并重新规划，会增加执行时间和 token 消耗
                     </p>
@@ -386,9 +387,8 @@ export function GenPage() {
             type="button"
             onClick={handleSubmit}
             disabled={loading}
-            style={{ backgroundColor: loading ? '#a78bfa' : '#7c3aed', color: '#ffffff' }}
-            className={`w-full flex justify-center items-center py-2.5 px-4 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 transition-colors ${
-              loading ? 'cursor-not-allowed' : 'hover:opacity-90'
+            className={`w-full flex justify-center items-center py-2.5 px-4 rounded-lg text-sm font-medium border border-purple-300 text-purple-700 bg-purple-50 ring-1 ring-purple-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 transition-colors ${
+              loading ? 'cursor-not-allowed opacity-60' : 'hover:bg-purple-100'
             }`}
           >
             {loading ? (
