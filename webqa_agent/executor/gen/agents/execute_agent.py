@@ -1446,10 +1446,16 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     final_summary = _i18n(language,
                                           f"前置动作 '{instruction_to_execute}' 失败，无法继续执行测试用例。错误：{tool_output}",
                                           f"Preamble action '{instruction_to_execute}' failed, cannot proceed with the test case. Error: {tool_output}")
-                    user_summary = _make_user_summary(language, 'failed', case_objective,
-                                                      _i18n(language,
-                                                            f"前置操作'{instruction_to_execute}'失败，无法开始测试。",
-                                                            f"Preamble action '{instruction_to_execute}' failed, test could not start."))
+
+                    extracted_user = (
+                        _parse_user_summary(tool_output)
+                        or _parse_user_summary(intermediate_output)
+                    )
+                    if extracted_user:
+                        user_summary = extracted_user
+                    else:
+                        user_summary = _make_user_summary(language, 'failed', case_objective)
+
                     logging.error(f'Preamble action {i + 1} failed, aborting test case')
                     # Ensure time data is recorded even on early failure
                     case_recorder.finish_case(final_status='failed', final_summary=final_summary, user_summary=user_summary)
@@ -1490,7 +1496,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         f'{type(e).__name__}: {e}'
                     )
                     final_summary = get_system_error_summary(e, language)
-                    user_summary = _make_user_summary(language, 'warning', case_objective)
+                    user_summary = make_user_summary(language, 'warning', case_objective, exception=e)
                     preamble_status = 'warning'
                     preamble_failure_type = 'system_error'
                 else:
@@ -1749,10 +1755,11 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 # System error: abort case immediately
                 _timeout_exc = asyncio.TimeoutError(f'Step timed out after {step_timeout:.0f}s')
                 final_summary = get_system_error_summary(_timeout_exc, language)
+                _obj = case_objective.rstrip('。！？.!?，,；;：:、… ')
                 user_summary = _i18n(
                     language,
-                    f'{case_objective}，工具执行超时，结果不完整，非产品缺陷。',
-                    f'{case_objective} tool execution timed out, results incomplete, not a product defect.',
+                    f'{_obj}，工具执行超时，结果不完整，非产品缺陷。',
+                    f'{_obj} tool execution timed out, results incomplete, not a product defect.',
                 )
                 code_determined_status = 'warning'
                 code_failure_type = 'system_error'
@@ -2197,13 +2204,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                     if extracted_user:
                                         user_summary = extracted_user
                                     else:
-                                        reason_suffix = f"{reason.rstrip('.')}." if reason else ''
-                                        user_summary = _make_user_summary(
-                                            language, 'failed', case_objective,
-                                            _i18n(language,
-                                                  '测试遇到不可恢复的问题，自动恢复失败。',
-                                                  'Test encountered an unrecoverable issue, automatic recovery failed.'
-                                                  + (f' {reason_suffix}' if reason_suffix else '')))
+                                        user_summary = _make_user_summary(language, 'failed', case_objective)
                                     code_determined_status = 'failed'
                                     code_failure_type = 'critical'
                                     break  # Abort test case
@@ -2466,7 +2467,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     model_io=f'System error: {str(e)}',
                 )
                 final_summary = get_system_error_summary(e, language)
-                user_summary = _make_user_summary(language, 'warning', case_objective)
+                user_summary = make_user_summary(language, 'warning', case_objective, exception=e)
                 code_determined_status = 'warning'
                 code_failure_type = 'system_error'
             else:
@@ -2815,7 +2816,7 @@ Generate a brief summary without referencing specific execution details."""
             if is_system_error(e):
                 # Summary LLM itself failed → system error
                 final_summary = get_system_error_summary(e, language)
-                user_summary = _make_user_summary(language, 'warning', case_objective)
+                user_summary = make_user_summary(language, 'warning', case_objective, exception=e)
                 code_determined_status = 'warning'
                 code_failure_type = 'system_error'
             elif not _get_failed_step_indices():
