@@ -2,7 +2,10 @@ import asyncio
 import json
 import logging
 import os
+import shutil
+import tempfile
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
@@ -81,6 +84,14 @@ class _BrowserSession:
         self._lock = asyncio.Lock()  # per-session lock
         self._closed_page_ids = set()  # Track closed page IDs for deduplication
 
+        # Download directory & unified event collector
+        self._downloads_dir = Path(tempfile.mkdtemp(prefix='webqa_downloads_'))
+
+        from webqa_agent.browser.event_collector import BrowserEventCollector
+        self._event_collector = BrowserEventCollector(
+            downloads_dir=str(self._downloads_dir)
+        )
+
     @property
     def page(self) -> Page:
         self._check_state()
@@ -90,6 +101,16 @@ class _BrowserSession:
     def context(self) -> BrowserContext:
         self._check_state()
         return self._context
+
+    @property
+    def downloads_dir(self) -> Path:
+        """Directory where downloaded files are saved."""
+        return self._downloads_dir
+
+    @property
+    def event_collector(self):
+        """Unified browser event collector for per-action event capture."""
+        return self._event_collector
 
     def is_closed(self) -> bool:
         return self._is_closed
@@ -147,12 +168,14 @@ class _BrowserSession:
                         viewport=cfg.get('viewport'),
                         device_scale_factor=1,
                         locale=cfg.get('language', 'en-US'),
+                        accept_downloads=True,
                     )
             else:
                 self._context = await self._browser.new_context(
                     viewport=cfg.get('viewport'),
                     device_scale_factor=1,
                     locale=cfg.get('language', 'en-US'),
+                    accept_downloads=True,
                 )
 
                 # Reset local browser interceptors
@@ -180,6 +203,9 @@ class _BrowserSession:
                 await dialog.accept()
 
             self._page.on('dialog', _handle_dialog)
+
+            # Re-attach event collector on new page (old page is closed)
+            self._event_collector.reset(self._page)
 
     async def initialize(self) -> '_BrowserSession':
         async with self._lock:
@@ -240,6 +266,9 @@ class _BrowserSession:
 
             self._page.on('dialog', _handle_dialog)
 
+            # Attach unified event collector (download, console error, pageerror, requestfailed)
+            self._event_collector.attach(self._page)
+
             return self
 
     async def close(self) -> None:
@@ -275,6 +304,13 @@ class _BrowserSession:
                     await self._playwright.stop()
             except Exception:
                 logging.debug('Failed to stop playwright', exc_info=True)
+
+            # Cleanup downloads directory
+            try:
+                if self._downloads_dir and self._downloads_dir.exists():
+                    shutil.rmtree(self._downloads_dir, ignore_errors=True)
+            except Exception:
+                logging.debug('Failed to clean downloads directory', exc_info=True)
 
             # Cleanup cloud resources if in cloud mode
             if self._is_cloud_mode:
@@ -353,6 +389,7 @@ class _BrowserSession:
             device_scale_factor=1,
             is_mobile=False,
             locale=cfg.get('language', 'en-US'),
+            accept_downloads=True,
         )
 
         # ── Cluster stability: intercept external font requests ──
@@ -439,6 +476,7 @@ class _BrowserSession:
                 viewport=cfg['viewport'],
                 device_scale_factor=1,
                 locale=cfg.get('language', 'en-US'),
+                accept_downloads=True,
             )
             logging.debug('[Cloud] Created new browser context')
 

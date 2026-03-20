@@ -395,6 +395,32 @@ class UITester:
             if dom_diff:
                 context_parts.append(f'- DOM Changes: {len(dom_diff)} elements added/modified')
 
+            # Browser events (download, console errors, JS exceptions, request failures)
+            browser_events = last_action.get('browser_events') or last_action.get('result', {}).get('browser_events')
+            if browser_events:
+                events_lines = []
+                if 'download' in browser_events:
+                    dl = browser_events['download']
+                    if dl.get('success'):
+                        size_str = f", size: {dl['file_size']} bytes" if dl.get('file_size') is not None else ''
+                        saved_str = f", saved_to: {dl['saved_path']}" if dl.get('saved_path') else ''
+                        events_lines.append(
+                            f"  - DOWNLOAD_VERIFIED: filename='{dl['suggested_filename']}'{size_str}{saved_str}, url={dl['url']}"
+                        )
+                    else:
+                        events_lines.append(
+                            f"  - DOWNLOAD_FAILED: filename='{dl.get('suggested_filename', 'unknown')}', error={dl.get('failure', 'unknown')}"
+                        )
+                for err in browser_events.get('console_errors', [])[:3]:
+                    events_lines.append(f"  - CONSOLE_ERROR: {err['text']}")
+                for err in browser_events.get('page_errors', [])[:3]:
+                    events_lines.append(f"  - JS_EXCEPTION: {err['message']}")
+                for req in browser_events.get('request_failures', [])[:3]:
+                    events_lines.append(f"  - REQUEST_FAILED: {req['method']} {req['url']}")
+                if events_lines:
+                    context_parts.append('- Browser Events:\n' + '\n'.join(events_lines))
+
+            logging.info(f'Browser events: {browser_events}')
         # Test objective
         if 'test_objective' in execution_context and execution_context['test_objective']:
             context_parts.append(f"\n**Test Objective:** {execution_context['test_objective']}")
