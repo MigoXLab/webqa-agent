@@ -96,6 +96,9 @@ def get_execute_system_prompt(case: dict, language: str = 'zh-CN') -> str:
             'FINAL_SUMMARY: 测试用例"[case_name]"执行完成。核心功能正常，'
             '但存在非关键问题：[问题描述]。'
         )
+        user_summary_success_template = 'USER_SUMMARY: [用一句话概括被验证的功能及结果，使用业务语言]'
+        user_summary_failure_template = 'USER_SUMMARY: [功能名]异常：[用户可感知的问题描述]。建议[可操作的建议]。'
+        user_summary_warning_template = 'USER_SUMMARY: [功能名]基本正常，但[用户可感知的非关键问题]。'
     else:
         final_summary_success_template = (
             'STATUS: passed\n'
@@ -116,6 +119,9 @@ def get_execute_system_prompt(case: dict, language: str = 'zh-CN') -> str:
             'Core functionality works, but non-critical issues detected: '
             '[issue_description].'
         )
+        user_summary_success_template = 'USER_SUMMARY: [One sentence confirming the verified feature works, in business language]'
+        user_summary_failure_template = 'USER_SUMMARY: [Feature name] issue: [user-perceivable problem]. Suggest [actionable recommendation].'
+        user_summary_warning_template = 'USER_SUMMARY: [Feature name] mostly works, but [user-perceivable non-critical issue].'
 
     system_prompt = f"""You are an intelligent UI test execution agent specialized in web application testing. Your role is to execute individual test cases by performing UI interactions and validations in a systematic, reliable manner following established QA best practices.
 
@@ -604,6 +610,27 @@ When all test steps are completed or an unrecoverable error occurs, output STATU
 
 **Warning Completion** (core functionality works but non-critical issues detected):
 {final_summary_warning_template}
+
+After the FINAL_SUMMARY line, output a USER_SUMMARY line.
+USER_SUMMARY is a concise, user-facing summary in business language (NOT technical).
+
+Rules:
+- Describe what works/doesn't work from user perspective
+- Success: 1 sentence confirming the feature works
+- Failure: problem + user impact + suggestion (2-3 sentences max)
+- Warning: what works + what to note
+- NO step numbers, plan ratios, or technical metadata
+- NO "FINAL_SUMMARY:", "test case", "executed step" phrases
+- Use the tested feature name, not the test case name
+
+Success example:
+{user_summary_success_template}
+
+Failure example:
+{user_summary_failure_template}
+
+Warning example:
+{user_summary_warning_template}
 
 ## Quality Assurance Standards
 {output_lang_instruction}

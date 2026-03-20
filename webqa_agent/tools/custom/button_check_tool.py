@@ -269,6 +269,7 @@ class ButtonCheckTool(WebQABaseTool):
             category='custom',  # Custom tool - marks as user-defined
             step_type='traverse_clickable_elements',  # Explicit step type for planning
             step_timeout=600.0,  # 10 min — clicks every element sequentially
+            recovery_disabled=True,  # Batch tool: FAILURE = diagnostic finding, not a transient error
             description_short='Comprehensive testing of all clickable elements',
             description_long=(
                 'Performs exhaustive testing of all clickable elements on the current page. '

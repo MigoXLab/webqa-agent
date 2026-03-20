@@ -7,6 +7,16 @@ from webqa_agent.data.gen_structures import (SubTestReport, SubTestResult,
                                              TestStatus)
 
 
+def get_report_summary(case_data: dict) -> str:
+    """Return the preferred user-facing summary from a recorded case dict.
+
+    Prefers ``user_summary`` (concise, business-language) over
+    ``final_summary`` (technical/agent-facing).  Returns empty string when
+    neither field is populated.
+    """
+    return case_data.get('user_summary') or case_data.get('final_summary', '')
+
+
 class CentralCaseRecorder:
     """Independent recorder to store all steps (action/verify/ux_verify) for a
     case.
@@ -145,15 +155,17 @@ class CentralCaseRecorder:
             'total_actions': total_actions,
         }
 
-    def finish_case(self, final_status: str = 'completed', final_summary: str | None = None) -> None:
+    def finish_case(self, final_status: str = 'completed', final_summary: str | None = None, user_summary: str | None = None) -> None:
         if not self.current_case_data:
             return
 
-        # Append summary to report list if provided (avoid overwriting existing reports)
-        if final_summary:
+        # Append summary to report list — prefer user_summary (user-facing)
+        # over final_summary (technical/agent-facing)
+        report_summary = user_summary or final_summary
+        if report_summary:
             self.current_case_data['report'].append({
                 'title': 'Summary',
-                'issues': final_summary
+                'issues': report_summary
             })
 
         end_time = datetime.now()
@@ -176,6 +188,7 @@ class CentralCaseRecorder:
                 'duration': duration_seconds,
                 'status': final_status,
                 'final_summary': final_summary or '',
+                'user_summary': user_summary or '',
                 'metrics': self._build_metrics()
             }
         )
@@ -242,8 +255,10 @@ class CentralCaseRecorder:
                 final_status = TestStatus.WARNING
 
         reports: List[SubTestReport] = []
-        if self.current_case_data and self.current_case_data.get('final_summary'):
-            reports.append(SubTestReport(title='Summary', issues=self.current_case_data.get('final_summary', '')))
+        if self.current_case_data:
+            report_summary = get_report_summary(self.current_case_data)
+            if report_summary:
+                reports.append(SubTestReport(title='Summary', issues=report_summary))
 
         # Extract case_id from case_info if available
         case_info = self.current_case_data.get('case_info', {}) if self.current_case_data else {}
@@ -257,4 +272,5 @@ class CentralCaseRecorder:
             steps=steps_models,
             report=reports,
             final_summary=self.current_case_data.get('final_summary', '') if self.current_case_data else '',
+            user_summary=self.current_case_data.get('user_summary', '') if self.current_case_data else '',
         )

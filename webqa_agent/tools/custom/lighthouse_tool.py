@@ -119,6 +119,7 @@ class LighthouseTool(WebQABaseTool):
             name='execute_lighthouse_test',
             category='custom',  # Custom tool - marks as user-defined
             step_type='lighthouse',  # Explicit step type for planning
+            recovery_disabled=True,  # Batch tool: FAILURE = diagnostic finding, not a transient error
             description_short='Run Lighthouse performance analysis on current page',
             description_long=(
                 'Executes Google Lighthouse performance audit on the current page. '

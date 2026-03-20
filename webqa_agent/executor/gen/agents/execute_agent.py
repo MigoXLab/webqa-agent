@@ -10,7 +10,7 @@ import datetime
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
@@ -35,6 +35,8 @@ from webqa_agent.executor.gen.utils.error_classifier import (
     get_system_error_summary, is_system_error)
 from webqa_agent.executor.gen.utils.message_converter import \
     convert_intermediate_steps_to_messages
+from webqa_agent.executor.gen.utils.summary_utils import (i18n_select,
+                                                          make_user_summary)
 from webqa_agent.llm.llm_api import EXTENDED_THINKING_EFFORT_MAPPING
 from webqa_agent.prompts.agent_execution_prompts import \
     get_execute_system_prompt
@@ -1087,9 +1089,39 @@ def _contains_failure_indicators(text: str) -> bool:
 
 # The node function that will be used in the graph
 
+def _i18n(language: str, zh: str, en: str) -> str:
+    """Select language-appropriate string (shorthand for i18n_select)."""
+    return i18n_select(language, zh, en)
+
+
 def _make_final_summary(language: str, template_zh: str, template_en: str) -> str:
-    """Return language-appropriate FINAL_SUMMARY string."""
-    return template_zh if language == 'zh-CN' else template_en
+    """Select language-appropriate FINAL_SUMMARY string.
+
+    Semantic alias for _i18n -- kept for readability at call sites that
+    construct final_summary values.
+    """
+    return _i18n(language, template_zh, template_en)
+
+
+def _make_user_summary(
+    language: str,
+    status: str,
+    objective: str,
+    reason: str = '',
+) -> str:
+    """Generate user-facing summary (shorthand for make_user_summary)."""
+    return make_user_summary(language, status, objective, reason)
+
+
+_USER_SUMMARY_PATTERN = re.compile(r'USER_SUMMARY:\s*(.+)', re.IGNORECASE)
+
+
+def _parse_user_summary(llm_output: str) -> Optional[str]:
+    """Extract USER_SUMMARY line from LLM output."""
+    if not llm_output:
+        return None
+    match = _USER_SUMMARY_PATTERN.search(llm_output)
+    return match.group(1).strip() if match else None
 
 
 async def agent_worker_node(state: dict, config: dict) -> dict:
@@ -1125,6 +1157,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     original_planned_steps = copy.deepcopy(case.get('steps', []))
 
     language = state.get('language', 'zh-CN')
+    case_objective = case.get('objective', case_name)
     system_prompt_string = get_execute_system_prompt(case, language=language)
     logging.debug(
         f'Generated system prompt length: {len(system_prompt_string)} characters'
@@ -1410,12 +1443,16 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 if _contains_failure_indicators(
                     intermediate_output
                 ) or _contains_failure_indicators(tool_output):
-                    final_summary = _make_final_summary(language,
-                                                        f"FINAL_SUMMARY: 前置动作 '{instruction_to_execute}' 失败，无法继续执行测试用例。错误：{tool_output}",
-                                                        f"FINAL_SUMMARY: Preamble action '{instruction_to_execute}' failed, cannot proceed with the test case. Error: {tool_output}")
+                    final_summary = _i18n(language,
+                                          f"前置动作 '{instruction_to_execute}' 失败，无法继续执行测试用例。错误：{tool_output}",
+                                          f"Preamble action '{instruction_to_execute}' failed, cannot proceed with the test case. Error: {tool_output}")
+                    user_summary = _make_user_summary(language, 'failed', case_objective,
+                                                      _i18n(language,
+                                                            f"前置操作'{instruction_to_execute}'失败，无法开始测试。",
+                                                            f"Preamble action '{instruction_to_execute}' failed, test could not start."))
                     logging.error(f'Preamble action {i + 1} failed, aborting test case')
                     # Ensure time data is recorded even on early failure
-                    case_recorder.finish_case(final_status='failed', final_summary=final_summary)
+                    case_recorder.finish_case(final_status='failed', final_summary=final_summary, user_summary=user_summary)
                     recorded_case_data = case_recorder.get_case_data()
                     if recorded_case_data is not None:
                         recorded_case_data['original_planned_steps'] = original_planned_steps
@@ -1426,6 +1463,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         'case_name': case_name,
                         'case_id': case.get('case_id', ''),
                         'final_summary': final_summary,
+                        'user_summary': user_summary,
                         'status': 'failed',
                         'failure_type': 'preamble_failure',
                         'metrics': {
@@ -1452,16 +1490,21 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         f'{type(e).__name__}: {e}'
                     )
                     final_summary = get_system_error_summary(e, language)
+                    user_summary = _make_user_summary(language, 'warning', case_objective)
                     preamble_status = 'warning'
                     preamble_failure_type = 'system_error'
                 else:
-                    final_summary = _make_final_summary(language,
-                                                        f"FINAL_SUMMARY: 前置动作 '{instruction_to_execute}' 发生异常：{str(e)}",
-                                                        f"FINAL_SUMMARY: Preamble action '{instruction_to_execute}' raised exception: {str(e)}")
+                    final_summary = _i18n(language,
+                                          f"前置动作 '{instruction_to_execute}' 发生异常：{str(e)}",
+                                          f"Preamble action '{instruction_to_execute}' raised exception: {str(e)}")
+                    user_summary = _make_user_summary(language, 'failed', case_objective,
+                                                      _i18n(language,
+                                                            f"前置操作'{instruction_to_execute}'发生异常。",
+                                                            f"Preamble action '{instruction_to_execute}' raised an exception."))
                     preamble_status = 'failed'
                     preamble_failure_type = 'preamble_exception'
                 # Ensure time data is recorded even on exception
-                case_recorder.finish_case(final_status=preamble_status, final_summary=final_summary)
+                case_recorder.finish_case(final_status=preamble_status, final_summary=final_summary, user_summary=user_summary)
                 recorded_case_data = case_recorder.get_case_data()
                 if recorded_case_data is not None:
                     recorded_case_data['original_planned_steps'] = original_planned_steps
@@ -1472,6 +1515,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     'case_name': case_name,
                     'case_id': case.get('case_id', ''),
                     'final_summary': final_summary,
+                    'user_summary': user_summary,
                     'status': preamble_status,
                     'failure_type': preamble_failure_type,
                     'metrics': {
@@ -1499,6 +1543,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         )
     ]
     final_summary = 'No summary provided.'
+    user_summary = ''
+    tool_output: str = ''  # Last step's output; used post-loop for USER_SUMMARY upgrade
     case_steps = case.get('steps', [])  # Get reference to steps list
     total_steps = len(case_steps)
     step_outcomes: List[StepOutcome] = []  # Structured step results for verdict engine
@@ -1542,13 +1588,18 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     # Build step_type → timeout mapping from tool metadata
     # Tools can declare step_timeout in their metadata (e.g. 600s for element traversal)
     step_timeout_map: Dict[str, float] = {}
+    # Build step_type set for tools that disable adaptive recovery (batch/scan tools)
+    recovery_disabled_step_types: Set[str] = set()
     try:
         for _tool_name in registry.get_tool_names():
             _meta = registry.get_metadata(_tool_name)
-            if _meta and _meta.step_type and getattr(_meta, 'step_timeout', None):
-                step_timeout_map[_meta.step_type] = _meta.step_timeout
+            if _meta and _meta.step_type:
+                if _meta.step_timeout:
+                    step_timeout_map[_meta.step_type] = _meta.step_timeout
+                if _meta.recovery_disabled:
+                    recovery_disabled_step_types.add(_meta.step_type)
     except Exception as exc:
-        logging.warning(f'Failed to build step timeout map from registry: {exc}')
+        logging.warning(f'Failed to build step timeout/recovery maps from registry: {exc}')
 
     i = 0
     while i < len(case_steps):
@@ -1561,6 +1612,11 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         # Convert params to function call instruction for agent_executor
         action_value = step.get('action')
         if action_value and action_value in custom_tool_names:
+            # Update step_type to the tool's actual step_type for correct timeout lookup.
+            # Without this, step_type stays 'Action' and step_timeout_map always misses.
+            _tool_meta = registry.get_metadata(action_value)
+            if _tool_meta and _tool_meta.step_type:
+                step_type = _tool_meta.step_type
             # Convert unified format to function call instruction
             params = step.get('params', {})
             param_str = ', '.join(f'{k}={v!r}' for k, v in params.items())
@@ -1648,6 +1704,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         )
         # ---------------------------------------------
 
+        # Reset per-step; prevents post-loop from using stale output on timeout/exception
+        tool_output = ''
+
         try:
             # The agent's history includes all prior messages
             logging.debug(f'Step {i + 1} - Calling Agent to execute {step_type}...')
@@ -1688,10 +1747,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     description=f'System timeout: step timed out after {step_timeout:.0f}s',
                 ))
                 # System error: abort case immediately
-                final_summary = get_system_error_summary(
-                    asyncio.TimeoutError(f'Step timed out after {step_timeout:.0f}s'),
-                    language,
-                )
+                _timeout_exc = asyncio.TimeoutError(f'Step timed out after {step_timeout:.0f}s')
+                final_summary = get_system_error_summary(_timeout_exc, language)
+                user_summary = _make_user_summary(language, 'warning', case_objective)
                 code_determined_status = 'warning'
                 code_failure_type = 'system_error'
                 logging.warning(
@@ -1789,6 +1847,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                                             f"'{instruction_to_execute}'. "
                                                             f'DOM-dependent operation cannot execute on unsupported page type. '
                                                             f'Error details: {tool_output}')
+                        user_summary = _make_user_summary(language, 'failed', case_objective,
+                                                          _i18n(language, '页面类型不支持自动化测试。', 'Page type does not support automated testing.'))
                         logging.error(
                             f'[CRITICAL] Executed step {current_executed_step} (planned step {i + 1}) '
                             f'requires DOM elements but page is unsupported (PDF/plugin). '
@@ -1813,6 +1873,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                                         f'(planned step {i + 1}): '
                                                         f"'{instruction_to_execute}'. "
                                                         f'Error details: {tool_output}')
+                    user_summary = _make_user_summary(language, 'failed', case_objective,
+                                                      _i18n(language, '遇到严重错误，测试终止。', 'Critical error encountered, test terminated.'))
                     logging.error(
                         f'[CRITICAL] Executed step {current_executed_step} (planned step {i + 1}) '
                         f'encountered critical failure. '
@@ -1834,8 +1896,23 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             )
 
             if is_failure:
+                # Priority 0: Skip adaptive recovery for batch/diagnostic tools.
+                # Their FAILURE output is a diagnostic finding, not a transient error.
+                if step_type in recovery_disabled_step_types:
+                    logging.info(
+                        f'Step {i + 1} ({step_type}) reported failure — '
+                        f'recording as diagnostic finding, recovery disabled for this tool.'
+                    )
+                    step_outcomes.append(StepOutcome(
+                        step_index=i + 1,
+                        severity=StepSeverity.SOFT_FAIL,
+                        description=f'Diagnostic result: {tool_output[:200]}',
+                    ))
+                    i += 1
+                    continue
+
                 # Priority 1: Try recovery for ELEMENT_NOT_FOUND (recoverable critical error)
-                if is_element_not_found:
+                elif is_element_not_found:
                     # Get dynamic config to check if adaptive recovery is enabled
                     dynamic_config = _get_dynamic_config(state)
 
@@ -1928,15 +2005,29 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 current_executed_step = len(
                                     case_recorder.current_case_steps
                                 )
+                                recovery_reason = recovery_result.get('reason', '')
                                 logging.error(
                                     f'Aborting test at executed step {current_executed_step} (planned step {i + 1}) '
-                                    f"based on recovery analysis: {recovery_result.get('reason', 'N/A')}"
+                                    f"based on recovery analysis: {recovery_reason or 'N/A'}"
                                 )
+                                step_outcomes.append(StepOutcome(
+                                    step_index=i + 1,
+                                    severity=StepSeverity.CRITICAL,
+                                    description=f'Element not found abort: {recovery_reason}',
+                                    recovery_strategy='abort',
+                                    recovery_reason=recovery_reason,
+                                ))
                                 final_summary = _make_final_summary(language,
                                                                     f'FINAL_SUMMARY: 测试在已执行步骤 {current_executed_step}（计划步骤 {i + 1}）中止。'
-                                                                    f"{recovery_result.get('reason', '严重错误')}",
+                                                                    f"{recovery_reason or '严重错误'}",
                                                                     f'FINAL_SUMMARY: Test aborted at executed step {current_executed_step} '
-                                                                    f"(planned step {i + 1}). {recovery_result.get('reason', 'Critical failure')}")
+                                                                    f"(planned step {i + 1}). {recovery_reason or 'Critical failure'}")
+                                reason_suffix = f"{recovery_reason.rstrip('.')}." if recovery_reason else ''
+                                user_summary = _make_user_summary(
+                                    language, 'failed', case_objective,
+                                    _i18n(language,
+                                          '目标元素无法定位，自动恢复尝试失败。',
+                                          f'Target element could not be located, automatic recovery failed. {reason_suffix}'))
                                 code_determined_status = 'failed'
                                 code_failure_type = 'recoverable'
                                 break
@@ -2086,6 +2177,12 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                                                         f"'{instruction_to_execute}'. "
                                                                         f'LLM adaptive recovery determined abortion necessary. '
                                                                         f'Reason: {reason}')
+                                    reason_suffix = f"{reason.rstrip('.')}." if reason else ''
+                                    user_summary = _make_user_summary(
+                                        language, 'failed', case_objective,
+                                        _i18n(language,
+                                              '测试遇到不可恢复的问题，自动恢复失败。',
+                                              f'Test encountered an unrecoverable issue, automatic recovery failed. {reason_suffix}'))
                                     code_determined_status = 'failed'
                                     code_failure_type = 'critical'
                                     break  # Abort test case
@@ -2135,6 +2232,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                                     f'FINAL_SUMMARY: Test case completed successfully with early '
                                                     f'termination at executed step {current_executed_step} '
                                                     f'(planned step {i + 1}/{total_steps}). {achievement_reason}')
+                user_summary = _make_user_summary(language, 'passed', case_objective)
                 code_determined_status = 'passed'
                 code_failure_type = None
                 break
@@ -2347,6 +2445,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     model_io=f'System error: {str(e)}',
                 )
                 final_summary = get_system_error_summary(e, language)
+                user_summary = _make_user_summary(language, 'warning', case_objective)
                 code_determined_status = 'warning'
                 code_failure_type = 'system_error'
             else:
@@ -2365,12 +2464,24 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 final_summary = _make_final_summary(language,
                                                     f"FINAL_SUMMARY: 步骤 '{instruction_to_execute}' 发生异常：{str(e)}",
                                                     f"FINAL_SUMMARY: Step '{instruction_to_execute}' raised an exception: {str(e)}")
+                user_summary = _make_user_summary(language, 'failed', case_objective,
+                                                  _i18n(language,
+                                                        f"步骤'{instruction_to_execute}'执行时发生异常。",
+                                                        f"Step '{instruction_to_execute}' raised an exception during execution."))
                 code_determined_status = 'failed'
                 code_failure_type = 'recoverable'
             break
 
         # Move to next step
         i += 1
+
+    # Upgrade template-based user_summary with LLM-generated one if available.
+    # Only when code_failure_type is None (normal completion / OBJECTIVE_ACHIEVED);
+    # critical/system_error/recoverable paths already set a definitive template.
+    if code_failure_type is None:
+        parsed_user_summary = _parse_user_summary(tool_output)
+        if parsed_user_summary:
+            user_summary = parsed_user_summary
 
     # If the loop finishes without an early exit, generate a final summary
     if 'final_summary:' not in final_summary.lower():
@@ -2490,12 +2601,15 @@ STATUS: warning（核心功能正常，但存在非关键的视觉或体验问�
 示例输出格式：
 STATUS: passed
 FINAL_SUMMARY: 测试用例"{case_name}"执行完成。共执行 {executed_steps_count} 个步骤，均未出现严重错误。测试目标已达成：[确认说明]。所有成功标准均已满足。
+USER_SUMMARY: [用一句话业务语言概括验证结果]
 
 STATUS: failed
 FINAL_SUMMARY: 测试用例"{case_name}"在第 [X] 步（共 {executed_steps_count} 步）失败。错误：[描述]。恢复尝试：[如有]。建议：[修复方案]。
+USER_SUMMARY: [功能名]异常：[用户可感知的问题]。建议[修复方向]。
 
 STATUS: warning
-FINAL_SUMMARY: 测试用例"{case_name}"执行完成。核心功能正常，但检测到非关键问题：[问题描述]。"""
+FINAL_SUMMARY: 测试用例"{case_name}"执行完成。核心功能正常，但检测到非关键问题：[问题描述]。
+USER_SUMMARY: [功能名]基本正常，但[用户可感知的非关键问题]。"""
             else:
                 summary_prompt = f"""Based on the test execution of case "{case_name}", generate a summary.
 
@@ -2534,12 +2648,15 @@ Decision rules (strictly follow, no deviation):
 Example output format:
 STATUS: passed
 FINAL_SUMMARY: Test case "{case_name}" completed successfully. All {executed_steps_count} executed steps completed without critical errors. Test objective achieved: [confirmation]. All success criteria met.
+USER_SUMMARY: [One sentence confirming the verified feature works, in business language]
 
 STATUS: failed
 FINAL_SUMMARY: Test case "{case_name}" failed at executed step [X] (out of {executed_steps_count} total executed steps). Error: [description]. Recovery attempts: [if any]. Recommendation: [suggested fix].
+USER_SUMMARY: [Feature name] issue: [user-perceivable problem]. Suggest [actionable recommendation].
 
 STATUS: warning
-FINAL_SUMMARY: Test case "{case_name}" completed. Core functionality works, but non-critical issues detected: [issue description]."""
+FINAL_SUMMARY: Test case "{case_name}" completed. Core functionality works, but non-critical issues detected: [issue description].
+USER_SUMMARY: [Feature name] mostly works, but [user-perceivable non-critical issue]."""
 
             # Get and sanitize recent messages (reduced from 6 to 4 to minimize content filter risk)
             recent_messages = []
@@ -2663,11 +2780,21 @@ Generate a brief summary without referencing specific execution details."""
 
             logging.debug(f'Final summary generated: {final_summary}')
 
+            # Parse USER_SUMMARY from LLM output
+            user_summary = _parse_user_summary(agent_output) or ''
+            if not user_summary:
+                # LLM did not output USER_SUMMARY — use template fallback
+                if not _get_failed_step_indices():
+                    user_summary = _make_user_summary(language, 'passed', case_objective)
+                else:
+                    user_summary = _make_user_summary(language, 'failed', case_objective)
+
         except Exception as e:
             logging.error(f'Exception during final summary generation: {str(e)}')
             if is_system_error(e):
                 # Summary LLM itself failed → system error
                 final_summary = get_system_error_summary(e, language)
+                user_summary = _make_user_summary(language, 'warning', case_objective)
                 code_determined_status = 'warning'
                 code_failure_type = 'system_error'
             elif not _get_failed_step_indices():
@@ -2675,12 +2802,14 @@ Generate a brief summary without referencing specific execution details."""
                 final_summary = _make_final_summary(language,
                                                     f'FINAL_SUMMARY: 测试用例"{case_name}"执行完成。共执行 {executed_steps_count} 个步骤，未检测到失败。',
                                                     f'FINAL_SUMMARY: Test case "{case_name}" completed successfully. All {executed_steps_count} executed steps completed without detected failures.')
+                user_summary = _make_user_summary(language, 'passed', case_objective)
                 code_determined_status = 'passed'
             else:
                 failed_indices = _get_failed_step_indices()
                 final_summary = _make_final_summary(language,
                                                     f'FINAL_SUMMARY: 测试用例"{case_name}"完成，以下步骤失败：{failed_indices}，请查看执行日志。',
                                                     f'FINAL_SUMMARY: Test case "{case_name}" completed with failures at steps {failed_indices}. Review execution logs for details.')
+                user_summary = _make_user_summary(language, 'failed', case_objective)
                 code_determined_status = 'failed'
                 code_failure_type = _derive_failure_type_from_outcomes(step_outcomes)
 
@@ -2730,12 +2859,23 @@ Generate a brief summary without referencing specific execution details."""
         if status == 'failed':
             failure_type = _derive_failure_type_from_outcomes(step_outcomes)
 
-    # Strip STATUS: line from final_summary — it was only needed for
-    # _parse_llm_status() and should not appear in user-facing reports.
-    if final_summary and final_summary.strip().startswith('STATUS:'):
-        _fs_lines = final_summary.strip().split('\n', 1)
-        if len(_fs_lines) > 1:
-            final_summary = _fs_lines[1].strip()
+    # Clean LLM formatting markers from final_summary — these were only
+    # needed for internal parsing and should not appear in user-facing reports.
+    if final_summary:
+        final_summary = final_summary.strip()
+
+        # Strip STATUS: line (was only needed for _parse_llm_status)
+        if final_summary.startswith('STATUS:'):
+            _fs_lines = final_summary.split('\n', 1)
+            final_summary = _fs_lines[1].strip() if len(_fs_lines) > 1 else ''
+
+        # Strip USER_SUMMARY: line (stored separately in user_summary)
+        if re.search(r'USER_SUMMARY:', final_summary, re.IGNORECASE):
+            final_summary = re.sub(r'\n?USER_SUMMARY:.*$', '', final_summary, flags=re.MULTILINE | re.IGNORECASE).strip()
+
+        # Strip FINAL_SUMMARY: prefix (was a formatting marker for LLM output)
+        if final_summary.upper().startswith('FINAL_SUMMARY:'):
+            final_summary = final_summary[len('FINAL_SUMMARY:'):].strip()
 
     # Diagnostic: step outcomes summary
     severity_counts: Dict[str, int] = {}
@@ -2752,7 +2892,7 @@ Generate a brief summary without referencing specific execution details."""
     logging.debug(f'=== Agent Worker Completed for {case_name}. ===')
 
     # Finalize case recording with final status (this calculates metrics)
-    case_recorder.finish_case(final_status=status, final_summary=final_summary)
+    case_recorder.finish_case(final_status=status, final_summary=final_summary, user_summary=user_summary)
 
     # Get recorded case data (contains metrics and step details)
     recorded_case_data = case_recorder.get_case_data()
@@ -2772,6 +2912,7 @@ Generate a brief summary without referencing specific execution details."""
         'case_name': case_name,
         'case_id': case.get('case_id', ''),
         'final_summary': final_summary,
+        'user_summary': user_summary,
         'status': status,
         'failure_type': failure_type,
         # Enriched fields for better reflection/REPLAN decisions

@@ -120,6 +120,7 @@ class SubTestResult(BaseModel):
     start_time: Optional[str] = None
     end_time: Optional[str] = None
     final_summary: Optional[str] = ''
+    user_summary: Optional[str] = ''  # User-facing concise summary in business language
     report: Optional[List[SubTestReport]] = []
 
 
