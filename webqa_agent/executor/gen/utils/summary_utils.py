@@ -29,18 +29,21 @@ def make_user_summary(
         Human-readable summary string.
     """
     is_zh = language == 'zh-CN'
+    # Strip trailing punctuation to avoid double punctuation when templates
+    # append their own separators (e.g. "功能测试。，该用例验证通过。")
+    objective = objective.rstrip('。！？.!?，,；;：:、… ')
 
     if is_zh:
         templates = {
-            'passed': f'{objective}验证通过。',
+            'passed': f'{objective}，该用例验证通过。',
             'warning': f'{objective}，AI 服务调用异常，测试中断，非产品缺陷。',
-            'failed': f'{objective}验证未通过。',
+            'failed': f'{objective}，该用例验证未通过。',
         }
     else:
         templates = {
-            'passed': f'{objective} verified successfully.',
+            'passed': f'{objective}, test case verified successfully.',
             'warning': f'{objective} was interrupted due to an AI service issue, not a product defect.',
-            'failed': f'{objective} verification failed.',
+            'failed': f'{objective}, test case verification failed.',
         }
 
     base = templates.get(status, templates['failed'])

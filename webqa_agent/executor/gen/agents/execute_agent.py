@@ -2030,8 +2030,10 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 user_summary = _make_user_summary(
                                     language, 'failed', case_objective,
                                     _i18n(language,
-                                          '目标元素无法定位，自动恢复尝试失败。',
-                                          f'Target element could not be located, automatic recovery failed. {reason_suffix}'))
+                                          '目标元素无法定位，自动恢复尝试失败，请排查页面是否存在该目标元素。',
+                                          'Target element could not be located, automatic recovery failed. '
+                                          'Please verify the target element exists on the page.'
+                                          + (f' {reason_suffix}' if reason_suffix else '')))
                                 code_determined_status = 'failed'
                                 code_failure_type = 'recoverable'
                                 break
@@ -2173,20 +2175,35 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                         recovery_strategy='abort',
                                         recovery_reason=reason,
                                     ))
-                                    final_summary = _make_final_summary(language,
-                                                                        f'FINAL_SUMMARY: 不可恢复的失败，已执行步骤 {current_executed_step}（计划步骤 {i + 1}）：'
-                                                                        f"'{instruction_to_execute}'。LLM 自适应恢复判断必须终止。原因：{reason}",
-                                                                        f'FINAL_SUMMARY: Unrecoverable failure at executed step {current_executed_step} '
-                                                                        f'(planned step {i + 1}): '
-                                                                        f"'{instruction_to_execute}'. "
-                                                                        f'LLM adaptive recovery determined abortion necessary. '
-                                                                        f'Reason: {reason}')
-                                    reason_suffix = f"{reason.rstrip('.')}." if reason else ''
-                                    user_summary = _make_user_summary(
-                                        language, 'failed', case_objective,
-                                        _i18n(language,
-                                              '测试遇到不可恢复的问题，自动恢复失败。',
-                                              f'Test encountered an unrecoverable issue, automatic recovery failed. {reason_suffix}'))
+                                    # final_summary: keep abort context (step, instruction, reason)
+                                    # for agent/executor diagnostics.
+                                    final_summary = _make_final_summary(
+                                        language,
+                                        f'FINAL_SUMMARY: 不可恢复的失败，已执行步骤 {current_executed_step}（计划步骤 {i + 1}）：'
+                                        f"'{instruction_to_execute}'。LLM 自适应恢复判断必须终止。原因：{reason}",
+                                        f'FINAL_SUMMARY: Unrecoverable failure at executed step {current_executed_step} '
+                                        f'(planned step {i + 1}): '
+                                        f"'{instruction_to_execute}'. "
+                                        f'LLM adaptive recovery determined abortion necessary. '
+                                        f'Reason: {reason}',
+                                    )
+                                    # user_summary: try to reuse the step's own USER_SUMMARY if
+                                    # present (forward-compatible — current tools don't emit
+                                    # USER_SUMMARY in step output, but custom tools may do so).
+                                    extracted_user = (
+                                        _parse_user_summary(tool_output)
+                                        or _parse_user_summary(intermediate_output)
+                                    )
+                                    if extracted_user:
+                                        user_summary = extracted_user
+                                    else:
+                                        reason_suffix = f"{reason.rstrip('.')}." if reason else ''
+                                        user_summary = _make_user_summary(
+                                            language, 'failed', case_objective,
+                                            _i18n(language,
+                                                  '测试遇到不可恢复的问题，自动恢复失败。',
+                                                  'Test encountered an unrecoverable issue, automatic recovery failed.'
+                                                  + (f' {reason_suffix}' if reason_suffix else '')))
                                     code_determined_status = 'failed'
                                     code_failure_type = 'critical'
                                     break  # Abort test case
