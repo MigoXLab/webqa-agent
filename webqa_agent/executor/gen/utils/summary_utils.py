@@ -33,13 +33,13 @@ def make_user_summary(
     if is_zh:
         templates = {
             'passed': f'{objective}验证通过。',
-            'warning': f'{objective}测试因系统原因中断，结果不作为产品缺陷。',
+            'warning': f'{objective}，AI 服务调用异常，测试中断，非产品缺陷。',
             'failed': f'{objective}验证未通过。',
         }
     else:
         templates = {
             'passed': f'{objective} verified successfully.',
-            'warning': f'{objective} test was interrupted due to a system issue, not a product defect.',
+            'warning': f'{objective} was interrupted due to an AI service issue, not a product defect.',
             'failed': f'{objective} verification failed.',
         }
 

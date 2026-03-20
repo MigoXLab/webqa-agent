@@ -597,7 +597,11 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                         # Harvest partial results from externalized recorder
                         lang = state.get('language', 'zh-CN')
                         case_objective = case.get('objective', case.get('name', case_name))
-                        user_summary = make_user_summary(lang, 'warning', case_objective)
+                        user_summary = i18n_select(
+                            lang,
+                            f'{case_objective}，测试运行超时，结果不完整，非产品缺陷。',
+                            f'{case_objective} test timed out, results incomplete, not a product defect.',
+                        )
                         case_recorder.finish_case(
                             final_status='timeout',
                             final_summary=timeout_summary,

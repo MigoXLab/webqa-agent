@@ -1749,7 +1749,11 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 # System error: abort case immediately
                 _timeout_exc = asyncio.TimeoutError(f'Step timed out after {step_timeout:.0f}s')
                 final_summary = get_system_error_summary(_timeout_exc, language)
-                user_summary = _make_user_summary(language, 'warning', case_objective)
+                user_summary = _i18n(
+                    language,
+                    f'{case_objective}，工具执行超时，结果不完整，非产品缺陷。',
+                    f'{case_objective} tool execution timed out, results incomplete, not a product defect.',
+                )
                 code_determined_status = 'warning'
                 code_failure_type = 'system_error'
                 logging.warning(
