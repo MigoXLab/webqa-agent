@@ -320,6 +320,15 @@ class PageButtonTest(_LocalizedTestBase):
                             # Brief pause between clicks
                             await asyncio.sleep(0.5)
 
+                        except asyncio.CancelledError:
+                            # Timeout fired mid-element.  The step is incomplete;
+                            # append it as-is (status defaults to PASSED which is
+                            # fine — the outer CancelledError handler below will
+                            # exclude it from the partial stats) then re-raise so
+                            # the outer handler can capture accumulated progress.
+                            sub_test_results.append(step)
+                            raise
+
                         except Exception as e:
                             error_message = f'PageButtonTest error: {str(e)}'
                             logging.error(error_message)
@@ -329,7 +338,10 @@ class PageButtonTest(_LocalizedTestBase):
                             total_failed += 1
                             status = TestStatus.FAILED
                         finally:
-                            sub_test_results.append(step)
+                            # Append only when the step completed normally (the
+                            # CancelledError branch already appended above).
+                            if not sub_test_results or sub_test_results[-1] is not step:
+                                sub_test_results.append(step)
 
                     collector.detach(page)
 
@@ -340,6 +352,26 @@ class PageButtonTest(_LocalizedTestBase):
                         issues=f"{self._get_text('clickable_elements_count')}{total}{self._get_text('click_failed_count')}{total_failed}",
                     )
                 )
+
+            except asyncio.CancelledError:
+                # Step-level timeout: save whatever progress was accumulated so
+                # ButtonCheckTool._arun() can record a meaningful partial result.
+                completed_steps = [
+                    s for s in sub_test_results
+                    if s.status in (TestStatus.PASSED, TestStatus.FAILED)
+                ]
+                self._partial_result = {
+                    'tested': len(completed_steps),
+                    'total': len(clickable_elements),
+                    'failed': sum(1 for s in completed_steps if s.status == TestStatus.FAILED),
+                    'failed_steps': [s for s in completed_steps if s.status == TestStatus.FAILED],
+                    'steps': completed_steps,
+                }
+                logging.info(
+                    f'PageButtonTest: CancelledError after '
+                    f'{self._partial_result["tested"]}/{self._partial_result["total"]} elements'
+                )
+                raise  # Must propagate so asyncio.timeout() converts to TimeoutError
 
             except Exception as e:
                 error_message = f'PageButtonTest error: {str(e)}'

@@ -21,6 +21,7 @@ Usage in test plans:
 Example test step:
     {"action": "traverse_clickable_elements", "params": {}}
 """
+import asyncio
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Type
@@ -140,6 +141,87 @@ def _humanize_error(error_text: str, language: str = 'zh-CN') -> str:
     if len(error_text) > 80:
         short += '...'
     return short
+
+
+# ---------------------------------------------------------------------------
+# Element priority filter
+# ---------------------------------------------------------------------------
+
+# Tier 1 – native interactive HTML elements; always tested.
+_TIER1_TAGS: frozenset = frozenset({'button', 'a', 'input', 'select', 'textarea'})
+
+# Tier 2 – structural/container tags that may host interactive content;
+# tested only when they carry an explicit interactive aria role.
+_TIER2_TAGS: frozenset = frozenset({'div', 'span', 'form', 'li', 'td'})
+
+# ARIA roles that indicate interactive behaviour regardless of tag name.
+# Sourced from WCAG 4.1.2 and WAI-ARIA Practices.
+_INTERACTIVE_ROLES: frozenset = frozenset({
+    'button', 'link', 'menuitem', 'menuitemcheckbox', 'menuitemradio',
+    'tab', 'option', 'checkbox', 'radio', 'switch',
+    'treeitem', 'combobox', 'textbox', 'searchbox',
+})
+
+# Default element cap – matches the class-level docstring guarantee.
+_DEFAULT_MAX_ELEMENTS: int = 50
+
+
+def _filter_clickable_elements(
+    raw_elements: Dict[str, Any],
+    max_elements: int = _DEFAULT_MAX_ELEMENTS,
+) -> Dict[str, Any]:
+    """Filter crawl elements by priority and cap at *max_elements*.
+
+    Priority order:
+      Tier 1 – native interactive tags (button, a, input, select, textarea)
+      Tier 2a – any tag with an interactive aria role
+      Tier 2b – structural tags (div/span/form/li/td) without an explicit role
+
+    Excluded unconditionally:
+      - ``aria-hidden="true"``   (decorative, invisible to assistive tech)
+      - ``input[type=hidden]``   (never user-facing)
+      - Tags outside Tier 1 / Tier 2 with no interactive role
+        (img, svg, nav, header, footer, …)
+
+    Args:
+        raw_elements: Raw dict from ``DeepCrawler.crawl().raw_dict()``.
+        max_elements: Hard cap on the number of elements returned.
+
+    Returns:
+        Filtered, priority-ordered dict with at most *max_elements* entries.
+    """
+    tier1: Dict[str, Any] = {}
+    tier2_role: Dict[str, Any] = {}
+    tier2_tag: Dict[str, Any] = {}
+
+    for elem_id, elem in raw_elements.items():
+        tag = (elem.get('tagName') or '').lower()
+        attrs: Dict[str, Any] = elem.get('attributes') or {}
+
+        # Unconditional exclusions
+        if attrs.get('aria-hidden') == 'true':
+            continue
+        if tag == 'input' and (attrs.get('type') or '').lower() == 'hidden':
+            continue
+
+        role = (attrs.get('role') or '').lower()
+
+        if tag in _TIER1_TAGS:
+            tier1[elem_id] = elem
+        elif role in _INTERACTIVE_ROLES:
+            tier2_role[elem_id] = elem
+        elif tag in _TIER2_TAGS:
+            tier2_tag[elem_id] = elem
+        # All other tags (img, svg, nav, header, footer, …) → ignored
+
+    # Merge in priority order and apply cap
+    combined: Dict[str, Any] = {}
+    for source in (tier1, tier2_role, tier2_tag):
+        for k, v in source.items():
+            if len(combined) >= max_elements:
+                return combined
+            combined[k] = v
+    return combined
 
 
 def _build_human_readable_summary(
@@ -393,10 +475,10 @@ class ButtonCheckTool(WebQABaseTool):
             dp = DeepCrawler(page)
             crawl_result = await dp.crawl(highlight=False, viewport_only=False)
 
-            # Get clickable elements as dictionary (format expected by PageButtonTest)
-            clickable_elements = crawl_result.raw_dict()
+            # Get raw clickable elements from DeepCrawler
+            raw_elements = crawl_result.raw_dict()
 
-            if not clickable_elements:
+            if not raw_elements:
                 # No clickable elements found - record as success (using safe_record_step helper)
                 self.safe_record_step(
                     description='Traverse clickable elements (no elements found)',
@@ -409,17 +491,71 @@ class ButtonCheckTool(WebQABaseTool):
                     page_state=f'URL: {url}'
                 )
 
-            logger.info(f'Button Test Tool: Found {len(clickable_elements)} clickable elements')
+            # Step 2.5: Apply priority filter (Tier1 native tags → interactive role → Tier2 tag)
+            # and cap at _DEFAULT_MAX_ELEMENTS.  Decorative / structural elements are excluded.
+            clickable_elements = _filter_clickable_elements(raw_elements)
+            logger.info(
+                f'Button Test Tool: Found {len(raw_elements)} raw elements → '
+                f'{len(clickable_elements)} after priority filter (cap={_DEFAULT_MAX_ELEMENTS})'
+            )
 
             # Step 3: Run PageButtonTest
             report_config = self.llm_config.get('report_config', {'language': 'en-US'})
             button_test = PageButtonTest(report_config=report_config)
+            language = self._get_report_language()
 
-            result = await button_test.run(
-                url=url,
-                page=page,
-                clickable_elements=clickable_elements
-            )
+            try:
+                result = await button_test.run(
+                    url=url,
+                    page=page,
+                    clickable_elements=clickable_elements
+                )
+            except asyncio.CancelledError:
+                # Timeout fired while PageButtonTest was running.  The inner loop
+                # saved whatever progress it completed to button_test._partial_result
+                # before re-raising.  Record that partial data to the test report so
+                # the user sees "tested N/M elements" instead of a blank timeout entry.
+                partial = getattr(button_test, '_partial_result', None)
+                if partial and partial.get('tested', 0) > 0:
+                    tested = partial['tested']
+                    total_cap = partial['total']
+                    p_failed = partial['failed']
+                    p_passed = tested - p_failed
+                    readable_partial = _build_human_readable_summary(
+                        tested, p_passed, p_failed, partial['failed_steps'], language
+                    )
+                    skipped = total_cap - tested
+                    skipped_note = (
+                        f'（因超时中断，另有 {skipped} 个元素未测试）'
+                        if language == 'zh-CN' else
+                        f'({skipped} element(s) not tested due to timeout)'
+                    )
+                    self.safe_record_step(
+                        description=(
+                            f'Traverse clickable elements '
+                            f'(partial: {tested}/{total_cap} tested, timed out)'
+                        ),
+                        model_io_data={
+                            'total_elements': total_cap,
+                            'raw_elements_count': len(raw_elements),
+                            'tested': tested,
+                            'passed': p_passed,
+                            'failed': p_failed,
+                            'partial': True,
+                            'summary': f'{readable_partial}\n{skipped_note}',
+                        },
+                        status='warning',
+                        screenshots=[
+                            s
+                            for step in partial['steps']
+                            for s in (getattr(step, 'screenshots', None) or [])
+                        ],
+                    )
+                    logger.info(
+                        f'Button Test Tool: Partial results saved '
+                        f'({tested}/{total_cap} elements, {p_failed} failed) before timeout'
+                    )
+                raise  # Re-raise so asyncio.timeout() converts it to TimeoutError
 
             # Step 4: Analyze results
             total_elements = len(clickable_elements)
@@ -447,6 +583,7 @@ class ButtonCheckTool(WebQABaseTool):
                             f'{passed_count} passed, {failed_count} failed'
                         ),
                         'total_elements': total_elements,
+                        'raw_elements_count': len(raw_elements),
                         'passed_count': passed_count,
                         'failed_count': failed_count,
                         'test_status': result.status.value,
@@ -456,7 +593,6 @@ class ButtonCheckTool(WebQABaseTool):
             )
 
             # Step 6: Record to case_recorder (using safe_record_step helper)
-            language = self._get_report_language()
             failed_steps = [
                 step for step in result.steps
                 if step.status == TestStatus.FAILED
@@ -478,6 +614,7 @@ class ButtonCheckTool(WebQABaseTool):
                 description=f'Traverse clickable elements (tested {total_elements})',
                 model_io_data={
                     'total_elements': total_elements,
+                    'raw_elements_count': len(raw_elements),
                     'passed': passed_count,
                     'failed': failed_count,
                     'summary': readable_summary,
