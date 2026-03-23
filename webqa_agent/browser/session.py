@@ -92,6 +92,14 @@ class _BrowserSession:
             downloads_dir=str(self._downloads_dir)
         )
 
+    def __del__(self) -> None:
+        """Safety net: clean up temp download directory if close() was never called."""
+        try:
+            if hasattr(self, '_downloads_dir') and self._downloads_dir and self._downloads_dir.exists():
+                shutil.rmtree(self._downloads_dir, ignore_errors=True)
+        except Exception:
+            pass
+
     @property
     def page(self) -> Page:
         self._check_state()
@@ -205,7 +213,7 @@ class _BrowserSession:
             self._page.on('dialog', _handle_dialog)
 
             # Re-attach event collector on new page (old page is closed)
-            self._event_collector.reset(self._page)
+            await self._event_collector.reset(self._page)
 
     async def initialize(self) -> '_BrowserSession':
         async with self._lock:
@@ -280,6 +288,13 @@ class _BrowserSession:
             if self._is_closed:
                 return
             self._is_closed = True
+
+            # Detach event collector before closing page to reset _attached state
+            try:
+                if self._page and self._event_collector:
+                    self._event_collector.detach(self._page)
+            except Exception:
+                logging.debug('Failed to detach event collector', exc_info=True)
 
             try:
                 if self._page:
@@ -371,18 +386,25 @@ class _BrowserSession:
     async def _initialize_local_browser(self, cfg: Dict[str, Any]) -> None:
         """Initialize local browser via Playwright launch."""
         self._playwright = await async_playwright().start()
+
+        launch_args = [
+            '--force-device-scale-factor=1',
+            f'--window-size={cfg["viewport"]["width"]},{cfg["viewport"]["height"]}',
+            '--num-raster-threads=2',
+            '--disable-dev-shm-usage',
+            '--use-gl=angle',
+            '--enable-unsafe-swiftshader',
+            '--ignore-gpu-blocklist',
+        ]
+
+        # Playwright 1.57+ headless uses chrome-headless-shell (no WebGL).
+        # Force full Chrome binary; achieve headless via Chrome's own flag.
+        if cfg['headless']:
+            launch_args.append('--headless=new')
+
         self._browser = await self._playwright.chromium.launch(
-            headless=cfg['headless'],
-            args=[
-                '--force-device-scale-factor=1',
-                f'--window-size={cfg["viewport"]["width"]},{cfg["viewport"]["height"]}',
-                '--num-raster-threads=2',
-                '--disk-cache-size=1',
-                '--media-cache-size=1',
-                '--disable-gpu',
-                '--disable-gpu-compositing',
-                '--disable-dev-shm-usage',  # 使用 /tmp 代替 /dev/shm，避免容器内 64MB 限制
-            ],
+            headless=False,
+            args=launch_args,
         )
         self._context = await self._browser.new_context(
             viewport=cfg['viewport'],

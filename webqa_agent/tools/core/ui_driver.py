@@ -10,7 +10,6 @@ from webqa_agent.actions.action_handler import ActionHandler
 from webqa_agent.actions.action_types import (ActionType,
                                               get_page_agnostic_keywords)
 from webqa_agent.browser import BrowserSession
-from webqa_agent.browser.check import ConsoleCheck, NetworkCheck
 from webqa_agent.crawler.deep_crawler import DeepCrawler, ElementKey
 from webqa_agent.llm.llm_api import LLMAPI
 from webqa_agent.prompts.ui_automation_prompts import LLMPrompt
@@ -41,8 +40,6 @@ class UITester:
         self.llm_config = llm_config
         self.browser_session = browser_session
         self.page = None
-        self.network_check = None
-        self.console_check = None
         self.ignore_rules = ignore_rules or {}
         self.execution_mode = execution_mode  # Store execution mode for page-agnostic operation handling
         self.language = language
@@ -97,12 +94,13 @@ class UITester:
         if not self.is_initialized:
             raise RuntimeError('ParallelUITester not initialized')
 
-        # Get ignore rules from config
-        network_ignore_rules = self.ignore_rules.get('network', [])
-        console_ignore_rules = self.ignore_rules.get('console', [])
-
-        self.network_check = NetworkCheck(self.page, ignore_rules=network_ignore_rules)
-        self.console_check = ConsoleCheck(self.page, ignore_rules=console_ignore_rules)
+        # Configure ignore rules on the session's unified event collector
+        collector = self.browser_session.event_collector
+        collector.set_ignore_rules(
+            console_rules=self.ignore_rules.get('console', []),
+            network_rules=self.ignore_rules.get('network', []),
+        )
+        collector.reset_session()
 
         await self._actions.go_to_page(self.page, url, cookies=cookies)
 
@@ -420,7 +418,6 @@ class UITester:
                 if events_lines:
                     context_parts.append('- Browser Events:\n' + '\n'.join(events_lines))
 
-            logging.info(f'Browser events: {browser_events}')
         # Test objective
         if 'test_objective' in execution_context and execution_context['test_objective']:
             context_parts.append(f"\n**Test Objective:** {execution_context['test_objective']}")
@@ -1293,57 +1290,37 @@ class UITester:
             return {'success': False, 'message': f'Check action failed: {str(e)}'}
 
     def get_monitoring_results(self) -> Dict[str, Any]:
-        """Get monitoring results."""
-        results = {}
-
-        if self.network_check:
-            results['network'] = self.network_check.get_messages()
-
-        if self.console_check:
-            results['console'] = self.console_check.get_messages()
-
-        return results
+        """Get monitoring results from the unified event collector."""
+        if self.browser_session:
+            try:
+                return self.browser_session.event_collector.get_session_summary()
+            except Exception:
+                pass
+        return {}
 
     async def end_session(self) -> Dict[str, Any]:
-        """End session: close monitoring, recycle resources.
+        """End session: collect monitoring data.
 
-        This method **must not** propagate exceptions. Any errors during gathering
-        monitoring data or listener cleanup are logged, and an (possibly empty)
-        results dict is always returned so that callers don't need to wrap it in
-        their own try/except blocks.
+        This method **must not** propagate exceptions. Listeners are managed
+        by the session-level event collector and cleaned up when the session
+        closes, so no manual listener removal is needed here.
         """
-
         results: dict = {}
-
         try:
             results = self.get_monitoring_results() or {}
         except BaseException as e:
             logging.warning(
-                f'ParallelUITester end_session monitoring warning: {e!r} (type: {type(e)})'
+                f'UITester end_session monitoring warning: {e!r} (type: {type(e)})'
             )
-
-        for listener_name in ('console_check', 'network_check'):
-            listener = getattr(self, listener_name, None)
-            if listener:
-                try:
-                    listener.remove_listeners()
-                except BaseException as e:
-                    logging.warning(
-                        f'ParallelUITester end_session cleanup warning while removing {listener_name}: {e!r} (type: {type(e)})'
-                    )
-
         return results
 
     async def cleanup(self):
         """Comprehensive cleanup of all resources.
 
-        This method ensures proper cleanup of:
-        - Event listeners (NetworkCheck, ConsoleCheck)
-        - LLM API HTTP client connections
-        - Internal data structures and caches
-        - Object references
+        Event listeners are managed by the session-level BrowserEventCollector
+        and cleaned up when the browser session closes.
         """
-        # 1. End session (remove event listeners, get monitoring data)
+        # 1. End session (collect monitoring data)
         try:
             await self.end_session()
         except Exception as e:
@@ -1363,8 +1340,6 @@ class UITester:
 
         # 3. Clear references to browser objects
         self.page = None
-        self.network_check = None
-        self.console_check = None
 
         # 4. Clear data structures to free memory
         self.test_results = []

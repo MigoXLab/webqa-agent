@@ -674,7 +674,7 @@ class CaseRunner:
         file_path = action.args.file_path if action.args else None
 
         # Clear event collector so we only capture events from this step
-        tester.browser_session.event_collector.clear()
+        await tester.browser_session.event_collector.clear()
 
         execution_steps_dict, execution_result = await tester.action(
             test_step=action.description,
@@ -837,7 +837,7 @@ class CaseRunner:
             return case_status, error_messages, messages_data, error_counts
 
         # ========== 1. Check Console Errors ==========
-        # Note: ConsoleCheck has already filtered out ignored errors
+        # Note: EventCollector has already filtered out ignored errors
         # So console_errors only contains unignored errors
         if console_errors:
             if case_status == TestStatus.PASSED:
@@ -850,7 +850,7 @@ class CaseRunner:
                 logging.warning(f'{case_name} detected {len(console_errors)} unignored console errors - marking case as WARNING')
 
         # ========== 2. Check Network Errors ==========
-        # Note: NetworkCheck has already filtered out ignored requests
+        # Note: EventCollector has already filtered out ignored requests
         # So failed_requests and error responses only contain unignored errors
         if network_error_count > 0:
             if case_status == TestStatus.PASSED:
