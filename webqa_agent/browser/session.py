@@ -2,7 +2,10 @@ import asyncio
 import json
 import logging
 import os
+import shutil
+import tempfile
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
@@ -81,6 +84,22 @@ class _BrowserSession:
         self._lock = asyncio.Lock()  # per-session lock
         self._closed_page_ids = set()  # Track closed page IDs for deduplication
 
+        # Download directory & unified event collector
+        self._downloads_dir = Path(tempfile.mkdtemp(prefix='webqa_downloads_'))
+
+        from webqa_agent.browser.event_collector import BrowserEventCollector
+        self._event_collector = BrowserEventCollector(
+            downloads_dir=str(self._downloads_dir)
+        )
+
+    def __del__(self) -> None:
+        """Safety net: clean up temp download directory if close() was never called."""
+        try:
+            if hasattr(self, '_downloads_dir') and self._downloads_dir and self._downloads_dir.exists():
+                shutil.rmtree(self._downloads_dir, ignore_errors=True)
+        except Exception:
+            pass
+
     @property
     def page(self) -> Page:
         self._check_state()
@@ -90,6 +109,16 @@ class _BrowserSession:
     def context(self) -> BrowserContext:
         self._check_state()
         return self._context
+
+    @property
+    def downloads_dir(self) -> Path:
+        """Directory where downloaded files are saved."""
+        return self._downloads_dir
+
+    @property
+    def event_collector(self):
+        """Unified browser event collector for per-action event capture."""
+        return self._event_collector
 
     def is_closed(self) -> bool:
         return self._is_closed
@@ -147,12 +176,14 @@ class _BrowserSession:
                         viewport=cfg.get('viewport'),
                         device_scale_factor=1,
                         locale=cfg.get('language', 'en-US'),
+                        accept_downloads=True,
                     )
             else:
                 self._context = await self._browser.new_context(
                     viewport=cfg.get('viewport'),
                     device_scale_factor=1,
                     locale=cfg.get('language', 'en-US'),
+                    accept_downloads=True,
                 )
 
                 # Reset local browser interceptors
@@ -180,6 +211,9 @@ class _BrowserSession:
                 await dialog.accept()
 
             self._page.on('dialog', _handle_dialog)
+
+            # Re-attach event collector on new page (old page is closed)
+            await self._event_collector.reset(self._page)
 
     async def initialize(self) -> '_BrowserSession':
         async with self._lock:
@@ -240,6 +274,9 @@ class _BrowserSession:
 
             self._page.on('dialog', _handle_dialog)
 
+            # Attach unified event collector (download, console error, pageerror, requestfailed)
+            self._event_collector.attach(self._page)
+
             return self
 
     async def close(self) -> None:
@@ -251,6 +288,13 @@ class _BrowserSession:
             if self._is_closed:
                 return
             self._is_closed = True
+
+            # Detach event collector before closing page to reset _attached state
+            try:
+                if self._page and self._event_collector:
+                    self._event_collector.detach(self._page)
+            except Exception:
+                logging.debug('Failed to detach event collector', exc_info=True)
 
             try:
                 if self._page:
@@ -275,6 +319,13 @@ class _BrowserSession:
                     await self._playwright.stop()
             except Exception:
                 logging.debug('Failed to stop playwright', exc_info=True)
+
+            # Cleanup downloads directory
+            try:
+                if self._downloads_dir and self._downloads_dir.exists():
+                    shutil.rmtree(self._downloads_dir, ignore_errors=True)
+            except Exception:
+                logging.debug('Failed to clean downloads directory', exc_info=True)
 
             # Cleanup cloud resources if in cloud mode
             if self._is_cloud_mode:
@@ -335,24 +386,32 @@ class _BrowserSession:
     async def _initialize_local_browser(self, cfg: Dict[str, Any]) -> None:
         """Initialize local browser via Playwright launch."""
         self._playwright = await async_playwright().start()
+
+        launch_args = [
+            '--force-device-scale-factor=1',
+            f'--window-size={cfg["viewport"]["width"]},{cfg["viewport"]["height"]}',
+            '--num-raster-threads=2',
+            '--disable-dev-shm-usage',
+            '--use-gl=angle',
+            '--enable-unsafe-swiftshader',
+            '--ignore-gpu-blocklist',
+        ]
+
+        # Playwright 1.57+ headless uses chrome-headless-shell (no WebGL).
+        # Force full Chrome binary; achieve headless via Chrome's own flag.
+        if cfg['headless']:
+            launch_args.append('--headless=new')
+
         self._browser = await self._playwright.chromium.launch(
-            headless=cfg['headless'],
-            args=[
-                '--force-device-scale-factor=1',
-                f'--window-size={cfg["viewport"]["width"]},{cfg["viewport"]["height"]}',
-                '--num-raster-threads=2',
-                '--disk-cache-size=1',
-                '--media-cache-size=1',
-                '--disable-gpu',
-                '--disable-gpu-compositing',
-                '--disable-dev-shm-usage',  # 使用 /tmp 代替 /dev/shm，避免容器内 64MB 限制
-            ],
+            headless=False,
+            args=launch_args,
         )
         self._context = await self._browser.new_context(
             viewport=cfg['viewport'],
             device_scale_factor=1,
             is_mobile=False,
             locale=cfg.get('language', 'en-US'),
+            accept_downloads=True,
         )
 
         # ── Cluster stability: intercept external font requests ──
@@ -439,6 +498,7 @@ class _BrowserSession:
                 viewport=cfg['viewport'],
                 device_scale_factor=1,
                 locale=cfg.get('language', 'en-US'),
+                accept_downloads=True,
             )
             logging.debug('[Cloud] Created new browser context')
 

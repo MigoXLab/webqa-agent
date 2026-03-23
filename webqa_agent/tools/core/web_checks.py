@@ -3,6 +3,7 @@ import logging
 import socket
 import ssl
 from datetime import datetime
+from typing import List
 from urllib.parse import urlparse
 
 import requests
@@ -203,8 +204,8 @@ class PageButtonTest(_LocalizedTestBase):
                 status = TestStatus.PASSED
                 from webqa_agent.actions.action_handler import (
                     ActionHandler, action_context_var)
-                from webqa_agent.browser.check import (ConsoleCheck,
-                                                       NetworkCheck)
+                from webqa_agent.browser.event_collector import \
+                    BrowserEventCollector
 
                 # Initialize ActionHandler with element buffer
                 action_handler = ActionHandler()
@@ -214,16 +215,16 @@ class PageButtonTest(_LocalizedTestBase):
                     str(k): v for k, v in clickable_elements.items()
                 }
 
-                # Initialize Checkers
-                network_check = NetworkCheck(page)
-                console_check = ConsoleCheck(page)
+                # Per-element event collector for browser error detection
+                collector = BrowserEventCollector()
+
+                collector.attach(page)
 
                 # count total passed / failed
                 total, total_failed = 0, 0
 
                 if clickable_elements:
                     for highlight_id, element in clickable_elements.items():
-                        # Run single test with the provided browser configuration
                         element_text = element.get('selector', 'Unknown')
                         logging.info(f'Testing clickable element {highlight_id}...')
 
@@ -238,45 +239,29 @@ class PageButtonTest(_LocalizedTestBase):
                             current_url = page.url
                             if current_url != url:
                                 await page.goto(url)
-                                await asyncio.sleep(0.5)  # Wait for page to stabilize
+                                await asyncio.sleep(0.5)
 
-                            # Record existing errors count
-                            initial_console_errors = len(console_check.get_messages())
-                            initial_network_errors = len(network_check.get_messages().get('failed_requests', []))
-                            initial_responses = len(network_check.get_messages().get('responses', []))
+                            # Clear per-action buffers before the click
+                            await collector.clear()
 
-                            # Use ActionHandler.click() for enhanced error handling
                             click_success = await action_handler.click(str(highlight_id))
-
-                            # Get error context from ActionContext
                             ctx = action_context_var.get()
 
-                            # Check for new browser errors
                             await asyncio.sleep(1)
 
-                            current_console_errors = console_check.get_messages()
-                            new_console_errors = current_console_errors[initial_console_errors:]
+                            events = await collector.collect(timeout=2.0)
 
-                            network_messages = network_check.get_messages()
-                            current_failed_requests = network_messages.get('failed_requests', [])
-                            new_network_failures = current_failed_requests[initial_network_errors:]
+                            # Check for new browser errors from this click
+                            new_console_errors = events.get('console_errors', [])
+                            new_request_failures = events.get('request_failures', [])
+                            has_browser_errors = bool(new_console_errors) or bool(new_request_failures)
 
-                            current_responses = network_messages.get('responses', [])
-                            new_failed_responses = [resp for resp in current_responses[initial_responses:] if resp.get('status', 200) >= 400]
-
-                            has_browser_errors = len(new_console_errors) > 0 or len(new_network_failures) > 0 or len(new_failed_responses) > 0
-
+                            browser_errors_summary: List[str] = []
                             if has_browser_errors:
-                                browser_errors_summary = []
-                                if new_console_errors:
-                                    for err in new_console_errors:
-                                        browser_errors_summary.append(f"Console Error: {err.get('msg')}")
-                                if new_network_failures:
-                                    for err in new_network_failures:
-                                        browser_errors_summary.append(f"Network Failure: {err.get('url')} - {err.get('error')}")
-                                if new_failed_responses:
-                                    for err in new_failed_responses:
-                                        browser_errors_summary.append(f"Network Error Status: {err.get('url')} - {err.get('status')}")
+                                for err in new_console_errors:
+                                    browser_errors_summary.append(f"Console Error: {err.get('text')}")
+                                for err in new_request_failures:
+                                    browser_errors_summary.append(f"Network Failure: {err.get('url')} - {err.get('failure')}")
 
                             if click_success and not has_browser_errors:
                                 step.status = TestStatus.PASSED
@@ -346,9 +331,7 @@ class PageButtonTest(_LocalizedTestBase):
                         finally:
                             sub_test_results.append(step)
 
-                    # Clean up listeners after traversal
-                    network_check.remove_listeners()
-                    console_check.remove_listeners()
+                    collector.detach(page)
 
                 logging.info(f"{icon['check']} Sub Test Completed: {result.name}")
                 result.report.append(

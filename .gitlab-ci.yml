@@ -1,6 +1,7 @@
 stages:
   - build
   - deploy
+  - pr_agent
 
 variables:
   DOCKER_DRIVER: overlay2
@@ -192,3 +193,37 @@ deploy-fe-prod:
     # - kubectl --kubeconfig "$kubeconfig_prod_public_webqa" apply -f ingress.yaml
     - echo "Frontend successfully deployed."
   when: manual
+
+# --- PR Agent Stage ---
+
+pr_agent_job:
+  stage: pr_agent
+  retry: 2
+  tags:
+    - ecs
+  image:
+    name: eng-center-registry.cn-shanghai.cr.aliyuncs.com/qa/codiumai/pr-agent:0.1.3.2-intern
+    entrypoint: [""]
+  script:
+    - cd /app
+    - echo "Running PR Agent action step"
+    - export MR_URL="$CI_MERGE_REQUEST_PROJECT_URL/merge_requests/$CI_MERGE_REQUEST_IID"
+    - echo "MR_URL=$MR_URL"
+    - export gitlab__url=https://gitlab.pjlab.org.cn
+    - export gitlab__PERSONAL_ACCESS_TOKEN=$GITLAB_PERSONAL_ACCESS_TOKEN
+    - export config__git_provider="gitlab"
+    - export config__model="gpt-5.1-codex"
+    - export config__max_model_tokens="200000"
+    - export config__response_language="zh-CN"
+    - export config__ai_timeout="600"
+    - export openai__key=$OPENAI_KEY
+    - export openai__api_base=$OPENAI_API_BASE
+    - export AUDIT_DB_HOST=$AUDIT_DB_HOST
+    - export AUDIT_DB_PORT=3306
+    - export AUDIT_DB_USER="pr_agent"
+    - export AUDIT_DB_PASSWORD=$AUDIT_DB_PASSWORD
+    - export AUDIT_DB_NAME="pr_agent"
+    - export PR_AGENT_COMMANDS="${PR_AGENT_COMMANDS:-describe review improve}"
+    - python -m pr_agent.servers.gitlab_ci_audit_runner
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'

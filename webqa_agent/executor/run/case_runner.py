@@ -673,6 +673,9 @@ class CaseRunner:
         """
         file_path = action.args.file_path if action.args else None
 
+        # Clear event collector so we only capture events from this step
+        await tester.browser_session.event_collector.clear()
+
         execution_steps_dict, execution_result = await tester.action(
             test_step=action.description,
             file_path=file_path,
@@ -698,6 +701,17 @@ class CaseRunner:
             'after_action_title': execution_result.get('after_action_title'),
             'after_action_page_structure': execution_result.get('after_action_page_structure'),
         }
+
+        # Collect browser events for subsequent verify steps.
+        # Run mode only keeps download events; console/request noise is excluded.
+        collector = tester.browser_session.event_collector
+        browser_events = await collector.collect(timeout=5.0)
+        if browser_events:
+            download_only = {k: v for k, v in browser_events.items() if k == 'download'}
+            if download_only:
+                context_result['browser_events'] = download_only
+                logging.debug(f'Browser events captured for step context: {list(download_only.keys())}')
+
         prev_step_context = StepContext(
             description=action.description,
             result=context_result
@@ -823,7 +837,7 @@ class CaseRunner:
             return case_status, error_messages, messages_data, error_counts
 
         # ========== 1. Check Console Errors ==========
-        # Note: ConsoleCheck has already filtered out ignored errors
+        # Note: EventCollector has already filtered out ignored errors
         # So console_errors only contains unignored errors
         if console_errors:
             if case_status == TestStatus.PASSED:
@@ -836,7 +850,7 @@ class CaseRunner:
                 logging.warning(f'{case_name} detected {len(console_errors)} unignored console errors - marking case as WARNING')
 
         # ========== 2. Check Network Errors ==========
-        # Note: NetworkCheck has already filtered out ignored requests
+        # Note: EventCollector has already filtered out ignored requests
         # So failed_requests and error responses only contain unignored errors
         if network_error_count > 0:
             if case_status == TestStatus.PASSED:
