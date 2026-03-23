@@ -148,18 +148,19 @@ def _humanize_error(error_text: str, language: str = 'zh-CN') -> str:
 # ---------------------------------------------------------------------------
 
 # Tier 1 – native interactive HTML elements; always tested.
-_TIER1_TAGS: frozenset = frozenset({'button', 'a', 'input', 'select', 'textarea'})
+_TIER1_TAGS: frozenset[str] = frozenset({'button', 'a', 'input', 'select', 'textarea'})
 
-# Tier 2 – structural/container tags that may host interactive content;
-# tested only when they carry an explicit interactive aria role.
-_TIER2_TAGS: frozenset = frozenset({'div', 'span', 'form', 'li', 'td'})
+# Tier 2 – structural/container tags tested at lower priority.
+# Those with an interactive aria role take precedence over those without.
+_TIER2_TAGS: frozenset[str] = frozenset({'div', 'span', 'form', 'li', 'td'})
 
 # ARIA roles that indicate interactive behaviour regardless of tag name.
 # Sourced from WCAG 4.1.2 and WAI-ARIA Practices.
-_INTERACTIVE_ROLES: frozenset = frozenset({
+_INTERACTIVE_ROLES: frozenset[str] = frozenset({
     'button', 'link', 'menuitem', 'menuitemcheckbox', 'menuitemradio',
     'tab', 'option', 'checkbox', 'radio', 'switch',
     'treeitem', 'combobox', 'textbox', 'searchbox',
+    'slider', 'spinbutton',
 })
 
 # Default element cap – matches the class-level docstring guarantee.
@@ -499,6 +500,21 @@ class ButtonCheckTool(WebQABaseTool):
                 f'{len(clickable_elements)} after priority filter (cap={_DEFAULT_MAX_ELEMENTS})'
             )
 
+            if not clickable_elements:
+                self.safe_record_step(
+                    description='Traverse clickable elements (all filtered out)',
+                    model_io_data={
+                        'raw_elements_count': len(raw_elements),
+                        'message': 'All elements were decorative/structural; no interactive elements to test',
+                    },
+                    status='passed',
+                )
+                return self.format_success(
+                    f'No testable interactive elements found after priority filter '
+                    f'({len(raw_elements)} raw elements were decorative/structural)',
+                    page_state=f'URL: {url}'
+                )
+
             # Step 3: Run PageButtonTest
             report_config = self.llm_config.get('report_config', {'language': 'en-US'})
             button_test = PageButtonTest(report_config=report_config)
@@ -518,13 +534,14 @@ class ButtonCheckTool(WebQABaseTool):
                 partial = getattr(button_test, '_partial_result', None)
                 if partial and partial.get('tested', 0) > 0:
                     tested = partial['tested']
-                    total_cap = partial['total']
-                    p_failed = partial['failed']
-                    p_passed = tested - p_failed
+                    total_elements = partial['total']
+                    partial_failed = partial['failed']
+                    partial_passed = tested - partial_failed
                     readable_partial = _build_human_readable_summary(
-                        tested, p_passed, p_failed, partial['failed_steps'], language
+                        tested, partial_passed, partial_failed,
+                        partial['failed_steps'], language,
                     )
-                    skipped = total_cap - tested
+                    skipped = total_elements - tested
                     skipped_note = (
                         f'（因超时中断，另有 {skipped} 个元素未测试）'
                         if language == 'zh-CN' else
@@ -533,14 +550,14 @@ class ButtonCheckTool(WebQABaseTool):
                     self.safe_record_step(
                         description=(
                             f'Traverse clickable elements '
-                            f'(partial: {tested}/{total_cap} tested, timed out)'
+                            f'(partial: {tested}/{total_elements} tested, timed out)'
                         ),
                         model_io_data={
-                            'total_elements': total_cap,
+                            'total_elements': total_elements,
                             'raw_elements_count': len(raw_elements),
                             'tested': tested,
-                            'passed': p_passed,
-                            'failed': p_failed,
+                            'passed': partial_passed,
+                            'failed': partial_failed,
                             'partial': True,
                             'summary': f'{readable_partial}\n{skipped_note}',
                         },
@@ -553,7 +570,8 @@ class ButtonCheckTool(WebQABaseTool):
                     )
                     logger.info(
                         f'Button Test Tool: Partial results saved '
-                        f'({tested}/{total_cap} elements, {p_failed} failed) before timeout'
+                        f'({tested}/{total_elements} elements, {partial_failed} failed) '
+                        f'before timeout'
                     )
                 raise  # Re-raise so asyncio.timeout() converts it to TimeoutError
 

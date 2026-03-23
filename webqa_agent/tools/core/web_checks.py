@@ -217,133 +217,132 @@ class PageButtonTest(_LocalizedTestBase):
 
                 # Per-element event collector for browser error detection
                 collector = BrowserEventCollector()
-
                 collector.attach(page)
 
                 # count total passed / failed
                 total, total_failed = 0, 0
 
                 if clickable_elements:
-                    for highlight_id, element in clickable_elements.items():
-                        element_text = element.get('selector', 'Unknown')
-                        logging.info(f'Testing clickable element {highlight_id}...')
+                    try:
+                        for highlight_id, element in clickable_elements.items():
+                            element_text = element.get('selector', 'Unknown')
+                            logging.info(f'Testing clickable element {highlight_id}...')
 
-                        step = SubTestStep(
-                            id=int(highlight_id),
-                            description=f"{self._get_text('click_element')}: {element_text}",
-                            screenshots=[],
-                            actions=[]
-                        )
+                            step = SubTestStep(
+                                id=int(highlight_id),
+                                description=f"{self._get_text('click_element')}: {element_text}",
+                                screenshots=[],
+                                actions=[]
+                            )
 
-                        try:
-                            current_url = page.url
-                            if current_url != url:
-                                await page.goto(url)
+                            step_recorded = False
+                            try:
+                                current_url = page.url
+                                if current_url != url:
+                                    await page.goto(url)
+                                    await asyncio.sleep(0.5)
+
+                                # Clear per-action buffers before the click
+                                await collector.clear()
+
+                                click_success = await action_handler.click(str(highlight_id))
+                                ctx = action_context_var.get()
+
+                                await asyncio.sleep(1)
+
+                                events = await collector.collect(timeout=2.0)
+
+                                # Check for new browser errors from this click
+                                new_console_errors = events.get('console_errors', [])
+                                new_request_failures = events.get('request_failures', [])
+                                has_browser_errors = bool(new_console_errors) or bool(new_request_failures)
+
+                                browser_errors_summary: List[str] = []
+                                if has_browser_errors:
+                                    for err in new_console_errors:
+                                        browser_errors_summary.append(f"Console Error: {err.get('text')}")
+                                    for err in new_request_failures:
+                                        browser_errors_summary.append(f"Network Failure: {err.get('url')} - {err.get('failure')}")
+
+                                if click_success and not has_browser_errors:
+                                    step.status = TestStatus.PASSED
+                                    total += 1
+
+                                else:
+                                    # Click failed or browser errors occurred
+                                    # Take and append the 'after' screenshot (error scene)
+                                    after_b64, after_path = await action_handler.b64_page_screenshot(
+                                        file_name=f'element_{highlight_id}_error_scene',
+                                        context='test'
+                                    )
+                                    if after_path:
+                                        step.screenshots.append(SubTestScreenshot(
+                                            type='path',
+                                            data=after_path,
+                                            label='Error Scene'
+                                        ))
+                                    elif after_b64:
+                                        step.screenshots.append(SubTestScreenshot(
+                                            type='base64',
+                                            data=after_b64,
+                                            label='Error Scene'
+                                        ))
+
+                                    error_type = 'unknown'
+                                    error_reason = 'Click failed or errors occurred'
+
+                                    if not click_success and ctx:
+                                        error_type = ctx.error_type
+                                        error_reason = ctx.error_reason
+                                    elif has_browser_errors:
+                                        error_type = 'browser_error'
+                                        error_reason = 'Console or Network errors occurred after click'
+
+                                    error_msg_parts = [f'{error_type}: {error_reason}']
+
+                                    if not click_success and ctx and ctx.playwright_error:
+                                        error_msg_parts.append(f'Details: {ctx.playwright_error}')
+
+                                    if has_browser_errors and browser_errors_summary:
+                                        error_msg_parts.append('Browser Errors: ' + '; '.join(browser_errors_summary))
+
+                                    step.errors = ' | '.join(error_msg_parts)
+                                    step.status = TestStatus.FAILED
+                                    total += 1
+                                    total_failed += 1
+                                    status = TestStatus.FAILED
+
+                                    logging.warning(
+                                        f'Click failed/errored for element {highlight_id}: '
+                                        f'type={error_type}, '
+                                        f'reason={error_reason}'
+                                    )
+
+                                # Brief pause between clicks
                                 await asyncio.sleep(0.5)
 
-                            # Clear per-action buffers before the click
-                            await collector.clear()
+                            except asyncio.CancelledError:
+                                # Timeout mid-element: discard this incomplete step so
+                                # the outer CancelledError handler only counts elements
+                                # that finished with an explicit PASSED/FAILED status.
+                                step_recorded = True  # prevent finally from appending
+                                raise
 
-                            click_success = await action_handler.click(str(highlight_id))
-                            ctx = action_context_var.get()
-
-                            await asyncio.sleep(1)
-
-                            events = await collector.collect(timeout=2.0)
-
-                            # Check for new browser errors from this click
-                            new_console_errors = events.get('console_errors', [])
-                            new_request_failures = events.get('request_failures', [])
-                            has_browser_errors = bool(new_console_errors) or bool(new_request_failures)
-
-                            browser_errors_summary: List[str] = []
-                            if has_browser_errors:
-                                for err in new_console_errors:
-                                    browser_errors_summary.append(f"Console Error: {err.get('text')}")
-                                for err in new_request_failures:
-                                    browser_errors_summary.append(f"Network Failure: {err.get('url')} - {err.get('failure')}")
-
-                            if click_success and not has_browser_errors:
-                                step.status = TestStatus.PASSED
-                                total += 1
-
-                            else:
-                                # Click failed or browser errors occurred
-                                # Take and append the 'after' screenshot (error scene)
-                                after_b64, after_path = await action_handler.b64_page_screenshot(
-                                    file_name=f'element_{highlight_id}_error_scene',
-                                    context='test'
-                                )
-                                if after_path:
-                                    step.screenshots.append(SubTestScreenshot(
-                                        type='path',
-                                        data=after_path,
-                                        label='Error Scene'
-                                    ))
-                                elif after_b64:
-                                    step.screenshots.append(SubTestScreenshot(
-                                        type='base64',
-                                        data=after_b64,
-                                        label='Error Scene'
-                                    ))
-
-                                error_type = 'unknown'
-                                error_reason = 'Click failed or errors occurred'
-
-                                if not click_success and ctx:
-                                    error_type = ctx.error_type
-                                    error_reason = ctx.error_reason
-                                elif has_browser_errors:
-                                    error_type = 'browser_error'
-                                    error_reason = 'Console or Network errors occurred after click'
-
-                                error_msg_parts = [f'{error_type}: {error_reason}']
-
-                                if not click_success and ctx and ctx.playwright_error:
-                                    error_msg_parts.append(f'Details: {ctx.playwright_error}')
-
-                                if has_browser_errors and browser_errors_summary:
-                                    error_msg_parts.append('Browser Errors: ' + '; '.join(browser_errors_summary))
-
-                                step.errors = ' | '.join(error_msg_parts)
+                            except Exception as e:
+                                error_message = f'PageButtonTest error: {str(e)}'
+                                logging.error(error_message)
                                 step.status = TestStatus.FAILED
+                                step.errors = str(e)
                                 total += 1
                                 total_failed += 1
                                 status = TestStatus.FAILED
+                            finally:
+                                if not step_recorded:
+                                    sub_test_results.append(step)
 
-                                logging.warning(
-                                    f'Click failed/errored for element {highlight_id}: '
-                                    f'type={error_type}, '
-                                    f'reason={error_reason}'
-                                )
-
-                            # Brief pause between clicks
-                            await asyncio.sleep(0.5)
-
-                        except asyncio.CancelledError:
-                            # Timeout fired mid-element.  The step is incomplete;
-                            # append it as-is (status defaults to PASSED which is
-                            # fine — the outer CancelledError handler below will
-                            # exclude it from the partial stats) then re-raise so
-                            # the outer handler can capture accumulated progress.
-                            sub_test_results.append(step)
-                            raise
-
-                        except Exception as e:
-                            error_message = f'PageButtonTest error: {str(e)}'
-                            logging.error(error_message)
-                            step.status = TestStatus.FAILED
-                            step.errors = str(e)
-                            total += 1
-                            total_failed += 1
-                            status = TestStatus.FAILED
-                        finally:
-                            # Append only when the step completed normally (the
-                            # CancelledError branch already appended above).
-                            if not sub_test_results or sub_test_results[-1] is not step:
-                                sub_test_results.append(step)
-
-                    collector.detach(page)
+                    finally:
+                        # Clean up listeners on every exit path (including timeout/cancel).
+                        collector.detach(page)
 
                 logging.info(f"{icon['check']} Sub Test Completed: {result.name}")
                 result.report.append(
