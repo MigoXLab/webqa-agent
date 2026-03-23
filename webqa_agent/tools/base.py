@@ -248,6 +248,21 @@ class WebQAToolMetadata(BaseModel):
         description='Per-step timeout in seconds. None = use default (300s).',
     )
 
+    # Disable adaptive recovery for batch/diagnostic tools. When True, any
+    # FAILURE reported by this tool is recorded as a diagnostic finding and
+    # the recovery engine (retry + LLM replan) is skipped entirely.
+    # Rationale: batch/scan tools (Lighthouse, Nuclei, ButtonCheck, LinkCheck)
+    # always run to completion — their FAILURE output is the intended result
+    # ("found N issues"), not an execution error worth retrying.
+    recovery_disabled: bool = Field(
+        default=False,
+        description=(
+            'Disable adaptive recovery (retry/replan) for this tool. '
+            'Set True for batch/scan tools whose FAILURE output is a diagnostic '
+            'finding, not a transient execution error.'
+        ),
+    )
+
     model_config = ConfigDict(extra='allow')  # Allow additional fields for future extension
 
 

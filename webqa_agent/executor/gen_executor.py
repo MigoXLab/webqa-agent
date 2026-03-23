@@ -12,6 +12,7 @@ from webqa_agent.config_models.gen_config import GenConfig
 from webqa_agent.data import (ParallelTestSession, SubTestReport,
                               SubTestResult, SubTestScreenshot, SubTestStep,
                               TestCategory, TestResult, TestStatus)
+from webqa_agent.executor.gen.utils.case_recorder import get_report_summary
 from webqa_agent.executor.result_aggregator import ResultAggregator
 from webqa_agent.utils import Display, i18n
 from webqa_agent.utils.get_log import GetLog
@@ -398,10 +399,11 @@ class GenExecutor:
 
             # Build reports
             reports = []
-            if recorded_case.get('final_summary'):
+            report_summary = get_report_summary(recorded_case)
+            if report_summary:
                 reports.append(SubTestReport(
                     title='Summary',
-                    issues=recorded_case.get('final_summary', '')
+                    issues=report_summary
                 ))
 
             # Extract metrics
@@ -422,6 +424,7 @@ class GenExecutor:
                     start_time=recorded_case.get('start_time'),
                     end_time=recorded_case.get('end_time'),
                     final_summary=recorded_case.get('final_summary', ''),
+                    user_summary=recorded_case.get('user_summary', ''),
                     report=reports,
                 )
             )

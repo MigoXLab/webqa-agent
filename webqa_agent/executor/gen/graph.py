@@ -23,6 +23,8 @@ from webqa_agent.executor.gen.agents.execute_agent import agent_worker_node
 from webqa_agent.executor.gen.state.schemas import MainGraphState
 from webqa_agent.executor.gen.utils.case_recorder import CentralCaseRecorder
 from webqa_agent.executor.gen.utils.error_classifier import is_system_error
+from webqa_agent.executor.gen.utils.summary_utils import (i18n_select,
+                                                          make_user_summary)
 from webqa_agent.prompts.test_planning_prompts import (
     get_element_filtering_system_prompt, get_element_filtering_user_prompt,
     get_planning_prompt, get_reflection_prompt)
@@ -593,9 +595,18 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                         timeout_summary = f'Case timed out after {case_timeout_minutes} minutes'
 
                         # Harvest partial results from externalized recorder
+                        lang = state.get('language', 'zh-CN')
+                        case_objective = case.get('objective', case.get('name', case_name))
+                        _obj = case_objective.rstrip('。！？.!?，,；;：:、… ')
+                        user_summary = i18n_select(
+                            lang,
+                            f'{_obj}，测试运行超时，结果不完整，非产品缺陷。',
+                            f'{_obj} test timed out, results incomplete, not a product defect.',
+                        )
                         case_recorder.finish_case(
                             final_status='timeout',
                             final_summary=timeout_summary,
+                            user_summary=user_summary,
                         )
                         partial_data = case_recorder.get_case_data() or {}
                         partial_steps = partial_data.get('steps', [])
@@ -607,6 +618,7 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                             'case_id': case_id,
                             'status': 'failed',
                             'failure_type': 'timeout',
+                            'user_summary': user_summary,
                             'reason': (
                                 f'{timeout_summary}. '
                                 f'{completed_count}/{total_planned} steps completed.'
@@ -623,17 +635,19 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                                 f'{timeout_summary}. '
                                 f'{completed_count} steps completed before timeout.'
                             ),
+                            'user_summary': user_summary,
                             'start_time': partial_data.get('start_time', now_str),
                             'end_time': now_str,
                         }
                         # Save timeout case result to disk (consistent with normal path)
                         try:
                             report_dir = _resolve_report_dir(state)
-                            try:
-                                case_idx = int(case_id.split('_')[1])
-                            except (IndexError, ValueError):
-                                case_idx = _completed_case_count + 1
-
+                            # Parse case index from case_id format "case_N"
+                            parts = case_id.split('_')
+                            case_idx = (
+                                int(parts[1]) if len(parts) > 1 and parts[1].isdigit()
+                                else _completed_case_count + 1
+                            )
                             await asyncio.to_thread(
                                 save_test_result_json,
                                 test_result=timeout_recorded,
@@ -845,16 +859,82 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                     ('warning', 'system_error') if is_system_error(e)
                     else ('failed', 'unexpected_error')
                 )
-                async with results_lock:
-                    completed_cases.append(
-                        {
-                            'case_name': case_name,
-                            'case_id': case_id,
-                            'status': err_status,
-                            'failure_type': err_failure_type,
-                            'reason': f'{type(e).__name__}: {str(e)}',
-                        }
+                tracker.result = err_status
+                lang = state.get('language', 'zh-CN')
+                case_objective = case.get('objective', case.get('name', case_name))
+
+                if err_status == 'warning':
+                    user_summary = make_user_summary(lang, 'warning', case_objective, exception=e)
+                else:
+                    err_reason = i18n_select(
+                        lang, '测试执行异常终止。', 'Test execution terminated unexpectedly.',
                     )
+                    user_summary = make_user_summary(
+                        lang, 'failed', case_objective, reason=err_reason,
+                    )
+
+                now_str = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+                err_summary = f'{type(e).__name__}: {str(e)}'
+
+                # Persist partial data via case_recorder (mirrors timeout handler)
+                case_recorder.finish_case(
+                    final_status=err_status,
+                    final_summary=err_summary,
+                    user_summary=user_summary,
+                )
+                partial_data = case_recorder.get_case_data() or {}
+                partial_steps = partial_data.get('steps', [])
+
+                case_result = {
+                    'case_name': case_name,
+                    'case_id': case_id,
+                    'status': err_status,
+                    'failure_type': err_failure_type,
+                    'user_summary': user_summary,
+                    'reason': err_summary,
+                }
+                exception_recorded = {
+                    'name': case_name,
+                    'case_id': case_id,
+                    'status': err_status,
+                    'failure_type': err_failure_type,
+                    'steps': partial_steps,
+                    'final_summary': err_summary,
+                    'user_summary': user_summary,
+                    'start_time': partial_data.get('start_time', now_str),
+                    'end_time': now_str,
+                }
+
+                # Save exception case result to disk (consistent with timeout path)
+                try:
+                    report_dir = _resolve_report_dir(state)
+                    # Parse case index from case_id format "case_N"
+                    parts = case_id.split('_')
+                    case_idx = (
+                        int(parts[1]) if len(parts) > 1 and parts[1].isdigit()
+                        else _completed_case_count + 1
+                    )
+                    await asyncio.to_thread(
+                        save_test_result_json,
+                        test_result=exception_recorded,
+                        report_dir=report_dir,
+                        index=case_idx,
+                        name=case_name,
+                        category='function',
+                        mode='gen',
+                        sub_test_id=case_id,
+                        llm_config=state.get('llm_config'),
+                        browser_config=state.get('browser_config', {}),
+                        target_url=state.get('url', ''),
+                    )
+                except Exception as save_err:
+                    logging.error(
+                        f'Failed to save exception case file for {case_name}: {save_err}'
+                    )
+
+                async with results_lock:
+                    completed_cases.append(case_result)
+                    recorded_cases.append(exception_recorded)
                     _completed_case_count += 1
 
             finally:

@@ -110,6 +110,7 @@ class NucleiTool(WebQABaseTool):
             name='execute_nuclei_scan',
             category='custom',  # Custom tool - marks as user-defined
             step_type='nuclei',  # Explicit step type for planning
+            recovery_disabled=True,  # Batch tool: FAILURE = diagnostic finding, not a transient error
             description_short='Run Nuclei security vulnerability scan on current page',
             description_long=(
                 'Executes Nuclei automated security scanner on the current page. '
