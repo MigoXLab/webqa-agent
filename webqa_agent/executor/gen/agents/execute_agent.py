@@ -1338,15 +1338,97 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         logging.debug(f'=== Executing {len(preamble_actions)} Preamble Actions ===')
         preamble_messages: list[BaseMessage] = [
             HumanMessage(
-                content='The test has started. Before the main test steps, I need to perform some setup actions to restore the UI state. Please execute the first preamble action.'
+                content=(
+                    'PREAMBLE PHASE: You are establishing the required UI state '
+                    'before the main test steps begin. '
+                    'Execute each provided action using only the parameters specified '
+                    'in the action definition — do not supplement, modify, or infer '
+                    'parameter values (such as URLs, input text, or element targets) '
+                    'from the test objective or any other context. '
+                    'Please execute the first preamble action.'
+                )
             )
         ]
 
         for i, step in enumerate(preamble_actions):
+            # ------------------------------------------------------------------
+            # Direct execution path for structured actions (bypass LLM entirely)
+            # ------------------------------------------------------------------
             if isinstance(step, dict):
-                instruction_to_execute = step.get('action')
+                action_name = step.get('action', '')
+                params = step.get('params', {})
+
+                if action_name == 'GoToPage' and params.get('url'):
+                    # GoToPage with explicit URL: execute directly, never let LLM
+                    # hallucinate or substitute the target URL.
+                    target_url = normalize_url(params['url'].strip())
+                    # Require an explicit http/https scheme; rely on Playwright
+                    # to surface further errors (DNS, 404, etc.) via exception.
+                    if not target_url.startswith(('http://', 'https://')):
+                        logging.warning(
+                            f'Preamble GoToPage URL missing http(s) scheme: '
+                            f'{params["url"]!r} — attempting navigation anyway'
+                        )
+                        target_url = params['url'].strip()
+                    try:
+                        await ui_tester_instance.browser_session.navigate_to(target_url)
+                        logging.info(
+                            f'Preamble action {i + 1}/{len(preamble_actions)}: '
+                            f'GoToPage executed directly → {target_url}'
+                        )
+                        continue  # Done — skip agent_executor entirely
+                    except Exception as _nav_err:
+                        logging.error(
+                            f'Preamble GoToPage direct execution failed: {target_url} — {_nav_err}'
+                        )
+                        final_summary = _i18n(
+                            language,
+                            f"前置导航到 '{target_url}' 失败：{_nav_err}",
+                            f"Preamble navigation to '{target_url}' failed: {_nav_err}",
+                        )
+                        user_summary = _make_user_summary(language, 'failed', case_objective)
+                        case_recorder.finish_case(
+                            final_status='failed',
+                            final_summary=final_summary,
+                            user_summary=user_summary,
+                        )
+                        recorded_case_data = case_recorder.get_case_data()
+                        if recorded_case_data is not None:
+                            recorded_case_data['original_planned_steps'] = original_planned_steps
+                        metrics = recorded_case_data.get('metrics', {}) if recorded_case_data else {}
+                        failed_step_details = _extract_failed_step_details(recorded_case_data)
+                        case_result = {
+                            'case_name': case_name,
+                            'case_id': case.get('case_id', ''),
+                            'final_summary': final_summary,
+                            'user_summary': user_summary,
+                            'status': 'failed',
+                            'failure_type': 'preamble_failure',
+                            'metrics': {
+                                'total_steps': metrics.get('total_steps', 0),
+                                'passed_steps': metrics.get('passed_steps', 0),
+                                'failed_steps': metrics.get('failed_steps', 0),
+                                'warning_steps': metrics.get('warning_steps', 0),
+                                'total_actions': metrics.get('total_actions', 0),
+                            },
+                            'failed_step_details': failed_step_details,
+                        }
+                        return {
+                            'case_result': case_result,
+                            'current_case_steps': [],
+                            'recorded_case': recorded_case_data,
+                        }
+
+                # Non-direct action: include params in instruction so LLM has
+                # the full context and cannot invent missing values.
+                if params:
+                    params_str = json.dumps(params, ensure_ascii=False)
+                    instruction_to_execute = f'{action_name}（params: {params_str}）'
+                else:
+                    instruction_to_execute = action_name or str(step)
             else:
                 instruction_to_execute = step
+
             if not instruction_to_execute:
                 logging.warning(f'Preamble action {i + 1} has no instruction, skipping')
                 continue
@@ -1402,7 +1484,11 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             )
             preamble_messages.append(
                 HumanMessage(
-                    content=f'Now, execute this preamble action: {instruction_to_execute}'
+                    content=(
+                        f'[PREAMBLE {i + 1}/{len(preamble_actions)}] '
+                        f'Execute this setup action using exactly the '
+                        f'parameters provided: {instruction_to_execute}'
+                    )
                 )
             )
 

@@ -197,7 +197,17 @@ def _filter_clickable_elements(
 
     for elem_id, elem in raw_elements.items():
         tag = (elem.get('tagName') or '').lower()
-        attrs: Dict[str, Any] = elem.get('attributes') or {}
+        raw_attrs = elem.get('attributes') or {}
+        # JS returns attributes as a list of {name, value} objects; normalise
+        # to a plain dict so all downstream .get() calls work uniformly.
+        if isinstance(raw_attrs, list):
+            attrs: Dict[str, Any] = {
+                a['name']: a['value']
+                for a in raw_attrs
+                if isinstance(a, dict) and 'name' in a
+            }
+        else:
+            attrs: Dict[str, Any] = raw_attrs
 
         # Unconditional exclusions
         if attrs.get('aria-hidden') == 'true':
