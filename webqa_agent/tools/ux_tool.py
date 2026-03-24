@@ -451,7 +451,7 @@ class UIUXViewportTool(BaseTool):
             return f'[FAILURE] Unexpected error during UX collection: {str(e)}'
         finally:
             elapsed = time.perf_counter() - tool_started
-            record_tool_timing(self.name, elapsed, browser_action_seconds=0.0)
+            record_tool_timing(self.name, elapsed)
             if llm_client:
                 try:
                     await llm_client.close()

@@ -58,6 +58,9 @@ _last_llm_call_metrics_var: contextvars.ContextVar[dict[str, Any] | None] = (
 _llm_duration_stats_var: contextvars.ContextVar[dict[str, Any] | None] = (
     contextvars.ContextVar('webqa_llm_duration_stats', default=None)
 )
+_llm_io_log_var: contextvars.ContextVar[list[dict[str, Any]] | None] = (
+    contextvars.ContextVar('webqa_llm_io_log', default=None)
+)
 
 
 def set_last_llm_call_metrics(metrics: dict[str, Any] | None) -> None:
@@ -68,6 +71,25 @@ def set_last_llm_call_metrics(metrics: dict[str, Any] | None) -> None:
 def get_last_llm_call_metrics() -> dict[str, Any] | None:
     """Read latest LLM call metrics for current async context."""
     return _last_llm_call_metrics_var.get()
+
+
+def reset_llm_io_log() -> None:
+    """Reset LLM I/O log for current async context."""
+    _llm_io_log_var.set([])
+
+
+def append_llm_io_log(entry: dict[str, Any]) -> None:
+    """Append one LLM call I/O entry for current async context."""
+    log = _llm_io_log_var.get()
+    if log is None:
+        _llm_io_log_var.set([entry])
+    else:
+        log.append(entry)
+
+
+def get_llm_io_log() -> list[dict[str, Any]]:
+    """Read accumulated LLM I/O log for current async context."""
+    return _llm_io_log_var.get() or []
 
 
 def reset_llm_duration_stats() -> None:
@@ -406,6 +428,21 @@ class LLMAPI:
 
             else:
                 raise ValueError(f"Unknown provider '{actual_provider}' for model '{actual_model}'")
+
+            # Record LLM I/O for data flow reporting
+            _io_entry: dict[str, Any] = {
+                'model': actual_model,
+                'provider': actual_provider,
+                'system_prompt': system_prompt,
+                'user_prompt': prompt if isinstance(prompt, str) else str(prompt)[:5000],
+                'image_count': len(images) if isinstance(images, list) else (1 if images else 0),
+                'response': result[:5000] if isinstance(result, str) else str(result)[:5000],
+            }
+            _last_metrics = get_last_llm_call_metrics()
+            if _last_metrics:
+                _io_entry['duration_ms'] = _last_metrics.get('duration_ms')
+                _io_entry['token_usage'] = _last_metrics.get('token_usage')
+            append_llm_io_log(_io_entry)
 
             return result
         except Exception as e:

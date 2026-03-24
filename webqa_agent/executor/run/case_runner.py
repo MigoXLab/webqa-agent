@@ -18,9 +18,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from webqa_agent.actions.action_handler import screenshot_prefix_var
 from webqa_agent.browser import BrowserSession, BrowserSessionPool
+from webqa_agent.llm.llm_api import (
+    get_llm_duration_stats, reset_llm_duration_stats,
+    get_llm_io_log, reset_llm_io_log,
+)
 from webqa_agent.data import (CaseStep, StepContext, SubTestResult,
                               SubTestStep, TestConfiguration, TestStatus)
 from webqa_agent.utils import Display, i18n
+from webqa_agent.utils.data_flow_reporter import record_data_flow_event
 from webqa_agent.utils.get_log import test_id_var
 from webqa_agent.utils.log_icon import icon
 from webqa_agent.utils.reporting_utils import (save_monitor_data_json,
@@ -127,7 +132,10 @@ class CaseRunner:
 
                 with Display.display(case_name) as tracker:  # pylint: disable=not-callable
                     case_result, raw_monitoring_data = await asyncio.wait_for(
-                        self.execute_single_case(session=session, case=case, case_index=idx),
+                        self.execute_single_case(
+                            session=session, case=case, case_index=idx,
+                            completed_case_count=completed_count,
+                        ),
                         timeout=case_timeout
                     )
                     # Set result on tracker so it's included when task moves to completed
@@ -263,7 +271,10 @@ class CaseRunner:
 
                     with Display.display(case_name) as tracker:  # pylint: disable=not-callable
                         case_result, raw_monitoring_data = await asyncio.wait_for(
-                            self.execute_single_case(session=session, case=case, case_index=idx),
+                            self.execute_single_case(
+                                session=session, case=case, case_index=idx,
+                                completed_case_count=completed_count,
+                            ),
                             timeout=case_timeout
                         )
                         # Set result on tracker so it's included when task moves to completed
@@ -354,18 +365,23 @@ class CaseRunner:
         logging.info(f"{icon['check']} Execution completed: {len(results)}/{total_cases} cases")
         return results
 
-    async def execute_single_case(self, session: BrowserSession, case: Dict[str, Any], case_index: int = 1) -> Tuple[SubTestResult, Dict[str, Any]]:
+    async def execute_single_case(
+        self, session: BrowserSession, case: Dict[str, Any],
+        case_index: int = 1, completed_case_count: int = 0,
+    ) -> Tuple[SubTestResult, Dict[str, Any]]:
         """Execute a single test case.
 
         Args:
             session: Browser session
             case: Case configuration {"name": "...", "steps": [...], "_config": {...}}
             case_index: Index of the case (for logging)
+            completed_case_count: Number of cases already completed (for data flow reporting)
 
         Returns:
             SubTestResult containing execution results
         """
         case_name = case.get('name', f'Unnamed Case {case_index}')
+        case_id = case.get('case_id', f'case_{case_index}')
         start_time = datetime.now()
 
         # Clean session state for case isolation (clear cookies/storage from previous case)
@@ -375,7 +391,21 @@ class CaseRunner:
         # Get case-specific config if available (for multi-YAML support)
         case_config = case.get('_config', {})
         url = case_config.get('url') or self.test_specific_config.get('url')
+
         cookies = case_config.get('cookies') or self.test_specific_config.get('cookies')
+
+        # Record case start for data flow reporting
+        record_data_flow_event(
+            stage='run',
+            event_type='case_execution_start',
+            payload={
+                'case_id': case_id,
+                'case_name': case_name,
+                'case': case,
+                'completed_case_count': completed_case_count,
+            },
+            report_dir=self.report_dir,
+        )
         ignore_rules = case_config.get('ignore_rules') or self.test_specific_config.get('ignore_rules', {})
 
         use_snapshot = case.get('use_snapshot')
@@ -392,8 +422,8 @@ class CaseRunner:
             await self._load_fixture_state(session, case, case_config)
 
         # Execute steps
-        executed_steps, case_status, error_messages, prev_step_context = await self._execute_steps(
-            tester, case.get('steps', [])
+        executed_steps, case_status, error_messages, prev_step_context, case_llm_metrics = await self._execute_steps(
+            tester, case.get('steps', []), case_id=case_id, case_name=case_name
         )
 
         # Get monitoring data and cleanup
@@ -402,7 +432,6 @@ class CaseRunner:
 
         # Build final result
         end_time = datetime.now()
-        case_id = case.get('case_id', f'case_{case_index}')
         case_result, raw_monitoring_data = self._build_case_result(
             case_name=case_name,
             case_id=case_id,
@@ -414,6 +443,47 @@ class CaseRunner:
             end_time=end_time,
             ignore_rules=ignore_rules
         )
+
+        # Record case result for data flow reporting (consistent with Gen mode structure)
+        duration_seconds = (end_time - start_time).total_seconds()
+        passed_steps = sum(1 for s in executed_steps if s.status == TestStatus.PASSED)
+        failed_steps = sum(1 for s in executed_steps if s.status == TestStatus.FAILED)
+        warning_steps = sum(1 for s in executed_steps if s.status == TestStatus.WARNING)
+        failed_step_details = [
+            {
+                'step_id': s.id,
+                'description': s.description,
+                'status': s.status.value,
+                'errors': s.errors or '',
+            }
+            for s in executed_steps if s.status == TestStatus.FAILED
+        ]
+        record_data_flow_event(
+            stage='run',
+            event_type='case_execution_result',
+            payload={
+                'case_id': case_id,
+                'case_name': case_name,
+                'case_result': {
+                    'case_name': case_name,
+                    'case_id': case_id,
+                    'status': case_result.status.value,
+                    'final_summary': case_result.final_summary or '',
+                    'metrics': {
+                        'total_steps': len(executed_steps),
+                        'passed_steps': passed_steps,
+                        'failed_steps': failed_steps,
+                        'warning_steps': warning_steps,
+                    },
+                    'failed_step_details': failed_step_details,
+                    'error_messages': error_messages,
+                    'duration_seconds': duration_seconds,
+                    'llm_metrics': case_llm_metrics,
+                },
+            },
+            report_dir=self.report_dir,
+        )
+
         return case_result, raw_monitoring_data
 
     # ========================================================================
@@ -599,21 +669,29 @@ class CaseRunner:
     async def _execute_steps(
         self,
         tester,
-        steps: List[Dict[str, Any]]
-    ) -> Tuple[List[SubTestStep], TestStatus, List[str], Optional[StepContext]]:
+        steps: List[Dict[str, Any]],
+        case_id: str = '',
+        case_name: str = '',
+    ) -> Tuple[List[SubTestStep], TestStatus, List[str], Optional[StepContext], Dict[str, Any]]:
         """Execute all steps in a case.
 
         Args:
             tester: UITester instance
             steps: List of step configurations
+            case_id: Case identifier (for data flow reporting)
+            case_name: Case name (for data flow reporting)
 
         Returns:
-            Tuple of (executed_steps, case_status, error_messages, prev_step_context)
+            Tuple of (executed_steps, case_status, error_messages, prev_step_context, accumulated_token_usage)
         """
         executed_steps = []
         case_status = TestStatus.PASSED
         error_messages = []
         prev_step_context: Optional[StepContext] = None
+        accumulated_token_usage: Dict[str, int] = {
+            'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0,
+        }
+        accumulated_llm_duration: float = 0.0
 
         for step_idx, step in enumerate(steps, 1):
             # Fast-fail: check if the browser page has crashed before executing the next step
@@ -628,19 +706,97 @@ class CaseRunner:
                 break
 
             parsed_step = CaseStep.model_validate(step)
+            step_type = parsed_step.step_type
+            instruction = (
+                parsed_step.action.description if step_type == 'action' and parsed_step.action
+                else parsed_step.verify.assertion if step_type == 'verify' and parsed_step.verify
+                else ''
+            )
 
-            if parsed_step.step_type == 'action':
+            # Record step request for data flow reporting
+            record_data_flow_event(
+                stage='run',
+                event_type='step_request',
+                payload={
+                    'case_id': case_id,
+                    'case_name': case_name,
+                    'planned_step_index': step_idx,
+                    'step_type': step_type,
+                    'instruction': instruction,
+                },
+                report_dir=self.report_dir,
+            )
+
+            reset_llm_duration_stats()
+            reset_llm_io_log()
+            step_start = datetime.now()
+
+            if step_type == 'action':
                 logging.info(f'Executing step {step_idx}: {parsed_step.action}')
                 step_result, prev_step_context = await self._execute_action_step(
                     tester, parsed_step.action, step_idx
                 )
-            elif parsed_step.step_type == 'verify':
+            elif step_type == 'verify':
                 logging.info(f'Executing step {step_idx}: {parsed_step.verify}')
                 step_result, prev_step_context = await self._execute_verify_step(
                     tester, parsed_step.verify, step_idx, prev_step_context
                 )
             else:
-                raise ValueError(f'Unsupported step type: {parsed_step.step_type}')
+                raise ValueError(f'Unsupported step type: {step_type}')
+
+            step_duration = (datetime.now() - step_start).total_seconds()
+
+            # Collect LLM token usage for this step
+            llm_stats = get_llm_duration_stats()
+            llm_token_usage = dict(llm_stats.get('token_usage', {})) if llm_stats else {}
+            llm_duration = float(llm_stats.get('duration_seconds', 0.0)) if llm_stats else 0.0
+
+            # Accumulate token usage across all steps for case-level summary
+            for token_key in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
+                accumulated_token_usage[token_key] += int(llm_token_usage.get(token_key, 0))
+            accumulated_llm_duration += llm_duration
+
+            # Compute time breakdown (consistent with Gen mode structure)
+            system_total = max(step_duration - llm_duration, 0.0)
+            llm_ratio = round(llm_duration / step_duration, 4) if step_duration > 0 else 0.0
+            system_ratio = round(system_total / step_duration, 4) if step_duration > 0 else 0.0
+
+            # Collect LLM I/O log for this step
+            llm_io = get_llm_io_log()
+
+            # Record step response for data flow reporting
+            record_data_flow_event(
+                stage='run',
+                event_type='step_response',
+                payload={
+                    'case_id': case_id,
+                    'case_name': case_name,
+                    'planned_step_index': step_idx,
+                    'step_type': step_type,
+                    'instruction': instruction,
+                    'status': step_result.status.value,
+                    'duration_seconds': step_duration,
+                    'llm_metrics': {
+                        'duration_seconds': llm_duration,
+                        'token_usage': llm_token_usage,
+                    },
+                    'time_breakdown': {
+                        'e2e_duration_seconds': round(step_duration, 2),
+                        'llm_duration_seconds': round(llm_duration, 2),
+                        'system_total_seconds': round(system_total, 2),
+                        'ratio': {
+                            'llm_ratio': llm_ratio,
+                            'system_ratio': system_ratio,
+                        },
+                    },
+                    'llm_calls': llm_io,
+                    'output': {
+                        'errors': step_result.errors or '',
+                        'actions': step_result.actions or [],
+                    },
+                },
+                report_dir=self.report_dir,
+            )
 
             executed_steps.append(step_result)
 
@@ -653,7 +809,11 @@ class CaseRunner:
             elif step_result.status == TestStatus.WARNING and case_status == TestStatus.PASSED:
                 case_status = TestStatus.WARNING
 
-        return executed_steps, case_status, error_messages, prev_step_context
+        case_llm_metrics = {
+            'duration_seconds': accumulated_llm_duration,
+            'token_usage': accumulated_token_usage,
+        }
+        return executed_steps, case_status, error_messages, prev_step_context, case_llm_metrics
 
     async def _execute_action_step(
         self,

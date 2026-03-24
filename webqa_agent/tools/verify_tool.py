@@ -178,8 +178,4 @@ class UIAssertTool(BaseTool):
             return f'[FAILURE] Unexpected error during assertion execution: {str(e)}'
         finally:
             elapsed = time.perf_counter() - tool_started
-            record_tool_timing(
-                self.name,
-                elapsed,
-                browser_action_seconds=elapsed,
-            )
+            record_tool_timing(self.name, elapsed)

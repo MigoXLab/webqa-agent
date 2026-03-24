@@ -1224,6 +1224,7 @@ async def _do_reflection(
 
     except json.JSONDecodeError as e:
         logging.error(f'[{case_name}] Failed to parse reflection response: {e}')
+        # reflection_duration already computed before json.loads
         record_data_flow_event(
             stage='planning',
             event_type='reflection_response',
@@ -1231,6 +1232,7 @@ async def _do_reflection(
                 'case_id': case_id,
                 'case_name': case_name,
                 'decision': 'CONTINUE',
+                'duration_seconds': reflection_duration,
                 'error': str(e),
             },
             report_dir=_resolve_report_dir(state),
@@ -1245,6 +1247,7 @@ async def _do_reflection(
             ]
         }
     except Exception as e:
+        reflection_duration = (datetime.datetime.now() - reflection_start).total_seconds()
         logging.error(f'[{case_name}] Reflection error: {e}')
         record_data_flow_event(
             stage='planning',
@@ -1253,6 +1256,7 @@ async def _do_reflection(
                 'case_id': case_id,
                 'case_name': case_name,
                 'decision': 'CONTINUE',
+                'duration_seconds': reflection_duration,
                 'error': str(e),
             },
             report_dir=_resolve_report_dir(state),

@@ -434,8 +434,4 @@ class UITool(BaseTool):
             return f'[FAILURE] {error_msg}'
         finally:
             elapsed = time.perf_counter() - tool_started
-            record_tool_timing(
-                self.name,
-                elapsed,
-                browser_action_seconds=elapsed,
-            )
+            record_tool_timing(self.name, elapsed)

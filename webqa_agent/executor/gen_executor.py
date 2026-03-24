@@ -14,7 +14,8 @@ from webqa_agent.data import (ParallelTestSession, SubTestReport,
                               TestCategory, TestResult, TestStatus)
 from webqa_agent.executor.gen.utils.case_recorder import get_report_summary
 from webqa_agent.executor.result_aggregator import ResultAggregator
-from webqa_agent.utils.data_flow_reporter import generate_data_flow_report
+from webqa_agent.utils.data_flow_reporter import (generate_data_flow_report,
+                                                    set_dataflow_enabled)
 from webqa_agent.utils import Display, i18n
 from webqa_agent.utils.get_log import GetLog
 from webqa_agent.utils.log_icon import icon
@@ -44,6 +45,9 @@ class GenExecutor:
         self.config = config
         self.result_aggregator = ResultAggregator(config.report_config.model_dump())
         self.session_pool: Optional[BrowserSessionPool] = None
+
+        # Apply dataflow toggle from report config
+        set_dataflow_enabled(config.report_config.save_dataflow)
 
     async def execute(self) -> Tuple[Dict[str, Any], str, str, Dict[str, int]]:
         """Execute gen mode workflow.
@@ -217,8 +221,8 @@ class GenExecutor:
             except Exception as agg_err:
                 logger.warning(f'Failed to aggregate/generate report: {agg_err}')
 
-            # Render data flow markdown report from captured JSONL events.
-            if custom_report_dir:
+            # Render data flow interactive gantt from captured JSONL events.
+            if custom_report_dir and self.config.report_config.save_dataflow:
                 try:
                     generate_data_flow_report(custom_report_dir)
                 except Exception as dataflow_err:

@@ -22,6 +22,8 @@ from webqa_agent.executor.result_aggregator import ResultAggregator
 from webqa_agent.executor.run.case_runner import CaseRunner
 from webqa_agent.utils import Display, i18n
 from webqa_agent.utils.config import load_cookies, load_yaml_files
+from webqa_agent.utils.data_flow_reporter import (generate_data_flow_report,
+                                                  set_dataflow_enabled)
 from webqa_agent.utils.get_log import GetLog
 from webqa_agent.utils.log_icon import icon
 from webqa_agent.utils.reporting_utils import save_index_json
@@ -49,6 +51,7 @@ class RunExecutor:
         """
         self.config = config
         self.result_aggregator = ResultAggregator(config.report_config.model_dump())
+        set_dataflow_enabled(config.report_config.save_dataflow)
 
     async def execute(self) -> Tuple[Dict[str, Any], str, str, Dict[str, int]]:
         """Execute run mode workflow.
@@ -328,6 +331,13 @@ class RunExecutor:
                     self.result_aggregator.cleanup_tmp_dir(report_dir)
             except Exception as agg_err:
                 logger.warning(f'Failed to aggregate/generate report in {report_dir}: {agg_err}', exc_info=True)
+
+            # Render data flow interactive gantt from captured JSONL events.
+            if report_dir and self.config.report_config.save_dataflow:
+                try:
+                    generate_data_flow_report(report_dir)
+                except Exception as dataflow_err:
+                    logger.warning(f'Failed to generate data flow report: {dataflow_err}')
 
             # Cleanup Display
             try:

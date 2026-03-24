@@ -13,8 +13,7 @@ from pathlib import Path
 from webqa_agent.config_models.base_config import (BrowserConfig, LLMConfig,
                                                    LogConfig, ReportConfig)
 from webqa_agent.config_models.gen_config import (CustomToolsConfig,
-                                                  DynamicStepConfig, GenConfig,
-                                                  TelemetryConfig)
+                                                  DynamicStepConfig, GenConfig)
 from webqa_agent.executor.gen_executor import GenExecutor
 from webqa_agent.utils import (check_lighthouse_installation,
                                check_nuclei_installation,
@@ -300,7 +299,8 @@ async def execute_gen_mode(cfg, workers: int = 1):
     report_config = ReportConfig(
         language=report_cfg_raw.get('language', 'en-US'),
         report_dir=report_cfg_raw.get('report_dir'),
-        save_screenshots=report_cfg_raw.get('save_screenshots', False)
+        save_screenshots=report_cfg_raw.get('save_screenshots', False),
+        save_dataflow=report_cfg_raw.get('save_dataflow', True),
     )
 
     # Build log config
@@ -323,11 +323,6 @@ async def execute_gen_mode(cfg, workers: int = 1):
     custom_tools_config = CustomToolsConfig(
         enabled=custom_tools_cfg.get('enabled', [])
     )
-    telemetry_cfg = tconf.get('telemetry', {})
-    telemetry_config = TelemetryConfig(
-        enabled=telemetry_cfg.get('enabled', True),
-    )
-
     # Reflection: enable_reflection in YAML maps to skip_reflection in GenConfig
     enable_reflection = tconf.get('enable_reflection', False)
     skip_reflection = not enable_reflection
@@ -342,7 +337,6 @@ async def execute_gen_mode(cfg, workers: int = 1):
         business_objectives=business_objectives,
         dynamic_step_generation=dynamic_step_config,
         custom_tools=custom_tools_config,
-        telemetry=telemetry_config,
         max_concurrent_tests=workers,
         skip_reflection=skip_reflection,
     )

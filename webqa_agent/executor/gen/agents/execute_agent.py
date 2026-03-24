@@ -40,8 +40,8 @@ from webqa_agent.executor.gen.utils.message_converter import \
 from webqa_agent.executor.gen.utils.summary_utils import (i18n_select,
                                                           make_user_summary)
 from webqa_agent.llm.llm_api import (
-    EXTENDED_THINKING_EFFORT_MAPPING, extract_usage_details,
-    get_llm_duration_stats, reset_llm_duration_stats)
+    EXTENDED_THINKING_EFFORT_MAPPING, accumulate_llm_duration_stats,
+    extract_usage_details, get_llm_duration_stats, reset_llm_duration_stats)
 from webqa_agent.prompts.agent_execution_prompts import \
     get_execute_system_prompt
 from webqa_agent.prompts.test_planning_prompts import \
@@ -57,6 +57,25 @@ from webqa_agent.utils.data_flow_reporter import (
 from webqa_agent.utils.log_icon import icon
 from webqa_agent.utils.timing_breakdown import (get_tool_timing_bucket,
                                                 reset_tool_timing_bucket)
+
+def _normalize_token_usage(raw: Any) -> dict[str, int]:
+    """Normalize a provider-agnostic token usage dict/object to standard 3-key dict.
+
+    Handles both OpenAI style (prompt_tokens/completion_tokens) and
+    Anthropic/LangChain style (input_tokens/output_tokens).  Always returns
+    ``{'prompt_tokens': int, 'completion_tokens': int, 'total_tokens': int}``
+    with 0 defaults.
+    """
+    if raw is None:
+        return {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}
+    d = raw if isinstance(raw, dict) else (dict(raw) if hasattr(raw, '__iter__') else {})
+    prompt = int(d.get('prompt_tokens', 0) or d.get('input_tokens', 0))
+    completion = int(d.get('completion_tokens', 0) or d.get('output_tokens', 0))
+    total = int(d.get('total_tokens', 0))
+    if total == 0:
+        total = prompt + completion
+    return {'prompt_tokens': prompt, 'completion_tokens': completion, 'total_tokens': total}
+
 
 LONG_STEPS = 30
 RETRY_STABILIZATION_DELAY = 1.0
@@ -87,13 +106,41 @@ class StepLLMTimingCallback(BaseCallbackHandler):
             self._starts[str(run_id)] = time.perf_counter()
 
     def on_llm_end(self, response: Any, **kwargs: Any) -> None:
-        _ = response
         run_id = kwargs.get('run_id')
         if run_id is None:
             return
         start = self._starts.pop(str(run_id), None)
         if start is not None:
             self._duration_seconds += max(time.perf_counter() - start, 0.0)
+
+        # Extract token usage from LLMResult and accumulate into shared stats
+        try:
+            usage_dict: dict[str, int] | None = None
+            llm_output = getattr(response, 'llm_output', None) or {}
+
+            # Path 1: OpenAI — llm_output['token_usage']
+            raw = llm_output.get('token_usage') or llm_output.get('usage')
+            if raw and isinstance(raw, dict):
+                usage_dict = _normalize_token_usage(raw)
+
+            # Path 2: newer LangChain — generations[*][*].message.usage_metadata
+            if usage_dict is None or usage_dict.get('total_tokens', 0) == 0:
+                for gen_list in getattr(response, 'generations', []):
+                    for gen in gen_list:
+                        meta = getattr(getattr(gen, 'message', None), 'usage_metadata', None)
+                        if meta:
+                            usage_dict = _normalize_token_usage(meta)
+                            break
+                    if usage_dict and usage_dict.get('total_tokens', 0) > 0:
+                        break
+
+            if usage_dict and usage_dict.get('total_tokens', 0) > 0:
+                accumulate_llm_duration_stats(
+                    duration_seconds=0.0,  # duration already tracked via perf_counter
+                    usage_details=usage_dict,
+                )
+        except Exception:
+            pass  # Never break the callback chain
 
     def on_llm_error(self, error: BaseException, **kwargs: Any) -> None:
         _ = error
@@ -102,11 +149,73 @@ class StepLLMTimingCallback(BaseCallbackHandler):
             self._starts.pop(str(run_id), None)
 
 
+def _extract_token_usage_from_result(
+    result: dict[str, Any],
+    messages: list[Any],
+) -> dict[str, int]:
+    """Fallback: extract token usage from AgentExecutor intermediate_steps.
+
+    Scans ``AgentAction.message_log`` AIMessages for ``usage_metadata`` or
+    ``response_metadata`` and aggregates across all LLM calls in this step.
+    """
+    zero = {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}
+    aggregated = dict(zero)
+
+    def _msg_usage(msg: Any) -> dict[str, int] | None:
+        if not isinstance(msg, AIMessage):
+            return None
+        # usage_metadata (most reliable, LangChain >=0.2)
+        meta = getattr(msg, 'usage_metadata', None)
+        if meta:
+            u = _normalize_token_usage(meta)
+            if u['total_tokens'] > 0:
+                return u
+        # response_metadata fallback
+        resp_meta = getattr(msg, 'response_metadata', None)
+        if isinstance(resp_meta, dict):
+            for key in ('token_usage', 'usage', 'usage_metadata'):
+                raw = resp_meta.get(key)
+                if raw and isinstance(raw, dict):
+                    u = _normalize_token_usage(raw)
+                    if u['total_tokens'] > 0:
+                        return u
+        return None
+
+    try:
+        # Scan intermediate_steps (AgentAction.message_log)
+        for step_tuple in result.get('intermediate_steps', []):
+            if not isinstance(step_tuple, (list, tuple)) or len(step_tuple) < 1:
+                continue
+            msg_log = getattr(step_tuple[0], 'message_log', None) or []
+            for msg in msg_log:
+                usage = _msg_usage(msg)
+                if usage:
+                    aggregated['prompt_tokens'] += usage['prompt_tokens']
+                    aggregated['completion_tokens'] += usage['completion_tokens']
+                    aggregated['total_tokens'] += usage['total_tokens']
+        if aggregated['total_tokens'] > 0:
+            return aggregated
+
+        # Fallback: scan result/passed messages
+        for msg in reversed(messages or result.get('messages', [])):
+            usage = _msg_usage(msg)
+            if usage:
+                return usage
+    except Exception:
+        pass
+    return zero
+
+
 def _safe_ratio(numerator: float, denominator: float) -> float:
     """Compute safe ratio with zero guard."""
     if denominator <= 0:
         return 0.0
-    return max(numerator / denominator, 0.0)
+    return round(max(numerator / denominator, 0.0), 4)
+
+
+def _round_s(value: float) -> float:
+    """Round seconds to 2 decimal places for readability."""
+    return round(value, 2)
 
 
 def _build_time_breakdown(
@@ -116,7 +225,6 @@ def _build_time_breakdown(
     message_prep_seconds: float,
     screenshot_seconds: float,
     tool_execution_seconds: float,
-    browser_action_seconds: float,
 ) -> dict[str, Any]:
     """Build normalized time breakdown for one step."""
     e2e = max(float(e2e_duration_seconds), 0.0)
@@ -124,7 +232,6 @@ def _build_time_breakdown(
     message_prep = max(float(message_prep_seconds), 0.0)
     screenshot = max(float(screenshot_seconds), 0.0)
     tool_total = max(float(tool_execution_seconds), 0.0)
-    browser_total = max(float(browser_action_seconds), 0.0)
 
     system_total = max(e2e - llm, 0.0)
     message_effective = min(message_prep, system_total)
@@ -135,21 +242,20 @@ def _build_time_breakdown(
     orchestration_overhead = max(after_screenshot - tool_effective, 0.0)
 
     return {
-        'e2e_duration_seconds': e2e,
-        'llm_duration_seconds': llm,
-        'system_total_seconds': system_total,
+        'e2e_duration_seconds': _round_s(e2e),
+        'llm_duration_seconds': _round_s(llm),
+        'system_total_seconds': _round_s(system_total),
         'system_breakdown': {
-            'message_prep_seconds': message_effective,
-            'screenshot_seconds': screenshot_effective,
-            'tool_execution_seconds': tool_effective,
-            'browser_action_seconds': min(browser_total, tool_effective),
-            'orchestration_overhead_seconds': orchestration_overhead,
+            'message_prep_seconds': _round_s(message_effective),
+            'screenshot_seconds': _round_s(screenshot_effective),
+            'tool_execution_seconds': _round_s(tool_effective),
+            'orchestration_overhead_seconds': _round_s(orchestration_overhead),
         },
         'ratio': {
             'llm_ratio': _safe_ratio(llm, e2e),
             'system_ratio': _safe_ratio(system_total, e2e),
-            'message_prep_ratio': _safe_ratio(message_prep, e2e),
-            'screenshot_ratio': _safe_ratio(screenshot, e2e),
+            'message_prep_ratio': _safe_ratio(message_effective, e2e),
+            'screenshot_ratio': _safe_ratio(screenshot_effective, e2e),
             'tool_execution_ratio': _safe_ratio(tool_effective, e2e),
             'orchestration_overhead_ratio': _safe_ratio(orchestration_overhead, e2e),
         },
@@ -1692,23 +1798,6 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 )
                 logging.debug(f'Preamble action {i + 1} result: {tool_output[:200]}...')
                 preamble_messages.append(AIMessage(content=tool_output))
-                record_data_flow_event(
-                    stage='agent_execution',
-                    event_type='preamble_response',
-                    payload={
-                        'case_id': case.get('case_id', ''),
-                        'case_name': case_name,
-                        'preamble_step_index': i + 1,
-                        'instruction': instruction_to_execute,
-                        'status': 'ok',
-                        'duration_seconds': duration,
-                        'output': tool_output,
-                        'intermediate_steps': serialize_intermediate_steps(
-                            result.get('intermediate_steps')
-                        ),
-                    },
-                    report_dir=report_dir,
-                )
 
                 # Safely check for failure in intermediate steps
                 intermediate_output = safe_get_intermediate_step(
@@ -1765,7 +1854,18 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                             'preamble_step_index': i + 1,
                             'instruction': instruction_to_execute,
                             'status': 'failed',
+                            'duration_seconds': duration,
                             'output': tool_output,
+                            'case_result': case_result,
+                        },
+                        report_dir=report_dir,
+                    )
+                    record_data_flow_event(
+                        stage='agent_execution',
+                        event_type='case_execution_result',
+                        payload={
+                            'case_id': case.get('case_id', ''),
+                            'case_name': case_name,
                             'case_result': case_result,
                         },
                         report_dir=report_dir,
@@ -1776,8 +1876,28 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         'recorded_case': recorded_case_data,
                     }
 
+                # Record successful preamble response (only reached if no failure detected)
+                record_data_flow_event(
+                    stage='agent_execution',
+                    event_type='preamble_response',
+                    payload={
+                        'case_id': case.get('case_id', ''),
+                        'case_name': case_name,
+                        'preamble_step_index': i + 1,
+                        'instruction': instruction_to_execute,
+                        'status': 'ok',
+                        'duration_seconds': duration,
+                        'output': tool_output,
+                        'intermediate_steps': serialize_intermediate_steps(
+                            result.get('intermediate_steps')
+                        ),
+                    },
+                    report_dir=report_dir,
+                )
                 logging.debug(f'Preamble action {i + 1} completed successfully')
             except Exception as e:
+                end_time = datetime.datetime.now()
+                duration = (end_time - start_time).total_seconds()
                 logging.error(f'Exception during preamble action {i + 1}: {str(e)}')
                 if is_system_error(e):
                     logging.warning(
@@ -1831,7 +1951,18 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         'preamble_step_index': i + 1,
                         'instruction': instruction_to_execute,
                         'status': 'exception',
+                        'duration_seconds': duration,
                         'error': str(e),
+                        'case_result': case_result,
+                    },
+                    report_dir=report_dir,
+                )
+                record_data_flow_event(
+                    stage='agent_execution',
+                    event_type='case_execution_result',
+                    payload={
+                        'case_id': case.get('case_id', ''),
+                        'case_name': case_name,
                         'case_result': case_result,
                     },
                     report_dir=report_dir,
@@ -2092,7 +2223,6 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     message_prep_seconds=message_prep_seconds,
                     screenshot_seconds=screenshot_seconds,
                     tool_execution_seconds=0.0,
-                    browser_action_seconds=0.0,
                 )
                 case_recorder.add_step(
                     description=instruction_to_execute or f'Step {i + 1}',
@@ -2168,16 +2298,25 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             )
             llm_token_usage = dict(llm_api_stats.get('token_usage', {}))
 
+            # Fallback: extract token usage from agent result messages when
+            # callback-based tracking returns 0 (e.g. direct-mode Action steps
+            # where only the outer LangChain LLM call happens).
+            if llm_token_usage.get('total_tokens', 0) == 0:
+                llm_token_usage = _extract_token_usage_from_result(result, messages)
+                if llm_token_usage.get('total_tokens', 0) > 0:
+                    logging.debug(
+                        f'Step {i + 1} token usage recovered from AIMessage metadata: '
+                        f'{llm_token_usage}'
+                    )
+
             tool_timing_bucket = get_tool_timing_bucket()
             tool_execution_seconds = float(tool_timing_bucket.get('tool_execution_seconds', 0.0))
-            browser_action_seconds = float(tool_timing_bucket.get('browser_action_seconds', 0.0))
             time_breakdown = _build_time_breakdown(
                 e2e_duration_seconds=duration,
                 llm_duration_seconds=llm_duration_seconds,
                 message_prep_seconds=message_prep_seconds,
                 screenshot_seconds=screenshot_seconds,
                 tool_execution_seconds=tool_execution_seconds,
-                browser_action_seconds=browser_action_seconds,
             )
 
             logging.debug(
@@ -2864,6 +3003,50 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
         except Exception as e:
             logging.error(f'Exception during step {i + 1} execution: {str(e)}')
+            failed_steps.append(i + 1)
+
+            # Record step_response for the exception so JSONL/gantt stay consistent
+            _locals = locals()
+            exc_duration = (
+                (datetime.datetime.now() - start_time).total_seconds()
+                if 'start_time' in _locals
+                else 0.0
+            )
+            exc_llm_seconds = step_llm_timing_callback.consume_step_duration()
+            exc_llm_stats = get_llm_duration_stats()
+            exc_llm_duration = max(
+                float(exc_llm_seconds),
+                float(exc_llm_stats.get('duration_seconds', 0.0)),
+                0.0,
+            )
+            exc_breakdown = _build_time_breakdown(
+                e2e_duration_seconds=exc_duration,
+                llm_duration_seconds=exc_llm_duration,
+                message_prep_seconds=message_prep_seconds,
+                screenshot_seconds=screenshot_seconds,
+                tool_execution_seconds=0.0,
+            )
+            record_data_flow_event(
+                stage='agent_execution',
+                event_type='step_response',
+                payload={
+                    'case_id': case.get('case_id', ''),
+                    'case_name': case_name,
+                    'planned_step_index': i + 1,
+                    'step_type': step_type,
+                    'instruction': instruction_to_execute,
+                    'status': 'exception',
+                    'duration_seconds': exc_duration,
+                    'llm_metrics': {
+                        'duration_seconds': exc_llm_duration,
+                        'token_usage': dict(exc_llm_stats.get('token_usage', {})),
+                    },
+                    'time_breakdown': exc_breakdown,
+                    'error': str(e),
+                },
+                report_dir=report_dir,
+            )
+
             if is_system_error(e):
                 # System-level error: mark warning, neutral summary, abort
                 logging.warning(
