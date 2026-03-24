@@ -346,12 +346,15 @@ class UITester:
             error_screenshots = [{'type': 'base64', 'data': ss} for ss in all_ordered_screenshots if ss] if not save_locally else []
             error_screenshots_paths = [{'type': 'path', 'data': path} for path in all_ordered_screenshots_paths if path]
 
+            error_model_io = all_plans.copy() if all_plans else []
+            error_model_io.append({'error': str(e)})
+
             error_execution_steps = {
                 'description': f'action: {test_step}',
                 'actions': all_execution_steps,
                 'screenshots': error_screenshots,
                 'screenshots_paths': error_screenshots_paths,
-                'modelIO': '',  # No valid model interaction output
+                'modelIO': json.dumps(error_model_io, indent=2, ensure_ascii=False, default=str),
                 'status': 'failed',
                 'error': str(e),
                 'start_time': start_time,
@@ -843,7 +846,7 @@ class UITester:
                 'actions': [],
                 'screenshots': [{'type': 'base64', 'data': basic_screenshot}] if basic_screenshot and not save_locally else [],
                 'screenshots_paths': [{'type': 'path', 'data': basic_screenshot_path}] if basic_screenshot_path else [],
-                'modelIO': '',
+                'modelIO': json.dumps({'error': str(e)}, ensure_ascii=False),
                 'status': 'failed',
                 'error': str(e),
                 'start_time': start_time,
@@ -1391,7 +1394,7 @@ class UITester:
             'actions': all_execution_steps,
             'screenshots': [],
             'screenshots_paths': [],
-            'modelIO': '',
+            'modelIO': json.dumps({'error': error_msg}, ensure_ascii=False),
             'status': 'failed',
             'error': error_msg,
             'start_time': start_time,

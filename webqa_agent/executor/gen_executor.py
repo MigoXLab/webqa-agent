@@ -387,6 +387,8 @@ class GenExecutor:
                     modelIO=step_data.get('modelIO', ''),
                     actions=step_data.get('actions', []),
                     status=step_status,
+                    errors=step_data.get('error', ''),
+                    error_details=step_data.get('error_details'),
                 ))
 
             # Get case status (use case_id for lookup to avoid name collision)
