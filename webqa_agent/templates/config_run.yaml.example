@@ -1,0 +1,93 @@
+target:
+  url: https://image.baidu.com/
+
+llm_config:
+  api: openai
+  model: gpt-5-mini-2025-08-07
+  api_key: your_openai_api_key
+  base_url:  https://api.example.com/v1
+  # temperature: 0.1   # Optional, default 0.1
+  # top_p: 0.9       # Optional, if not set, this parameter will not be passed
+  # max_tokens: 8192  # Optional, maximum output tokens (supports generating more test cases)
+  # GPT-5 family reasoning & text verbosity configuration (optional)
+  # reasoning:
+  #   effort: none    # none | low | medium | high (gpt-5.1 defaults to 'none' for low-latency)
+  # text:
+  #   verbosity: medium  # low | medium | high (default 'medium')
+
+browser_config:
+  viewport: {"width": 1280, "height": 720}
+  headless: False
+  language: zh-CN
+  # cookies: /path/to/cookie.json         # Load cookie data
+  # cookies: []
+
+ignore_rules:               # Ignore rules for network and console
+  network:
+    - pattern: ".*\\.google-analytics\\.com.*"
+      type: "domain"
+  console:
+    - pattern: "Failed to load resource.*favicon"
+      match_type: "regex"
+    - pattern: "Warning:"
+      match_type: "contains"
+
+cases:
+  - name: Baidu Image Upload
+    steps:
+      - verify: Verify the page displays the Baidu logo and search input box
+      - action: The upload icon is the image icon inside the input box, next to the Baidu Search button, used to upload the file
+        args:
+          file_path: ./tests/img/test.jpeg
+      - action: Wait until the image is uploaded
+      - verify: Verify that the input field displays an open palm/hand icon image
+      - action: Type "How many fingers are in the picture?" in the search input box, then press Enter, Wait for 2 seconds
+
+  - name: Baidu Image Check
+    steps:
+      - verify: Verify the page displays the Baidu logo and many Pictures display
+      - action: Click on a random image to view
+
+  # Example: Fixture-like state management (pytest-style)
+  # Define fixtures by setting non-empty snapshot:
+  #
+  # 1. Define fixtures (snapshot non-empty):
+  # - name: Setup Admin Login
+  #   snapshot: "admin_user"  # Non-empty = auto-save after execution
+  #   steps:
+  #     - action: Enter username 'admin'
+  #     - action: Enter password 'admin123'
+  #     - action: Click login button
+  #
+  # - name: Setup Normal User Login
+  #   snapshot: "normal_user"  # Another fixture
+  #   steps:
+  #     - action: Enter username 'user'
+  #     - action: Enter password 'user123'
+  #     - action: Click login button
+  #
+  # 2. Use fixtures (use_snapshot):
+  # - name: Test Admin Dashboard
+  #   use_snapshot: "admin_user"  # Load admin_user fixture
+  #   steps:
+  #     - action: Navigate to admin dashboard
+  #     - verify: Verify admin permissions
+  #
+  # - name: Test User Profile
+  #   use_snapshot: "normal_user"  # Load normal_user fixture
+  #   steps:
+  #     - action: View profile page
+  #     - verify: Verify user information
+  #
+  # - name: Test Public Page
+  #   # No use_snapshot = independent test (no pre-loaded state)
+  #   steps:
+  #     - action: Visit public homepage
+  #     - verify: Verify page loads correctly
+
+log:
+  level: info
+
+report:
+  language: en-US # zh-CN, en-US
+  save_screenshots: False  # Whether to enable screenshots. If True, screenshots are saved as local files. If False, screenshots are stored as base64 in the test data.

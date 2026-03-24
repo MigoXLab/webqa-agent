@@ -73,5 +73,5 @@ class GenConfig(BaseModel):
     )
 
     skip_reflection: bool = Field(
-        default=False, description='Skip reflection/self-correction phase'
+        default=True, description='Skip reflection/self-correction phase'
     )

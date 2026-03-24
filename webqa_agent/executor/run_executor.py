@@ -21,7 +21,7 @@ from webqa_agent.data.run_structures import Case
 from webqa_agent.executor.result_aggregator import ResultAggregator
 from webqa_agent.executor.run.case_runner import CaseRunner
 from webqa_agent.utils import Display, i18n
-from webqa_agent.utils.config import load_yaml_files
+from webqa_agent.utils.config import load_cookies, load_yaml_files
 from webqa_agent.utils.get_log import GetLog
 from webqa_agent.utils.log_icon import icon
 from webqa_agent.utils.reporting_utils import save_index_json
@@ -90,12 +90,15 @@ class RunExecutor:
                     'ignore_rules': cfg_ignore_rules
                 })
 
+            raw_cookies = config.get('cookies') or config.get('browser_config', {}).get('cookies')
+            resolved_cookies = load_cookies(raw_cookies) if raw_cookies else None
+
             # Attach config info to each case
             for case in cfg_cases:
                 case_id_counter += 1
                 case['_config'] = {
                     'url': cfg_url,
-                    'cookies': config.get('cookies') or config.get('browser_config', {}).get('cookies'),
+                    'cookies': resolved_cookies,
                     'browser_config': config.get('browser') or config.get('browser_config', {}),
                     'ignore_rules': cfg_ignore_rules,
                     '_source_file': source_file,

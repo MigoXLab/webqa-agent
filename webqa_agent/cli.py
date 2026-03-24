@@ -37,7 +37,6 @@ def get_template_content(mode):
     Returns:
         Template content as string, or None if not found
     """
-    # Determine template filename based on mode
     if mode == 'gen':
         template_filename = 'config.yaml.example'
     elif mode == 'run':
@@ -45,26 +44,17 @@ def get_template_content(mode):
     else:
         raise ValueError(f'Invalid mode: {mode}')
 
-    # Try to find template in multiple locations
     package_dir = Path(__file__).parent  # webqa_agent package directory
-    project_root = package_dir.parent  # project root directory
+    project_root = package_dir.parent
 
     template_paths = [
-        # Check config package (for installed version)
+        # 1. Inside the pip package (webqa_agent/templates/)
+        package_dir / 'templates' / template_filename,
+        # 2. Project root config/ (development mode)
         project_root / 'config' / template_filename,
-        # Check webqa_agent/config (fallback location)
-        package_dir / 'config' / template_filename,
-        # Check current directory
+        # 3. Current working directory config/
         Path('config') / template_filename,
     ]
-
-    # Try to import from config package if available
-    try:
-        import config
-        config_pkg_dir = Path(config.__file__).parent
-        template_paths.insert(0, config_pkg_dir / template_filename)
-    except ImportError:
-        pass
 
     for template_path in template_paths:
         if template_path.exists():
@@ -173,9 +163,9 @@ def cmd_init(args):
     template = get_template_content(mode)
     if template is None:
         print(f'❌ Template file not found for mode: {mode}', file=sys.stderr)
-        print('   Expected template files:', file=sys.stderr)
-        print('   - config/config.yaml.example (Gen mode)', file=sys.stderr)
-        print('   - config/config_run.yaml.example (Run mode)', file=sys.stderr)
+        print('   Searched locations:', file=sys.stderr)
+        print('   - webqa_agent/templates/ (pip package)', file=sys.stderr)
+        print('   - config/ (project root or cwd)', file=sys.stderr)
         sys.exit(1)
 
     # Write config file
@@ -333,6 +323,10 @@ async def execute_gen_mode(cfg, workers: int = 1):
         enabled=custom_tools_cfg.get('enabled', [])
     )
 
+    # Reflection: enable_reflection in YAML maps to skip_reflection in GenConfig
+    enable_reflection = tconf.get('enable_reflection', False)
+    skip_reflection = not enable_reflection
+
     # Build GenConfig
     gen_config = GenConfig(
         target_url=target_url,
@@ -343,7 +337,8 @@ async def execute_gen_mode(cfg, workers: int = 1):
         business_objectives=business_objectives,
         dynamic_step_generation=dynamic_step_config,
         custom_tools=custom_tools_config,
-        max_concurrent_tests=workers
+        max_concurrent_tests=workers,
+        skip_reflection=skip_reflection,
     )
 
     # Display configuration
