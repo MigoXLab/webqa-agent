@@ -1340,7 +1340,7 @@ def generate_data_flow_report(report_dir: str | None = None) -> str | None:
     """Generate interactive HTML report from collected JSONL events.
 
     Reads ``data_flow_events.jsonl`` and produces
-    ``data_flow_gantt_interactive.html`` in the same directory.
+    ``data_flow_report.html`` in the same directory.
     """
     target_dir = _resolve_report_dir(report_dir)
     if target_dir is None:
@@ -1364,7 +1364,7 @@ def generate_data_flow_report(report_dir: str | None = None) -> str | None:
 
         interactive_tasks = _build_interactive_gantt_tasks(events)
         interactive_html = _render_interactive_gantt_html(interactive_tasks)
-        interactive_path = target_dir / 'data_flow_gantt_interactive.html'
+        interactive_path = target_dir / 'data_flow_report.html'
         interactive_path.write_text(interactive_html, encoding='utf-8')
         return str(interactive_path)
     except Exception:
