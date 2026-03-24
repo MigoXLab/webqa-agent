@@ -12,8 +12,8 @@ from app.models import Execution
 from app.models.business import Business
 from app.models.environment import Environment
 from app.models.scheduled_task import ScheduledTask
+from app.providers import get_provider
 from app.services.executor import _time_id_prefix, upload_report_to_oss
-from app.services.feishu_notify import send_feishu_notification
 from app.services.progress_cache import refresh_progress_ttl, set_progress
 from app.utils.datetime_utils import now_with_tz
 from fastapi import APIRouter, HTTPException
@@ -176,73 +176,62 @@ async def execution_complete(execution_id: str, request: ExecutionCompleteReques
             # 刷新进度缓存 TTL（保留历史日志，TTL 过期后自动清理）
             await refresh_progress_ttl(execution_id)
 
-            # 飞书通知：如果是定时任务触发（含手动触发），发送结果通知
+            # 通知：如果是定时任务触发（含手动触发），发送结果通知
             if execution.scheduled_task_id:
                 try:
+                    notifier = get_provider('notification')
+
                     # 查找关联的定时任务，获取 webhook_url
                     task_result = await db.execute(
                         select(ScheduledTask).where(ScheduledTask.id == execution.scheduled_task_id)
                     )
                     scheduled_task = task_result.scalar_one_or_none()
 
-                    # 获取默认 webhook 和任务级别 webhook
-                    default_webhook = settings.DEFAULT_FEISHU_WEBHOOK_URL
                     task_webhook = scheduled_task.webhook_url if scheduled_task else None
                     feishu_user_ids = scheduled_task.feishu_notify_user_id if scheduled_task else None
 
-                    if default_webhook or task_webhook:
-                        # 获取业务名称
-                        biz_result = await db.execute(
-                            select(Business).where(Business.id == execution.business_id)
+                    # 获取业务名称
+                    biz_result = await db.execute(
+                        select(Business).where(Business.id == execution.business_id)
+                    )
+                    business = biz_result.scalar_one_or_none()
+                    business_name = business.name if business else '未知业务'
+
+                    # 获取执行环境名称
+                    environment_name = None
+                    if execution.environment_id:
+                        env_result = await db.execute(
+                            select(Environment).where(Environment.id == execution.environment_id)
                         )
-                        business = biz_result.scalar_one_or_none()
-                        business_name = business.name if business else '未知业务'
+                        env = env_result.scalar_one_or_none()
+                        environment_name = env.name if env else None
 
-                        # 获取执行环境名称
-                        environment_name = None
-                        if execution.environment_id:
-                            env_result = await db.execute(
-                                select(Environment).where(Environment.id == execution.environment_id)
-                            )
-                            env = env_result.scalar_one_or_none()
-                            environment_name = env.name if env else None
+                    task_name = scheduled_task.name if scheduled_task else None
 
-                        # 获取任务名称（如有）
-                        task_name = scheduled_task.name if scheduled_task else None
+                    notification_kwargs = dict(
+                        execution_id=execution_id,
+                        business_name=business_name,
+                        completed_at=execution.completed_at,
+                        result_count=request.result_count,
+                        report_url=oss_url,
+                        feishu_notify_user_id=feishu_user_ids,
+                        environment_name=environment_name,
+                        task_name=task_name,
+                    )
 
-                        notification_kwargs = dict(
-                            execution_id=execution_id,
-                            business_name=business_name,
-                            completed_at=execution.completed_at,
-                            result_count=request.result_count,
-                            oss_report_url=oss_url,
-                            feishu_notify_user_id=feishu_user_ids,
-                            environment_name=environment_name,
-                            task_name=task_name,
-                        )
+                    # 默认通知
+                    asyncio.create_task(notifier.send(**notification_kwargs))
 
-                        # 1. 默认群始终发送通知
-                        if default_webhook:
-                            asyncio.create_task(
-                                send_feishu_notification(
-                                    webhook_url=default_webhook,
-                                    **notification_kwargs,
-                                )
-                            )
-
-                        # 2. 用户自定义 webhook 群：失败时发送，手动触发也发送
-                        #    （仅当自定义 webhook 与默认不同时发送，避免重复）
+                    # 用户自定义 webhook：失败或手动触发时额外发送
+                    if task_webhook:
                         failed_count = (request.result_count or {}).get('failed', 0)
                         is_manual = execution.trigger_type != 'scheduled'
-                        if task_webhook and task_webhook != default_webhook and (failed_count > 0 or is_manual):
+                        if failed_count > 0 or is_manual:
                             asyncio.create_task(
-                                send_feishu_notification(
-                                    webhook_url=task_webhook,
-                                    **notification_kwargs,
-                                )
+                                notifier.send(webhook_url=task_webhook, **notification_kwargs)
                             )
                 except Exception as notify_err:
-                    logger.warning(f'[Internal] 飞书通知发送失败（不影响主流程）: {notify_err}')
+                    logger.warning(f'[Internal] 通知发送失败（不影响主流程）: {notify_err}')
 
             return ExecutionCompleteResponse(
                 success=True,

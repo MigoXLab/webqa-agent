@@ -59,9 +59,11 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["webqa_agent*", "app_gradio*", "config*"]
+include = ["webqa_agent*", "app_gradio*"]
 
 [tool.setuptools.package-data]
-webqa_agent = ["static/*", "static/**/*", "crawler/js/*"]
+webqa_agent = ["static/*", "static/**/*", "crawler/js/*", "templates/*.yaml.example", "templates/**"]
 app_gradio = ["*.json"]
-config = ["*.yaml.example"]
+
+[project.optional-dependencies]
+ui = ["gradio>=5.44.0"]

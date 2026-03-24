@@ -112,7 +112,7 @@ async def _stop_k8s_job(execution_id: str) -> bool:
             k8s_config.load_incluster_config()
 
         batch_v1 = client.BatchV1Api()
-        k8s_namespace = os.getenv('K8S_NAMESPACE', 'cloud-staging')
+        k8s_namespace = os.getenv('K8S_NAMESPACE', 'webqa')
 
         # 查询 execution 的 trigger_type 确定 Job 名前缀
         async with AsyncSessionLocal() as db:
@@ -149,17 +149,22 @@ async def _stop_k8s_job(execution_id: str) -> bool:
 
 
 def generate_sso_cookies(username: str, password: str, env: str = 'prod') -> Tuple[Optional[str], Optional[List[Dict]]]:
-    """使用 SSO 账号生成 cookies。"""
-    try:
-        from app.utils.get_sso_token import get_sso_token_sync
+    """使用认证 provider 生成 cookies。
 
-        logger.info(f'[SSO] 生成 cookies: username={username}, env={env}')
-        token, cookie_json = get_sso_token_sync(username, password, env)
-        cookies = json.loads(cookie_json)
-        logger.info('[SSO] Cookies 生成成功')
-        return token, cookies
+    Provider 由 backend/app/providers/ 自动发现：
+    - 内部部署：自动加载 OpenXLab SSO 实现
+    - 开源部署：回退到 CookiesAuthProvider（不支持从凭据生成）
+    """
+    try:
+        from app.providers import get_provider
+
+        auth = get_provider('auth')
+        logger.info(f'[Auth] 生成 cookies: username={username}, env={env}, provider={auth.name}')
+        cookies = auth.generate_cookies(username, password, env)
+        logger.info('[Auth] Cookies 生成成功')
+        return None, cookies
     except Exception:
-        logger.exception(f'[SSO] Cookies 生成失败: username={username}, env={env}')
+        logger.exception(f'[Auth] Cookies 生成失败: username={username}, env={env}')
         raise
 
 
@@ -179,41 +184,37 @@ def _time_id_prefix(execution_id: str, started_at=None) -> str:
 
 
 def upload_report_to_oss(report_dir: str, oss_key_dir: str) -> Optional[str]:
-    """上传报告目录到 OSS。oss_key_dir 建议使用「时间_id 的第一部分」如 20250227_143022_abc12345。"""
+    """上传报告目录到远程存储。
+
+    Provider 由 backend/app/providers/ 自动发现：
+    - 内部部署：自动加载 OSS 实现
+    - 开源部署：回退到 LocalStorageProvider（不上传，返回 None）
+    """
     if not report_dir or not os.path.exists(report_dir):
-        logger.warning(f'[OSS] 报告目录不存在: {report_dir}')
+        logger.warning(f'[Storage] 报告目录不存在: {report_dir}')
         return None
 
     try:
-        from app.utils.oss_utils import upload_dir_to_oss
+        from app.providers import get_provider
 
+        storage = get_provider('storage')
         # 兼容调用方仅传 execution_id 的情况，统一转换为时间前缀目录
-        normalized_oss_key_dir = (
+        normalized_key = (
             oss_key_dir if oss_key_dir and '_' in oss_key_dir else _time_id_prefix(oss_key_dir)
         )
-        oss_key_prefix = f'test/webqa_agent/reports/{normalized_oss_key_dir}'
 
-        logger.info(f'[OSS] 开始上传: {report_dir} -> {oss_key_prefix}')
-        uploaded_files = upload_dir_to_oss(report_dir, oss_key_prefix=oss_key_prefix)
+        logger.info(f'[Storage] 开始上传: {report_dir}, provider={storage.name}')
+        report_url = storage.upload_report(report_dir, normalized_key)
 
-        if not uploaded_files:
-            return None
+        if report_url:
+            logger.info(f'[Storage] 上传成功，报告 URL: {report_url}')
+        else:
+            logger.info('[Storage] Provider 未上传报告（本地存储模式）')
 
-        # 查找主 HTML 报告
-        html_files = [f for f in uploaded_files.keys() if f.endswith('.html')]
-        if html_files:
-            main_html = next(
-                (f for f in html_files if 'test_report' in f or 'report' in f.lower()),
-                html_files[0]
-            )
-            report_url = uploaded_files[main_html]
-            logger.info(f'[OSS] 上传成功，报告 URL: {report_url}')
-            return report_url
-
-        return list(uploaded_files.values())[0]
+        return report_url
 
     except Exception:
-        logger.exception(f'[OSS] 上传失败: report_dir={report_dir}, oss_key_dir={oss_key_dir}')
+        logger.exception(f'[Storage] 上传失败: report_dir={report_dir}, oss_key_dir={oss_key_dir}')
         return None
 
 
@@ -261,7 +262,7 @@ async def run_execution(execution_id: str, case_data: Optional[Dict[str, Any]] =
 
 
 async def _start_gen_executor(execution_id: str, gen_config_dict: Optional[Dict[str, Any]] = None):
-    """Gen Mode (local): Start subprocess running run_gen_webqa.py.
+    """Gen Mode (local): Start subprocess running gen_webqa.py.
 
     Accepts a raw config dict (without api_key). Secrets are injected here from
     backend settings before writing the config file.
@@ -328,7 +329,7 @@ async def _start_gen_executor(execution_id: str, gen_config_dict: Optional[Dict[
                 env['OPENAI_BASE_URL'] = base_url
 
             process = await asyncio.create_subprocess_exec(
-                'python', '-m', 'backend.run_gen_webqa',
+                'python', '-m', 'backend.gen_webqa',
                 '-c', config_path,
                 '--execution-id', execution_id,
                 '--report-dir', str(config_dir),
@@ -396,11 +397,11 @@ async def _start_gen_executor(execution_id: str, gen_config_dict: Optional[Dict[
 
 
 # =============================================================================
-# GEN + KUBERNETES MODE: 创建 K8s Job 运行 run_gen_webqa
+# GEN + KUBERNETES MODE: 创建 K8s Job 运行 gen_webqa
 # =============================================================================
 
 async def _start_gen_k8s(execution_id: str, gen_config_dict: Optional[Dict[str, Any]] = None):
-    """Gen Mode (kubernetes): Create a K8s Job running run_gen_webqa.py.
+    """Gen Mode (kubernetes): Create a K8s Job running gen_webqa.py.
 
     Accepts a raw config dict (without api_key). Secrets are injected here from
     backend settings before writing the config to shared storage and creating
@@ -497,7 +498,7 @@ async def _create_gen_k8s_job(
     base_url: str,
     business_id: Optional[UUID] = None,
 ) -> str:
-    """Create a Kubernetes Job that runs run_gen_webqa.py inside the agent
+    """Create a Kubernetes Job that runs gen_webqa.py inside the agent
     image."""
     try:
         from kubernetes import client
@@ -513,8 +514,8 @@ async def _create_gen_k8s_job(
 
     batch_v1 = client.BatchV1Api()
 
-    k8s_namespace = os.getenv('K8S_NAMESPACE', 'cloud-staging')
-    k8s_job_image = os.getenv('K8S_JOB_IMAGE', 'eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/webqa-agent:latest')
+    k8s_namespace = os.getenv('K8S_NAMESPACE', 'webqa')
+    k8s_job_image = os.getenv('K8S_JOB_IMAGE', 'webqa-agent:latest')
     k8s_pvc_name = os.getenv('K8S_PVC_NAME', 'webqa-pvc')
     k8s_sa_name = os.getenv('K8S_JOB_SERVICE_ACCOUNT', 'webqa-agent-sa')
     cpu_limit, memory_gi = _compute_k8s_resources(workers, business_id)
@@ -551,7 +552,7 @@ async def _create_gen_k8s_job(
                         client.V1Container(
                             name='webqa-agent',
                             image=k8s_job_image,
-                            command=['python', '-m', 'backend.run_gen_webqa'],
+                            command=['python', '-m', 'backend.gen_webqa'],
                             args=[
                                 '-c', config_path,
                                 '--execution-id', execution_id,
@@ -920,8 +921,8 @@ async def _create_k8s_job(
     batch_v1 = client.BatchV1Api()
 
     # 从环境变量获取 K8s 配置 (默认值适用于标准部署)
-    k8s_namespace = os.getenv('K8S_NAMESPACE', 'cloud-staging')
-    k8s_job_image = os.getenv('K8S_JOB_IMAGE', 'eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/webqa-agent:latest')
+    k8s_namespace = os.getenv('K8S_NAMESPACE', 'webqa')
+    k8s_job_image = os.getenv('K8S_JOB_IMAGE', 'webqa-agent:latest')
     k8s_pvc_name = os.getenv('K8S_PVC_NAME', 'webqa-pvc')
     k8s_sa_name = os.getenv('K8S_JOB_SERVICE_ACCOUNT', 'webqa-agent-sa')
 

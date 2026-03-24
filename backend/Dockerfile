@@ -1,4 +1,5 @@
-FROM eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/python:3.11-slim
+ARG BASE_IMAGE=python:3.11-slim
+FROM ${BASE_IMAGE}
 
 WORKDIR /app
 

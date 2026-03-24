@@ -52,6 +52,7 @@ vibecoding, vibe coding, web evaluation, autonomous exploration, web testing aut
 - [Core Features](#-core-features)
 - [Examples](#-examples)
 - [Quick Start](#-quick-start)
+- [Deployment](#-deployment)
 - [Usage](#usage)
 - [Extending WebQA Agent Tools](#extending-webqa-agent-tools)
 - [RoadMap](#roadmap)
@@ -172,6 +173,36 @@ mkdir -p config \
 
 curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/start.sh | bash
 ```
+
+## 🖥️ Deployment
+
+WebQA Agent supports multiple usage modes — from lightweight CLI to full-stack platform:
+
+### 🖥️ CLI Mode (Already installed above)
+
+```bash
+webqa-agent init -m gen       # Initialize config
+webqa-agent gen               # AI-driven test generation
+webqa-agent run               # Execute test cases
+```
+
+### ☸️ Full-Stack Deployment (Frontend + Backend + Database)
+
+For teams that need a **persistent web dashboard**, test case management, scheduled tasks, and execution history, deploy the full-stack platform with Kubernetes:
+
+```bash
+git clone https://github.com/MigoXLab/webqa-agent.git
+cd webqa-agent
+
+# 1. Configure secrets
+cp deploy/k8s/secret.yaml.example deploy/k8s/secret.yaml
+# Edit secret.yaml: DB password, LLM API key (base64 encoded)
+
+# 2. Update configmap
+# Edit deploy/k8s/configmap.yaml: LLM endpoint, models, agent image
+```
+
+> For detailed deployment guide, see [deploy/k8s/README.md](deploy/k8s/README.md)
 
 <a id="usage"></a>
 

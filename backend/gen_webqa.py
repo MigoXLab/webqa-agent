@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""WebQA Agent Gen Mode Execution Script.
+"""WebQA Agent 执行脚本.
 
-Function:
-1. Load GenConfig and execute webqa-agent in Gen mode (AI-driven).
-2. Callback to Backend API with results.
+功能：
+1. 加载配置文件并执行 webqa-agent 测试
+2. 执行完成后回调 Backend API 通知结果
 
-Usage:
-  python -m backend.run_gen_webqa -c config.yaml --execution-id xxx
+使用方式：
+  python -m backend.gen_webqa -c config.yaml --execution-id xxx
 """
 
 import argparse

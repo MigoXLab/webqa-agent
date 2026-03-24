@@ -1,4 +1,5 @@
-FROM eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/mcr.microsoft.com/playwright/python:v1.58.0-noble
+ARG BASE_IMAGE=mcr.microsoft.com/playwright/python:v1.58.0-noble
+FROM ${BASE_IMAGE}
 
 WORKDIR /app
 

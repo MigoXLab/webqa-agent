@@ -222,3 +222,37 @@ async def send_feishu_notification(
     except Exception as e:
         logger.exception(f'[Feishu] Failed to send notification for execution {execution_id}: {e}')
         return False
+
+
+# ---------------------------------------------------------------------------
+# Provider wrapper for the providers auto-discovery mechanism.
+# This class is loaded automatically when this module exists (internal deploy).
+# ---------------------------------------------------------------------------
+
+class Provider:
+    """Notifier implementation backed by Feishu (Lark) webhook bot."""
+
+    name = 'feishu'
+
+    async def send(
+        self,
+        *,
+        execution_id: str,
+        business_name: str,
+        result_count: dict | None = None,
+        report_url: str | None = None,
+        webhook_url: str | None = None,
+        **kwargs,
+    ) -> bool:
+        from app.config import get_settings
+        url = webhook_url or get_settings().DEFAULT_FEISHU_WEBHOOK_URL
+        if not url:
+            return False
+        return await send_feishu_notification(
+            webhook_url=url,
+            execution_id=execution_id,
+            business_name=business_name,
+            result_count=result_count,
+            oss_report_url=report_url,
+            **kwargs,
+        )

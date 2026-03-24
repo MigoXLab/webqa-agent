@@ -398,13 +398,18 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-16">
             <Link to="/" className="flex items-center gap-3 flex-shrink-0 hover:opacity-80 transition-opacity">
-              <img
-                src="https://static.openxlab.org.cn/platform-config-upload/biz-images/extends/logo-title.svg"
-                alt="Logo"
-                className="h-auto flex-shrink-0"
-                style={{ width: '220px', height: 'auto' }}
-              />
-              {/* <h1 className="text-gray-900 text-lg md:text-xl font-bold">WebQA Agent</h1> */}
+              {import.meta.env.VITE_BRAND_LOGO ? (
+                <img
+                  src={import.meta.env.VITE_BRAND_LOGO}
+                  alt={import.meta.env.VITE_BRAND_NAME || 'WebQA Agent'}
+                  className="h-auto flex-shrink-0"
+                  style={{ width: '220px', height: 'auto' }}
+                />
+              ) : (
+                <h1 className="text-gray-900 text-lg md:text-xl font-bold">
+                  {import.meta.env.VITE_BRAND_NAME || 'WebQA Agent'}
+                </h1>
+              )}
             </Link>
 
             <nav className="flex items-center gap-2">

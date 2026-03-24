@@ -1,0 +1,19 @@
+# =============================================================================
+# GitLab → GitHub 同步排除清单
+# 此文件中列出的路径不会同步到 GitHub 开源仓库
+# =============================================================================
+
+# --- 内部实现文件（SSO / OSS / 飞书） ---
+backend/app/utils/get_sso_token.py
+backend/app/utils/oss_utils.py
+backend/app/services/feishu_notify.py
+
+# --- 内部部署配置（阿里云特化 K8s） ---
+k8s/
+
+# --- 同步与 CI 配置自身 ---
+.sync-ignore
+.gitlab-ci.yml
+
+# --- 内部文档 ---
+docs/design

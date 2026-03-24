@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webqa-be
+  namespace: webqa
+  labels:
+    app: webqa-be
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webqa-be
+  template:
+    metadata:
+      labels:
+        app: webqa-be
+    spec:
+      serviceAccountName: webqa-be-sa
+      containers:
+        - name: webqa-be
+          # Replace with your backend image
+          image: your-registry/webqa-be:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: webqa-config
+            - secretRef:
+                name: webqa-secrets
+          volumeMounts:
+            - name: shared-storage
+              mountPath: /shared
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: shared-storage
+          persistentVolumeClaim:
+            claimName: webqa-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webqa-be
+  namespace: webqa
+spec:
+  selector:
+    app: webqa-be
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP

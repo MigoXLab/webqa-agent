@@ -1,5 +1,6 @@
 # Build stage
-FROM eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/node:20-alpine as build
+ARG NODE_IMAGE=node:20-alpine
+FROM ${NODE_IMAGE} AS build
 
 WORKDIR /app
 
@@ -10,7 +11,8 @@ COPY frontend/ .
 RUN npm run build
 
 # Production stage
-FROM eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/nginx:alpine
+ARG NGINX_IMAGE=nginx:alpine
+FROM ${NGINX_IMAGE}
 
 COPY --from=build /app/build /usr/share/nginx/html
 COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf

@@ -52,6 +52,7 @@ Vibecoding, Vibe coding, 网页测试自动化, 浏览器测试工具, AI驱动�
 - [核心特性](#-核心特性)
 - [示例演示](#-示例演示)
 - [快速开始](#-快速开始)
+- [部署方式](#-部署方式)
 - [使用说明](#使用说明)
 - [扩展 WebQA Agent 工具](#扩展-webqa-agent-工具)
 - [RoadMap](#roadmap)
@@ -172,6 +173,35 @@ mkdir -p config \
 
 curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/start.sh | bash
 ```
+
+## 🖥️ 部署方式
+
+WebQA Agent 支持三种使用方式——从轻量 CLI 到全栈平台：
+
+### 🖥️ CLI 模式（安装后即可使用）
+
+```bash
+webqa-agent init -m gen       # 初始化配置
+webqa-agent gen               # AI 自动探索测试
+webqa-agent run               # 执行测试用例
+```
+
+### ☸️ 全栈部署（前端 + 后端 + 数据库）
+
+如果你的团队需要一个**可持续使用的 Web 管理平台**，包括测试用例管理、定时任务、执行历史等功能，可以通过 Kubernetes 部署完整的前后端：
+
+```bash
+git clone https://github.com/MigoXLab/webqa-agent.git
+cd webqa-agent
+
+# 1. 配置密钥
+cp deploy/k8s/secret.yaml.example deploy/k8s/secret.yaml
+# 编辑 secret.yaml：数据库密码、LLM API Key（base64 编码）
+
+# 2. 更新配置
+# 编辑 deploy/k8s/configmap.yaml：LLM 端点、模型列表、Agent 镜像
+
+> 详细部署指南请参考 [deploy/k8s/README.md](deploy/k8s/README.md)
 
 <a id="使用说明"></a>
 

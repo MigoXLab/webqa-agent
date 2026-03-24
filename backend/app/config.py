@@ -34,8 +34,8 @@ class Settings(BaseSettings):
     LLM_API: str = 'openai'
     LLM_API_KEY: str = ''
     LLM_BASE_URL: str = 'https://api.openai.com/v1'
-    LLM_AVAILABLE_MODELS: str = 'gpt-4o-mini,gpt-4o'
-    LLM_DEFAULT_MODEL: str = 'gpt-4o-mini'
+    LLM_AVAILABLE_MODELS: str = 'gemini-3-flash-preview,gemini-3.1-flash-lite-preview,gpt-5-mini-2025-08-07,doubao-seed-2-0-pro-260215'
+    LLM_DEFAULT_MODEL: str = 'gpt-5-mini-2025-08-07'
     LLM_GEN_MODELS: str = ''
     LLM_GEN_DEFAULT_MODEL: str = ''
 
@@ -69,8 +69,8 @@ class Settings(BaseSettings):
     # Backend Callback URL (供 Agent Job 回调使用)
     BACKEND_CALLBACK_URL: str = 'http://localhost:8000'
 
-    # Feishu Webhook (默认飞书通知地址，定时任务未单独配置时使用)
-    DEFAULT_FEISHU_WEBHOOK_URL: str = 'https://open.feishu.cn/open-apis/bot/v2/hook/ea37e263-8e8b-4b9a-b98d-cd0b6ad4f4fc'
+    # Notification Webhook (used by notification provider for scheduled task results)
+    DEFAULT_FEISHU_WEBHOOK_URL: str = ''
     FEISHU_WEBHOOK_TIMEOUT_SECONDS: int = 10
 
     # Redis Configuration

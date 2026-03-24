@@ -257,3 +257,20 @@ def get_sso_token_sync(username: str = 'ui_test@pjlab.org.cn', password: str = '
         return token, cookie_json
     except Exception as e:
         raise Exception(f'SSO login failed: Unable to process authentication cookies: {str(e)}')
+
+
+# ---------------------------------------------------------------------------
+# Provider wrapper for the providers auto-discovery mechanism.
+# This class is loaded automatically when this module exists (internal deploy).
+# ---------------------------------------------------------------------------
+
+class Provider:
+    """AuthProvider implementation backed by OpenXLab SSO."""
+
+    name = 'openxlab_sso'
+
+    def generate_cookies(
+        self, username: str, password: str, env: str = 'prod'
+    ) -> list[dict]:
+        _token, cookie_json = get_sso_token_sync(username, password, env)
+        return json.loads(cookie_json)

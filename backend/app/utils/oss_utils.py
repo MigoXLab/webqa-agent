@@ -152,3 +152,39 @@ def upload_dir_to_oss(
             logger.info(f'[oss] Uploaded {rel_path} ({len(uploaded_files)}/{len(files_to_upload)})')
 
     return uploaded_files
+
+
+# ---------------------------------------------------------------------------
+# Provider wrapper for the providers auto-discovery mechanism.
+# This class is loaded automatically when this module exists (internal deploy).
+# ---------------------------------------------------------------------------
+
+class Provider:
+    """StorageProvider implementation backed by Alibaba Cloud OSS via internal STS."""
+
+    name = 'openxlab_oss'
+
+    def upload_report(self, local_dir: str, key_prefix: str) -> str | None:
+        if not local_dir or not os.path.exists(local_dir):
+            logger.warning('[OSS Provider] Report directory does not exist: %s', local_dir)
+            return None
+
+        try:
+            oss_key = f'test/webqa_agent/reports/{key_prefix}'
+
+            uploaded = upload_dir_to_oss(local_dir, oss_key_prefix=oss_key)
+            if not uploaded:
+                return None
+
+            html_files = [f for f in uploaded.keys() if f.endswith('.html')]
+            if html_files:
+                main_html = next(
+                    (f for f in html_files if 'test_report' in f or 'report' in f.lower()),
+                    html_files[0],
+                )
+                return uploaded[main_html]
+
+            return list(uploaded.values())[0]
+        except Exception:
+            logger.exception('[OSS Provider] Upload failed: local_dir=%s', local_dir)
+            return None
