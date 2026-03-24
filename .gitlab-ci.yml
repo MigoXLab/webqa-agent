@@ -31,7 +31,7 @@ build-backend:
   script:
     - echo "Build Backend"
     # 在根目录构建，使用 backend/Dockerfile，这样可以访问 webqa_agent/
-    - docker build -t $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:$CI_COMMIT_SHORT_SHA -f backend/Dockerfile .
+    - docker build --pull -t $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:$CI_COMMIT_SHORT_SHA -f backend/Dockerfile .
     - docker push $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:$CI_COMMIT_SHORT_SHA
     # 同时推送 latest 标签
     - docker tag $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:$CI_COMMIT_SHORT_SHA $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_BACKEND:latest
@@ -60,7 +60,7 @@ build-frontend:
     - docker login $harbor_url_prod_vpc -u $harbor_user -p $harbor_password
   script:
     - echo "Build Frontend"
-    - docker build -t $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:$CI_COMMIT_SHORT_SHA -f frontend/Dockerfile .
+    - docker build --pull -t $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:$CI_COMMIT_SHORT_SHA -f frontend/Dockerfile .
     - docker push $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:$CI_COMMIT_SHORT_SHA
     # 同时推送 latest 标签
     - docker tag $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:$CI_COMMIT_SHORT_SHA $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_FRONTEND:latest
@@ -89,7 +89,7 @@ build-agent:
   script:
     - echo "Build Agent"
     # 在根目录构建，使用 webqa_agent/Dockerfile，这样可以访问 backend/ 和 webqa_agent/
-    - docker build -t $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:$CI_COMMIT_SHORT_SHA -f Dockerfile .
+    - docker build --pull -t $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:$CI_COMMIT_SHORT_SHA -f Dockerfile .
     - docker push $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:$CI_COMMIT_SHORT_SHA
     # 同时推送 latest 标签，供 K8s Job 使用
     - docker tag $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:$CI_COMMIT_SHORT_SHA $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:latest
