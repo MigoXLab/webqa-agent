@@ -1332,6 +1332,47 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     )
     logging.debug('AgentExecutor created successfully')
 
+    # ---------------------------------------------------------------------------
+    # Shared helper: close a preamble failure and build the return dict.
+    # Defined as a closure so it can capture case_recorder, case, case_name,
+    # and original_planned_steps without parameter boilerplate.
+    # ---------------------------------------------------------------------------
+    def _finish_preamble_failure(
+        final_summary: str,
+        user_summary: str,
+        status: str = 'failed',
+        failure_type: str = 'preamble_failure',
+    ) -> dict:
+        case_recorder.finish_case(
+            final_status=status,
+            final_summary=final_summary,
+            user_summary=user_summary,
+        )
+        recorded = case_recorder.get_case_data()
+        if recorded is not None:
+            recorded['original_planned_steps'] = original_planned_steps
+        metrics = recorded.get('metrics', {}) if recorded else {}
+        return {
+            'case_result': {
+                'case_name': case_name,
+                'case_id': case.get('case_id', ''),
+                'final_summary': final_summary,
+                'user_summary': user_summary,
+                'status': status,
+                'failure_type': failure_type,
+                'metrics': {
+                    'total_steps': metrics.get('total_steps', 0),
+                    'passed_steps': metrics.get('passed_steps', 0),
+                    'failed_steps': metrics.get('failed_steps', 0),
+                    'warning_steps': metrics.get('warning_steps', 0),
+                    'total_actions': metrics.get('total_actions', 0),
+                },
+                'failed_step_details': _extract_failed_step_details(recorded),
+            },
+            'current_case_steps': [],
+            'recorded_case': recorded,
+        }
+
     # --- Execute Preamble Actions to Restore State ---
     preamble_actions = case.get('preamble_actions', [])
     if preamble_actions:
@@ -1388,37 +1429,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                             f"Preamble navigation to '{target_url}' failed: {_nav_err}",
                         )
                         user_summary = _make_user_summary(language, 'failed', case_objective)
-                        case_recorder.finish_case(
-                            final_status='failed',
-                            final_summary=final_summary,
-                            user_summary=user_summary,
-                        )
-                        recorded_case_data = case_recorder.get_case_data()
-                        if recorded_case_data is not None:
-                            recorded_case_data['original_planned_steps'] = original_planned_steps
-                        metrics = recorded_case_data.get('metrics', {}) if recorded_case_data else {}
-                        failed_step_details = _extract_failed_step_details(recorded_case_data)
-                        case_result = {
-                            'case_name': case_name,
-                            'case_id': case.get('case_id', ''),
-                            'final_summary': final_summary,
-                            'user_summary': user_summary,
-                            'status': 'failed',
-                            'failure_type': 'preamble_failure',
-                            'metrics': {
-                                'total_steps': metrics.get('total_steps', 0),
-                                'passed_steps': metrics.get('passed_steps', 0),
-                                'failed_steps': metrics.get('failed_steps', 0),
-                                'warning_steps': metrics.get('warning_steps', 0),
-                                'total_actions': metrics.get('total_actions', 0),
-                            },
-                            'failed_step_details': failed_step_details,
-                        }
-                        return {
-                            'case_result': case_result,
-                            'current_case_steps': [],
-                            'recorded_case': recorded_case_data,
-                        }
+                        return _finish_preamble_failure(final_summary, user_summary)
 
                 # Non-direct action: include params in instruction so LLM has
                 # the full context and cannot invent missing values.
@@ -1544,35 +1555,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         user_summary = _make_user_summary(language, 'failed', case_objective)
 
                     logging.error(f'Preamble action {i + 1} failed, aborting test case')
-                    # Ensure time data is recorded even on early failure
-                    case_recorder.finish_case(final_status='failed', final_summary=final_summary, user_summary=user_summary)
-                    recorded_case_data = case_recorder.get_case_data()
-                    if recorded_case_data is not None:
-                        recorded_case_data['original_planned_steps'] = original_planned_steps
-                    # Extract metrics for consistent case_result structure
-                    metrics = recorded_case_data.get('metrics', {}) if recorded_case_data else {}
-                    failed_step_details = _extract_failed_step_details(recorded_case_data)
-                    case_result = {
-                        'case_name': case_name,
-                        'case_id': case.get('case_id', ''),
-                        'final_summary': final_summary,
-                        'user_summary': user_summary,
-                        'status': 'failed',
-                        'failure_type': 'preamble_failure',
-                        'metrics': {
-                            'total_steps': metrics.get('total_steps', 0),
-                            'passed_steps': metrics.get('passed_steps', 0),
-                            'failed_steps': metrics.get('failed_steps', 0),
-                            'warning_steps': metrics.get('warning_steps', 0),
-                            'total_actions': metrics.get('total_actions', 0),
-                        },
-                        'failed_step_details': failed_step_details,
-                    }
-                    return {
-                        'case_result': case_result,
-                        'current_case_steps': [],
-                        'recorded_case': recorded_case_data,
-                    }
+                    return _finish_preamble_failure(final_summary, user_summary)
 
                 logging.debug(f'Preamble action {i + 1} completed successfully')
             except Exception as e:
@@ -1596,35 +1579,11 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                                             f"Preamble action '{instruction_to_execute}' raised an exception."))
                     preamble_status = 'failed'
                     preamble_failure_type = 'preamble_exception'
-                # Ensure time data is recorded even on exception
-                case_recorder.finish_case(final_status=preamble_status, final_summary=final_summary, user_summary=user_summary)
-                recorded_case_data = case_recorder.get_case_data()
-                if recorded_case_data is not None:
-                    recorded_case_data['original_planned_steps'] = original_planned_steps
-                # Extract metrics for consistent case_result structure
-                metrics = recorded_case_data.get('metrics', {}) if recorded_case_data else {}
-                failed_step_details = _extract_failed_step_details(recorded_case_data)
-                case_result = {
-                    'case_name': case_name,
-                    'case_id': case.get('case_id', ''),
-                    'final_summary': final_summary,
-                    'user_summary': user_summary,
-                    'status': preamble_status,
-                    'failure_type': preamble_failure_type,
-                    'metrics': {
-                        'total_steps': metrics.get('total_steps', 0),
-                        'passed_steps': metrics.get('passed_steps', 0),
-                        'failed_steps': metrics.get('failed_steps', 0),
-                        'warning_steps': metrics.get('warning_steps', 0),
-                        'total_actions': metrics.get('total_actions', 0),
-                    },
-                    'failed_step_details': failed_step_details,
-                }
-                return {
-                    'case_result': case_result,
-                    'current_case_steps': [],
-                    'recorded_case': recorded_case_data,
-                }
+                return _finish_preamble_failure(
+                    final_summary, user_summary,
+                    status=preamble_status,
+                    failure_type=preamble_failure_type,
+                )
 
         logging.debug('=== All Preamble Actions Completed Successfully ===')
 
