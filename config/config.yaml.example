@@ -32,10 +32,6 @@ test_config: # Test configuration for Gen mode (AI-driven test generation)
     max_dynamic_steps: 8  # Optional, default: 8 - Max steps per UI change (range: 3-15)
     min_elements_threshold: 2  # Optional, default: 2 - Min new elements to trigger (1=sensitive, 3+=selective)
 
-  # Telemetry configuration (optional)
-  telemetry:
-    enabled: true  # true | false
-
 llm_config: # LLM configuration, supports OpenAI, Anthropic Claude, and Google Gemini models
   # =========================
   # OpenAI Configuration Example
