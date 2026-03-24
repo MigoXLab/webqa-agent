@@ -215,15 +215,17 @@ class PageButtonTest(_LocalizedTestBase):
                     str(k): v for k, v in clickable_elements.items()
                 }
 
-                # Per-element event collector for browser error detection
+                # Per-element event collector for browser error detection.
+                # Wrapped in try/finally so detach() is always called — even
+                # when clickable_elements is empty or CancelledError propagates.
                 collector = BrowserEventCollector()
                 collector.attach(page)
 
                 # count total passed / failed
                 total, total_failed = 0, 0
 
-                if clickable_elements:
-                    try:
+                try:
+                    if clickable_elements:
                         for highlight_id, element in clickable_elements.items():
                             element_text = element.get('selector', 'Unknown')
                             logging.info(f'Testing clickable element {highlight_id}...')
@@ -340,9 +342,9 @@ class PageButtonTest(_LocalizedTestBase):
                                 if not step_recorded:
                                     sub_test_results.append(step)
 
-                    finally:
-                        # Clean up listeners on every exit path (including timeout/cancel).
-                        collector.detach(page)
+                finally:
+                    # Clean up listeners on every exit path (including timeout/cancel).
+                    collector.detach(page)
 
                 logging.info(f"{icon['check']} Sub Test Completed: {result.name}")
                 result.report.append(

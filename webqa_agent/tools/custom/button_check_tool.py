@@ -200,14 +200,17 @@ def _filter_clickable_elements(
         raw_attrs = elem.get('attributes') or {}
         # JS returns attributes as a list of {name, value} objects; normalise
         # to a plain dict so all downstream .get() calls work uniformly.
+        attrs: Dict[str, Any]
         if isinstance(raw_attrs, list):
-            attrs: Dict[str, Any] = {
-                a['name']: a['value']
+            # HTML boolean attributes (e.g. disabled, readonly) may lack a
+            # 'value' key in the serialised form; default to empty string.
+            attrs = {
+                a['name']: a.get('value', '')
                 for a in raw_attrs
                 if isinstance(a, dict) and 'name' in a
             }
         else:
-            attrs: Dict[str, Any] = raw_attrs
+            attrs = raw_attrs
 
         # Unconditional exclusions
         if attrs.get('aria-hidden') == 'true':

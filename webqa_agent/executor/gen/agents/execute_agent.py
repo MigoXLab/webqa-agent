@@ -1361,15 +1361,16 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 if action_name == 'GoToPage' and params.get('url'):
                     # GoToPage with explicit URL: execute directly, never let LLM
                     # hallucinate or substitute the target URL.
-                    target_url = normalize_url(params['url'].strip())
-                    # Require an explicit http/https scheme; rely on Playwright
-                    # to surface further errors (DNS, 404, etc.) via exception.
+                    raw_url = params['url'].strip()
+                    target_url = normalize_url(raw_url)
+                    # normalize_url strips trailing slashes / lowercases the host
+                    # but does not add a scheme — fall back to raw if scheme lost.
                     if not target_url.startswith(('http://', 'https://')):
                         logging.warning(
                             f'Preamble GoToPage URL missing http(s) scheme: '
-                            f'{params["url"]!r} — attempting navigation anyway'
+                            f'{raw_url!r} — attempting navigation with original URL'
                         )
-                        target_url = params['url'].strip()
+                        target_url = raw_url
                     try:
                         await ui_tester_instance.browser_session.navigate_to(target_url)
                         logging.info(
@@ -1422,7 +1423,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 # Non-direct action: include params in instruction so LLM has
                 # the full context and cannot invent missing values.
                 if params:
-                    params_str = json.dumps(params, ensure_ascii=False)
+                    params_str = json.dumps(params, ensure_ascii=False, default=str)
                     instruction_to_execute = f'{action_name}（params: {params_str}）'
                 else:
                     instruction_to_execute = action_name or str(step)
