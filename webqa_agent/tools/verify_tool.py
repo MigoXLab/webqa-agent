@@ -7,6 +7,7 @@ verification.
 
 import datetime
 import logging
+import time
 from typing import Any, Optional, Type
 
 from langchain_core.tools import BaseTool
@@ -14,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from webqa_agent.executor.gen.utils.case_recorder import CentralCaseRecorder
 from webqa_agent.tools.core.ui_driver import UITester
+from webqa_agent.utils.timing_breakdown import record_tool_timing
 
 
 class UIAssertionSchema(BaseModel):
@@ -75,6 +77,7 @@ class UIAssertTool(BaseTool):
         """
         if not self.ui_tester_instance:
             return '[FAILURE] Error: UITester instance not provided for assertion.'
+        tool_started = time.perf_counter()
 
         logging.debug(f'Executing UI assertion: {assertion}')
         if focus_region:
@@ -173,3 +176,6 @@ class UIAssertTool(BaseTool):
         except Exception as e:
             logging.error(f'Error executing UI assertion: {str(e)}')
             return f'[FAILURE] Unexpected error during assertion execution: {str(e)}'
+        finally:
+            elapsed = time.perf_counter() - tool_started
+            record_tool_timing(self.name, elapsed)

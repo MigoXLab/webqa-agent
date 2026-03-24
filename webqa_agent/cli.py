@@ -299,7 +299,8 @@ async def execute_gen_mode(cfg, workers: int = 1):
     report_config = ReportConfig(
         language=report_cfg_raw.get('language', 'en-US'),
         report_dir=report_cfg_raw.get('report_dir'),
-        save_screenshots=report_cfg_raw.get('save_screenshots', False)
+        save_screenshots=report_cfg_raw.get('save_screenshots', False),
+        save_dataflow=report_cfg_raw.get('save_dataflow', True),
     )
 
     # Build log config
@@ -322,7 +323,6 @@ async def execute_gen_mode(cfg, workers: int = 1):
     custom_tools_config = CustomToolsConfig(
         enabled=custom_tools_cfg.get('enabled', [])
     )
-
     # Reflection: enable_reflection in YAML maps to skip_reflection in GenConfig
     enable_reflection = tconf.get('enable_reflection', False)
     skip_reflection = not enable_reflection
