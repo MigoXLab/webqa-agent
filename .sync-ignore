@@ -10,6 +10,9 @@ backend/app/services/feishu_notify.py
 
 # --- 内部部署配置（阿里云特化 K8s） ---
 k8s/
+Dockerfile.k8s
+backend/Dockerfile.k8s
+frontend/Dockerfile.k8s
 
 # --- 同步与 CI 配置自身 ---
 .sync-ignore
