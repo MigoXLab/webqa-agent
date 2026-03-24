@@ -746,6 +746,7 @@ async def generate_dynamic_steps_with_llm(
     failure_recovery_mode: bool = False,
     failed_instruction: str = '',
     error_message: str = '',
+    report_dir: str = None,
 ) -> dict:
     """Generate dynamic test steps or recover from failed steps using LLM.
 
@@ -953,6 +954,7 @@ Use this logic to select strategy:
                     'executed_steps': executed_steps,
                     'messages': messages,
                 },
+                report_dir=report_dir,
             )
             response, llm_metrics = await _instrumented_ainvoke(
                 llm,
@@ -1066,6 +1068,7 @@ Use this logic to select strategy:
                         'llm_metrics': llm_metrics,
                         'raw_response': response_text,
                     },
+                    report_dir=report_dir,
                 )
 
                 return {
@@ -1088,6 +1091,7 @@ Use this logic to select strategy:
                         'llm_metrics': llm_metrics,
                         'raw_response': response_text,
                     },
+                    report_dir=report_dir,
                 )
                 return {
                     'strategy': 'abort',
@@ -1107,6 +1111,7 @@ Use this logic to select strategy:
                     'reason': f'Recovery failed: {str(e)}',
                     'error': str(e),
                 },
+                report_dir=report_dir,
             )
             return {
                 'strategy': 'abort',
@@ -1255,6 +1260,7 @@ Please analyze these new UI elements using the QAG methodology and generate appr
                 'new_elements_count': len(new_elements),
                 'messages': messages,
             },
+            report_dir=report_dir,
         )
         response, llm_metrics = await _instrumented_ainvoke(
             llm,
@@ -1383,6 +1389,7 @@ Please analyze these new UI elements using the QAG methodology and generate appr
                         'llm_metrics': llm_metrics,
                         'raw_response': response_text,
                     },
+                    report_dir=report_dir,
                 )
 
                 return result_data
@@ -1401,6 +1408,7 @@ Please analyze these new UI elements using the QAG methodology and generate appr
                         'llm_metrics': llm_metrics,
                         'raw_response': response_text,
                     },
+                    report_dir=report_dir,
                 )
                 return {
                     'strategy': 'insert',
@@ -1426,6 +1434,7 @@ Please analyze these new UI elements using the QAG methodology and generate appr
                     'llm_metrics': llm_metrics,
                     'raw_response': response_text,
                 },
+                report_dir=report_dir,
             )
             return {'strategy': 'insert', 'reason': 'JSON parsing failed', 'steps': []}
 
@@ -1446,6 +1455,7 @@ Please analyze these new UI elements using the QAG methodology and generate appr
                 'steps': [],
                 'error': str(e),
             },
+            report_dir=report_dir,
         )
         return {
             'strategy': 'insert',
@@ -1518,13 +1528,18 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     case_name = case.get('name', 'Unnamed Test Case')
     report_dir = state.get('report_config', {}).get('report_dir')
     completed_cases = state.get('completed_cases', [])
+    # Only record safe fields from case (exclude cookies, session data, etc.)
+    safe_case = {
+        k: v for k, v in case.items()
+        if k not in ('cookies', 'session', 'auth', 'credentials', 'token', 'api_key')
+    }
     record_data_flow_event(
         stage='agent_execution',
         event_type='case_execution_start',
         payload={
             'case_id': case.get('case_id', ''),
             'case_name': case_name,
-            'case': case,
+            'case': safe_case,
             'completed_case_count': len(completed_cases),
         },
         report_dir=report_dir,
@@ -2529,6 +2544,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 llm=llm,
                                 current_case=case,
                                 screenshot=recovery_screenshot,
+                                report_dir=report_dir,
                             )
 
                             strategy = recovery_result.get('strategy')
@@ -2675,6 +2691,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                     llm=llm,
                                     current_case=case,  # Include current_case for context
                                     screenshot=screenshot_b64,
+                                    report_dir=report_dir,
                                 )
 
                                 # Process recovery strategy
@@ -2882,6 +2899,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 screenshot=screenshot,
                                 tool_output=tool_output,
                                 step_success=step_success,
+                                report_dir=report_dir,
                             )
 
                             # Handle dynamic steps based on LLM strategy decision

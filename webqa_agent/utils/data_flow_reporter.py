@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import queue
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -10,6 +11,33 @@ from typing import Any
 
 _WRITE_LOCK = threading.Lock()
 _DATAFLOW_ENABLED: bool = True  # Module-level switch; set via set_dataflow_enabled()
+
+# Background writer: events are queued and flushed by a daemon thread
+# so that callers (often on the asyncio event loop) never block on file I/O.
+_EVENT_QUEUE: queue.Queue[tuple[Path, str] | None] = queue.Queue()
+
+
+def _bg_writer() -> None:
+    """Daemon thread that drains _EVENT_QUEUE and writes events to disk."""
+    while True:
+        item = _EVENT_QUEUE.get()
+        if item is None:
+            _EVENT_QUEUE.task_done()
+            break  # Shutdown sentinel
+        event_path, line = item
+        try:
+            event_path.parent.mkdir(parents=True, exist_ok=True)
+            with _WRITE_LOCK:
+                with event_path.open('a', encoding='utf-8') as f:
+                    f.write(line)
+        except Exception:
+            pass  # Best-effort; never crash the writer
+        finally:
+            _EVENT_QUEUE.task_done()
+
+
+_WRITER_THREAD = threading.Thread(target=_bg_writer, daemon=True, name='dataflow-writer')
+_WRITER_THREAD.start()
 
 
 def set_dataflow_enabled(enabled: bool) -> None:
@@ -100,7 +128,11 @@ def record_data_flow_event(
     payload: dict[str, Any],
     report_dir: str | None = None,
 ) -> str | None:
-    """Append one sanitized data-flow event to the JSONL log."""
+    """Append one sanitized data-flow event to the JSONL log.
+
+    File I/O is offloaded to a background daemon thread so that callers
+    on the asyncio event loop are never blocked.
+    """
     if not _DATAFLOW_ENABLED:
         return None
     target_dir = _resolve_report_dir(report_dir)
@@ -108,7 +140,6 @@ def record_data_flow_event(
         return None
 
     try:
-        target_dir.mkdir(parents=True, exist_ok=True)
         event_path = target_dir / 'data_flow_events.jsonl'
         event = {
             'timestamp': datetime.now().isoformat(timespec='milliseconds'),
@@ -116,12 +147,16 @@ def record_data_flow_event(
             'event_type': event_type,
             'payload': _sanitize_value(payload),
         }
-        with _WRITE_LOCK:
-            with event_path.open('a', encoding='utf-8') as f:
-                f.write(json.dumps(event, ensure_ascii=False) + '\n')
+        line = json.dumps(event, ensure_ascii=False) + '\n'
+        _EVENT_QUEUE.put_nowait((event_path, line))
         return str(event_path)
     except Exception:
         return None
+
+
+def flush_data_flow_events(timeout: float = 5.0) -> None:
+    """Block until the background writer has drained all queued events."""
+    _EVENT_QUEUE.join()
 
 
 def _truncate_text(value: str, limit: int = 120) -> str:
@@ -1342,6 +1377,9 @@ def generate_data_flow_report(report_dir: str | None = None) -> str | None:
     Reads ``data_flow_events.jsonl`` and produces
     ``data_flow_report.html`` in the same directory.
     """
+    # Ensure all queued events are flushed to disk before reading
+    flush_data_flow_events()
+
     target_dir = _resolve_report_dir(report_dir)
     if target_dir is None:
         return None
