@@ -7,13 +7,17 @@ from typing import List, Optional
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
 
+# backend/ 目录（config.py 在 backend/app/ 下，向上两级即为 backend/）
+BACKEND_DIR = Path(__file__).parent.parent.resolve()
+DOTENV_PATH = BACKEND_DIR / '.env'
+
 # Load .env into os.environ so os.getenv() can access all keys,
 # including dynamic per-model keys like LLM_API_KEY_INTERN_S1_PRO.
 # pydantic_settings only populates declared fields, not os.environ.
-load_dotenv(override=False)
+load_dotenv(DOTENV_PATH, override=False)
 
 # 项目根目录
-PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
+PROJECT_ROOT = BACKEND_DIR.parent
 
 
 class Settings(BaseSettings):
@@ -177,7 +181,7 @@ class Settings(BaseSettings):
         return f'{self.effective_shared_storage_path}/{self.SHARED_LOGS_DIR}'
 
     class Config:
-        env_file = '.env'
+        env_file = str(DOTENV_PATH)
         env_file_encoding = 'utf-8'
         extra = 'ignore'
 
