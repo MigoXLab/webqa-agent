@@ -87,6 +87,7 @@ def save_index_json(
     api_request_total = 0
     console_error_total = 0
     network_error_total = 0
+    failed_request_total = 0
     results_list: List[Dict[str, Any]] = []
 
     # Collect result summaries and counters
@@ -131,6 +132,7 @@ def save_index_json(
                 # Console/API error counts for summary display
                 console_error_total += _get_metric_value(metrics, 'console_error_count', 0)
                 network_error_total += _get_metric_value(metrics, 'network_error_count', 0)
+                failed_request_total += _get_metric_value(metrics, 'failed_request_count', 0)
 
                 raw_name = _get_attr(sub, 'name')
                 display_name = raw_name
@@ -203,13 +205,28 @@ def save_index_json(
 
     # Console/API error summary (only when any error exists)
     if console_error_total > 0 or network_error_total > 0:
-        if report_lang == 'zh-CN':
-            error_item = f'Console报错{console_error_total}个，接口报错{network_error_total}个'
-        else:
-            error_item = f'Console errors: {console_error_total}, API errors: {network_error_total}'
+        parts_zh, parts_en = [], []
+        if console_error_total > 0:
+            parts_zh.append(f'Console报错{console_error_total}个')
+            parts_en.append(f'Console errors: {console_error_total}')
+        if network_error_total > 0:
+            parts_zh.append(f'接口报错(4xx/5xx){network_error_total}个')
+            parts_en.append(f'API errors (4xx/5xx): {network_error_total}')
+        error_item = '，'.join(parts_zh) if report_lang == 'zh-CN' else ', '.join(parts_en)
         test_items.append({
             'name': '控制台/接口报错' if report_lang == 'zh-CN' else 'Console/API Errors',
             'item': error_item
+        })
+
+    # Network-level failed requests (informational, does not trigger warning)
+    if failed_request_total > 0:
+        test_items.append({
+            'name': '网络请求失败' if report_lang == 'zh-CN' else 'Failed Requests',
+            'item': (
+                f'{failed_request_total}个请求网络层失败（第三方资源等，不影响测试结果）'
+                if report_lang == 'zh-CN' else
+                f'{failed_request_total} network-level failures (third-party resources, informational only)'
+            )
         })
 
     total_items = result_count.get('total', 0)

@@ -986,10 +986,15 @@ class CaseRunner:
 
         failed_requests = network_data.get('failed_requests', [])
         error_responses = [r for r in network_data.get('responses', []) if r.get('status', 0) >= 400]
-        network_error_count = len(failed_requests) + len(error_responses)
+        # Only HTTP error responses (4xx/5xx) count toward warning;
+        # failed_requests are network-level failures (DNS, blocked, timeout)
+        # typically caused by third-party resources and not real API issues.
+        network_error_count = len(error_responses)
+        failed_request_count = len(failed_requests)
         error_counts = {
             'console_error_count': len(console_errors),
-            'network_error_count': network_error_count
+            'network_error_count': network_error_count,
+            'failed_request_count': failed_request_count,
         }
 
         # Do not override step failures; still record counts for reporting
@@ -1009,24 +1014,25 @@ class CaseRunner:
                 error_messages.append(f'Unignored console errors detected: {len(console_errors)} error(s)')
                 logging.warning(f'{case_name} detected {len(console_errors)} unignored console errors - marking case as WARNING')
 
-        # ========== 2. Check Network Errors ==========
+        # ========== 2. Check Network Errors (HTTP 4xx/5xx only) ==========
         # Note: EventCollector has already filtered out ignored requests
-        # So failed_requests and error responses only contain unignored errors
+        # Only error_responses (4xx/5xx) trigger warning; failed_requests are informational only
         if network_error_count > 0:
             if case_status == TestStatus.PASSED:
                 case_status = TestStatus.WARNING
             if not has_network_ignore_rules:
                 error_messages.append(
-                    f'Network errors detected: {len(failed_requests)} failed requests, '
-                    f'{len(error_responses)} error responses'
+                    f'Network errors detected: {len(error_responses)} error responses (4xx/5xx)'
                 )
-                logging.warning(f'{case_name} detected {len(failed_requests)} failed requests, {len(error_responses)} error responses - marking case as WARNING')
+                logging.warning(f'{case_name} detected {len(error_responses)} error responses (4xx/5xx) - marking case as WARNING')
             else:
                 error_messages.append(
-                    f'Unignored network errors detected: {len(failed_requests)} failed requests, '
-                    f'{len(error_responses)} error responses'
+                    f'Unignored network errors detected: {len(error_responses)} error responses (4xx/5xx)'
                 )
-                logging.warning(f'{case_name} detected {len(failed_requests)} unignored failed requests, {len(error_responses)} unignored error responses - marking case as WARNING')
+                logging.warning(f'{case_name} detected {len(error_responses)} unignored error responses (4xx/5xx) - marking case as WARNING')
+
+        if failed_request_count > 0:
+            logging.info(f'{case_name} has {failed_request_count} network-level failed requests (informational, not counted as errors)')
 
         return case_status, error_messages, messages_data, error_counts
 
@@ -1093,7 +1099,8 @@ class CaseRunner:
                 'failed_steps': failed_steps,
                 'total_actions': total_actions,
                 'console_error_count': error_counts.get('console_error_count', 0),
-                'network_error_count': error_counts.get('network_error_count', 0)
+                'network_error_count': error_counts.get('network_error_count', 0),
+                'failed_request_count': error_counts.get('failed_request_count', 0),
             },
             steps=executed_steps,
             messages=messages_data,
