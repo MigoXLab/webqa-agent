@@ -21,10 +21,10 @@ test_config: # Test configuration for Gen mode (AI-driven test generation)
                  # - detect_dynamic_links: Dynamic link discovery and validation
                  # Example: ['lighthouse', 'nuclei']
 
-  # Intelligent reflection (optional, default: False)
+  # Intelligent reflection (optional, default: True)
   # When enabled, LLM analyzes failed test cases and replans them.
   # This improves test coverage but increases execution time and token usage.
-  enable_reflection: False
+  enable_reflection: True
 
   # Dynamic step generation (optional, adaptive testing)
   dynamic_step_generation:

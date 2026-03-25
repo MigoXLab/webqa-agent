@@ -20,3 +20,4 @@ frontend/Dockerfile.k8s
 
 # --- 内部文档 ---
 docs/design
+vebdor/

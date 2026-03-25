@@ -324,7 +324,7 @@ async def execute_gen_mode(cfg, workers: int = 1):
         enabled=custom_tools_cfg.get('enabled', [])
     )
     # Reflection: enable_reflection in YAML maps to skip_reflection in GenConfig
-    enable_reflection = tconf.get('enable_reflection', False)
+    enable_reflection = tconf.get('enable_reflection', True)
     skip_reflection = not enable_reflection
 
     # Build GenConfig
