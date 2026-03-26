@@ -178,10 +178,17 @@ class Provider:
 
             html_files = [f for f in uploaded.keys() if f.endswith('.html')]
             if html_files:
+                # 优先寻找精确匹配的 report.html 或 test_report.html
                 main_html = next(
-                    (f for f in html_files if 'test_report' in f or 'report' in f.lower()),
-                    html_files[0],
+                    (f for f in html_files if os.path.basename(f) in ('report.html', 'test_report.html')),
+                    None
                 )
+                if not main_html:
+                    # 如果没有精确匹配，再退而求其次找包含 report 且不是 data_flow_report 的
+                    main_html = next(
+                        (f for f in html_files if ('test_report' in f or 'report' in f.lower()) and 'data_flow_report' not in f.lower()),
+                        html_files[0]
+                    )
                 return uploaded[main_html]
 
             return list(uploaded.values())[0]

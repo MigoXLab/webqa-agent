@@ -247,7 +247,7 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="例如：书生"
+                  placeholder="例如：百度"
                 />
               </div>
 
