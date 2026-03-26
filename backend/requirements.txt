@@ -3,6 +3,7 @@ alembic==1.14.0
 apscheduler==3.10.4
 asyncpg==0.30.0
 croniter==2.0.1
+docker>=7.0.0
 # FastAPI
 # FastAPI
 fastapi==0.115.6

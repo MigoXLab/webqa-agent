@@ -64,8 +64,9 @@ def _compute_k8s_resources(workers: int, business_id: Optional[UUID] = None) -> 
     return cpu_limit, memory_gi
 
 
-# Store active processes for cancellation
+# Store active processes/containers for cancellation
 _active_processes: Dict[str, asyncio.subprocess.Process] = {}
+_active_containers: Dict[str, str] = {}  # execution_id -> container_id (Docker mode)
 
 
 async def stop_execution(execution_id: str) -> bool:
@@ -88,7 +89,11 @@ async def stop_execution(execution_id: str) -> bool:
             logger.error(f'[Executor] Failed to stop process: {e}')
             return False
 
-    # 2. K8s mode: delete the Job from cluster
+    # 2. Docker mode: stop the container
+    if execution_id in _active_containers:
+        return await _stop_docker_container(execution_id)
+
+    # 3. K8s mode: delete the Job from cluster
     if settings.is_kubernetes_mode:
         return await _stop_k8s_job(execution_id)
 
@@ -252,10 +257,14 @@ async def run_execution(execution_id: str, case_data: Optional[Dict[str, Any]] =
     if trigger_type == 'gen':
         if mode == 'kubernetes':
             await _start_gen_k8s(execution_id, gen_config_dict)
+        elif mode == 'docker':
+            await _start_gen_docker(execution_id, gen_config_dict)
         else:
             await _start_gen_executor(execution_id, gen_config_dict)
     elif mode == 'kubernetes':
         await _start_agent_k8s(execution_id, case_data=case_data)
+    elif mode == 'docker':
+        await _start_agent_docker(execution_id, case_data=case_data)
     else:
         # local 模式（默认）
         await _start_agent_subprocess(execution_id, case_data=case_data)
@@ -593,7 +602,7 @@ async def _create_gen_k8s_job(
 
 
 # =============================================================================
-# LOCAL MODE: 启动子进程
+# COMMON: Run 模式公共准备逻辑
 # =============================================================================
 
 def _build_cases_from_request(
@@ -620,36 +629,42 @@ def _build_cases_from_request(
     return cases
 
 
-async def _start_agent_subprocess(execution_id: str, case_data: Optional[Dict[str, Any]] = None):
-    """Local 模式：启动子进程运行 Agent。"""
+async def _prepare_run_config(
+    execution_id: str,
+    case_data: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Run 模式公共准备逻辑：获取数据、生成配置、写入共享存储。
+
+    所有 Run 模式（local/docker/k8s）共享此准备流程。
+    成功时更新 execution.status='running'，失败时更新为 'failed'。
+
+    Returns:
+        成功返回 dict(config_path, config_dir, api_key, base_url, workers, business_id)，
+        失败返回 None（DB 状态已更新）。
+    """
     async with AsyncSessionLocal() as db:
         try:
-            # 获取执行记录
             result = await db.execute(
                 select(Execution).where(Execution.id == UUID(execution_id))
             )
             execution = result.scalar_one_or_none()
-
             if not execution:
-                logger.error(f'[Local] Execution not found: {execution_id}')
-                return
+                logger.error(f'[Prepare] Execution not found: {execution_id}')
+                return None
 
-            # 获取环境和用例
             environment, test_cases, error = await _fetch_execution_data(db, execution)
             if error:
-                logger.error(f'[Local] 获取执行数据失败: execution_id={execution_id}, error={error}')
+                logger.error(f'[Prepare] 获取执行数据失败: execution_id={execution_id}, error={error}')
                 execution.status = 'failed'
                 execution.error_message = error
                 execution.completed_at = now_with_tz()
                 await db.commit()
-                return
+                return None
 
-            # Debug 模式：前端传入的 case 用前端数据，其余（如 snapshot 依赖）用 DB 数据
             if case_data:
                 frontend_cases = _build_cases_from_request(
                     case_data, business_id=execution.business_id
                 )
-                # 合并：前端数据优先，DB 数据补充，按 test_case_ids 顺序排列
                 case_map = {str(tc.id): tc for tc in test_cases}
                 case_map.update({str(tc.id): tc for tc in frontend_cases})
                 test_cases = [case_map[cid] for cid in execution.test_case_ids if cid in case_map]
@@ -659,9 +674,8 @@ async def _start_agent_subprocess(execution_id: str, case_data: Optional[Dict[st
                 execution.error_message = '没有可执行的测试用例'
                 execution.completed_at = now_with_tz()
                 await db.commit()
-                return
+                return None
 
-            # 获取认证 cookies（如果环境配置了认证）
             cookies = None
             if environment.auth_type == 'sso' and environment.sso_username:
                 try:
@@ -673,25 +687,20 @@ async def _start_agent_subprocess(execution_id: str, case_data: Optional[Dict[st
                     execution.error_message = f'SSO 认证失败: {e}'
                     execution.completed_at = now_with_tz()
                     await db.commit()
-                    return
+                    return None
             elif environment.auth_type == 'cookies' and environment.cookies:
                 cookies = environment.cookies
 
-            # 按 login_required 分组构建配置
-            # - 需要登录的 cases → 带 cookies
-            # - 不需要登录的 cases → 不带 cookies
             configs = _build_agent_configs(
                 environment, test_cases, execution.workers, cookies
             )
-
             if not configs:
                 execution.status = 'failed'
                 execution.error_message = '没有可执行的测试用例'
                 execution.completed_at = now_with_tz()
                 await db.commit()
-                return
+                return None
 
-            # 添加 LLM 配置到每个 config
             api_key = settings.get_api_key_for_model(execution.model)
             base_url = settings.get_base_url_for_model(execution.model)
             for config in configs:
@@ -702,127 +711,143 @@ async def _start_agent_subprocess(execution_id: str, case_data: Optional[Dict[st
                     'model': execution.model,
                 }
 
-            # 写入临时配置文件
             config_dir = Path(settings.shared_reports_path) / f'exec_{execution_id}'
             config_dir.mkdir(parents=True, exist_ok=True)
 
-            # 如果有多个配置，写入到单独的文件中让 RunExecutor 加载整个文件夹
-            # 如果只有一个配置，写入单个文件
             if len(configs) == 1:
                 config_file = config_dir / 'config.yaml'
                 with open(config_file, 'w', encoding='utf-8') as f:
                     yaml.dump(configs[0], f, allow_unicode=True)
                 config_path = str(config_file)
             else:
-                # 多个配置：写入到多个文件，让 RunExecutor 加载整个目录
                 for idx, config in enumerate(configs):
                     config_file = config_dir / f'config_{idx}.yaml'
                     with open(config_file, 'w', encoding='utf-8') as f:
                         yaml.dump(config, f, allow_unicode=True)
                 config_path = str(config_dir)
 
-            # 更新状态
             execution.status = 'running'
             execution.started_at = now_with_tz()
             await db.commit()
 
-            # 启动子进程
-            logger.info(f'[Local] 启动子进程执行: {execution_id}')
+            return {
+                'config_path': config_path,
+                'config_dir': str(config_dir),
+                'api_key': api_key,
+                'base_url': base_url,
+                'workers': execution.workers,
+                'business_id': execution.business_id,
+            }
 
-            env = os.environ.copy()
-            env['EXECUTION_ID'] = execution_id
-            env['SHARED_STORAGE_PATH'] = settings.effective_shared_storage_path
-            env['BACKEND_CALLBACK_URL'] = settings.BACKEND_CALLBACK_URL
-            env['OPENAI_API_KEY'] = api_key
-            env['OPENAI_BASE_URL'] = base_url
-            env['WEBQA_CASE_TIMEOUT'] = str(settings.WEBQA_CASE_TIMEOUT)
+        except Exception as e:
+            logger.exception(f'[Prepare] 准备执行失败: {e}')
+            try:
+                execution.status = 'failed'
+                execution.error_message = f'准备执行失败: {e}'
+                execution.completed_at = now_with_tz()
+                await db.commit()
+            except Exception:
+                pass
+            return None
 
-            # 静默模式：输出直接打印到终端（方便 K8s Job 查看 kubectl logs）
-            # 不写入日志文件，减少 I/O
-            process = await asyncio.create_subprocess_exec(
-                'python', '-m', 'backend.run_webqa',
-                '-c', config_path,
-                '-w', str(execution.workers),
-                '--execution-id', execution_id,
-                '--report-dir', str(config_dir),
-                '--stdout',  # Disable file logging, push logs to Backend API
-                cwd=str(PROJECT_ROOT),
-                env=env,
-                # stdout/stderr 不重定向，直接打印到终端
-            )
 
-            logger.info(f'[Local] 子进程已启动: PID={process.pid}')
-            _active_processes[execution_id] = process
+# =============================================================================
+# LOCAL MODE: 启动子进程
+# =============================================================================
 
-            # 启动后台任务：监控进程并处理超时/崩溃
-            async def monitor_process():
-                timeout_seconds = settings.JOB_TIMEOUT_SECONDS
-                try:
-                    # 等待进程完成或超时
-                    await asyncio.wait_for(process.wait(), timeout=timeout_seconds)
-                    logger.info(f'[Local] 子进程结束: PID={process.pid}, exit_code={process.returncode}')
+async def _start_agent_subprocess(execution_id: str, case_data: Optional[Dict[str, Any]] = None):
+    """Local 模式：启动子进程运行 Agent。"""
+    prep = await _prepare_run_config(execution_id, case_data)
+    if not prep:
+        return
 
-                    # Remove from active processes
-                    _active_processes.pop(execution_id, None)
+    try:
+        logger.info(f'[Local] 启动子进程执行: {execution_id}')
 
-                    # 检查进程是否异常退出（非零退出码且未回调）
-                    if process.returncode != 0:
-                        logger.warning(f'[Local] 子进程异常退出: exit_code={process.returncode}')
-                        # 延迟 2 秒，等待可能的回调完成
-                        await asyncio.sleep(2)
-                        # 检查状态是否仍为 running（说明回调失败）
-                        async with AsyncSessionLocal() as db:
-                            result = await db.execute(
-                                select(Execution).where(Execution.id == UUID(execution_id))
-                            )
-                            exec_record = result.scalar_one_or_none()
-                            if exec_record and exec_record.status == 'running':
-                                exec_record.status = 'failed'
-                                exec_record.error_message = f'Agent 异常退出 (exit_code={process.returncode})'
-                                exec_record.completed_at = now_with_tz()
-                                await db.commit()
-                                logger.info(f'[Local] 已更新状态为 failed: {execution_id}')
+        env = os.environ.copy()
+        env['EXECUTION_ID'] = execution_id
+        env['SHARED_STORAGE_PATH'] = settings.effective_shared_storage_path
+        env['BACKEND_CALLBACK_URL'] = settings.BACKEND_CALLBACK_URL
+        env['OPENAI_API_KEY'] = prep['api_key']
+        env['OPENAI_BASE_URL'] = prep['base_url']
+        env['WEBQA_CASE_TIMEOUT'] = str(settings.WEBQA_CASE_TIMEOUT)
 
-                except asyncio.TimeoutError:
-                    # 超时：终止进程并更新状态
-                    logger.warning(f'[Local] 子进程超时 ({timeout_seconds}s): PID={process.pid}')
-                    process.terminate()
-                    try:
-                        await asyncio.wait_for(process.wait(), timeout=10)
-                    except asyncio.TimeoutError:
-                        process.kill()
-                        await process.wait()
+        process = await asyncio.create_subprocess_exec(
+            'python', '-m', 'backend.run_webqa',
+            '-c', prep['config_path'],
+            '-w', str(prep['workers']),
+            '--execution-id', execution_id,
+            '--report-dir', prep['config_dir'],
+            '--stdout',
+            cwd=str(PROJECT_ROOT),
+            env=env,
+        )
 
-                    # 更新数据库状态为 timeout
+        logger.info(f'[Local] 子进程已启动: PID={process.pid}')
+        _active_processes[execution_id] = process
+
+        async def monitor_process():
+            timeout_seconds = settings.JOB_TIMEOUT_SECONDS
+            try:
+                await asyncio.wait_for(process.wait(), timeout=timeout_seconds)
+                logger.info(f'[Local] 子进程结束: PID={process.pid}, exit_code={process.returncode}')
+                _active_processes.pop(execution_id, None)
+
+                if process.returncode != 0:
+                    logger.warning(f'[Local] 子进程异常退出: exit_code={process.returncode}')
+                    await asyncio.sleep(2)
                     async with AsyncSessionLocal() as db:
                         result = await db.execute(
                             select(Execution).where(Execution.id == UUID(execution_id))
                         )
                         exec_record = result.scalar_one_or_none()
                         if exec_record and exec_record.status == 'running':
-                            exec_record.status = 'timeout'
-                            exec_record.error_message = f'执行超时（超过 {timeout_seconds // 3600} 小时）'
+                            exec_record.status = 'failed'
+                            exec_record.error_message = f'Agent 异常退出 (exit_code={process.returncode})'
                             exec_record.completed_at = now_with_tz()
                             await db.commit()
-                            logger.info(f'[Local] 已更新状态为 timeout: {execution_id}')
+                            logger.info(f'[Local] 已更新状态为 failed: {execution_id}')
 
-                except Exception as e:
-                    logger.exception(f'[Local] 监控进程异常: {e}')
+            except asyncio.TimeoutError:
+                logger.warning(f'[Local] 子进程超时 ({timeout_seconds}s): PID={process.pid}')
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=10)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
 
-            asyncio.create_task(monitor_process())
+                async with AsyncSessionLocal() as db:
+                    result = await db.execute(
+                        select(Execution).where(Execution.id == UUID(execution_id))
+                    )
+                    exec_record = result.scalar_one_or_none()
+                    if exec_record and exec_record.status == 'running':
+                        exec_record.status = 'timeout'
+                        exec_record.error_message = f'执行超时（超过 {timeout_seconds // 3600} 小时）'
+                        exec_record.completed_at = now_with_tz()
+                        await db.commit()
+                        logger.info(f'[Local] 已更新状态为 timeout: {execution_id}')
 
-            # 不等待进程完成，让它在后台运行
-            # Agent 完成后会回调 /api/internal/executions/{id}/complete
+            except Exception as e:
+                logger.exception(f'[Local] 监控进程异常: {e}')
 
-        except Exception as e:
-            logger.exception(f'[Local] 启动失败: {e}')
-            # 更新状态为失败
+        asyncio.create_task(monitor_process())
+
+    except Exception as e:
+        logger.exception(f'[Local] 启动失败: {e}')
+        async with AsyncSessionLocal() as db:
             try:
-                execution.status = 'failed'
-                execution.error_message = f'启动子进程失败: {e}'
-                execution.completed_at = now_with_tz()
-                await db.commit()
-            except:
+                result = await db.execute(
+                    select(Execution).where(Execution.id == UUID(execution_id))
+                )
+                execution = result.scalar_one_or_none()
+                if execution and execution.status == 'running':
+                    execution.status = 'failed'
+                    execution.error_message = f'启动子进程失败: {e}'
+                    execution.completed_at = now_with_tz()
+                    await db.commit()
+            except Exception:
                 pass
 
 # =============================================================================
@@ -1033,6 +1058,297 @@ async def _create_k8s_job(
     batch_v1.create_namespaced_job(namespace=k8s_namespace, body=job)
 
     return job_name
+
+
+# =============================================================================
+# DOCKER MODE: 创建独立 agent 容器
+# =============================================================================
+
+def _create_docker_container(
+    execution_id: str,
+    command: list,
+    env_vars: dict,
+    cpu_limit: int,
+    memory_gi: int,
+    container_name: str,
+) -> str:
+    """Create and start a Docker container for agent execution.
+
+    Blocking call — must be wrapped in asyncio.to_thread(). Returns container
+    ID.
+    """
+    try:
+        import docker
+    except ImportError:
+        raise RuntimeError('docker package not installed: pip install docker')
+
+    client = docker.from_env()
+
+    container = client.containers.run(
+        image=settings.DOCKER_AGENT_IMAGE,
+        command=command,
+        environment=env_vars,
+        volumes={settings.DOCKER_SHARED_VOLUME: {'bind': '/shared', 'mode': 'rw'}},
+        network=settings.DOCKER_NETWORK,
+        detach=True,
+        name=container_name,
+        mem_limit=f'{memory_gi}g',
+        nano_cpus=cpu_limit * 1_000_000_000,
+        labels={
+            'app': 'webqa-agent',
+            'execution-id': execution_id,
+            'managed-by': 'webqa-backend',
+        },
+    )
+    return container.id
+
+
+async def _monitor_docker_container(container_id: str, execution_id: str) -> None:
+    """Monitor a Docker container until completion or timeout.
+
+    Handles: normal exit, error exit, timeout, container removal.
+    """
+    try:
+        import docker
+    except ImportError:
+        logger.error('[Docker] docker package not available for monitoring')
+        return
+
+    client = docker.from_env()
+    timeout = settings.JOB_TIMEOUT_SECONDS
+    start_time = asyncio.get_event_loop().time()
+
+    try:
+        while True:
+            await asyncio.sleep(5)
+
+            try:
+                container = await asyncio.to_thread(client.containers.get, container_id)
+                container_status = container.status
+            except docker.errors.NotFound:
+                logger.info(f'[Docker] Container already removed: {container_id[:12]}')
+                _active_containers.pop(execution_id, None)
+                return
+
+            if container_status in ('exited', 'dead'):
+                exit_code = container.attrs['State']['ExitCode']
+                logger.info(f'[Docker] Container finished: {container_id[:12]}, exit_code={exit_code}')
+                _active_containers.pop(execution_id, None)
+
+                if exit_code != 0:
+                    await asyncio.sleep(2)
+                    async with AsyncSessionLocal() as db:
+                        result = await db.execute(
+                            select(Execution).where(Execution.id == UUID(execution_id))
+                        )
+                        exec_record = result.scalar_one_or_none()
+                        if exec_record and exec_record.status == 'running':
+                            exec_record.status = 'failed'
+                            exec_record.error_message = f'Agent 容器异常退出 (exit_code={exit_code})'
+                            exec_record.completed_at = now_with_tz()
+                            await db.commit()
+
+                try:
+                    await asyncio.to_thread(container.remove, force=True)
+                except Exception:
+                    pass
+                return
+
+            elapsed = asyncio.get_event_loop().time() - start_time
+            if elapsed > timeout:
+                logger.warning(f'[Docker] Container timeout ({timeout}s): {container_id[:12]}')
+                _active_containers.pop(execution_id, None)
+
+                try:
+                    await asyncio.to_thread(container.stop, timeout=10)
+                    await asyncio.to_thread(container.remove, force=True)
+                except Exception:
+                    pass
+
+                async with AsyncSessionLocal() as db:
+                    result = await db.execute(
+                        select(Execution).where(Execution.id == UUID(execution_id))
+                    )
+                    exec_record = result.scalar_one_or_none()
+                    if exec_record and exec_record.status == 'running':
+                        exec_record.status = 'timeout'
+                        exec_record.error_message = f'执行超时（超过 {timeout // 3600} 小时）'
+                        exec_record.completed_at = now_with_tz()
+                        await db.commit()
+                return
+
+    except Exception as e:
+        logger.exception(f'[Docker] Monitor exception: {e}')
+        _active_containers.pop(execution_id, None)
+
+
+async def _stop_docker_container(execution_id: str) -> bool:
+    """Stop a running Docker container."""
+    container_id = _active_containers.get(execution_id)
+    if not container_id:
+        return False
+
+    try:
+        import docker
+        client = docker.from_env()
+        container = await asyncio.to_thread(client.containers.get, container_id)
+        await asyncio.to_thread(container.stop, timeout=10)
+        logger.info(f'[Docker] Container stopped: {container_id[:12]}')
+        _active_containers.pop(execution_id, None)
+        return True
+    except Exception as e:
+        logger.error(f'[Docker] Failed to stop container: {e}')
+        _active_containers.pop(execution_id, None)
+        return False
+
+
+async def _start_agent_docker(execution_id: str, case_data: Optional[Dict[str, Any]] = None):
+    """Docker 模式：创建独立 agent 容器运行测试。"""
+    prep = await _prepare_run_config(execution_id, case_data)
+    if not prep:
+        return
+
+    container_config_path = prep['config_path'].replace(
+        settings.effective_shared_storage_path, '/shared'
+    )
+    container_report_dir = prep['config_dir'].replace(
+        settings.effective_shared_storage_path, '/shared'
+    )
+    cpu_limit, memory_gi = _compute_k8s_resources(prep['workers'], prep['business_id'])
+
+    try:
+        container_id = await asyncio.to_thread(
+            _create_docker_container,
+            execution_id=execution_id,
+            command=[
+                'python', '-m', 'backend.run_webqa',
+                '-c', container_config_path,
+                '-w', str(prep['workers']),
+                '--execution-id', execution_id,
+                '--report-dir', container_report_dir,
+                '--stdout',
+            ],
+            env_vars={
+                'EXECUTION_ID': execution_id,
+                'SHARED_STORAGE_PATH': '/shared',
+                'BACKEND_CALLBACK_URL': settings.BACKEND_CALLBACK_URL,
+                'OPENAI_API_KEY': prep['api_key'],
+                'OPENAI_BASE_URL': prep['base_url'],
+                'WEBQA_CASE_TIMEOUT': str(settings.WEBQA_CASE_TIMEOUT),
+            },
+            cpu_limit=cpu_limit,
+            memory_gi=memory_gi,
+            container_name=f'webqa-agent-{execution_id[:8]}',
+        )
+
+        logger.info(f'[Docker] Agent container created: {container_id[:12]}')
+        _active_containers[execution_id] = container_id
+        asyncio.create_task(_monitor_docker_container(container_id, execution_id))
+
+    except Exception as e:
+        logger.exception(f'[Docker] Failed to create agent container: {e}')
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(Execution).where(Execution.id == UUID(execution_id))
+            )
+            execution = result.scalar_one_or_none()
+            if execution and execution.status == 'running':
+                execution.status = 'failed'
+                execution.error_message = f'创建 Docker 容器失败: {e}'
+                execution.completed_at = now_with_tz()
+                await db.commit()
+
+
+async def _start_gen_docker(execution_id: str, gen_config_dict: Optional[Dict[str, Any]] = None):
+    """Gen Mode (docker): Create a Docker container running gen_webqa.py."""
+    async with AsyncSessionLocal() as db:
+        try:
+            result = await db.execute(
+                select(Execution).where(Execution.id == UUID(execution_id))
+            )
+            execution = result.scalar_one_or_none()
+            if not execution:
+                logger.error(f'[Gen Docker] Execution not found: {execution_id}')
+                return
+
+            if not gen_config_dict and execution.config:
+                gen_config_dict = execution.config
+
+            if not gen_config_dict:
+                execution.status = 'failed'
+                execution.error_message = 'Gen configuration missing'
+                execution.completed_at = now_with_tz()
+                await db.commit()
+                return
+
+            llm_cfg = gen_config_dict.setdefault('llm_config', {})
+            model_name = llm_cfg.get('model', '')
+            if not llm_cfg.get('api_key'):
+                llm_cfg['api_key'] = settings.get_api_key_for_model(model_name)
+            if not llm_cfg.get('base_url'):
+                llm_cfg['base_url'] = settings.get_base_url_for_model(model_name)
+
+            api_key = llm_cfg.get('api_key', '')
+            base_url = llm_cfg.get('base_url', '')
+
+            config_dir = Path(settings.shared_reports_path) / f'exec_{execution_id}'
+            config_dir.mkdir(parents=True, exist_ok=True)
+            config_file = config_dir / 'config.yaml'
+
+            with open(config_file, 'w', encoding='utf-8') as f:
+                json.dump(gen_config_dict, f, indent=2, ensure_ascii=False)
+
+            container_config_path = str(config_file).replace(
+                settings.effective_shared_storage_path, '/shared'
+            )
+            container_report_dir = str(config_dir).replace(
+                settings.effective_shared_storage_path, '/shared'
+            )
+
+            execution.status = 'running'
+            execution.started_at = now_with_tz()
+            await db.commit()
+
+            logger.info(f'[Gen Docker] Creating container: {execution_id}')
+            cpu_limit, memory_gi = _compute_k8s_resources(
+                execution.workers or 1, execution.business_id
+            )
+
+            container_id = await asyncio.to_thread(
+                _create_docker_container,
+                execution_id=execution_id,
+                command=[
+                    'python', '-m', 'backend.gen_webqa',
+                    '-c', container_config_path,
+                    '--execution-id', execution_id,
+                    '--report-dir', container_report_dir,
+                    '--stdout',
+                ],
+                env_vars={
+                    'EXECUTION_ID': execution_id,
+                    'SHARED_STORAGE_PATH': '/shared',
+                    'BACKEND_CALLBACK_URL': settings.BACKEND_CALLBACK_URL,
+                    'OPENAI_API_KEY': api_key,
+                    'OPENAI_BASE_URL': base_url,
+                },
+                cpu_limit=cpu_limit,
+                memory_gi=memory_gi,
+                container_name=f'webqa-gen-{execution_id[:8]}',
+            )
+
+            logger.info(f'[Gen Docker] Container created: {container_id[:12]}')
+            _active_containers[execution_id] = container_id
+            asyncio.create_task(_monitor_docker_container(container_id, execution_id))
+
+        except Exception as e:
+            logger.exception(f'[Gen Docker] Start failed: {e}')
+            try:
+                execution.status = 'failed'
+                execution.error_message = f'Failed to start Docker container: {e}'
+                execution.completed_at = now_with_tz()
+                await db.commit()
+            except Exception:
+                pass
 
 
 # =============================================================================

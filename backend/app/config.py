@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     # - kubernetes: 创建 K8s Job 运行 Agent（K8s 集群）
     EXECUTION_MODE: str = 'local'
 
+    # Docker Mode Configuration
+    DOCKER_AGENT_IMAGE: str = 'webqa-agent:latest'
+    DOCKER_NETWORK: str = 'webqa-network'
+    DOCKER_SHARED_VOLUME: str = 'webqa-shared-data'
+
     # Shared Storage Configuration
     # - 本地开发: 留空或设置为项目内路径 (如 ./data)
     # - Docker Compose / K8s: /shared
@@ -153,6 +158,11 @@ class Settings(BaseSettings):
         """
         normalized = model.upper().replace('-', '_').replace('.', '_')
         return os.getenv(f'LLM_BASE_URL_{normalized}', self.LLM_BASE_URL)
+
+    @property
+    def is_docker_mode(self) -> bool:
+        """Check if running in Docker mode."""
+        return self.EXECUTION_MODE.lower() == 'docker'
 
     @property
     def is_kubernetes_mode(self) -> bool:

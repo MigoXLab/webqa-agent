@@ -1,0 +1,98 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: webqa-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: webqa
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ../../backend/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: webqa-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  webqa-be:
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+    image: webqa-be:latest
+    container_name: webqa-be
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/webqa
+      - REDIS_URL=redis://redis:6379/0
+      - EXECUTION_MODE=docker
+      - BACKEND_CALLBACK_URL=http://webqa-be:8000
+      - SHARED_STORAGE_PATH=/shared
+      - DOCKER_AGENT_IMAGE=webqa-agent:latest
+      - DOCKER_NETWORK=webqa-network
+      - DOCKER_SHARED_VOLUME=webqa-shared-data
+    volumes:
+      - shared_data:/shared
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  # Agent 镜像：不常驻运行，由 backend 按需创建容器
+  # 构建命令：docker compose build webqa-agent
+  webqa-agent:
+    build:
+      context: ../..
+      dockerfile: webqa_agent/Dockerfile
+    image: webqa-agent:latest
+    profiles: ["build-only"]
+
+  webqa-fe:
+    build:
+      context: ../..
+      dockerfile: frontend/Dockerfile
+    image: webqa-fe:latest
+    container_name: webqa-fe
+    ports:
+      - "80:80"
+    depends_on:
+      - webqa-be
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    name: webqa-network
+    driver: bridge
+
+volumes:
+  db_data:
+  redis_data:
+  shared_data:
+    name: webqa-shared-data

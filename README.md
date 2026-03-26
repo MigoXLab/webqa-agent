@@ -52,8 +52,8 @@ vibecoding, vibe coding, web evaluation, autonomous exploration, web testing aut
 - [Core Features](#-core-features)
 - [Examples](#-examples)
 - [Quick Start](#-quick-start)
-- [Deployment](#-deployment)
 - [Usage](#usage)
+- [Deployment](#-deployment)
 - [Extending WebQA Agent Tools](#extending-webqa-agent-tools)
 - [RoadMap](#roadmap)
 - [Acknowledgements](#acknowledgements)
@@ -112,8 +112,6 @@ test_config:
   <img src="docs/images/baidu-gif.gif" alt="Baidu Image Generation Test Demo" width="600" />
 </p>
 
-Try Demo: [🤗Hugging Face](https://huggingface.co/spaces/mmmay0722/WebQA-Agent) · [🚀ModelScope](https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary)
-
 ## 🚀 Quick Start
 
 ### 🏎️ Recommended [uv](https://github.com/astral-sh/uv) (Python>=3.11):
@@ -160,49 +158,6 @@ brew install nuclei      # macOS
 nuclei -ut               # Update templates
 # Linux/Windows: https://github.com/projectdiscovery/nuclei/releases
 ```
-
-### 🐳 Generate Mode - Docker One-liner Start
-
-Please ensure Docker is installed (recommended Docker >= 24.0, Docker Compose >= 2.32). Official guide: [Docker Installation](https://docs.docker.com/get-started/get-docker/)
-
-```bash
-mkdir -p config \
-  && curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/config/config.yaml.example -o config/config.yaml
-
-# Edit config.yaml: set target.url, llm_config.api_key, etc.
-
-curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/start.sh | bash
-```
-
-## 🖥️ Deployment
-
-WebQA Agent supports multiple usage modes — from lightweight CLI to full-stack platform:
-
-### 🖥️ CLI Mode (Already installed above)
-
-```bash
-webqa-agent init -m gen       # Initialize config
-webqa-agent gen               # AI-driven test generation
-webqa-agent run               # Execute test cases
-```
-
-### ☸️ Full-Stack Deployment (Frontend + Backend + Database)
-
-For teams that need a **persistent web dashboard**, test case management, scheduled tasks, and execution history, deploy the full-stack platform with Kubernetes:
-
-```bash
-git clone https://github.com/MigoXLab/webqa-agent.git
-cd webqa-agent
-
-# 1. Configure secrets
-cp deploy/k8s/secret.yaml.example deploy/k8s/secret.yaml
-# Edit secret.yaml: DB password, LLM API key (base64 encoded)
-
-# 2. Update configmap
-# Edit deploy/k8s/configmap.yaml: LLM endpoint, models, agent image
-```
-
-> For detailed deployment guide, see [deploy/k8s/README.md](deploy/k8s/README.md)
 
 <a id="usage"></a>
 
@@ -305,6 +260,16 @@ cases:                                  # Test case list
 ### 📊 View Results
 
 Test reports are generated in the `reports/` directory. Open the HTML file to view detailed results.
+
+## 🖥️ Deployment
+
+For teams that need a **persistent web dashboard** with test management, scheduled tasks, and execution history, deploy the full-stack platform:
+
+| Method            | Use Case                    | Guide                                                  |
+| ----------------- | --------------------------- | ------------------------------------------------------ |
+| Local Development | Personal dev & debugging    | [deploy/README.md](deploy/README.md#local-development) |
+| Docker Compose    | Single-machine / Team trial | [deploy/README.md](deploy/README.md#docker-compose)    |
+| Kubernetes        | Production cluster          | [deploy/k8s/README.md](deploy/k8s/README.md)           |
 
 <a id="extending-webqa-agent-tools"></a>
 

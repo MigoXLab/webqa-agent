@@ -1,5 +1,4 @@
-ARG BASE_IMAGE=mcr.microsoft.com/playwright/python:v1.58.0-noble
-FROM ${BASE_IMAGE}
+FROM eng-center-registry-vpc.cn-shanghai.cr.aliyuncs.com/qa/mcr.microsoft.com/playwright/python:v1.58.0-noble
 
 WORKDIR /app
 
@@ -14,8 +13,9 @@ RUN apt-get update && apt-get install -y curl unzip \
     && apt-get purge -y curl && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-# 安装 lighthouse 到 /app（代码通过 node_modules 查找，需要本地安装而非 -g）
-RUN npm install lighthouse chrome-launcher
+# 安装 lighthouse（代码通过 node_modules 查找，需要本地安装而非 -g）
+COPY webqa_agent/package.json /app/package.json
+RUN npm install
 
 # 安装 nuclei（从本地预下载的安装包）
 COPY vendor/nuclei_3.3.7_linux_amd64.zip /tmp/nuclei.zip
@@ -24,8 +24,10 @@ RUN unzip -o /tmp/nuclei.zip -d /usr/local/bin/ \
     && rm /tmp/nuclei.zip
 
 # 安装 Python 依赖
-COPY requirements.txt /app/
+COPY webqa_agent/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir --default-timeout=300 -r requirements.txt
+
+ENV PYTHONPATH=/app
 
 # 复制项目代码（Agent 需要运行 backend.run_webqa）
 COPY webqa_agent/ /app/webqa_agent/

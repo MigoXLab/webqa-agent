@@ -52,8 +52,8 @@ Vibecoding, Vibe coding, 网页测试自动化, 浏览器测试工具, AI驱动�
 - [核心特性](#-核心特性)
 - [示例演示](#-示例演示)
 - [快速开始](#-快速开始)
-- [部署方式](#-部署方式)
 - [使用说明](#使用说明)
+- [全栈部署](#-全栈部署)
 - [扩展 WebQA Agent 工具](#扩展-webqa-agent-工具)
 - [RoadMap](#roadmap)
 - [致谢](#致谢)
@@ -112,8 +112,6 @@ test_config:
   <img src="docs/images/baidu-gif.gif" alt="百度图片生成功能测试演示" width="600" />
 </p>
 
-Generate 模式体验Demo： [🤗Hugging Face](https://huggingface.co/spaces/mmmay0722/WebQA-Agent) · [🚀ModelScope](https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary)
-
 ## 🚀 快速开始
 
 ### 🏎️ 推荐使用 [uv](https://github.com/astral-sh/uv) (Python>=3.11) 安装
@@ -160,48 +158,6 @@ brew install nuclei      # macOS
 nuclei -ut               # 更新模板
 # Linux/Windows: https://github.com/projectdiscovery/nuclei/releases
 ```
-
-### 🐳 Generate 模式 - Docker一键启动
-
-请确保已安装 Docker（推荐 Docker >= 24.0，Docker Compose >= 2.32）。官方指南：[Docker 安装](https://docs.docker.com/get-started/get-docker/)
-
-```bash
-mkdir -p config \
-  && curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/config/config.yaml.example -o config/config.yaml
-
-# 编辑 config.yaml：设置 target.url、llm_config.api_key 等
-
-curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/start.sh | bash
-```
-
-## 🖥️ 部署方式
-
-WebQA Agent 支持三种使用方式——从轻量 CLI 到全栈平台：
-
-### 🖥️ CLI 模式（安装后即可使用）
-
-```bash
-webqa-agent init -m gen       # 初始化配置
-webqa-agent gen               # AI 自动探索测试
-webqa-agent run               # 执行测试用例
-```
-
-### ☸️ 全栈部署（前端 + 后端 + 数据库）
-
-如果你的团队需要一个**可持续使用的 Web 管理平台**，包括测试用例管理、定时任务、执行历史等功能，可以通过 Kubernetes 部署完整的前后端：
-
-```bash
-git clone https://github.com/MigoXLab/webqa-agent.git
-cd webqa-agent
-
-# 1. 配置密钥
-cp deploy/k8s/secret.yaml.example deploy/k8s/secret.yaml
-# 编辑 secret.yaml：数据库密码、LLM API Key（base64 编码）
-
-# 2. 更新配置
-# 编辑 deploy/k8s/configmap.yaml：LLM 端点、模型列表、Agent 镜像
-
-> 详细部署指南请参考 [deploy/k8s/README.md](deploy/k8s/README.md)
 
 <a id="使用说明"></a>
 
@@ -300,6 +256,16 @@ cases:                                  # 测试用例列表
 ### 📊 查看结果
 
 测试报告生成在 `reports/` 目录下，打开 HTML 文件即可查看详细结果。
+
+## 🖥️ 全栈部署
+
+如果你的团队需要一个**持续使用的 Web 管理平台**（测试管理、定时任务、执行历史），可以部署完整的前后端服务。我们支持三种部署方式：
+
+| 方式           | 适用场景            | 参考文档                                                        |
+| -------------- | ------------------- | --------------------------------------------------------------- |
+| 本地开发       | 个人开发调试        | [deploy/README_zh-CN.md](deploy/README_zh-CN.md#本地开发)       |
+| Docker Compose | 单机部署 / 团队试用 | [deploy/README_zh-CN.md](deploy/README_zh-CN.md#docker-compose) |
+| Kubernetes     | 生产集群            | [deploy/k8s/README.md](deploy/k8s/README.md)                    |
 
 <a id="扩展-webqa-agent-工具"></a>
 
