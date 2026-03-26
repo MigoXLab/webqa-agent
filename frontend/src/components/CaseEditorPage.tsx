@@ -360,7 +360,7 @@ export function CaseEditorPage() {
   const [business, setBusiness] = useState<{ id: string; name: string; environments: Environment[] } | null>(null);
 
   // ---- Editor state ----
-  const [activeTab, setActiveTab] = useState<EditorTab>('form');
+  const [activeTab, setActiveTab] = useState<EditorTab>('yaml');
   const [formData, setFormData] = useState<Partial<TestCase>>({
     name: '', description: '', login_required: false, version: '', snapshot: '', use_snapshot: '', status: 'active',
     steps: [{ id: crypto.randomUUID(), order: 1, step_type: 'action', action: { description: '' } }],
@@ -772,14 +772,14 @@ export function CaseEditorPage() {
               console.log('[Debug] Final execution:', {
                 id: finalExec.id,
                 status: finalExec.status,
-                oss_report_url: finalExec.oss_report_url,
+                report_url: finalExec.report_url,
               });
 
-              if (finalExec.oss_report_url) {
-                console.log('[Debug] ✅ Setting report URL:', finalExec.oss_report_url);
-                setDebugReportUrl(finalExec.oss_report_url);
+              if (finalExec.report_url) {
+                console.log('[Debug] ✅ Setting report URL:', finalExec.report_url);
+                setDebugReportUrl(finalExec.report_url);
               } else {
-                console.warn('[Debug] ⚠️ No oss_report_url in final execution');
+                console.warn('[Debug] ⚠️ No report_url in final execution');
               }
             } catch (err) {
               console.error('[Debug] ❌ Failed to fetch final execution:', err);
@@ -815,8 +815,8 @@ export function CaseEditorPage() {
       try {
         const finalExec = await apiClient.getExecution(debugExecutionId);
         console.log('[Debug] Manual stop - Final execution:', finalExec);
-        if (finalExec.oss_report_url) {
-          setDebugReportUrl(finalExec.oss_report_url);
+        if (finalExec.report_url) {
+          setDebugReportUrl(finalExec.report_url);
         }
         // Set state based on actual status
         const successStatuses = ['completed', 'passed', 'success'];
@@ -944,17 +944,6 @@ export function CaseEditorPage() {
               {/* Tabs */}
               <div className="flex items-center border-b border-gray-200 bg-white flex-shrink-0 px-4">
                 <button
-                  onClick={() => setActiveTab('form')}
-                  className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                    activeTab === 'form'
-                      ? 'border-blue-600 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  <LayoutList className="w-4 h-4" />
-                  表单编辑
-                </button>
-                <button
                   onClick={() => setActiveTab('yaml')}
                   className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
                     activeTab === 'yaml'
@@ -969,6 +958,17 @@ export function CaseEditorPage() {
                   ) : (
                     <span className="ml-1 text-xs text-green-500">✓</span>
                   )}
+                </button>
+                <button
+                  onClick={() => setActiveTab('form')}
+                  className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                    activeTab === 'form'
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  <LayoutList className="w-4 h-4" />
+                  表单编辑
                 </button>
               </div>
 

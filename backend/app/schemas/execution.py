@@ -63,6 +63,8 @@ class ExecutionResponse(BaseModel):
     test_case_ids: List[str]
     status: str
     oss_report_url: Optional[str] = None
+    report_url: Optional[str] = None
+    data_flow_report_url: Optional[str] = None
     local_report_path: Optional[str] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
@@ -86,5 +88,7 @@ class ExecutionStatusResponse(BaseModel):
     id: UUID
     status: str
     oss_report_url: Optional[str] = None
+    report_url: Optional[str] = None
+    data_flow_report_url: Optional[str] = None
     result_count: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None

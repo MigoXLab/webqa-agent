@@ -130,9 +130,9 @@ export function ExecutionHistory({ businesses }: Props) {
       case 'passed':
         return (
           <div className="flex items-center gap-2">
-            {exec.oss_report_url && (
+            {exec.report_url && (
               <button
-                onClick={() => openReport(exec.oss_report_url)}
+                onClick={() => openReport(exec.report_url!)}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors text-sm font-medium"
               >
                 查看报告

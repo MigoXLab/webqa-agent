@@ -12,7 +12,7 @@ from app.schemas.execution import (ExecutionCreate, ExecutionListResponse,
                                    ExecutionResponse, ExecutionStatusResponse)
 from app.services.executor import run_execution, stop_execution
 from app.services.progress_cache import get_progress
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,6 +49,23 @@ logger = logging.getLogger(__name__)
 _running_tasks: dict[str, asyncio.Task] = {}
 
 
+def get_execution_urls(execution: Execution, request: Request) -> tuple[Optional[str], Optional[str]]:
+    """Generate report URLs for an execution."""
+    # 1. If OSS report URL exists, use it and derive data flow URL
+    if execution.oss_report_url:
+        report_url = execution.oss_report_url
+        data_flow_url = report_url.replace('test_report.html', 'data_flow_report.html')
+        return report_url, data_flow_url
+
+    # 2. If no OSS report URL, but execution is completed/failed/warning, generate local static URLs
+    if execution.status in ('completed', 'passed', 'failed', 'timeout', 'warning'):
+        report_url = f'/reports/exec_{execution.id}/test_report.html'
+        data_flow_url = f'/reports/exec_{execution.id}/data_flow_report.html'
+        return report_url, data_flow_url
+
+    return None, None
+
+
 async def can_start_execution(db: AsyncSession) -> tuple[bool, str]:
     """Check if a new execution can be started."""
     result = await db.execute(
@@ -66,6 +83,7 @@ async def can_start_execution(db: AsyncSession) -> tuple[bool, str]:
 
 @router.post('', response_model=APIResponse[ExecutionResponse], status_code=status.HTTP_201_CREATED)
 async def create_execution(
+    request: Request,
     data: ExecutionCreate,
     db: AsyncSession = Depends(get_db),
 ):
@@ -153,6 +171,7 @@ async def create_execution(
     logger.info(f'[API] Started execution: id={execution_id_str}, business={data.business_id}, env={data.environment_id}, cases={len(data.test_case_ids) if data.test_case_ids else 0}, model={data.model}, workers={data.workers}')
 
     # Build response with names
+    report_url, data_flow_report_url = get_execution_urls(execution, request)
     response = ExecutionResponse(
         id=execution.id,
         business_id=execution.business_id,
@@ -164,6 +183,9 @@ async def create_execution(
         workers=execution.workers,
         test_case_ids=execution.test_case_ids,
         status=execution.status,
+        oss_report_url=execution.oss_report_url,
+        report_url=report_url,
+        data_flow_report_url=data_flow_report_url,
         created_at=execution.created_at,
         config=execution.config,
     )
@@ -173,6 +195,7 @@ async def create_execution(
 
 @router.get('', response_model=APIResponse[ExecutionListResponse])
 async def list_executions(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     business_id: Optional[UUID] = None,
     trigger_type: Optional[str] = None,
@@ -232,6 +255,7 @@ async def list_executions(
     # Build response
     items = []
     for exc in executions:
+        report_url, data_flow_report_url = get_execution_urls(exc, request)
         items.append(ExecutionResponse(
             id=exc.id,
             business_id=exc.business_id,
@@ -245,6 +269,8 @@ async def list_executions(
             test_case_ids=exc.test_case_ids,
             status=exc.status,
             oss_report_url=exc.oss_report_url,
+            report_url=report_url,
+            data_flow_report_url=data_flow_report_url,
             local_report_path=exc.local_report_path,
             started_at=exc.started_at,
             completed_at=exc.completed_at,
@@ -261,6 +287,7 @@ async def list_executions(
 
 @router.get('/{execution_id}', response_model=APIResponse[ExecutionResponse])
 async def get_execution(
+    request: Request,
     execution_id: UUID,
     db: AsyncSession = Depends(get_db),
 ):
@@ -281,6 +308,7 @@ async def get_execution(
             detail={'code': 2004, 'message': '执行记录不存在'}
         )
 
+    report_url, data_flow_report_url = get_execution_urls(execution, request)
     response = ExecutionResponse(
         id=execution.id,
         business_id=execution.business_id,
@@ -294,6 +322,8 @@ async def get_execution(
         test_case_ids=execution.test_case_ids,
         status=execution.status,
         oss_report_url=execution.oss_report_url,
+        report_url=report_url,
+        data_flow_report_url=data_flow_report_url,
         local_report_path=execution.local_report_path,
         started_at=execution.started_at,
         completed_at=execution.completed_at,
@@ -345,6 +375,7 @@ async def stop_execution_endpoint(
 
 @router.get('/{execution_id}/status', response_model=APIResponse[ExecutionStatusResponse])
 async def get_execution_status(
+    request: Request,
     execution_id: UUID,
     db: AsyncSession = Depends(get_db),
 ):
@@ -360,11 +391,14 @@ async def get_execution_status(
             detail={'code': 2004, 'message': '执行记录不存在'}
         )
 
+    report_url, data_flow_report_url = get_execution_urls(execution, request)
     return APIResponse(
         data=ExecutionStatusResponse(
             id=execution.id,
             status=execution.status,
             oss_report_url=execution.oss_report_url,
+            report_url=report_url,
+            data_flow_report_url=data_flow_report_url,
             result_count=execution.result_count,
             error_message=execution.error_message,
         )

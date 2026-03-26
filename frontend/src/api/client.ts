@@ -64,6 +64,8 @@ export interface Execution {
   test_case_ids: string[];
   status: 'pending' | 'running' | 'passed' | 'failed' | 'warning' | 'timeout' | 'completed';
   oss_report_url?: string;
+  report_url?: string;
+  data_flow_report_url?: string;
   local_report_path?: string;
   started_at?: string;
   completed_at?: string;
@@ -342,6 +344,8 @@ class APIClient {
     id: string;
     status: string;
     oss_report_url?: string;
+    report_url?: string;
+    data_flow_report_url?: string;
     result_count?: Record<string, number>;
     error_message?: string;
   }> {

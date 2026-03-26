@@ -274,9 +274,18 @@ export function ExecutionDetail() {
             </h2>
             <div className="flex items-center gap-3">
               {renderStatusBadge(execution.status)}
-              {execution.oss_report_url && (
+              {execution.data_flow_report_url && (
                 <button
-                  onClick={() => window.open(execution.oss_report_url, '_blank')}
+                  onClick={() => window.open(execution.data_flow_report_url, '_blank')}
+                  className="inline-flex items-center gap-2 px-4 py-1.5 bg-indigo-50 text-indigo-600 border border-indigo-200 rounded-lg hover:bg-indigo-100 transition-colors text-sm font-medium"
+                >
+                  Agent Trace
+                  <ExternalLink className="w-4 h-4" />
+                </button>
+              )}
+              {execution.report_url && (
+                <button
+                  onClick={() => window.open(execution.report_url, '_blank')}
                   className="inline-flex items-center gap-2 px-4 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
                 >
                   查看报告
