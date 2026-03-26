@@ -1232,7 +1232,11 @@ def _render_interactive_gantt_html(tasks: list[dict[str, Any]]) -> str:
         addRowLabel("Plan", planRowY);
         caseKeys.forEach((ck, ci) => {{
           const firstNode = nodes.find((n) => n.id === `n_${{ci}}_0`);
-          if (firstNode) addRowLabel(`Case ${{ci + 1}}`, firstNode.y);
+          if (firstNode) {{
+            const m = ck.match(/id:case_(\d+)/);
+            const label = m ? `Case ${{m[1]}}` : `Case ${{ci + 1}}`;
+            addRowLabel(label, firstNode.y);
+          }}
         }});
       }}
 

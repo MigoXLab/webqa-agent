@@ -3021,7 +3021,6 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
         except Exception as e:
             logging.error(f'Exception during step {i + 1} execution: {str(e)}')
-            failed_steps.append(i + 1)
 
             # Record step_response for the exception so JSONL/gantt stay consistent
             _locals = locals()
