@@ -39,27 +39,31 @@ from webqa_agent.executor.gen.utils.message_converter import \
     convert_intermediate_steps_to_messages
 from webqa_agent.executor.gen.utils.summary_utils import (i18n_select,
                                                           make_user_summary)
-from webqa_agent.llm.llm_api import (
-    EXTENDED_THINKING_EFFORT_MAPPING, accumulate_llm_duration_stats,
-    extract_usage_details, get_llm_duration_stats, reset_llm_duration_stats)
+from webqa_agent.llm.llm_api import (EXTENDED_THINKING_EFFORT_MAPPING,
+                                     accumulate_llm_duration_stats,
+                                     extract_usage_details,
+                                     get_llm_duration_stats,
+                                     reset_llm_duration_stats)
 from webqa_agent.prompts.agent_execution_prompts import \
     get_execute_system_prompt
 from webqa_agent.prompts.test_planning_prompts import \
     get_dynamic_step_generation_prompt
 from webqa_agent.tools.action_tool import UITool
-from webqa_agent.tools.base import ActionTypes
+from webqa_agent.tools.base import ActionTypes, ResponseTags
 from webqa_agent.tools.registry import get_registry
 from webqa_agent.tools.ux_tool import UIUXViewportTool
 from webqa_agent.tools.verify_tool import UIAssertTool
-from webqa_agent.utils.data_flow_reporter import (
-    record_data_flow_event, serialize_intermediate_steps,
-    serialize_langchain_message)
+from webqa_agent.utils.data_flow_reporter import (record_data_flow_event,
+                                                  serialize_intermediate_steps,
+                                                  serialize_langchain_message)
 from webqa_agent.utils.log_icon import icon
 from webqa_agent.utils.timing_breakdown import (get_tool_timing_bucket,
                                                 reset_tool_timing_bucket)
 
+
 def _normalize_token_usage(raw: Any) -> dict[str, int]:
-    """Normalize a provider-agnostic token usage dict/object to standard 3-key dict.
+    """Normalize a provider-agnostic token usage dict/object to standard 3-key
+    dict.
 
     Handles both OpenAI style (prompt_tokens/completion_tokens) and
     Anthropic/LangChain style (input_tokens/output_tokens).  Always returns
@@ -1699,21 +1703,115 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     )
     logging.debug('AgentExecutor created successfully')
 
+    # ---------------------------------------------------------------------------
+    # Shared helper: close a preamble failure and build the return dict.
+    # Defined as a closure so it can capture case_recorder, case, case_name,
+    # and original_planned_steps without parameter boilerplate.
+    # ---------------------------------------------------------------------------
+    def _finish_preamble_failure(
+        final_summary: str,
+        user_summary: str,
+        status: str = 'failed',
+        failure_type: str = 'preamble_failure',
+    ) -> dict:
+        case_recorder.finish_case(
+            final_status=status,
+            final_summary=final_summary,
+            user_summary=user_summary,
+        )
+        recorded = case_recorder.get_case_data()
+        if recorded is not None:
+            recorded['original_planned_steps'] = original_planned_steps
+        metrics = recorded.get('metrics', {}) if recorded else {}
+        return {
+            'case_result': {
+                'case_name': case_name,
+                'case_id': case.get('case_id', ''),
+                'final_summary': final_summary,
+                'user_summary': user_summary,
+                'status': status,
+                'failure_type': failure_type,
+                'metrics': {
+                    'total_steps': metrics.get('total_steps', 0),
+                    'passed_steps': metrics.get('passed_steps', 0),
+                    'failed_steps': metrics.get('failed_steps', 0),
+                    'warning_steps': metrics.get('warning_steps', 0),
+                    'total_actions': metrics.get('total_actions', 0),
+                },
+                'failed_step_details': _extract_failed_step_details(recorded),
+            },
+            'current_case_steps': [],
+            'recorded_case': recorded,
+        }
+
     # --- Execute Preamble Actions to Restore State ---
     preamble_actions = case.get('preamble_actions', [])
     if preamble_actions:
         logging.debug(f'=== Executing {len(preamble_actions)} Preamble Actions ===')
         preamble_messages: list[BaseMessage] = [
             HumanMessage(
-                content='The test has started. Before the main test steps, I need to perform some setup actions to restore the UI state. Please execute the first preamble action.'
+                content=(
+                    'PREAMBLE PHASE: You are establishing the required UI state '
+                    'before the main test steps begin. '
+                    'Execute each provided action using only the parameters specified '
+                    'in the action definition — do not supplement, modify, or infer '
+                    'parameter values (such as URLs, input text, or element targets) '
+                    'from the test objective or any other context. '
+                    'Please execute the first preamble action.'
+                )
             )
         ]
 
         for i, step in enumerate(preamble_actions):
+            # ------------------------------------------------------------------
+            # Direct execution path for structured actions (bypass LLM entirely)
+            # ------------------------------------------------------------------
             if isinstance(step, dict):
-                instruction_to_execute = step.get('action')
+                action_name = step.get('action', '')
+                params = step.get('params', {})
+
+                if action_name == 'GoToPage' and params.get('url'):
+                    # GoToPage with explicit URL: execute directly, never let LLM
+                    # hallucinate or substitute the target URL.
+                    raw_url = params['url'].strip()
+                    target_url = normalize_url(raw_url)
+                    # normalize_url strips trailing slashes / lowercases the host
+                    # but does not add a scheme — fall back to raw if scheme lost.
+                    if not target_url.startswith(('http://', 'https://')):
+                        logging.warning(
+                            f'Preamble GoToPage URL missing http(s) scheme: '
+                            f'{raw_url!r} — attempting navigation with original URL'
+                        )
+                        target_url = raw_url
+                    try:
+                        await ui_tester_instance.browser_session.navigate_to(target_url)
+                        logging.info(
+                            f'Preamble action {i + 1}/{len(preamble_actions)}: '
+                            f'GoToPage executed directly → {target_url}'
+                        )
+                        continue  # Done — skip agent_executor entirely
+                    except Exception as _nav_err:
+                        logging.error(
+                            f'Preamble GoToPage direct execution failed: {target_url} — {_nav_err}'
+                        )
+                        final_summary = _i18n(
+                            language,
+                            f"前置导航到 '{target_url}' 失败：{_nav_err}",
+                            f"Preamble navigation to '{target_url}' failed: {_nav_err}",
+                        )
+                        user_summary = _make_user_summary(language, 'failed', case_objective)
+                        return _finish_preamble_failure(final_summary, user_summary)
+
+                # Non-direct action: include params in instruction so LLM has
+                # the full context and cannot invent missing values.
+                if params:
+                    params_str = json.dumps(params, ensure_ascii=False, default=str)
+                    instruction_to_execute = f'{action_name}（params: {params_str}）'
+                else:
+                    instruction_to_execute = action_name or str(step)
             else:
                 instruction_to_execute = step
+
             if not instruction_to_execute:
                 logging.warning(f'Preamble action {i + 1} has no instruction, skipping')
                 continue
@@ -1769,7 +1867,11 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             )
             preamble_messages.append(
                 HumanMessage(
-                    content=f'Now, execute this preamble action: {instruction_to_execute}'
+                    content=(
+                        f'[PREAMBLE {i + 1}/{len(preamble_actions)}] '
+                        f'Execute this setup action using exactly the '
+                        f'parameters provided: {instruction_to_execute}'
+                    )
                 )
             )
             record_data_flow_event(
@@ -1836,30 +1938,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         user_summary = _make_user_summary(language, 'failed', case_objective)
 
                     logging.error(f'Preamble action {i + 1} failed, aborting test case')
-                    # Ensure time data is recorded even on early failure
-                    case_recorder.finish_case(final_status='failed', final_summary=final_summary, user_summary=user_summary)
-                    recorded_case_data = case_recorder.get_case_data()
-                    if recorded_case_data is not None:
-                        recorded_case_data['original_planned_steps'] = original_planned_steps
-                    # Extract metrics for consistent case_result structure
-                    metrics = recorded_case_data.get('metrics', {}) if recorded_case_data else {}
-                    failed_step_details = _extract_failed_step_details(recorded_case_data)
-                    case_result = {
-                        'case_name': case_name,
-                        'case_id': case.get('case_id', ''),
-                        'final_summary': final_summary,
-                        'user_summary': user_summary,
-                        'status': 'failed',
-                        'failure_type': 'preamble_failure',
-                        'metrics': {
-                            'total_steps': metrics.get('total_steps', 0),
-                            'passed_steps': metrics.get('passed_steps', 0),
-                            'failed_steps': metrics.get('failed_steps', 0),
-                            'warning_steps': metrics.get('warning_steps', 0),
-                            'total_actions': metrics.get('total_actions', 0),
-                        },
-                        'failed_step_details': failed_step_details,
-                    }
+                    _result = _finish_preamble_failure(final_summary, user_summary)
                     record_data_flow_event(
                         stage='agent_execution',
                         event_type='preamble_response',
@@ -1871,7 +1950,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                             'status': 'failed',
                             'duration_seconds': duration,
                             'output': tool_output,
-                            'case_result': case_result,
+                            'case_result': _result['case_result'],
                         },
                         report_dir=report_dir,
                     )
@@ -1881,15 +1960,11 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         payload={
                             'case_id': case.get('case_id', ''),
                             'case_name': case_name,
-                            'case_result': case_result,
+                            'case_result': _result['case_result'],
                         },
                         report_dir=report_dir,
                     )
-                    return {
-                        'case_result': case_result,
-                        'current_case_steps': [],
-                        'recorded_case': recorded_case_data,
-                    }
+                    return _result
 
                 # Record successful preamble response (only reached if no failure detected)
                 record_data_flow_event(
@@ -1933,30 +2008,11 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                                             f"Preamble action '{instruction_to_execute}' raised an exception."))
                     preamble_status = 'failed'
                     preamble_failure_type = 'preamble_exception'
-                # Ensure time data is recorded even on exception
-                case_recorder.finish_case(final_status=preamble_status, final_summary=final_summary, user_summary=user_summary)
-                recorded_case_data = case_recorder.get_case_data()
-                if recorded_case_data is not None:
-                    recorded_case_data['original_planned_steps'] = original_planned_steps
-                # Extract metrics for consistent case_result structure
-                metrics = recorded_case_data.get('metrics', {}) if recorded_case_data else {}
-                failed_step_details = _extract_failed_step_details(recorded_case_data)
-                case_result = {
-                    'case_name': case_name,
-                    'case_id': case.get('case_id', ''),
-                    'final_summary': final_summary,
-                    'user_summary': user_summary,
-                    'status': preamble_status,
-                    'failure_type': preamble_failure_type,
-                    'metrics': {
-                        'total_steps': metrics.get('total_steps', 0),
-                        'passed_steps': metrics.get('passed_steps', 0),
-                        'failed_steps': metrics.get('failed_steps', 0),
-                        'warning_steps': metrics.get('warning_steps', 0),
-                        'total_actions': metrics.get('total_actions', 0),
-                    },
-                    'failed_step_details': failed_step_details,
-                }
+                _result = _finish_preamble_failure(
+                    final_summary, user_summary,
+                    status=preamble_status,
+                    failure_type=preamble_failure_type,
+                )
                 record_data_flow_event(
                     stage='agent_execution',
                     event_type='preamble_response',
@@ -1968,7 +2024,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         'status': 'exception',
                         'duration_seconds': duration,
                         'error': str(e),
-                        'case_result': case_result,
+                        'case_result': _result['case_result'],
                     },
                     report_dir=report_dir,
                 )
@@ -1978,15 +2034,11 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     payload={
                         'case_id': case.get('case_id', ''),
                         'case_name': case_name,
-                        'case_result': case_result,
+                        'case_result': _result['case_result'],
                     },
                     report_dir=report_dir,
                 )
-                return {
-                    'case_result': case_result,
-                    'current_case_steps': [],
-                    'recorded_case': recorded_case_data,
-                }
+                return _result
 
         logging.debug('=== All Preamble Actions Completed Successfully ===')
 
@@ -2370,7 +2422,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 result, index=0, subindex=1, default=''
             )
             combined_output = f'{tool_output}\n{intermediate_output}'
-            if '[warning]' in combined_output.lower():
+            combined_output_lower = combined_output.lower()
+            if ResponseTags.WARNING.lower() in combined_output_lower:
                 warning_steps.append(i + 1)
                 logging.info(
                     f'Step {i + 1} completed with warnings (e.g., UX issues detected)'
@@ -2482,10 +2535,20 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         f'Step {i + 1} ({step_type}) reported failure — '
                         f'recording as diagnostic finding, recovery disabled for this tool.'
                     )
+                    _diag_summary = (
+                        ui_tester_instance.last_action_context.get('diagnostic_summary')
+                        if ui_tester_instance
+                        and getattr(ui_tester_instance, 'last_action_context', None)
+                        else None
+                    )
                     step_outcomes.append(StepOutcome(
                         step_index=i + 1,
                         severity=StepSeverity.SOFT_FAIL,
-                        description=f'Diagnostic result: {tool_output[:200]}',
+                        description=(
+                            f'[Tool completed — page findings] {_diag_summary}'
+                            if _diag_summary
+                            else f'Batch tool completed (no structured summary): {tool_output[:200]}'
+                        ),
                     ))
                     i += 1
                     continue
@@ -2831,7 +2894,28 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
             # Record PASSED outcome for successful steps (no prior outcome recorded)
             step_already_recorded = any(o.step_index == i + 1 for o in step_outcomes)
-            if not step_already_recorded:
+
+            # Classify [CANNOT_VERIFY] and [WARNING] tags that bypass failure detection
+            is_cannot_verify = ResponseTags.CANNOT_VERIFY.lower() in combined_output_lower
+            is_non_failure_warning = (
+                ResponseTags.WARNING.lower() in combined_output_lower
+                and not is_failure
+                and not is_cannot_verify
+            )
+
+            if is_cannot_verify and not step_already_recorded:
+                step_outcomes.append(StepOutcome(
+                    step_index=i + 1,
+                    severity=StepSeverity.SOFT_FAIL,
+                    description=f'Verification inconclusive: {tool_output[:200]}',
+                ))
+            elif is_non_failure_warning and not step_already_recorded:
+                step_outcomes.append(StepOutcome(
+                    step_index=i + 1,
+                    severity=StepSeverity.WARNING,
+                    description=f'Warning: {tool_output[:200]}',
+                ))
+            elif not step_already_recorded:
                 step_outcomes.append(StepOutcome(
                     step_index=i + 1,
                     severity=StepSeverity.PASSED,
@@ -3200,6 +3284,21 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 'passed': len([o for o in step_outcomes if o.severity == StepSeverity.PASSED]),
             }
 
+            _step_diag_lines = [
+                f'  - Step {o.step_index} ({o.severity.value.upper()}): {o.description}'
+                for o in step_outcomes
+                if o.description and o.severity != StepSeverity.PASSED
+            ]
+            _diag_header = _i18n(
+                language,
+                '步骤诊断详情（工具实际发现，优先参考）：',
+                'Step Diagnostic Details (actual tool findings, prioritize these):',
+            )
+            _step_details_section = (
+                f'\n{_diag_header}\n' + '\n'.join(_step_diag_lines) + '\n'
+                if _step_diag_lines else ''
+            )
+
             if language == 'zh-CN':
                 summary_prompt = f"""根据测试用例"{case_name}"的执行情况，生成一份摘要。
 
@@ -3217,7 +3316,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 - 警告(WARNING): {severity_summary['warning']} 个
 - 通过(PASSED): {severity_summary['passed']} 个
 测试目标提前达成: {'是' if objective_achieved else '否'}
-
+{_step_details_section}
 **重要**：引用步骤时请使用实际执行的步骤编号。测试计划了 {planned_steps_count} 步，但 UI Agent 实际执行了 {executed_steps_count} 步（包含元素定位、滚动等子步骤）。
 
 请先在第一行输出测试结果状态，然后输出详细摘要：
@@ -3263,7 +3362,7 @@ Step Execution Results:
 - Warnings (WARNING): {severity_summary['warning']}
 - Passed (PASSED): {severity_summary['passed']}
 Objective achieved early: {'Yes' if objective_achieved else 'No'}
-
+{_step_details_section}
 **Important**: Use executed step numbers when referencing steps. The test had {planned_steps_count} planned steps,
 but the UI Agent executed {executed_steps_count} detailed steps (including sub-steps for element location, scrolling, etc.).
 

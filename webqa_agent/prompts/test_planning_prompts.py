@@ -265,7 +265,10 @@ def get_shared_test_design_standards(language: str = 'zh-CN') -> str:
 - **`test_data_requirements`**: What test data is needed (if applicable)
 - **`steps`**: Action/verify pairs. Available action types: {action_types_str}
   - **FORBIDDEN in steps**: `elementRef`, `elementId`, `domId`
-- **`preamble_actions`**: Optional setup steps
+- **`preamble_actions`**: Optional setup steps to establish required preconditions before the test begins.
+  Each entry is a single atomic operation. Use concrete, verbatim parameters—exact URL paths, exact
+  input values, exact button labels—so the action can be executed deterministically without inference.
+  Format: `{{"action": "<instruction>", "params": {{"url": "..."}}}}` (params optional but preferred for URLs).
 - **`reset_session`**: true/false for test isolation
 - **`success_criteria`**: Measurable pass/fail conditions
 
@@ -358,7 +361,11 @@ When testing language switching: use navigation menu text as the primary languag
 #   - `action`: User-scenario action instructions describing what a real user would do in natural language. **Available action types (core UI actions + custom tools)**: {action_types_str}.
 #   - `verify`: User-expectation validation instructions describing what result a real user would expect to see
 #   - **FORBIDDEN FIELDS**: Do NOT output `elementRef`, `elementId`, `domId`, or any other technical identifiers in the step objects. The system handles element resolution automatically based on your semantic description.
-# - **`preamble_actions`**: Optional setup steps to establish required test preconditions
+# - **`preamble_actions`**: Optional setup steps to establish required test preconditions.
+#   Format: list of `{{"action": "<instruction>", "params": {{...}}}}` objects (params optional).
+#   Rules: (1) Start with GoToPage if navigation is needed. (2) Each entry = ONE atomic operation.
+#   (3) Use EXACT parameter values (URLs, search queries, button labels) — NO vague descriptions.
+#   (4) For search-dependent cases: copy the EXACT search query from the source case's steps.
 # - **`reset_session`**: Session management flag for test isolation strategy
 # - **`success_criteria`**: Measurable, verifiable conditions that define test pass/fail status
 
@@ -1284,61 +1291,70 @@ Replanned cases start from a **fresh browser session** (homepage). You must use 
    ```
 
 2. **Preamble Actions Guidelines**:
-   - **Add navigation actions** - Include "Navigate to X page" or "Click X link" to reach the target page
-   - **Add UI interactions as needed** (clicks, form fills, scrolls, etc.)
-   - Keep preamble simple and focused on state restoration
-   - Preamble will be executed before main test steps
-   - If replanned case can start from homepage, set `"preamble_actions": []`
+   - Each preamble action should be ONE atomic operation (navigate / click one element / type one value)
+   - Use **verbatim parameter values**: exact URLs, exact input strings, exact button labels — no vague
+     descriptions like "go to the right page" or "ensure the previous state"
+   - When the replanned case depends on a specific state established by the source case (e.g. a search
+     query, a selected tab, a filled form), **reproduce those exact parameter values** from the source
+     case's steps rather than inventing substitutes
+   - Keep preamble concise (typically 1–4 steps)
+   - If the replanned case can start from a clean homepage, set `"preamble_actions": []`
 
-3. **Example Scenarios**:
+3. **Example Scenarios** (illustrate the principle; adapt to your actual URLs and domain):
 
-   **Scenario A: Simple replanning from login page**
+   **Scenario A: Navigate directly to a specific deep-link page**
+   Source case tested a list page; replanned case tests a detail page reached via direct URL.
    ```json
    {{
-     "name": "Verify_Login_Error_Messages",
+     "name": "Verify_Item_Detail_View",
      "_is_replanned": true,
-     "_replan_source": "Verify_Header_Try_Now_Button",
+     "_replan_source": "Verify_Item_List_Page",
      "preamble_actions": [
-       {{"action": "Navigate to the login page via header 'Try Now' button"}}
+       {{"action": "GoToPage", "params": {{"url": "https://example.com/items/item-id-42/"}}}}
      ],
      "steps": [
-       {{"action": "Enter invalid email"}},
-       {{"verify": "Error message displayed"}}
+       {{"action": "Click the 'Expand Details' button"}},
+       {{"verify": "Detail panel opens and displays item attributes"}}
      ]
    }}
    ```
 
-   **Scenario B: Replanning requiring UI interaction**
+   **Scenario B: Reproduce a search or filter state from the source case**
+   Source case performed a search with a specific query; replanned case tests a sub-feature of those results.
+   Use the **exact same query string** the source case used — do not simplify or generalise it.
    ```json
    {{
-     "name": "Verify_Form_Validation_Messages",
+     "name": "Verify_Result_Sort_By_Date",
      "_is_replanned": true,
-     "_replan_source": "Verify_Submit_Button",
+     "_replan_source": "Verify_Search_Workflow",
      "preamble_actions": [
-       {{"action": "Click 'Sign Up' button"}},
-       {{"action": "Wait for registration form to load"}}
+       {{"action": "GoToPage", "params": {{"url": "https://example.com/"}}}},
+       {{"action": "Click the 'Advanced Search' tab to switch search mode"}},
+       {{"action": "Type 'blue widget 2024' into the keyword search field (exact same query as source case)"}},
+       {{"action": "Click the Search button and wait for the results list to load"}}
      ],
      "steps": [
-       {{"action": "Enter invalid phone number"}},
-       {{"verify": "Validation error displayed"}}
+       {{"action": "Click the 'Sort by: Date' option"}},
+       {{"verify": "Results list is re-ordered with newest items first"}}
      ]
    }}
    ```
 
-   **Scenario C: Replanning from user dashboard**
+   **Scenario C: Multi-step UI interaction to reach an interior application state**
+   Source case navigated through several UI steps; replanned case tests a feature deeper in that flow.
    ```json
    {{
-     "name": "Verify_Profile_Settings",
+     "name": "Verify_Settings_Saved_Confirmation",
      "_is_replanned": true,
-     "_replan_source": "Verify_Dashboard_Layout",
+     "_replan_source": "Verify_User_Profile_Navigation",
      "preamble_actions": [
-       {{"action": "Perform login sequence"}},
-       {{"action": "Navigate to user dashboard"}},
-       {{"action": "Click 'Profile' menu item"}}
+       {{"action": "GoToPage", "params": {{"url": "https://example.com/dashboard"}}}},
+       {{"action": "Click the account avatar icon in the top-right corner"}},
+       {{"action": "Click 'Account Settings' in the dropdown menu"}}
      ],
      "steps": [
-       {{"verify": "Profile settings page is displayed"}},
-       {{"action": "Update username field"}}
+       {{"action": "Change the display language to 'English'"}},
+       {{"verify": "A confirmation banner 'Settings saved' appears"}}
      ]
    }}
    ```
