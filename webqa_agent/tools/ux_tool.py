@@ -1,6 +1,7 @@
 import base64
 import json
 import logging
+import time
 from io import BytesIO
 from typing import Any, List
 
@@ -11,8 +12,10 @@ from pydantic import Field
 from webqa_agent.crawler.deep_crawler import DeepCrawler
 from webqa_agent.data.gen_structures import TestStatus
 from webqa_agent.executor.gen.utils.case_recorder import CentralCaseRecorder
-from webqa_agent.llm.llm_api import LLMAPI
+from webqa_agent.llm.llm_api import LLMAPI, get_last_llm_call_metrics
 from webqa_agent.prompts.ui_automation_prompts import LLMPrompt
+from webqa_agent.utils.data_flow_reporter import record_data_flow_event
+from webqa_agent.utils.timing_breakdown import record_tool_timing
 
 
 class UIUXViewportTool(BaseTool):
@@ -30,6 +33,29 @@ class UIUXViewportTool(BaseTool):
 
     def _run(self, assertion: str) -> str:
         raise NotImplementedError('Use arun for asynchronous execution.')
+
+    def _data_flow_report_dir(self) -> str | None:
+        """Resolve report_dir from the attached UITester instance."""
+        return getattr(self.ui_tester_instance, 'report_dir', None)
+
+    def _data_flow_case_payload(self) -> dict[str, Any]:
+        """Best-effort case context for data flow events."""
+        case_data = {}
+        if getattr(self, 'ui_tester_instance', None) and isinstance(
+            getattr(self.ui_tester_instance, 'current_case_data', None), dict
+        ):
+            case_data = self.ui_tester_instance.current_case_data
+
+        case_name = (
+            case_data.get('name')
+            or case_data.get('case_name')
+            or getattr(self.ui_tester_instance, 'current_test_name', None)
+            or 'Test Case'
+        )
+        return {
+            'case_id': case_data.get('case_id', ''),
+            'case_name': case_name,
+        }
 
     def _annotate_b64_image(self, image_b64: str, rect: List[int]) -> str:
         """Annotate a base64 encoded image with a rectangle."""
@@ -56,6 +82,7 @@ class UIUXViewportTool(BaseTool):
     async def _arun(self, assertion: str) -> str:
         if not self.ui_tester_instance:
             return '[FAILURE] Error: UITester instance not provided for UX collection.'
+        tool_started = time.perf_counter()
 
         llm_client = None
         try:
@@ -174,9 +201,35 @@ class UIUXViewportTool(BaseTool):
 
             # logging.debug(f"UX text typo analysis prompt: {text_prompt}")
 
+            record_data_flow_event(
+                stage='ux',
+                event_type='ux_typo_request',
+                payload={
+                    **self._data_flow_case_payload(),
+                    'assertion': assertion,
+                    'prompt': text_prompt,
+                },
+                report_dir=self._data_flow_report_dir(),
+            )
+            typo_started = time.perf_counter()
             typo_response = await llm_client.get_llm_response(
                 LLMPrompt.page_default_prompt,
                 text_prompt,
+            )
+            typo_duration = max(time.perf_counter() - typo_started, 0.0)
+            typo_llm_metrics = get_last_llm_call_metrics() or {}
+            typo_event_duration = float(typo_llm_metrics.get('duration_seconds') or typo_duration)
+            record_data_flow_event(
+                stage='ux',
+                event_type='ux_typo_response',
+                payload={
+                    **self._data_flow_case_payload(),
+                    'assertion': assertion,
+                    'response': typo_response,
+                    'duration_seconds': typo_event_duration,
+                    'llm_metrics': typo_llm_metrics,
+                },
+                report_dir=self._data_flow_report_dir(),
             )
             logging.debug(f'UX text typo analysis response: {typo_response}')
 
@@ -194,10 +247,37 @@ class UIUXViewportTool(BaseTool):
             # logging.debug(f"UX layout analysis prompt: {layout_prompt}")
 
             images = [screenshot] if isinstance(screenshot, str) else None
+            record_data_flow_event(
+                stage='ux',
+                event_type='ux_layout_request',
+                payload={
+                    **self._data_flow_case_payload(),
+                    'assertion': assertion,
+                    'prompt': layout_prompt,
+                    'has_image': bool(images),
+                },
+                report_dir=self._data_flow_report_dir(),
+            )
+            layout_started = time.perf_counter()
             layout_response = await llm_client.get_llm_response(
                 LLMPrompt.page_default_prompt,
                 layout_prompt,
                 images=images,
+            )
+            layout_duration = max(time.perf_counter() - layout_started, 0.0)
+            layout_llm_metrics = get_last_llm_call_metrics() or {}
+            layout_event_duration = float(layout_llm_metrics.get('duration_seconds') or layout_duration)
+            record_data_flow_event(
+                stage='ux',
+                event_type='ux_layout_response',
+                payload={
+                    **self._data_flow_case_payload(),
+                    'assertion': assertion,
+                    'response': layout_response,
+                    'duration_seconds': layout_event_duration,
+                    'llm_metrics': layout_llm_metrics,
+                },
+                report_dir=self._data_flow_report_dir(),
             )
 
             parsed_layout = None
@@ -370,6 +450,8 @@ class UIUXViewportTool(BaseTool):
             logging.error(f'Error collecting UX viewport context: {str(e)}')
             return f'[FAILURE] Unexpected error during UX collection: {str(e)}'
         finally:
+            elapsed = time.perf_counter() - tool_started
+            record_tool_timing(self.name, elapsed)
             if llm_client:
                 try:
                     await llm_client.close()

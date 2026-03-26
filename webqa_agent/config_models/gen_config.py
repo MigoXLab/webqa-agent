@@ -67,7 +67,6 @@ class GenConfig(BaseModel):
     custom_tools: CustomToolsConfig = Field(
         default_factory=CustomToolsConfig, description='Custom tools to enable'
     )
-
     max_concurrent_tests: int = Field(
         default=4, ge=1, le=10, description='Maximum concurrent test execution'
     )

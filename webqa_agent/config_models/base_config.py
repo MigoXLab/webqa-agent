@@ -57,6 +57,10 @@ class ReportConfig(BaseModel):
     save_screenshots: bool = Field(
         default=False, description='Save screenshots during test execution'
     )
+    save_dataflow: bool = Field(
+        default=True,
+        description='Record data-flow events (JSONL) and generate interactive gantt report.',
+    )
 
     @field_validator('language')
     @classmethod

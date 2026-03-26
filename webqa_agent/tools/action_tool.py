@@ -7,6 +7,7 @@ This tool allows the agent to interact with the web page.
 import datetime
 import json
 import logging
+import time
 from typing import Any, Optional, Type
 
 from langchain_core.tools import BaseTool
@@ -15,6 +16,7 @@ from pydantic import BaseModel, Field
 from webqa_agent.crawler.deep_crawler import DeepCrawler
 from webqa_agent.executor.gen.utils.case_recorder import CentralCaseRecorder
 from webqa_agent.tools.core.ui_driver import UITester
+from webqa_agent.utils.timing_breakdown import record_tool_timing
 
 
 class UIActionSchema(BaseModel):
@@ -131,6 +133,7 @@ class UITool(BaseTool):
             error_msg = 'UITester instance not provided for action execution'
             logging.error(error_msg)
             return f'[FAILURE] Error: {error_msg}'
+        tool_started = time.perf_counter()
 
         logging.debug(f'=== Executing UI Action: {action} ===')
         logging.debug(f'Target: {target}')
@@ -429,3 +432,6 @@ class UITool(BaseTool):
             logging.error(f'Exception in UI action execution: {error_msg}')
             logging.error(f'Exception type: {type(e).__name__}')
             return f'[FAILURE] {error_msg}'
+        finally:
+            elapsed = time.perf_counter() - tool_started
+            record_tool_timing(self.name, elapsed)
