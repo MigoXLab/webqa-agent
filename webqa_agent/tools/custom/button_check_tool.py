@@ -30,32 +30,12 @@ from pydantic import BaseModel, Field
 
 from webqa_agent.data.gen_structures import TestStatus
 from webqa_agent.tools.base import WebQABaseTool, WebQAToolMetadata
-from webqa_agent.tools.core.web_checks import PageButtonTest
+from webqa_agent.tools.core.web_checks import (TAG_LABELS, PageButtonTest,
+                                               get_element_semantic_label)
 from webqa_agent.tools.registry import register_tool
 
 logger = logging.getLogger(__name__)
 
-# HTML tag name → human-readable label (zh-CN, en-US)
-_TAG_LABELS: Dict[str, tuple] = {
-    'a': ('链接', 'Link'),
-    'button': ('按钮', 'Button'),
-    'input': ('输入框', 'Input'),
-    'textarea': ('文本输入框', 'Text Input'),
-    'select': ('下拉选择', 'Dropdown'),
-    'div': ('区块', 'Block'),
-    'span': ('文本区域', 'Text Span'),
-    'img': ('图片', 'Image'),
-    'svg': ('图标', 'Icon'),
-    'label': ('标签', 'Label'),
-    'li': ('列表项', 'List Item'),
-    'td': ('表格单元', 'Table Cell'),
-    'tr': ('表格行', 'Table Row'),
-    'th': ('表头', 'Table Header'),
-    'form': ('表单', 'Form'),
-    'nav': ('导航', 'Navigation'),
-    'header': ('页头', 'Header'),
-    'footer': ('页脚', 'Footer'),
-}
 
 # Common browser error codes → human-readable translations (zh-CN, en-US)
 _ERROR_TRANSLATIONS: Dict[str, tuple] = {
@@ -74,32 +54,52 @@ _ERROR_TRANSLATIONS: Dict[str, tuple] = {
 }
 
 
-def _humanize_element(description: str, element_id: int, language: str = 'zh-CN') -> str:
-    """Convert CSS selector description to a human-readable label.
+def _humanize_element(
+    step,
+    clickable_elements: dict | None = None,
+    language: str = 'zh-CN',
+    include_id: bool = True,
+) -> str:
+    """Convert a SubTestStep to a human-readable element label.
 
     Args:
-        description: Step description like "Click Element: textarea.ant-input.css-xxx"
-        element_id: Numeric element ID
+        step: SubTestStep with .id (numeric element ID) and .description.
+        clickable_elements: Optional dict for semantic label lookup.
         language: 'zh-CN' or 'en-US'
+        include_id: When ``False`` and a semantic label exists, the internal
+            element ID is omitted for cleaner user-facing output.
+            When no semantic label is available, the ID is always shown
+            as it is the only distinguishing identifier.
 
     Returns:
-        Human-readable string like "文本输入框(#18)" or "Text Input (#18)"
+        ``Link[文心](#9)`` (include_id=True) or ``Link[文心]`` (False).
     """
     lang_idx = 0 if language == 'zh-CN' else 1
+    element_id: int = step.id
+    description: str = step.description or ''
 
-    # Extract the part after ':'  (e.g. "textarea.ant-input.css-xxx")
     raw = description
     if ':' in raw:
         raw = raw.split(':', 1)[-1].strip()
 
-    # Get the tag name (first segment before '.' or '#' or '[')
     tag = raw
     for sep in ('.', '#', '[', ' '):
         tag = tag.split(sep)[0]
     tag = tag.strip().lower()
 
-    label = _TAG_LABELS.get(tag, (tag, tag))[lang_idx] if tag else str(element_id)
-    return f'{label}(#{element_id})'
+    tag_label = TAG_LABELS.get(tag, (tag, tag))[lang_idx] if tag else str(element_id)
+
+    semantic_label = ''
+    if clickable_elements is not None:
+        elem = clickable_elements.get(str(element_id))
+        if elem:
+            semantic_label = get_element_semantic_label(elem)
+
+    if semantic_label:
+        if include_id:
+            return f'{tag_label}[{semantic_label}](#{element_id})'
+        return f'{tag_label}[{semantic_label}]'
+    return f'{tag_label}(#{element_id})'
 
 
 def _humanize_error(error_text: str, language: str = 'zh-CN') -> str:
@@ -136,11 +136,7 @@ def _humanize_error(error_text: str, language: str = 'zh-CN') -> str:
     if 'playwright_error' in text_lower:
         return '浏览器操作异常' if language == 'zh-CN' else 'Browser operation error'
 
-    # Last resort: truncate raw text
-    short = error_text[:80]
-    if len(error_text) > 80:
-        short += '...'
-    return short
+    return error_text
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +240,7 @@ def _build_human_readable_summary(
     failed_count: int,
     failed_steps: List,
     language: str = 'zh-CN',
+    clickable_elements: dict | None = None,
 ) -> str:
     """Build a structured, human-readable traversal test summary.
 
@@ -253,50 +250,59 @@ def _build_human_readable_summary(
         failed_count: Number of elements that failed
         failed_steps: List of failed SubTestStep objects
         language: 'zh-CN' or 'en-US'
+        clickable_elements: Optional element dict from DeepCrawler, used to
+            enrich element labels with semantic text (aria-label, innerText, …).
 
     Returns:
         Formatted summary string
     """
+    # Build header
     if language == 'zh-CN':
         header = (
             f'遍历测试完成：共检测 {total_elements} 个交互元素，'
             f'{passed_count} 个正常，{failed_count} 个发现问题。'
         )
-        if failed_count == 0:
-            return header
-
-        lines = [header, '发现的问题：']
-        for i, step in enumerate(failed_steps[:10], 1):
-            elem_label = _humanize_element(
-                step.description or '', step.id, language
-            )
-            error_desc = _humanize_error(
-                getattr(step, 'errors', '') or '', language
-            )
-            lines.append(f'{i}. {elem_label}：{error_desc}')
-        if failed_count > 10:
-            lines.append(f'...及其他 {failed_count - 10} 个问题')
-        return '\n'.join(lines)
     else:
         header = (
             f'Traversal test completed: {total_elements} elements tested, '
             f'{passed_count} passed, {failed_count} issues found.'
         )
-        if failed_count == 0:
-            return header
 
-        lines = [header, 'Issues:']
-        for i, step in enumerate(failed_steps[:10], 1):
-            elem_label = _humanize_element(
-                step.description or '', step.id, language
-            )
-            error_desc = _humanize_error(
-                getattr(step, 'errors', '') or '', language
-            )
-            lines.append(f'{i}. {elem_label}: {error_desc}')
-        if failed_count > 10:
-            lines.append(f'...and {failed_count - 10} more issues')
-        return '\n'.join(lines)
+    if failed_count == 0:
+        return header
+
+    # Group failures by error type for readability
+    error_groups: Dict[str, List[str]] = {}
+    for step in failed_steps:
+        error_desc = _humanize_error(
+            getattr(step, 'errors', '') or '', language,
+        )
+        elem_label = _humanize_element(
+            step, clickable_elements, language, include_id=False,
+        )
+        error_groups.setdefault(error_desc, []).append(elem_label)
+
+    # Per-group element cap: show all ≤ 10, truncate above
+    _MAX_PER_GROUP = 10
+
+    lines = [header]
+    lines.append('发现的问题：' if language == 'zh-CN' else 'Issues:')
+    for error_desc, elements in error_groups.items():
+        count = len(elements)
+        if language == 'zh-CN':
+            lines.append(f'● {error_desc} ({count}个):')
+        else:
+            lines.append(f'● {error_desc} ({count}):')
+        shown = elements[:_MAX_PER_GROUP]
+        for elem_label in shown:
+            lines.append(f'  - {elem_label}')
+        overflow = count - _MAX_PER_GROUP
+        if overflow > 0:
+            if language == 'zh-CN':
+                lines.append(f'  ...及其他 {overflow} 个元素')
+            else:
+                lines.append(f'  ...and {overflow} more')
+    return '\n'.join(lines)
 
 
 class ButtonCheckToolSchema(BaseModel):
@@ -553,6 +559,7 @@ class ButtonCheckTool(WebQABaseTool):
                     readable_partial = _build_human_readable_summary(
                         tested, partial_passed, partial_failed,
                         partial['failed_steps'], language,
+                        clickable_elements=clickable_elements,
                     )
                     skipped = total_elements - tested
                     skipped_note = (
@@ -572,7 +579,7 @@ class ButtonCheckTool(WebQABaseTool):
                             'passed': partial_passed,
                             'failed': partial_failed,
                             'partial': True,
-                            'summary': f'{readable_partial}\n{skipped_note}',
+                            'summary': f'{readable_partial}\n{skipped_note}'.split('\n'),
                         },
                         status='warning',
                         screenshots=[
@@ -601,6 +608,21 @@ class ButtonCheckTool(WebQABaseTool):
                 f'Total: {total_elements}, Passed: {passed_count}, Failed: {failed_count}'
             )
 
+            # Build data needed for Step 5 and Step 6
+            failed_steps = []
+            all_screenshots = []
+            for step in result.steps:
+                if step.status == TestStatus.FAILED:
+                    failed_steps.append(step)
+                if hasattr(step, 'screenshots') and step.screenshots:
+                    all_screenshots.extend(step.screenshots)
+
+            readable_summary = _build_human_readable_summary(
+                total_elements, passed_count, failed_count,
+                failed_steps, language,
+                clickable_elements=clickable_elements,
+            )
+
             # Step 5: Update context for downstream tools
             self.update_action_context(
                 self.ui_tester_instance,
@@ -619,27 +641,12 @@ class ButtonCheckTool(WebQABaseTool):
                         'failed_count': failed_count,
                         'test_status': result.status.value,
                     },
+                    'diagnostic_summary': readable_summary,
                     'timestamp': datetime.now().isoformat(),
                 }
             )
 
             # Step 6: Record to case_recorder (using safe_record_step helper)
-            failed_steps = [
-                step for step in result.steps
-                if step.status == TestStatus.FAILED
-            ]
-
-            # Extract all screenshots from the test steps
-            all_screenshots = []
-            for step in result.steps:
-                if hasattr(step, 'screenshots') and step.screenshots:
-                    all_screenshots.extend(step.screenshots)
-
-            # Build human-readable summary
-            readable_summary = _build_human_readable_summary(
-                total_elements, passed_count, failed_count,
-                failed_steps, language
-            )
 
             self.safe_record_step(
                 description=f'Traverse clickable elements (tested {total_elements})',
@@ -648,9 +655,9 @@ class ButtonCheckTool(WebQABaseTool):
                     'raw_elements_count': len(raw_elements),
                     'passed': passed_count,
                     'failed': failed_count,
-                    'summary': readable_summary,
+                    'summary': readable_summary.split('\n'),
                 },
-                status='passed' if result.status == TestStatus.PASSED else 'failed',
+                status='passed' if result.status == TestStatus.PASSED else 'warning',
                 screenshots=all_screenshots,
             )
 

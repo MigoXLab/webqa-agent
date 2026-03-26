@@ -421,6 +421,14 @@ class UITester:
                 if events_lines:
                     context_parts.append('- Browser Events:\n' + '\n'.join(events_lines))
 
+            # Diagnostic summary from batch/scan tools (e.g., button traversal, link check)
+            _diag = last_action.get('diagnostic_summary')
+            if _diag:
+                context_parts.append(
+                    '- Diagnostic Summary (actual tool findings — use as verification evidence):\n'
+                    + '\n'.join(f'  {line}' for line in _diag.splitlines())
+                )
+
         # Test objective
         if 'test_objective' in execution_context and execution_context['test_objective']:
             context_parts.append(f"\n**Test Objective:** {execution_context['test_objective']}")

@@ -353,26 +353,6 @@ class LinkCheckTool(WebQABaseTool):
                 )
                 result_message += f' (validated {len(validated_links)}: {passed_count} passed)'
 
-            self.update_action_context(
-                self.ui_tester_instance,
-                {
-                    'description': f'Detect dynamic links (found {len(new_links)} new)',
-                    'action_type': 'DynamicLinkCheck',
-                    'status': 'success',
-                    'result': {
-                        'message': result_message,
-                        'validated_links': validated_links,
-                        'total_links_on_page': len(current_links_set),
-                        'new_links_count': len(new_links),
-                        'check_https': check_https,
-                        'check_status': check_status,
-                    },
-                    'timestamp': datetime.now().isoformat(),
-                    'detected_new_links_count': len(new_links),
-                    'all_links_snapshot': list(current_links_set),
-                }
-            )
-
             # Build detailed summary of first 10 validated links
             link_details = []
             for i, link_data in enumerate(validated_links[:10], 1):
@@ -398,6 +378,27 @@ class LinkCheckTool(WebQABaseTool):
             summary = '\n'.join(link_details)
             if len(new_links) > 10:
                 summary += f'\n... and {len(new_links) - 10} more links'
+
+            self.update_action_context(
+                self.ui_tester_instance,
+                {
+                    'description': f'Detect dynamic links (found {len(new_links)} new)',
+                    'action_type': 'DynamicLinkCheck',
+                    'status': 'success',
+                    'result': {
+                        'message': result_message,
+                        'validated_links': validated_links,
+                        'total_links_on_page': len(current_links_set),
+                        'new_links_count': len(new_links),
+                        'check_https': check_https,
+                        'check_status': check_status,
+                    },
+                    'diagnostic_summary': summary,
+                    'timestamp': datetime.now().isoformat(),
+                    'detected_new_links_count': len(new_links),
+                    'all_links_snapshot': list(current_links_set),
+                }
+            )
 
             # Record step when new links are detected (using safe_record_step helper)
             # Build detailed model_io with all validation results
@@ -431,7 +432,7 @@ class LinkCheckTool(WebQABaseTool):
                     'error': self._serialize_value(e),
                     'error_type': type(e).__name__
                 },
-                status='failed',
+                status='warning',
             )
 
             # Update context to indicate detection failure (enables proper assertion skip logic)

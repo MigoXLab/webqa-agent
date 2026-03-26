@@ -1,9 +1,10 @@
 import asyncio
 import logging
+import re
 import socket
 import ssl
 from datetime import datetime
-from typing import List
+from typing import Any, Dict, List
 from urllib.parse import urlparse
 
 import requests
@@ -180,6 +181,191 @@ class WebAccessibilityTest(_LocalizedTestBase):
             raise Exception(error_message)
 
 
+# ---------------------------------------------------------------------------
+# Element label and highlight helpers for screenshot annotation
+# ---------------------------------------------------------------------------
+
+# HTML tag name → human-readable label (zh-CN, en-US).
+# Single source of truth — also imported by button_check_tool.
+TAG_LABELS: Dict[str, tuple] = {
+    'a': ('链接', 'Link'),
+    'button': ('按钮', 'Button'),
+    'input': ('输入框', 'Input'),
+    'textarea': ('文本输入框', 'Text Input'),
+    'select': ('下拉选择', 'Dropdown'),
+    'div': ('区块', 'Block'),
+    'span': ('文本区域', 'Text Span'),
+    'img': ('图片', 'Image'),
+    'svg': ('图标', 'Icon'),
+    'label': ('标签', 'Label'),
+    'li': ('列表项', 'List Item'),
+    'td': ('表格单元', 'Table Cell'),
+    'tr': ('表格行', 'Table Row'),
+    'th': ('表头', 'Table Header'),
+    'form': ('表单', 'Form'),
+    'nav': ('导航', 'Navigation'),
+    'header': ('页头', 'Header'),
+    'footer': ('页脚', 'Footer'),
+}
+
+# Auto-generated CSS class prefixes to skip in fallback labelling.
+# Covers CSS Modules (css-), styled-components (sc-/styled-), Svelte, JS hooks.
+_AUTO_CLASS_PREFIX = re.compile(r'^(css-|sc-|svelte-|styled-|js-|_)')
+
+
+def get_element_semantic_label(elem: dict) -> str:
+    """Extract a human-readable semantic label from an element dict.
+
+    Priority chain (first non-empty value wins):
+        aria-label → innerText[:30] → placeholder → title → alt → name
+        → role → first meaningful CSS class → ''
+
+    This is a shared utility used by both web_checks and button_check_tool to
+    ensure consistent semantic labelling of elements across all tools.
+
+    Args:
+        elem: Element dict from DeepCrawler with keys like 'attributes',
+            'innerText', 'className', 'selector'.
+
+    Returns:
+        Human-readable label string, or '' if none found.
+    """
+    attrs_raw = elem.get('attributes')
+    if isinstance(attrs_raw, list):
+        # JS serialises attributes as [{name: ..., value: ...}]; normalise to dict
+        attrs: dict = {
+            a['name']: a.get('value', '')
+            for a in attrs_raw
+            if isinstance(a, dict) and 'name' in a
+        }
+    elif isinstance(attrs_raw, dict):
+        attrs = attrs_raw
+    else:
+        attrs = {}
+
+    # Fallback 8: first meaningful CSS class from className or selector
+    _class_fallback: str | None = None
+    # className is the raw class attribute: "chat-voice-input other-class"
+    _class_name = (elem.get('className') or '').strip()
+    if _class_name:
+        for _cls in _class_name.split():
+            if len(_cls) > 2 and not _AUTO_CLASS_PREFIX.match(_cls):
+                _class_fallback = _cls
+                break
+    # selector is CSS notation: "div.chat-voice-input" — extract .xxx parts only
+    if not _class_fallback:
+        _selector = elem.get('selector') or ''
+        for _cls in re.findall(r'\.([a-zA-Z][\w-]*)', _selector):
+            if len(_cls) > 2 and not _AUTO_CLASS_PREFIX.match(_cls):
+                _class_fallback = _cls
+                break
+
+    candidates = [
+        (attrs.get('aria-label') or '').strip() or None,
+        (elem.get('innerText') or '')[:30].strip() or None,
+        (attrs.get('placeholder') or '').strip() or None,
+        (attrs.get('title') or '').strip() or None,
+        (attrs.get('alt') or '').strip() or None,
+        (attrs.get('name') or '').strip() or None,
+        (attrs.get('role') or '').strip() or None,
+        _class_fallback,
+    ]
+    for candidate in candidates:
+        if candidate:
+            return candidate
+    return ''
+
+
+def _humanize_element_label(
+    tag: str, elem_id: int, language: str = 'en-US', elem: dict | None = None,
+) -> str:
+    """Human-readable element label for screenshot annotations.
+
+    When *elem* is provided, a semantic name is extracted via
+    :func:`get_element_semantic_label` (priority: aria-label → innerText →
+    placeholder → title → alt → name → role → CSS class).
+
+    Format with a name  : Link[文心一言](#9)
+    Format without a name: Link(#9)
+    """
+    human_name = get_element_semantic_label(elem) if elem is not None else ''
+
+    lang_idx = 0 if language == 'zh-CN' else 1
+    if tag:
+        base_label = TAG_LABELS.get(tag, (tag, tag.title()))[lang_idx]
+    else:
+        base_label = str(elem_id) if language == 'zh-CN' else 'Element'
+
+    if human_name:
+        return f'{base_label}[{human_name}](#{elem_id})'
+    return f'{base_label}(#{elem_id})'
+
+
+async def _highlight_element_for_screenshot(
+    page: Any, tag: str, text: str, selector: str, xpath: str = '',
+) -> bool:
+    """Add red outline to element via JS. Returns True if element was found.
+
+    Lookup chain:
+      ① CSS selector (skipped if bare tag name) → ② XPath → ③ tag + text match → ④ return false
+    Bare-tag selectors (e.g. ``'a'``, ``'div'``) are skipped because
+    ``querySelector`` returns the first element of that type, not the target.
+    """
+    try:
+        return await page.evaluate("""({tag, text, selector, xpath}) => {
+            let el = null;
+            // Only use CSS selector if it's specific (contains class, ID, or
+            // attribute qualifiers).  Bare tag names like 'a' or 'div' match
+            // the *first* element of that type — almost always wrong.
+            const isBareTag = selector && /^[a-z][a-z0-9]*$/i.test(selector.trim());
+            if (selector && !isBareTag) {
+                try { el = document.querySelector(selector); } catch(e) {}
+            }
+            if (!el && xpath) {
+                try {
+                    const xpathResult = document.evaluate(
+                        xpath, document, null,
+                        XPathResult.FIRST_ORDERED_NODE_TYPE, null
+                    );
+                    el = xpathResult.singleNodeValue;
+                } catch(e) {}
+            }
+            if (!el && text && tag) {
+                for (const c of document.querySelectorAll(tag)) {
+                    if (c.textContent && c.textContent.trim().startsWith(text.trim())) {
+                        el = c; break;
+                    }
+                }
+            }
+            if (el) {
+                el.dataset.webqaHighlight = 'true';
+                el.style.outline = '3px solid red';
+                el.style.outlineOffset = '2px';
+                el.style.boxShadow = '0 0 8px rgba(255,0,0,0.6)';
+                el.scrollIntoView({behavior:'instant', block:'center'});
+                return true;
+            }
+            return false;
+        }""", {'tag': tag, 'text': text, 'selector': selector, 'xpath': xpath})
+    except Exception:
+        return False
+
+
+async def _remove_element_highlight(page: Any) -> None:
+    """Remove all webqa highlight markers from the page."""
+    try:
+        await page.evaluate("""() => {
+            for (const el of document.querySelectorAll('[data-webqa-highlight]')) {
+                el.style.outline = '';
+                el.style.outlineOffset = '';
+                el.style.boxShadow = '';
+                delete el.dataset.webqaHighlight;
+            }
+        }""")
+    except Exception:
+        pass
+
+
 class PageButtonTest(_LocalizedTestBase):
 
     async def run(self, url: str, page: Page, clickable_elements: dict, **kwargs) -> SubTestResult:
@@ -319,6 +505,49 @@ class PageButtonTest(_LocalizedTestBase):
                                         f'type={error_type}, '
                                         f'reason={error_reason}'
                                     )
+
+                                    # Capture highlighted screenshot for failed element
+                                    try:
+                                        if page.url != url:
+                                            await page.goto(url)
+                                            await asyncio.sleep(0.3)
+
+                                        _elem_data = element
+                                        _tag_name = (_elem_data.get('tagName') or '').lower()
+                                        _inner_text = (_elem_data.get('innerText') or '')[:40]
+                                        _elem_selector = _elem_data.get('selector', '')
+
+                                        _found = await _highlight_element_for_screenshot(
+                                            page, _tag_name, _inner_text, _elem_selector,
+                                            xpath=_elem_data.get('xpath', ''),
+                                        )
+                                        if _found:
+                                            await asyncio.sleep(0.2)
+                                            _hl_b64, _hl_path = await action_handler.b64_page_screenshot(
+                                                file_name=f'element_{highlight_id}_highlighted',
+                                                context='test',
+                                            )
+                                            _elem_label = _humanize_element_label(
+                                                _tag_name, int(highlight_id), self.language,
+                                                elem=_elem_data,
+                                            )
+                                            if _hl_path:
+                                                step.screenshots.insert(0, SubTestScreenshot(
+                                                    type='path', data=_hl_path,
+                                                    label=f'Failed: {_elem_label}',
+                                                ))
+                                            elif _hl_b64:
+                                                step.screenshots.insert(0, SubTestScreenshot(
+                                                    type='base64', data=_hl_b64,
+                                                    label=f'Failed: {_elem_label}',
+                                                ))
+                                            await _remove_element_highlight(page)
+
+                                    except Exception as _hl_err:
+                                        logging.debug(
+                                            f'Failed to capture highlighted screenshot for element '
+                                            f'{highlight_id}: {_hl_err}'
+                                        )
 
                                 # Brief pause between clicks
                                 await asyncio.sleep(0.5)

@@ -43,7 +43,7 @@ from webqa_agent.prompts.agent_execution_prompts import \
 from webqa_agent.prompts.test_planning_prompts import \
     get_dynamic_step_generation_prompt
 from webqa_agent.tools.action_tool import UITool
-from webqa_agent.tools.base import ActionTypes
+from webqa_agent.tools.base import ActionTypes, ResponseTags
 from webqa_agent.tools.registry import get_registry
 from webqa_agent.tools.ux_tool import UIUXViewportTool
 from webqa_agent.tools.verify_tool import UIAssertTool
@@ -1848,7 +1848,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 result, index=0, subindex=1, default=''
             )
             combined_output = f'{tool_output}\n{intermediate_output}'
-            if '[warning]' in combined_output.lower():
+            combined_output_lower = combined_output.lower()
+            if ResponseTags.WARNING.lower() in combined_output_lower:
                 warning_steps.append(i + 1)
                 logging.info(
                     f'Step {i + 1} completed with warnings (e.g., UX issues detected)'
@@ -1960,10 +1961,20 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         f'Step {i + 1} ({step_type}) reported failure — '
                         f'recording as diagnostic finding, recovery disabled for this tool.'
                     )
+                    _diag_summary = (
+                        ui_tester_instance.last_action_context.get('diagnostic_summary')
+                        if ui_tester_instance
+                        and getattr(ui_tester_instance, 'last_action_context', None)
+                        else None
+                    )
                     step_outcomes.append(StepOutcome(
                         step_index=i + 1,
                         severity=StepSeverity.SOFT_FAIL,
-                        description=f'Diagnostic result: {tool_output[:200]}',
+                        description=(
+                            f'[Tool completed — page findings] {_diag_summary}'
+                            if _diag_summary
+                            else f'Batch tool completed (no structured summary): {tool_output[:200]}'
+                        ),
                     ))
                     i += 1
                     continue
@@ -2307,7 +2318,28 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
             # Record PASSED outcome for successful steps (no prior outcome recorded)
             step_already_recorded = any(o.step_index == i + 1 for o in step_outcomes)
-            if not step_already_recorded:
+
+            # Classify [CANNOT_VERIFY] and [WARNING] tags that bypass failure detection
+            is_cannot_verify = ResponseTags.CANNOT_VERIFY.lower() in combined_output_lower
+            is_non_failure_warning = (
+                ResponseTags.WARNING.lower() in combined_output_lower
+                and not is_failure
+                and not is_cannot_verify
+            )
+
+            if is_cannot_verify and not step_already_recorded:
+                step_outcomes.append(StepOutcome(
+                    step_index=i + 1,
+                    severity=StepSeverity.SOFT_FAIL,
+                    description=f'Verification inconclusive: {tool_output[:200]}',
+                ))
+            elif is_non_failure_warning and not step_already_recorded:
+                step_outcomes.append(StepOutcome(
+                    step_index=i + 1,
+                    severity=StepSeverity.WARNING,
+                    description=f'Warning: {tool_output[:200]}',
+                ))
+            elif not step_already_recorded:
                 step_outcomes.append(StepOutcome(
                     step_index=i + 1,
                     severity=StepSeverity.PASSED,
@@ -2632,6 +2664,21 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 'passed': len([o for o in step_outcomes if o.severity == StepSeverity.PASSED]),
             }
 
+            _step_diag_lines = [
+                f'  - Step {o.step_index} ({o.severity.value.upper()}): {o.description}'
+                for o in step_outcomes
+                if o.description and o.severity != StepSeverity.PASSED
+            ]
+            _diag_header = _i18n(
+                language,
+                '步骤诊断详情（工具实际发现，优先参考）：',
+                'Step Diagnostic Details (actual tool findings, prioritize these):',
+            )
+            _step_details_section = (
+                f'\n{_diag_header}\n' + '\n'.join(_step_diag_lines) + '\n'
+                if _step_diag_lines else ''
+            )
+
             if language == 'zh-CN':
                 summary_prompt = f"""根据测试用例"{case_name}"的执行情况，生成一份摘要。
 
@@ -2649,7 +2696,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 - 警告(WARNING): {severity_summary['warning']} 个
 - 通过(PASSED): {severity_summary['passed']} 个
 测试目标提前达成: {'是' if objective_achieved else '否'}
-
+{_step_details_section}
 **重要**：引用步骤时请使用实际执行的步骤编号。测试计划了 {planned_steps_count} 步，但 UI Agent 实际执行了 {executed_steps_count} 步（包含元素定位、滚动等子步骤）。
 
 请先在第一行输出测试结果状态，然后输出详细摘要：
@@ -2695,7 +2742,7 @@ Step Execution Results:
 - Warnings (WARNING): {severity_summary['warning']}
 - Passed (PASSED): {severity_summary['passed']}
 Objective achieved early: {'Yes' if objective_achieved else 'No'}
-
+{_step_details_section}
 **Important**: Use executed step numbers when referencing steps. The test had {planned_steps_count} planned steps,
 but the UI Agent executed {executed_steps_count} detailed steps (including sub-steps for element location, scrolling, etc.).
 
