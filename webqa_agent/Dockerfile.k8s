@@ -23,9 +23,11 @@ RUN unzip -o /tmp/nuclei.zip -d /usr/local/bin/ \
     && chmod +x /usr/local/bin/nuclei \
     && rm /tmp/nuclei.zip
 
-# 安装 Python 依赖
+# 升级 pip 并配置清华镜像源，然后安装 Python 依赖
 COPY webqa_agent/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir --default-timeout=300 -r requirements.txt
+RUN pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple && \
+    pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
+    pip install --no-cache-dir --default-timeout=300 -r requirements.txt
 
 ENV PYTHONPATH=/app
 
