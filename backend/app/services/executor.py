@@ -307,6 +307,10 @@ async def _start_gen_executor(execution_id: str, gen_config_dict: Optional[Dict[
                 llm_cfg['api_key'] = settings.get_api_key_for_model(model_name)
             if not llm_cfg.get('base_url'):
                 llm_cfg['base_url'] = settings.get_base_url_for_model(model_name)
+            if not llm_cfg.get('max_tokens'):
+                llm_cfg['max_tokens'] = 8192
+            if not llm_cfg.get('max_tokens'):
+                llm_cfg['max_tokens'] = 8192
 
             api_key = llm_cfg.get('api_key', '')
             base_url = llm_cfg.get('base_url', '')
@@ -448,6 +452,8 @@ async def _start_gen_k8s(execution_id: str, gen_config_dict: Optional[Dict[str, 
                 llm_cfg['api_key'] = settings.get_api_key_for_model(model_name)
             if not llm_cfg.get('base_url'):
                 llm_cfg['base_url'] = settings.get_base_url_for_model(model_name)
+            if not llm_cfg.get('max_tokens'):
+                llm_cfg['max_tokens'] = 8192
 
             api_key = llm_cfg.get('api_key', '')
             base_url = llm_cfg.get('base_url', '')
@@ -1287,6 +1293,8 @@ async def _start_gen_docker(execution_id: str, gen_config_dict: Optional[Dict[st
                 llm_cfg['api_key'] = settings.get_api_key_for_model(model_name)
             if not llm_cfg.get('base_url'):
                 llm_cfg['base_url'] = settings.get_base_url_for_model(model_name)
+            if not llm_cfg.get('max_tokens'):
+                llm_cfg['max_tokens'] = 8192
 
             api_key = llm_cfg.get('api_key', '')
             base_url = llm_cfg.get('base_url', '')
