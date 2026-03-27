@@ -182,6 +182,11 @@ class TestFileLibrary:
                     logger.debug('Cannot stat file, skipping: %s', filepath)
                     continue
 
+                # Skip symlinks (followlinks=False only prevents directory symlinks)
+                if os.path.islink(filepath):
+                    logger.debug('TestFileLibrary: skipping symlink: %s', filepath)
+                    continue
+
                 if not os.path.isfile(filepath):
                     continue
 
@@ -291,7 +296,7 @@ class TestFileLibrary:
             cat: iter(entries) for cat, entries in by_category.items()
         }
         categories = cycle(sorted(category_iters.keys()))
-        exhausted: set = set()
+        exhausted: set[str] = set()
 
         while len(selected) < MAX_CATALOG_FILES and len(exhausted) < len(
             category_iters
@@ -322,6 +327,11 @@ class TestFileLibrary:
             True if the resolved path starts with the configured directory
             followed by os.sep, or equals the directory itself.
             False otherwise.
+
+        Note:
+            This validates directory containment only, not catalog membership.
+            Files excluded during scan (e.g., oversized) but within the directory
+            will still pass validation.
         """
         if not file_path:
             return False

@@ -116,6 +116,21 @@ class TestFileLibraryScan:
         names = {entry.name for entry in lib.files}
         assert 'locked.pdf' not in names
 
+    def test_scan_skips_symlinked_files(self, tmp_path):
+        """Symlinked files should not be indexed (prevents external path
+        leakage)."""
+        test_files_dir = tmp_path / 'test_files'
+        test_files_dir.mkdir()
+        (test_files_dir / 'real.txt').write_text('real content')
+        symlink = test_files_dir / 'link_to_external.txt'
+        try:
+            symlink.symlink_to('/etc/hosts')
+            library = TestFileLibrary(str(test_files_dir))
+            names = [f.name for f in library.files]
+            assert 'link_to_external.txt' not in names
+        except OSError:
+            pytest.skip('Cannot create symlinks on this OS')
+
     def test_scan_handles_nonexistent_directory(self, tmp_path):
         """Non-existent directory should result in empty file list."""
         nonexistent = str(tmp_path / 'does_not_exist')
