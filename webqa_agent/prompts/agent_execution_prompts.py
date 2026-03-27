@@ -648,6 +648,36 @@ Warning example:
     return system_prompt
 
 
+def get_file_upload_context(file_catalog: str) -> str:
+    """Generate file upload context section for the agent execution prompt.
+
+    Args:
+        file_catalog: LLM-readable file catalog from TestFileLibrary.
+
+    Returns:
+        Formatted prompt section with file catalog and selection rules.
+    """
+    return f"""
+
+## File Upload Testing
+When you encounter a file upload element on the page:
+1. Check the element's accept attribute and surrounding labels/text
+2. Select the most appropriate file from the available test files below
+3. Use the Upload action with the FULL file path as the value parameter
+
+{file_catalog}
+
+**Selection Rules:**
+- Match file type to the accept attribute (e.g., accept=".pdf" -> choose a .pdf file)
+- If accept allows multiple types, prefer the most common type for the page context
+- For batch upload (multiple attribute), make SEPARATE Upload action calls, one per file
+- If no matching file exists, skip the upload step
+
+**CRITICAL**: The value parameter MUST be the FULL absolute path exactly as shown
+in the file list above. Do NOT use just the filename.
+"""
+
+
 def get_category_guidelines(test_category: str) -> str:
     """Generate specific execution guidelines based on test category."""
 

@@ -60,8 +60,8 @@ from webqa_agent.executor.gen.utils.url_utils import (extract_domain,
 from webqa_agent.llm.llm_api import (EXTENDED_THINKING_EFFORT_MAPPING,
                                      get_llm_duration_stats,
                                      reset_llm_duration_stats)
-from webqa_agent.prompts.agent_execution_prompts import \
-    get_execute_system_prompt
+from webqa_agent.prompts.agent_execution_prompts import (
+    get_execute_system_prompt, get_file_upload_context)
 from webqa_agent.tools.base import ResponseTags
 from webqa_agent.tools.registry import get_registry
 from webqa_agent.utils.data_flow_reporter import (record_data_flow_event,
@@ -122,6 +122,17 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     logging.debug(
         f'Generated system prompt length: {len(system_prompt_string)} characters'
     )
+
+    # Inject file upload context if test file library is available
+    test_file_library = state.get('test_file_library')
+    if test_file_library:
+        file_catalog = test_file_library.get_catalog_for_llm()
+        if file_catalog:
+            system_prompt_string += get_file_upload_context(file_catalog)
+            logging.debug(
+                f'Injected file upload context ({len(file_catalog)} chars) '
+                f'into agent system prompt'
+            )
 
     llm_config = ui_tester_instance.llm.llm_config
     logging.info(f"{icon['running']} Agent worker for test case started: {case_name}")
