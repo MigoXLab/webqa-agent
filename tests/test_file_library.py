@@ -340,3 +340,61 @@ class TestGenConfigTestFilesDir:
             test_files_dir='/nonexistent/path/xyz',
         )
         assert config.test_files_dir is None
+
+
+@pytest.fixture
+def test_files_dir(tmp_path):
+    """Create a minimal test directory with a resume.pdf for integration
+    tests."""
+    pdf_file = tmp_path / 'resume.pdf'
+    pdf_file.write_bytes(b'%PDF-1.4 fake pdf content')
+    return tmp_path
+
+
+class TestIntegration:
+    """Integration tests for config -> library -> catalog flow."""
+
+    def test_genconfig_to_library_flow(self, test_files_dir):
+        """Test that GenConfig.test_files_dir correctly feeds
+        TestFileLibrary."""
+        config = GenConfig(
+            target_url='https://example.com',
+            llm_config=LLMConfig(model='gpt-4o', api_key='test-key'),
+            test_files_dir=str(test_files_dir),
+        )
+        assert config.test_files_dir is not None
+
+        library = TestFileLibrary(config.test_files_dir)
+        assert len(library.files) > 0
+
+        catalog = library.get_catalog_for_llm()
+        assert 'resume.pdf' in catalog
+        assert config.test_files_dir in catalog
+
+    def test_none_config_skips_library(self):
+        """Test that None test_files_dir means no library created."""
+        config = GenConfig(
+            target_url='https://example.com',
+            llm_config=LLMConfig(model='gpt-4o', api_key='test-key'),
+        )
+        assert config.test_files_dir is None
+        # Simulating gen_executor behavior: no library when dir is None
+        test_file_library = None
+        if config.test_files_dir:
+            test_file_library = TestFileLibrary(config.test_files_dir)
+        assert test_file_library is None
+
+    def test_path_validation_security(self, test_files_dir):
+        """Test end-to-end path validation security."""
+        library = TestFileLibrary(str(test_files_dir))
+
+        # Valid file inside directory
+        valid = str(test_files_dir / 'resume.pdf')
+        assert library.validate_file_path(valid) is True
+
+        # Traversal attack
+        evil = str(test_files_dir / '..' / '..' / 'etc' / 'passwd')
+        assert library.validate_file_path(evil) is False
+
+        # Completely unrelated path
+        assert library.validate_file_path('/tmp/random_file.pdf') is False
