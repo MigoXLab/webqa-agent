@@ -107,6 +107,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
     ui_tester_instance = config['configurable']['ui_tester_instance']
     ui_tester_instance.report_dir = report_dir
+    # Attach test file library for path security validation in action_tool
+    ui_tester_instance.test_file_library = state.get('test_file_library')
 
     case_recorder = config.get('configurable', {}).get('case_recorder')
     if case_recorder is None:
