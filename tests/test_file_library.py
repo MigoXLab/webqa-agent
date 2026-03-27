@@ -10,6 +10,8 @@ import platform
 
 import pytest
 
+from webqa_agent.config_models.base_config import LLMConfig
+from webqa_agent.config_models.gen_config import GenConfig
 from webqa_agent.utils.test_file_library import (MAX_CATALOG_FILES,
                                                  TestFileLibrary)
 
@@ -311,3 +313,30 @@ class TestFileLibraryPathValidation:
         # We'll just verify it doesn't crash
         result = lib.validate_file_path(str(file_library_dir))
         assert isinstance(result, bool)
+
+
+class TestGenConfigTestFilesDir:
+    """Tests for test_files_dir field in GenConfig."""
+
+    def test_default_is_none(self):
+        config = GenConfig(
+            target_url='https://example.com',
+            llm_config=LLMConfig(model='gpt-4o', api_key='test-key'),
+        )
+        assert config.test_files_dir is None
+
+    def test_valid_directory(self, tmp_path):
+        config = GenConfig(
+            target_url='https://example.com',
+            llm_config=LLMConfig(model='gpt-4o', api_key='test-key'),
+            test_files_dir=str(tmp_path),
+        )
+        assert config.test_files_dir == str(tmp_path)
+
+    def test_nonexistent_directory_becomes_none(self):
+        config = GenConfig(
+            target_url='https://example.com',
+            llm_config=LLMConfig(model='gpt-4o', api_key='test-key'),
+            test_files_dir='/nonexistent/path/xyz',
+        )
+        assert config.test_files_dir is None

@@ -327,6 +327,9 @@ async def execute_gen_mode(cfg, workers: int = 1):
     enable_reflection = tconf.get('enable_reflection', True)
     skip_reflection = not enable_reflection
 
+    # Test files directory for upload testing
+    test_files_dir = tconf.get('test_files_dir')
+
     # Build GenConfig
     gen_config = GenConfig(
         target_url=target_url,
@@ -339,6 +342,7 @@ async def execute_gen_mode(cfg, workers: int = 1):
         custom_tools=custom_tools_config,
         max_concurrent_tests=workers,
         skip_reflection=skip_reflection,
+        test_files_dir=test_files_dir,
     )
 
     # Display configuration

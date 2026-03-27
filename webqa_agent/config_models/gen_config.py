@@ -1,8 +1,10 @@
 """Gen mode configuration for AI-driven test generation."""
 
-from typing import List
+import logging
+import os
+from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from webqa_agent.config_models.base_config import (BrowserConfig, LLMConfig,
                                                    LogConfig, ReportConfig)
@@ -74,3 +76,22 @@ class GenConfig(BaseModel):
     skip_reflection: bool = Field(
         default=True, description='Skip reflection/self-correction phase'
     )
+
+    test_files_dir: Optional[str] = Field(
+        default=None,
+        description='Directory containing test files for upload testing. '
+                    'Agent scans this directory and auto-selects files '
+                    'when encountering upload controls in Gen mode.',
+    )
+
+    @field_validator('test_files_dir')
+    @classmethod
+    def validate_test_files_dir(cls, v: Optional[str]) -> Optional[str]:
+        """Resolve and validate test files directory path."""
+        if v is None:
+            return None
+        resolved = os.path.abspath(v)
+        if not os.path.isdir(resolved):
+            logging.warning(f'test_files_dir does not exist: {resolved}')
+            return None
+        return resolved
