@@ -47,7 +47,7 @@ jobs:
         timeout-minutes: 30
         with:
           context: .
-          file: ./Dockerfile
+          file: ./webqa_agent/Dockerfile
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.DOCKERHUB_USERNAME }}/webqa-agent:${{ steps.extract_tag.outputs.tag_name }}

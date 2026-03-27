@@ -263,6 +263,8 @@ Test reports are generated in the `reports/` directory. Open the HTML file to vi
 
 ## 🖥️ Deployment
 
+> **Note:** The web dashboard platform is currently only available in Chinese.
+
 For teams that need a **persistent web dashboard** with test management, scheduled tasks, and execution history, deploy the full-stack platform:
 
 | Method            | Use Case                    | Guide                                                  |
