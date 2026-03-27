@@ -168,7 +168,14 @@ class UITool(BaseTool):
         elif action == 'KeyboardPress':
             action_phrase = f'Press the {value} key'
         elif action == 'Upload':
-            action_phrase = f'Upload file {value} to {target}'
+            if value:
+                action_phrase = f'Upload file {value} to {target}'
+            else:
+                return (
+                    '[WARNING] Upload skipped: no test files available. '
+                    'Configure test_files_dir in config.yaml to enable '
+                    'file upload testing.'
+                )
         elif action == 'Drag':
             action_phrase = f'Drag {target}'
             if value:
@@ -213,7 +220,25 @@ class UITool(BaseTool):
             logging.debug(f'Executing UI action: {instruction}')
             start_time = datetime.datetime.now()
 
-            execution_steps, result = await self.ui_tester_instance.action(instruction)
+            # For Upload actions, validate path security and forward file_path
+            if action == 'Upload' and value:
+                # Security: validate file is within configured test_files_dir
+                test_file_library = getattr(
+                    self.ui_tester_instance, 'test_file_library', None
+                )
+                if test_file_library and not test_file_library.validate_file_path(value):
+                    return (
+                        f'[FAILURE:SECURITY] File path "{value}" is outside the '
+                        f'configured test_files_dir. Only files within the test '
+                        f'directory can be uploaded.'
+                    )
+                execution_steps, result = await self.ui_tester_instance.action(
+                    instruction, file_path=value
+                )
+            else:
+                execution_steps, result = await self.ui_tester_instance.action(
+                    instruction
+                )
 
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()
