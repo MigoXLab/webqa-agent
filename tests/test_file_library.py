@@ -304,15 +304,9 @@ class TestFileLibraryPathValidation:
         assert lib.validate_file_path('') is False
 
     def test_directory_itself_is_not_valid_file(self, file_library_dir):
-        """The directory path itself should not validate as a file path."""
+        """The directory path itself is not a valid upload file."""
         lib = TestFileLibrary(str(file_library_dir))
-        # The directory itself equals self._directory, but is not a file
-        # validate_file_path checks path containment, not file existence
-        # Per spec: "equals self._directory" is allowed
-        # But the directory IS the root, so this is an edge case
-        # We'll just verify it doesn't crash
-        result = lib.validate_file_path(str(file_library_dir))
-        assert isinstance(result, bool)
+        assert lib.validate_file_path(str(file_library_dir)) is False
 
 
 class TestGenConfigTestFilesDir:

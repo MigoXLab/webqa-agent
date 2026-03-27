@@ -226,7 +226,12 @@ class UITool(BaseTool):
                 test_file_library = getattr(
                     self.ui_tester_instance, 'test_file_library', None
                 )
-                if test_file_library and not test_file_library.validate_file_path(value):
+                if test_file_library is None:
+                    return (
+                        '[WARNING] Upload skipped: test_files_dir is not '
+                        'configured. Cannot validate file path security.'
+                    )
+                if not test_file_library.validate_file_path(value):
                     return (
                         f'[FAILURE:SECURITY] File path "{value}" is outside the '
                         f'configured test_files_dir. Only files within the test '

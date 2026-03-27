@@ -325,7 +325,7 @@ class TestFileLibrary:
 
         Returns:
             True if the resolved path starts with the configured directory
-            followed by os.sep, or equals the directory itself.
+            followed by os.sep. The directory itself is rejected (not a file).
             False otherwise.
 
         Note:
@@ -337,5 +337,5 @@ class TestFileLibrary:
             return False
 
         real_path = os.path.realpath(file_path)
-        # Must be inside the directory (with trailing separator) or equal to it
-        return real_path.startswith(self._directory + os.sep) or real_path == self._directory
+        # Must be strictly inside the directory (directory itself is not a valid file)
+        return real_path.startswith(self._directory + os.sep)

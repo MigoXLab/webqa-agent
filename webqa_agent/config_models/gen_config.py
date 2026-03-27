@@ -90,7 +90,7 @@ class GenConfig(BaseModel):
         """Resolve and validate test files directory path."""
         if v is None:
             return None
-        resolved = os.path.abspath(v)
+        resolved = os.path.realpath(v)
         if not os.path.isdir(resolved):
             logging.warning(f'test_files_dir does not exist: {resolved}')
             return None
