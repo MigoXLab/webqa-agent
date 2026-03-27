@@ -37,7 +37,7 @@ llm_config: # LLM configuration, supports OpenAI, Anthropic Claude, and Google G
   # OpenAI Configuration Example
   # =========================
   api: openai
-  model: gpt-4.1-2025-04-14  # Primary model for Stage 2 test planning (Recommended)
+  model: gpt-5.4  # Primary model for Stage 2 test planning (Recommended)
   filter_model: gpt-4o-mini  # Lightweight model for Stage 1 element filtering (cost-effective)
   api_key: your_openai_api_key  # Or set OPENAI_API_KEY environment variable
   base_url: https://api.openai.com/v1  # Optional, OpenAI default endpoint
@@ -55,7 +55,7 @@ llm_config: # LLM configuration, supports OpenAI, Anthropic Claude, and Google G
   # =========================
   # Anthropic Claude Configuration Example
   # =========================
-  # model: claude-sonnet-4-5-20250929  # Claude 4.5 Sonnet (Recommended for testing)
+  # model: claude-sonnet-4-6  # Claude 4.6 Sonnet (Recommended for testing)
   # filter_model: claude-haiku-4-5-20251001  # Claude 4.5 Haiku (Fast & cost-effective filtering)
   # api_key: your_anthropic_api_key  # Or set ANTHROPIC_API_KEY environment variable
   # base_url:  # Optional, leave empty to use Anthropic default
@@ -81,8 +81,8 @@ llm_config: # LLM configuration, supports OpenAI, Anthropic Claude, and Google G
   # =========================
   # Google Gemini Configuration Example (RECOMMENDED)
   # =========================
-  # model: gemini-3-flash-preview  # Latest Gemini 3 Flash (recommended default)
-  # filter_model: gemini-2.5-flash-lite  # Cost-effective filtering
+  # model: gemini-3.1-pro-preview  # Latest Gemini 3 Flash (recommended default)
+  # filter_model: gemini-3-flash-preview  # Cost-effective filtering
   # api_key: your_gemini_api_key  # Or set GEMINI_API_KEY environment variable
   # temperature: 1.0  # Default 1.0 for Gemini (Google best practice)
   # max_tokens: 8192  # Recommended for comprehensive test generation
@@ -101,10 +101,7 @@ llm_config: # LLM configuration, supports OpenAI, Anthropic Claude, and Google G
   #
   # Recommended Gemini Models (with usage scenarios):
   # - gemini-3-flash-preview: Pro-level intelligence at Flash speed (recommended default for general testing)
-  # - gemini-3-pro-preview: Best for complex reasoning tasks (advanced test generation, edge case detection)
-  # - gemini-2.5-pro: Production-ready model (stable, high quality for enterprise use)
-  # - gemini-2.5-flash: General purpose testing (balanced speed/quality, cost-effective)
-  # - gemini-2.5-flash-lite: Lightweight filtering (Stage 1 element prioritization only)
+  # - gemini-3.1-pro-preview: Best for complex reasoning tasks (advanced test generation, edge case detection)
 
 browser_config:
   viewport: {"width": 1280, "height": 720}
