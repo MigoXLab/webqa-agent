@@ -379,6 +379,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             all_page_links=all_page_links,
             navigation_map=navigation_map,
             enabled_custom_tools=enabled_custom_tools,
+            has_test_files=state.get('test_file_library') is not None,
         )
         record_data_flow_event(
             stage='planning',

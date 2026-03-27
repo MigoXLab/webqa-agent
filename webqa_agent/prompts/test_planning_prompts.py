@@ -740,6 +740,7 @@ def get_test_case_planning_system_prompt(
     business_objectives: str,
     language: str = 'zh-CN',
     enabled_custom_tools: list[str] | None = None,
+    has_test_files: bool = False,
 ) -> str:
     """Generate system prompt for test case planning.
 
@@ -748,6 +749,7 @@ def get_test_case_planning_system_prompt(
         language: Language for test case naming (zh-CN or en-US)
         enabled_custom_tools: List of enabled custom tool step_types to include.
                             If None, includes all custom tools.
+        has_test_files: Whether test files are configured for upload testing.
 
     Returns:
         Formatted system prompt string
@@ -1000,6 +1002,17 @@ Your response must be ONLY in JSON format. Do not include any analysis, explanat
 
 """
 
+    if has_test_files:
+        system_prompt += """
+
+## File Upload Testing
+When you identify file upload controls (input[type="file"]) on the page:
+- Include upload actions in your test steps with natural language descriptions
+- Example step: "Upload a PDF resume to the file upload area"
+- The agent will automatically select appropriate files during execution
+- Consider testing: successful file upload, verify uploaded filename appears on page
+"""
+
     return system_prompt
 
 
@@ -1197,6 +1210,7 @@ def get_planning_prompt(
     all_page_links: list = None,
     navigation_map: dict = None,
     enabled_custom_tools: list[str] | None = None,
+    has_test_files: bool = False,
 ) -> tuple[str, str]:
     """Generate prompts for planning (returns system and user prompt).
 
@@ -1210,12 +1224,13 @@ def get_planning_prompt(
         navigation_map: Element-to-URL correlation mapping for navigation testing
         enabled_custom_tools: List of enabled custom tool step_types to include.
                             If None, includes all custom tools.
+        has_test_files: Whether test files are configured for upload testing.
 
     Returns:
         tuple: (system_prompt, user_prompt)
     """
     system_prompt = get_test_case_planning_system_prompt(
-        business_objectives, language, enabled_custom_tools
+        business_objectives, language, enabled_custom_tools, has_test_files
     )
     user_prompt = get_test_case_planning_user_prompt(
         state_url, page_text_summary, priority_elements, all_page_links, navigation_map
