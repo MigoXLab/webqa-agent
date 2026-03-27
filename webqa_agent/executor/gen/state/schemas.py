@@ -29,6 +29,7 @@ class MainGraphState(TypedDict):
     llm_config: Optional[dict]           # LLM config for creating UITester
     report_config: Optional[dict]        # Report config
     browser_config: Optional[dict]       # Browser config
+    test_file_library: Any               # TestFileLibrary instance (optional)
 
     # Output
     final_report: Optional[dict]
