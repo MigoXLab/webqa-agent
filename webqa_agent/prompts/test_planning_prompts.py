@@ -740,7 +740,7 @@ def get_test_case_planning_system_prompt(
     business_objectives: str,
     language: str = 'zh-CN',
     enabled_custom_tools: list[str] | None = None,
-    has_test_files: bool = False,
+    file_catalog: str = '',
 ) -> str:
     """Generate system prompt for test case planning.
 
@@ -749,7 +749,8 @@ def get_test_case_planning_system_prompt(
         language: Language for test case naming (zh-CN or en-US)
         enabled_custom_tools: List of enabled custom tool step_types to include.
                             If None, includes all custom tools.
-        has_test_files: Whether test files are configured for upload testing.
+        file_catalog: Formatted file catalog string from TestFileLibrary.get_catalog_for_llm().
+                      Empty string means no test files configured.
 
     Returns:
         Formatted system prompt string
@@ -1002,15 +1003,21 @@ Your response must be ONLY in JSON format. Do not include any analysis, explanat
 
 """
 
-    if has_test_files:
-        system_prompt += """
+    if file_catalog:
+        system_prompt += f"""
 
 ## File Upload Testing
+File upload is a SINGLE action step. The Upload action automatically handles clicking the file input
+and injecting the file — do NOT plan separate "Click upload button" and "Upload file" steps.
+
 When you identify file upload controls (input[type="file"]) on the page:
-- Include upload actions in your test steps with natural language descriptions
-- Example step: "Upload a PDF resume to the file upload area"
-- The agent will automatically select appropriate files during execution
-- Consider testing: successful file upload, verify uploaded filename appears on page
+- Include ONE upload step per file, using only filenames from the available test files below
+- Do NOT invent filenames; use only files from the list below
+- Example step format: "Upload bench.pdf to the file upload field"
+- Consider testing: successful upload, verify the filename appears on page
+
+Available test files:
+{file_catalog}
 """
 
     return system_prompt
@@ -1210,7 +1217,7 @@ def get_planning_prompt(
     all_page_links: list = None,
     navigation_map: dict = None,
     enabled_custom_tools: list[str] | None = None,
-    has_test_files: bool = False,
+    file_catalog: str = '',
 ) -> tuple[str, str]:
     """Generate prompts for planning (returns system and user prompt).
 
@@ -1224,13 +1231,14 @@ def get_planning_prompt(
         navigation_map: Element-to-URL correlation mapping for navigation testing
         enabled_custom_tools: List of enabled custom tool step_types to include.
                             If None, includes all custom tools.
-        has_test_files: Whether test files are configured for upload testing.
+        file_catalog: Formatted file catalog string from TestFileLibrary.get_catalog_for_llm().
+                      Empty string means no test files configured.
 
     Returns:
         tuple: (system_prompt, user_prompt)
     """
     system_prompt = get_test_case_planning_system_prompt(
-        business_objectives, language, enabled_custom_tools, has_test_files
+        business_objectives, language, enabled_custom_tools, file_catalog
     )
     user_prompt = get_test_case_planning_user_prompt(
         state_url, page_text_summary, priority_elements, all_page_links, navigation_map

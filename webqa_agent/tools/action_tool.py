@@ -41,13 +41,15 @@ class UIActionSchema(BaseModel):
         )
     )
 
-    target: str = Field(
+    target: Optional[str] = Field(
+        default=None,
         description=(
             'Element identifier or selector to target. '
             'For most actions, this should be the element ID from the page description. '
             'For Scroll actions, this can be a scroll target description. '
-            'For GoToPage action, this should be the URL.'
-        )
+            'For GoToPage action, this should be the URL. '
+            'Not required for page-agnostic actions like Sleep and GoBack.'
+        ),
     )
 
     value: Optional[str] = Field(
@@ -121,11 +123,16 @@ class UITool(BaseTool):
         logging.debug(f'Page structure length: {len(page_structure)} characters')
         return page_structure, screenshot
 
-    def _run(self, action: str, target: str, **kwargs) -> str:
+    def _run(self, action: str, target: Optional[str] = None, **kwargs) -> str:
         raise NotImplementedError('Use arun for asynchronous execution.')
 
+    # Actions that require a target element — fast-fail if missing
+    _ACTIONS_REQUIRING_TARGET = frozenset({
+        'Tap', 'Input', 'SelectDropdown', 'Clear', 'Hover', 'Drag', 'GoToPage',
+    })
+
     async def _arun(
-        self, action: str, target: str, value: Optional[str] = None, description: Optional[str] = None, clear_before_type: bool = False
+        self, action: str, target: Optional[str] = None, value: Optional[str] = None, description: Optional[str] = None, clear_before_type: bool = False
     ) -> str:
         """Executes a UI action using the UITester and returns a formatted
         summary of the result."""
@@ -134,6 +141,13 @@ class UITool(BaseTool):
             logging.error(error_msg)
             return f'[FAILURE] Error: {error_msg}'
         tool_started = time.perf_counter()
+
+        # Fast-fail for actions that require a target element
+        if action in self._ACTIONS_REQUIRING_TARGET and not target:
+            return (
+                f'[FAILURE:VALIDATION_ERROR] Action {action!r} requires a target '
+                f'element, but none was provided.'
+            )
 
         logging.debug(f'=== Executing UI Action: {action} ===')
         logging.debug(f'Target: {target}')
@@ -169,7 +183,7 @@ class UITool(BaseTool):
             action_phrase = f'Press the {value} key'
         elif action == 'Upload':
             if value:
-                action_phrase = f'Upload file {value} to {target}'
+                action_phrase = f"Upload file {value} to {target or 'the file input'}"
             else:
                 return (
                     '[WARNING] Upload skipped: no test files available. '
@@ -189,12 +203,12 @@ class UITool(BaseTool):
         elif action == 'Mouse':
             if value and 'move:' in value.lower():
                 # Extract coordinates from 'move:x,y' format
-                action_phrase = f"Move mouse cursor to coordinates {value.split(':', 1)[1]} (specified as {target})"
+                action_phrase = f"Move mouse cursor to coordinates {value.split(':', 1)[1]} (specified as {target or 'the element'})"
             elif value and 'wheel:' in value.lower():
                 # Extract delta values from 'wheel:deltaX,deltaY' format
-                action_phrase = f"Scroll mouse wheel by {value.split(':', 1)[1]} (on {target})"
+                action_phrase = f"Scroll mouse wheel by {value.split(':', 1)[1]} (on {target or 'the element'})"
             else:
-                action_phrase = f"Perform mouse action on {target} with value '{value}'"
+                action_phrase = f"Perform mouse action on {target or 'the element'} with value '{value}'"
         else:
             # Improved fallback logic to avoid malformed phrases like "action on "
             if target:
