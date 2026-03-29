@@ -1,73 +1,73 @@
 """Tests for the LLM-first + Safety Guard status determination logic.
 
 Tests cover:
-- _parse_llm_status: LLM output STATUS parsing with normalization
-- _apply_safety_guard: CRITICAL/HARD_FAIL safety overrides
-- _derive_failure_type_from_outcomes: failure_type derivation
-- _verdict_fallback: deterministic fallback when LLM STATUS is missing
+- parse_llm_status: LLM output STATUS parsing with normalization
+- apply_safety_guard: CRITICAL/HARD_FAIL safety overrides
+- derive_failure_type_from_outcomes: failure_type derivation
+- verdict_fallback: deterministic fallback when LLM STATUS is missing
 """
 
 from webqa_agent.data.gen_structures import StepOutcome, StepSeverity
-from webqa_agent.executor.gen.agents.execute_agent import (
-    _apply_safety_guard, _derive_failure_type_from_outcomes, _parse_llm_status,
-    _verdict_fallback)
+from webqa_agent.executor.gen.agents.status_determination import (
+    apply_safety_guard, derive_failure_type_from_outcomes, parse_llm_status,
+    verdict_fallback)
 
 # ============================================================================
-# _parse_llm_status tests
+# parse_llm_status tests
 # ============================================================================
 
 
 class TestParseLlmStatus:
-    """Tests for _parse_llm_status()."""
+    """Tests for parse_llm_status()."""
 
     def test_parse_passed(self) -> None:
-        assert _parse_llm_status('STATUS: passed\nFINAL_SUMMARY: ...') == 'passed'
+        assert parse_llm_status('STATUS: passed\nFINAL_SUMMARY: ...') == 'passed'
 
     def test_parse_failed(self) -> None:
-        assert _parse_llm_status('STATUS: failed\nFINAL_SUMMARY: ...') == 'failed'
+        assert parse_llm_status('STATUS: failed\nFINAL_SUMMARY: ...') == 'failed'
 
     def test_parse_warning(self) -> None:
-        assert _parse_llm_status('STATUS: warning\nFINAL_SUMMARY: ...') == 'warning'
+        assert parse_llm_status('STATUS: warning\nFINAL_SUMMARY: ...') == 'warning'
 
     def test_parse_case_insensitive(self) -> None:
-        assert _parse_llm_status('Status: PASSED\nFINAL_SUMMARY: ...') == 'passed'
-        assert _parse_llm_status('STATUS: Failed\nFINAL_SUMMARY: ...') == 'failed'
+        assert parse_llm_status('Status: PASSED\nFINAL_SUMMARY: ...') == 'passed'
+        assert parse_llm_status('STATUS: Failed\nFINAL_SUMMARY: ...') == 'failed'
 
     def test_parse_variant_pass(self) -> None:
-        assert _parse_llm_status('STATUS: pass\nFINAL_SUMMARY: ...') == 'passed'
+        assert parse_llm_status('STATUS: pass\nFINAL_SUMMARY: ...') == 'passed'
 
     def test_parse_variant_fail(self) -> None:
-        assert _parse_llm_status('STATUS: fail\nFINAL_SUMMARY: ...') == 'failed'
+        assert parse_llm_status('STATUS: fail\nFINAL_SUMMARY: ...') == 'failed'
 
     def test_parse_variant_success(self) -> None:
-        assert _parse_llm_status('STATUS: success\nFINAL_SUMMARY: ...') == 'passed'
+        assert parse_llm_status('STATUS: success\nFINAL_SUMMARY: ...') == 'passed'
 
     def test_parse_variant_failure(self) -> None:
-        assert _parse_llm_status('STATUS: failure\nFINAL_SUMMARY: ...') == 'failed'
+        assert parse_llm_status('STATUS: failure\nFINAL_SUMMARY: ...') == 'failed'
 
     def test_parse_missing_returns_none(self) -> None:
-        assert _parse_llm_status('FINAL_SUMMARY: Test completed.') is None
+        assert parse_llm_status('FINAL_SUMMARY: Test completed.') is None
 
     def test_parse_empty_returns_none(self) -> None:
-        assert _parse_llm_status('') is None
+        assert parse_llm_status('') is None
 
     def test_parse_none_returns_none(self) -> None:
         # Explicitly pass empty string (function signature expects str)
-        assert _parse_llm_status('') is None
+        assert parse_llm_status('') is None
 
     def test_parse_with_trailing_text(self) -> None:
-        result = _parse_llm_status('STATUS: passed (all criteria met)\nFINAL_SUMMARY: ...')
+        result = parse_llm_status('STATUS: passed (all criteria met)\nFINAL_SUMMARY: ...')
         assert result == 'passed'
 
     def test_parse_with_whitespace(self) -> None:
-        assert _parse_llm_status('STATUS:  passed\nFINAL_SUMMARY: ...') == 'passed'
+        assert parse_llm_status('STATUS:  passed\nFINAL_SUMMARY: ...') == 'passed'
 
     def test_parse_invalid_status_value(self) -> None:
-        assert _parse_llm_status('STATUS: unknown\nFINAL_SUMMARY: ...') is None
+        assert parse_llm_status('STATUS: unknown\nFINAL_SUMMARY: ...') is None
 
 
 # ============================================================================
-# _apply_safety_guard tests
+# apply_safety_guard tests
 # ============================================================================
 
 
@@ -77,42 +77,42 @@ def _make_outcome(severity: StepSeverity, step_index: int = 1) -> StepOutcome:
 
 
 class TestApplySafetyGuard:
-    """Tests for _apply_safety_guard()."""
+    """Tests for apply_safety_guard()."""
 
     def test_critical_overrides_passed(self) -> None:
         outcomes = [_make_outcome(StepSeverity.CRITICAL)]
-        assert _apply_safety_guard('passed', outcomes) == 'failed'
+        assert apply_safety_guard('passed', outcomes) == 'failed'
 
     def test_critical_overrides_warning(self) -> None:
         outcomes = [_make_outcome(StepSeverity.CRITICAL)]
-        assert _apply_safety_guard('warning', outcomes) == 'failed'
+        assert apply_safety_guard('warning', outcomes) == 'failed'
 
     def test_critical_keeps_failed(self) -> None:
         outcomes = [_make_outcome(StepSeverity.CRITICAL)]
-        assert _apply_safety_guard('failed', outcomes) == 'failed'
+        assert apply_safety_guard('failed', outcomes) == 'failed'
 
     def test_hard_fail_overrides_passed(self) -> None:
         outcomes = [_make_outcome(StepSeverity.HARD_FAIL)]
-        assert _apply_safety_guard('passed', outcomes) == 'failed'
+        assert apply_safety_guard('passed', outcomes) == 'failed'
 
     def test_hard_fail_overrides_warning(self) -> None:
         outcomes = [_make_outcome(StepSeverity.HARD_FAIL)]
-        assert _apply_safety_guard('warning', outcomes) == 'failed'
+        assert apply_safety_guard('warning', outcomes) == 'failed'
 
     def test_hard_fail_keeps_failed(self) -> None:
         outcomes = [_make_outcome(StepSeverity.HARD_FAIL)]
-        assert _apply_safety_guard('failed', outcomes) == 'failed'
+        assert apply_safety_guard('failed', outcomes) == 'failed'
 
     def test_no_hard_failures_keeps_original(self) -> None:
         outcomes = [_make_outcome(StepSeverity.PASSED), _make_outcome(StepSeverity.SOFT_FAIL)]
-        assert _apply_safety_guard('passed', outcomes) == 'passed'
-        assert _apply_safety_guard('warning', outcomes) == 'warning'
-        assert _apply_safety_guard('failed', outcomes) == 'failed'
+        assert apply_safety_guard('passed', outcomes) == 'passed'
+        assert apply_safety_guard('warning', outcomes) == 'warning'
+        assert apply_safety_guard('failed', outcomes) == 'failed'
 
     def test_empty_outcomes_keeps_original(self) -> None:
-        assert _apply_safety_guard('passed', []) == 'passed'
-        assert _apply_safety_guard('failed', []) == 'failed'
-        assert _apply_safety_guard('warning', []) == 'warning'
+        assert apply_safety_guard('passed', []) == 'passed'
+        assert apply_safety_guard('failed', []) == 'failed'
+        assert apply_safety_guard('warning', []) == 'warning'
 
     def test_mixed_critical_and_hard_fail(self) -> None:
         """CRITICAL takes priority over HARD_FAIL."""
@@ -120,36 +120,36 @@ class TestApplySafetyGuard:
             _make_outcome(StepSeverity.CRITICAL),
             _make_outcome(StepSeverity.HARD_FAIL, step_index=2),
         ]
-        assert _apply_safety_guard('passed', outcomes) == 'failed'
-        assert _apply_safety_guard('warning', outcomes) == 'failed'
+        assert apply_safety_guard('passed', outcomes) == 'failed'
+        assert apply_safety_guard('warning', outcomes) == 'failed'
 
 
 # ============================================================================
-# _derive_failure_type_from_outcomes tests
+# derive_failure_type_from_outcomes tests
 # ============================================================================
 
 
 class TestDeriveFailureTypeFromOutcomes:
-    """Tests for _derive_failure_type_from_outcomes()."""
+    """Tests for derive_failure_type_from_outcomes()."""
 
     def test_critical(self) -> None:
         outcomes = [_make_outcome(StepSeverity.CRITICAL)]
-        assert _derive_failure_type_from_outcomes(outcomes) == 'critical'
+        assert derive_failure_type_from_outcomes(outcomes) == 'critical'
 
     def test_hard_fail(self) -> None:
         outcomes = [_make_outcome(StepSeverity.HARD_FAIL)]
-        assert _derive_failure_type_from_outcomes(outcomes) == 'product_defect'
+        assert derive_failure_type_from_outcomes(outcomes) == 'product_defect'
 
     def test_soft_fail(self) -> None:
         outcomes = [_make_outcome(StepSeverity.SOFT_FAIL)]
-        assert _derive_failure_type_from_outcomes(outcomes) == 'infrastructure'
+        assert derive_failure_type_from_outcomes(outcomes) == 'infrastructure'
 
     def test_empty(self) -> None:
-        assert _derive_failure_type_from_outcomes([]) == 'recoverable'
+        assert derive_failure_type_from_outcomes([]) == 'recoverable'
 
     def test_only_passed(self) -> None:
         outcomes = [_make_outcome(StepSeverity.PASSED)]
-        assert _derive_failure_type_from_outcomes(outcomes) == 'recoverable'
+        assert derive_failure_type_from_outcomes(outcomes) == 'recoverable'
 
     def test_mixed_critical_wins(self) -> None:
         outcomes = [
@@ -158,82 +158,82 @@ class TestDeriveFailureTypeFromOutcomes:
             _make_outcome(StepSeverity.HARD_FAIL, step_index=3),
             _make_outcome(StepSeverity.CRITICAL, step_index=4),
         ]
-        assert _derive_failure_type_from_outcomes(outcomes) == 'critical'
+        assert derive_failure_type_from_outcomes(outcomes) == 'critical'
 
     def test_hard_fail_over_soft_fail(self) -> None:
         outcomes = [
             _make_outcome(StepSeverity.SOFT_FAIL),
             _make_outcome(StepSeverity.HARD_FAIL, step_index=2),
         ]
-        assert _derive_failure_type_from_outcomes(outcomes) == 'product_defect'
+        assert derive_failure_type_from_outcomes(outcomes) == 'product_defect'
 
 
 # ============================================================================
-# _verdict_fallback tests
+# verdict_fallback tests
 # ============================================================================
 
 
 class TestVerdictFallback:
-    """Tests for _verdict_fallback()."""
+    """Tests for verdict_fallback()."""
 
     def test_all_passed(self) -> None:
         outcomes = [_make_outcome(StepSeverity.PASSED)]
-        status, failure_type = _verdict_fallback(outcomes, [], False)
+        status, failure_type = verdict_fallback(outcomes, [], False)
         assert status == 'passed'
         assert failure_type is None
 
     def test_critical(self) -> None:
         outcomes = [_make_outcome(StepSeverity.CRITICAL)]
-        status, failure_type = _verdict_fallback(outcomes, [], False)
+        status, failure_type = verdict_fallback(outcomes, [], False)
         assert status == 'failed'
         assert failure_type == 'critical'
 
     def test_hard_fail(self) -> None:
         outcomes = [_make_outcome(StepSeverity.HARD_FAIL)]
-        status, failure_type = _verdict_fallback(outcomes, [], False)
+        status, failure_type = verdict_fallback(outcomes, [], False)
         assert status == 'failed'
         assert failure_type == 'product_defect'
 
     def test_objective_achieved(self) -> None:
         outcomes = [_make_outcome(StepSeverity.SOFT_FAIL)]
-        status, failure_type = _verdict_fallback(outcomes, [], True)
+        status, failure_type = verdict_fallback(outcomes, [], True)
         assert status == 'passed'
         assert failure_type is None
 
     def test_soft_fail_no_objective(self) -> None:
         outcomes = [_make_outcome(StepSeverity.SOFT_FAIL)]
-        status, failure_type = _verdict_fallback(outcomes, [], False)
+        status, failure_type = verdict_fallback(outcomes, [], False)
         assert status == 'failed'
         assert failure_type == 'infrastructure'
 
     def test_warning_steps(self) -> None:
         outcomes = [_make_outcome(StepSeverity.PASSED)]
-        status, failure_type = _verdict_fallback(outcomes, [1], False)
+        status, failure_type = verdict_fallback(outcomes, [1], False)
         assert status == 'warning'
         assert failure_type is None
 
     def test_empty_outcomes(self) -> None:
-        status, failure_type = _verdict_fallback([], [], False)
+        status, failure_type = verdict_fallback([], [], False)
         assert status == 'passed'
         assert failure_type is None
 
     def test_only_skipped(self) -> None:
         outcomes = [_make_outcome(StepSeverity.SKIPPED)]
-        status, failure_type = _verdict_fallback(outcomes, [], False)
+        status, failure_type = verdict_fallback(outcomes, [], False)
         assert status == 'passed'
         assert failure_type is None
 
     def test_critical_overrides_objective(self) -> None:
         """CRITICAL should fail even if objective_achieved is True."""
         outcomes = [_make_outcome(StepSeverity.CRITICAL)]
-        status, failure_type = _verdict_fallback(outcomes, [], True)
+        status, failure_type = verdict_fallback(outcomes, [], True)
         assert status == 'failed'
         assert failure_type == 'critical'
 
     def test_hard_fail_overrides_objective(self) -> None:
         """HARD_FAIL should fail even if objective_achieved is True."""
         outcomes = [_make_outcome(StepSeverity.HARD_FAIL)]
-        status, failure_type = _verdict_fallback(outcomes, [], True)
+        status, failure_type = verdict_fallback(outcomes, [], True)
         assert status == 'failed'
         assert failure_type == 'product_defect'
 
@@ -262,7 +262,7 @@ class TestSystemErrorSafetyGuardBypass:
         if code_failure_type == 'system_error':
             status = code_determined_status  # bypass
         else:
-            status = _apply_safety_guard(code_determined_status, outcomes)
+            status = apply_safety_guard(code_determined_status, outcomes)
 
         assert status == 'warning', (
             f'Expected warning (system error bypass), got {status}'
@@ -277,7 +277,7 @@ class TestSystemErrorSafetyGuardBypass:
         if code_failure_type == 'system_error':
             status = code_determined_status
         else:
-            status = _apply_safety_guard(code_determined_status, outcomes)
+            status = apply_safety_guard(code_determined_status, outcomes)
 
         assert status == 'warning', (
             f'Expected warning (system error bypass), got {status}'
@@ -292,7 +292,7 @@ class TestSystemErrorSafetyGuardBypass:
         if code_failure_type == 'system_error':
             status = code_determined_status
         else:
-            status = _apply_safety_guard(code_determined_status, outcomes)
+            status = apply_safety_guard(code_determined_status, outcomes)
 
         assert status == 'failed', (
             f'Expected failed (safety guard override), got {status}'

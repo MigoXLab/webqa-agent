@@ -11,10 +11,9 @@ import json
 import logging
 import re
 import time
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Dict, List, Optional, Set
 
 from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
@@ -28,1498 +27,49 @@ except ImportError:
     LANGCHAIN_ANTHROPIC_AVAILABLE = False
     ChatAnthropic = None  # Type placeholder
 
-from webqa_agent.actions.action_types import (ActionType,
-                                              get_page_agnostic_keywords)
 from webqa_agent.crawler.deep_crawler import DeepCrawler
 from webqa_agent.data.gen_structures import StepOutcome, StepSeverity
+from webqa_agent.executor.gen.agents.dynamic_step_generator import \
+    generate_dynamic_steps_with_llm
+from webqa_agent.executor.gen.agents.status_determination import (
+    apply_safety_guard, derive_failure_type_from_outcomes, detect_llm_provider,
+    extract_failed_step_details, is_critical_failure_step,
+    is_navigation_instruction, is_objective_achieved,
+    is_operation_page_agnostic, parse_llm_status, verdict_fallback)
+from webqa_agent.executor.gen.agents.step_helpers import (
+    build_user_summary, contains_failure_indicators, i18n, is_similar_step,
+    make_final_summary, parse_user_summary, sanitize_message_for_summary)
 from webqa_agent.executor.gen.utils.case_recorder import CentralCaseRecorder
+from webqa_agent.executor.gen.utils.content_extraction import (
+    extract_dom_diff_from_output, extract_text_content,
+    safe_get_intermediate_step)
 from webqa_agent.executor.gen.utils.error_classifier import (
     get_system_error_summary, is_system_error)
 from webqa_agent.executor.gen.utils.message_converter import \
     convert_intermediate_steps_to_messages
-from webqa_agent.executor.gen.utils.summary_utils import (i18n_select,
-                                                          make_user_summary)
+from webqa_agent.executor.gen.utils.token_timing import (
+    LONG_STEPS, RETRY_STABILIZATION_DELAY, StepLLMTimingCallback,
+    build_time_breakdown, extract_token_usage_from_result,
+    instrumented_ainvoke)
+from webqa_agent.executor.gen.utils.tool_config import (get_dynamic_config,
+                                                        get_tools,
+                                                        parse_step_type)
+from webqa_agent.executor.gen.utils.url_utils import (extract_domain,
+                                                      extract_path,
+                                                      normalize_url)
 from webqa_agent.llm.llm_api import (EXTENDED_THINKING_EFFORT_MAPPING,
-                                     accumulate_llm_duration_stats,
-                                     extract_usage_details,
                                      get_llm_duration_stats,
                                      reset_llm_duration_stats)
 from webqa_agent.prompts.agent_execution_prompts import \
     get_execute_system_prompt
-from webqa_agent.prompts.test_planning_prompts import \
-    get_dynamic_step_generation_prompt
-from webqa_agent.tools.action_tool import UITool
-from webqa_agent.tools.base import ActionTypes, ResponseTags
+from webqa_agent.tools.base import ResponseTags
 from webqa_agent.tools.registry import get_registry
-from webqa_agent.tools.ux_tool import UIUXViewportTool
-from webqa_agent.tools.verify_tool import UIAssertTool
 from webqa_agent.utils.data_flow_reporter import (record_data_flow_event,
                                                   serialize_intermediate_steps,
                                                   serialize_langchain_message)
 from webqa_agent.utils.log_icon import icon
 from webqa_agent.utils.timing_breakdown import (get_tool_timing_bucket,
                                                 reset_tool_timing_bucket)
-
-
-def _normalize_token_usage(raw: Any) -> dict[str, int]:
-    """Normalize a provider-agnostic token usage dict/object to standard 3-key
-    dict.
-
-    Handles both OpenAI style (prompt_tokens/completion_tokens) and
-    Anthropic/LangChain style (input_tokens/output_tokens).  Always returns
-    ``{'prompt_tokens': int, 'completion_tokens': int, 'total_tokens': int}``
-    with 0 defaults.
-    """
-    if raw is None:
-        return {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}
-    d = raw if isinstance(raw, dict) else (dict(raw) if hasattr(raw, '__iter__') else {})
-    prompt = int(d.get('prompt_tokens', 0) or d.get('input_tokens', 0))
-    completion = int(d.get('completion_tokens', 0) or d.get('output_tokens', 0))
-    total = int(d.get('total_tokens', 0))
-    if total == 0:
-        total = prompt + completion
-    return {'prompt_tokens': prompt, 'completion_tokens': completion, 'total_tokens': total}
-
-
-LONG_STEPS = 30
-RETRY_STABILIZATION_DELAY = 1.0
-MIN_RECOVERY_CONFIDENCE = 0.7
-
-
-class StepLLMTimingCallback(BaseCallbackHandler):
-    """Collect llm call durations for one step execution."""
-
-    def __init__(self) -> None:
-        self._starts: dict[str, float] = {}
-        self._duration_seconds: float = 0.0
-
-    def reset_step(self) -> None:
-        self._starts.clear()
-        self._duration_seconds = 0.0
-
-    def consume_step_duration(self) -> float:
-        duration = self._duration_seconds
-        self.reset_step()
-        return duration
-
-    def on_llm_start(self, serialized: dict[str, Any], prompts: list[str], **kwargs: Any) -> None:
-        _ = serialized
-        _ = prompts
-        run_id = kwargs.get('run_id')
-        if run_id is not None:
-            self._starts[str(run_id)] = time.perf_counter()
-
-    def on_llm_end(self, response: Any, **kwargs: Any) -> None:
-        run_id = kwargs.get('run_id')
-        if run_id is None:
-            return
-        start = self._starts.pop(str(run_id), None)
-        if start is not None:
-            self._duration_seconds += max(time.perf_counter() - start, 0.0)
-
-        # Extract token usage from LLMResult and accumulate into shared stats
-        try:
-            usage_dict: dict[str, int] | None = None
-            llm_output = getattr(response, 'llm_output', None) or {}
-
-            # Path 1: OpenAI — llm_output['token_usage']
-            raw = llm_output.get('token_usage') or llm_output.get('usage')
-            if raw and isinstance(raw, dict):
-                usage_dict = _normalize_token_usage(raw)
-
-            # Path 2: newer LangChain — generations[*][*].message.usage_metadata
-            if usage_dict is None or usage_dict.get('total_tokens', 0) == 0:
-                for gen_list in getattr(response, 'generations', []):
-                    for gen in gen_list:
-                        meta = getattr(getattr(gen, 'message', None), 'usage_metadata', None)
-                        if meta:
-                            usage_dict = _normalize_token_usage(meta)
-                            break
-                    if usage_dict and usage_dict.get('total_tokens', 0) > 0:
-                        break
-
-            if usage_dict and usage_dict.get('total_tokens', 0) > 0:
-                accumulate_llm_duration_stats(
-                    duration_seconds=0.0,  # duration already tracked via perf_counter
-                    usage_details=usage_dict,
-                )
-        except Exception:
-            pass  # Never break the callback chain
-
-    def on_llm_error(self, error: BaseException, **kwargs: Any) -> None:
-        _ = error
-        run_id = kwargs.get('run_id')
-        if run_id is not None:
-            self._starts.pop(str(run_id), None)
-
-
-def _extract_token_usage_from_result(
-    result: dict[str, Any],
-    messages: list[Any],
-) -> dict[str, int]:
-    """Fallback: extract token usage from AgentExecutor intermediate_steps.
-
-    Scans ``AgentAction.message_log`` AIMessages for ``usage_metadata`` or
-    ``response_metadata`` and aggregates across all LLM calls in this step.
-    """
-    zero = {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}
-    aggregated = dict(zero)
-
-    def _msg_usage(msg: Any) -> dict[str, int] | None:
-        if not isinstance(msg, AIMessage):
-            return None
-        # usage_metadata (most reliable, LangChain >=0.2)
-        meta = getattr(msg, 'usage_metadata', None)
-        if meta:
-            u = _normalize_token_usage(meta)
-            if u['total_tokens'] > 0:
-                return u
-        # response_metadata fallback
-        resp_meta = getattr(msg, 'response_metadata', None)
-        if isinstance(resp_meta, dict):
-            for key in ('token_usage', 'usage', 'usage_metadata'):
-                raw = resp_meta.get(key)
-                if raw and isinstance(raw, dict):
-                    u = _normalize_token_usage(raw)
-                    if u['total_tokens'] > 0:
-                        return u
-        return None
-
-    try:
-        # Scan intermediate_steps (AgentAction.message_log)
-        for step_tuple in result.get('intermediate_steps', []):
-            if not isinstance(step_tuple, (list, tuple)) or len(step_tuple) < 1:
-                continue
-            msg_log = getattr(step_tuple[0], 'message_log', None) or []
-            for msg in msg_log:
-                usage = _msg_usage(msg)
-                if usage:
-                    aggregated['prompt_tokens'] += usage['prompt_tokens']
-                    aggregated['completion_tokens'] += usage['completion_tokens']
-                    aggregated['total_tokens'] += usage['total_tokens']
-        if aggregated['total_tokens'] > 0:
-            return aggregated
-
-        # Fallback: scan result/passed messages
-        for msg in reversed(messages or result.get('messages', [])):
-            usage = _msg_usage(msg)
-            if usage:
-                return usage
-    except Exception:
-        pass
-    return zero
-
-
-def _safe_ratio(numerator: float, denominator: float) -> float:
-    """Compute safe ratio with zero guard."""
-    if denominator <= 0:
-        return 0.0
-    return round(max(numerator / denominator, 0.0), 4)
-
-
-def _round_s(value: float) -> float:
-    """Round seconds to 2 decimal places for readability."""
-    return round(value, 2)
-
-
-def _build_time_breakdown(
-    *,
-    e2e_duration_seconds: float,
-    llm_duration_seconds: float,
-    message_prep_seconds: float,
-    screenshot_seconds: float,
-    tool_execution_seconds: float,
-) -> dict[str, Any]:
-    """Build normalized time breakdown for one step."""
-    e2e = max(float(e2e_duration_seconds), 0.0)
-    llm = max(float(llm_duration_seconds), 0.0)
-    message_prep = max(float(message_prep_seconds), 0.0)
-    screenshot = max(float(screenshot_seconds), 0.0)
-    tool_total = max(float(tool_execution_seconds), 0.0)
-
-    system_total = max(e2e - llm, 0.0)
-    message_effective = min(message_prep, system_total)
-    after_message = max(system_total - message_effective, 0.0)
-    screenshot_effective = min(screenshot, after_message)
-    after_screenshot = max(after_message - screenshot_effective, 0.0)
-    tool_effective = min(tool_total, after_screenshot)
-    orchestration_overhead = max(after_screenshot - tool_effective, 0.0)
-
-    return {
-        'e2e_duration_seconds': _round_s(e2e),
-        'llm_duration_seconds': _round_s(llm),
-        'system_total_seconds': _round_s(system_total),
-        'system_breakdown': {
-            'message_prep_seconds': _round_s(message_effective),
-            'screenshot_seconds': _round_s(screenshot_effective),
-            'tool_execution_seconds': _round_s(tool_effective),
-            'orchestration_overhead_seconds': _round_s(orchestration_overhead),
-        },
-        'ratio': {
-            'llm_ratio': _safe_ratio(llm, e2e),
-            'system_ratio': _safe_ratio(system_total, e2e),
-            'message_prep_ratio': _safe_ratio(message_effective, e2e),
-            'screenshot_ratio': _safe_ratio(screenshot_effective, e2e),
-            'tool_execution_ratio': _safe_ratio(tool_effective, e2e),
-            'orchestration_overhead_ratio': _safe_ratio(orchestration_overhead, e2e),
-        },
-    }
-
-
-def _extract_langchain_usage(response: Any) -> tuple[dict[str, int], dict[str, Any]]:
-    """Extract token usage from LangChain AIMessage-compatible responses."""
-    usage_source = getattr(response, 'usage_metadata', None)
-
-    if usage_source is None:
-        response_metadata = getattr(response, 'response_metadata', None)
-        if isinstance(response_metadata, dict):
-            usage_source = (
-                response_metadata.get('token_usage')
-                or response_metadata.get('usage')
-                or response_metadata.get('usage_metadata')
-            )
-
-    return extract_usage_details(usage_source)
-
-
-async def _instrumented_ainvoke(
-    runnable: Any,
-    invoke_input: Any,
-    *,
-    model_name: str,
-    capture_metrics: bool = False,
-) -> Any:
-    """Invoke a Runnable and optionally capture timing/usage metrics."""
-    original_ainvoke = getattr(runnable, 'ainvoke', None)
-    if not callable(original_ainvoke):
-        raise AttributeError(f'{type(runnable).__name__} does not support ainvoke')
-
-    start_ts = time.perf_counter()
-    response = await original_ainvoke(invoke_input)
-    if capture_metrics:
-        usage_details, usage_raw = _extract_langchain_usage(response)
-        duration_ms = int((time.perf_counter() - start_ts) * 1000)
-        invoke_metrics = {
-            'model': model_name,
-            'duration_ms': duration_ms,
-            'duration_seconds': duration_ms / 1000.0,
-            'token_usage': usage_details,
-            'usage_raw': usage_raw,
-        }
-        return response, invoke_metrics
-    return response
-
-
-# ============================================================================
-# Tool Registry Helper Functions
-# ============================================================================
-
-
-def _get_tools(
-    ui_tester_instance, llm_config, case_recorder, enabled_custom_tools=None
-):
-    """Get tools combining core tools with registry tools.
-
-    Always includes core tools (UITool, UIAssertTool, UIUXViewportTool) and
-    adds any custom tools from the registry if available and enabled.
-
-    Args:
-        ui_tester_instance: UITester instance for browser access
-        llm_config: LLM configuration dict
-        case_recorder: CentralCaseRecorder instance
-        enabled_custom_tools: Optional list of custom tool step_types to enable
-                             (e.g., ['lighthouse', 'nuclei', 'detect_dynamic_links'])
-
-    Returns:
-        List of instantiated tool objects (core tools + enabled custom tools)
-    """
-    # Always instantiate core tools to ensure consistent behavior
-    core_tools = [
-        UITool(ui_tester_instance=ui_tester_instance, case_recorder=case_recorder),
-        UIAssertTool(
-            ui_tester_instance=ui_tester_instance, case_recorder=case_recorder
-        ),
-        UIUXViewportTool(
-            ui_tester_instance=ui_tester_instance,
-            llm_config=llm_config,
-            case_recorder=case_recorder,
-        ),
-    ]
-    logging.debug(f'Core tools instantiated: {[t.name for t in core_tools]}')
-
-    # Try to load custom tools from registry (filtered by enabled_custom_tools)
-    custom_tools = []
-    try:
-        registry = get_registry()
-        tool_names = registry.get_tool_names()
-        if tool_names:
-            # Get filtered tools from registry based on enabled_custom_tools
-            registry_tools = registry.get_tools(
-                ui_tester_instance=ui_tester_instance,
-                llm_config=llm_config,
-                case_recorder=case_recorder,
-                enabled_custom_tools=enabled_custom_tools,  # Pass filtering parameter
-            )
-            if registry_tools:
-                # Filter out core tools from registry to avoid duplicates
-                # Only keep custom tools (category='custom')
-                core_tool_names = {t.name for t in core_tools}
-                custom_tools = [
-                    t for t in registry_tools if t.name not in core_tool_names
-                ]
-                if custom_tools:
-                    logging.debug(
-                        f'Custom tools loaded from registry: {[t.name for t in custom_tools]}'
-                    )
-                elif enabled_custom_tools:
-                    logging.debug(
-                        f'No custom tools loaded (enabled: {enabled_custom_tools})'
-                    )
-    except Exception as e:
-        logging.warning(
-            f'Registry loading failed, continuing with core tools only: {e}'
-        )
-
-    # Return combined list: core tools + custom tools
-    all_tools = core_tools + custom_tools
-    logging.debug(f'Total tools available: {[t.name for t in all_tools]}')
-    return all_tools
-
-
-# ============================================================================
-# Dynamic Step Generation Configuration Helper
-# ============================================================================
-
-
-def _get_dynamic_config(state: dict) -> dict:
-    """Extract and merge dynamic step generation config from state with
-    defaults.
-
-    Centralized config extraction ensures all code paths use identical defaults.
-    Always returns a complete configuration dictionary with all keys present.
-
-    Default values (8, 2) provide balanced approach:
-    - max_dynamic_steps=8: Covers 90% of UI changes (modals, dropdowns, forms)
-      while preventing verbose generation
-    - min_elements_threshold=2: Filters single-element noise (spinners, tooltips)
-      while catching meaningful changes
-
-    Args:
-        state: Graph state containing dynamic_step_generation config
-
-    Returns:
-        A complete configuration dictionary with all keys present.
-        User-provided values override defaults.
-    """
-    defaults = {'enabled': True, 'max_dynamic_steps': 8, 'min_elements_threshold': 2}
-    user_config = state.get('dynamic_step_generation', {})
-    # Merge defaults with user config. User values override defaults.
-    return {**defaults, **user_config}
-
-
-# ============================================================================
-# Step Type Parsing Helper
-# ============================================================================
-
-
-def _parse_step_type(step: dict) -> str:
-    """Parse step type from test step dict.
-
-    Supports both core fields (action, verify, ux_verify) and custom tool fields (type).
-
-    Args:
-        step: Test step dictionary
-
-    Returns:
-        Step type string: 'Action', 'Assertion', 'UX_Verify', or custom step type
-    """
-    if step.get('action'):
-        return 'Action'
-    elif step.get('verify'):
-        return 'Assertion'
-    elif step.get('ux_verify'):
-        return 'UX_Verify'
-    elif step.get('type'):
-        # Custom tool step type (e.g., 'custom_api_test')
-        step_type = step['type']
-        logging.debug(f'Custom step type detected: {step_type}')
-        return step_type
-    else:
-        # Fallback to Assertion for unknown step formats
-        logging.warning(f'Unknown step format, defaulting to Assertion: {step}')
-        return 'Assertion'
-
-
-# ============================================================================
-# Dynamic Step Generation Helper Functions
-# ============================================================================
-
-
-def normalize_url(u):
-    """Normalize URL for comparison by removing www prefix and standardizing
-    paths.
-
-    Args:
-        u: URL string to normalize
-
-    Returns:
-        Normalized URL string
-    """
-    from urllib.parse import urlparse
-
-    try:
-        parsed = urlparse(u)
-        # Handle domain variations: remove www prefix, unify to lowercase
-        netloc = parsed.netloc.lower()
-        if netloc.startswith('www.'):
-            netloc = netloc[4:]  # Remove www.
-
-        # Standardize path: remove trailing slash
-        path = parsed.path.rstrip('/')
-
-        # Build standardized URL
-        normalized = f'{parsed.scheme}://{netloc}{path}'
-        return normalized
-    except Exception:
-        # If parsing fails, return lowercase form of original URL
-        return u.lower()
-
-
-def extract_domain(u):
-    """Extract normalized domain from URL.
-
-    Args:
-        u: URL string
-
-    Returns:
-        Normalized domain string (lowercase, www removed)
-    """
-    try:
-        from urllib.parse import urlparse
-
-        parsed = urlparse(u)
-        domain = parsed.netloc.lower()
-        if domain.startswith('www.'):
-            domain = domain[4:]
-        return domain
-    except Exception:
-        return ''
-
-
-def extract_path(u):
-    """Extract normalized path from URL.
-
-    Args:
-        u: URL string
-
-    Returns:
-        Path string with trailing slash removed
-    """
-    try:
-        from urllib.parse import urlparse
-
-        parsed = urlparse(u)
-        return parsed.path.rstrip('/')
-    except Exception:
-        return ''
-
-
-def extract_json_from_response(response_text: str) -> str:
-    """Extract JSON content from markdown-formatted or plain text response.
-
-    Args:
-        response_text: Raw response text from LLM that may contain JSON in markdown blocks
-
-    Returns:
-        Extracted JSON string ready for parsing
-    """
-    if not response_text:
-        return ''
-
-    # Check for ```json...``` pattern
-    json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
-    if json_match:
-        return json_match.group(1).strip()
-
-    # Check for ```...``` without json marker
-    code_match = re.search(r'```\s*(.*?)\s*```', response_text, re.DOTALL)
-    if code_match:
-        potential_json = code_match.group(1).strip()
-        # Basic check if it looks like JSON
-        if potential_json.startswith(('[', '{')):
-            return potential_json
-
-    # Return as-is if no code blocks found
-    return response_text.strip()
-
-
-def extract_text_content(content: Union[str, list, None]) -> str:
-    """Extract plain text content from AIMessage or ToolMessage content field.
-
-    Handles provider-specific format differences:
-    - ChatOpenAI: content is typically a string
-    - ChatAnthropic: content is a list containing {'type': 'text', 'text': '...'} blocks
-    - Others: None or other formats
-
-    Args:
-        content: AIMessage.content or ToolMessage.content
-
-    Returns:
-        str: Extracted plain text content, or empty string if extraction fails
-
-    Examples:
-        >>> extract_text_content("Hello")
-        'Hello'
-
-        >>> extract_text_content([{'type': 'text', 'text': 'Hello'}, {'type': 'tool_use', ...}])
-        'Hello'
-
-        >>> extract_text_content(None)
-        ''
-    """
-    # Case 1: Already a string (OpenAI traditional format)
-    if isinstance(content, str):
-        return content
-
-    # Case 2: None or empty value
-    if content is None:
-        return ''
-
-    # Case 3: List format (Anthropic format or OpenAI new format)
-    if isinstance(content, list):
-        text_parts = []
-        for block in content:
-            # Handle dictionary-formatted blocks
-            if isinstance(block, dict):
-                # Anthropic format: {'type': 'text', 'text': '...'}
-                if block.get('type') == 'text' and 'text' in block:
-                    text_parts.append(block['text'])
-                # Some providers might use 'content' key directly
-                elif 'content' in block:
-                    text_parts.append(str(block['content']))
-                # Direct 'text' key without type
-                elif 'text' in block:
-                    text_parts.append(block['text'])
-            # Handle string elements (some edge cases)
-            elif isinstance(block, str):
-                text_parts.append(block)
-
-        return '\n'.join(text_parts)
-
-    # Case 4: Other types (convert to string)
-    try:
-        return str(content)
-    except Exception:
-        logging.warning(f'Failed to extract text from content type: {type(content)}')
-        return ''
-
-
-def safe_get_intermediate_step(
-    result: dict, index: int = 0, subindex: int = 1, default: str = ''
-) -> str:
-    """Safely extract intermediate_steps observation from AgentExecutor result.
-
-    Modified to use extract_text_content for provider compatibility:
-    - Original version directly returned step[subindex], which could be a list (Anthropic) or string (OpenAI)
-    - Now uses extract_text_content to ensure consistent string output
-
-    Args:
-        result: Return value from AgentExecutor.ainvoke()
-        index: Index of intermediate_steps (default: 0, i.e., first step)
-        subindex: Index within step tuple (default: 1, i.e., observation part)
-        default: Default value if extraction fails
-
-    Returns:
-        str: Extracted observation text, guaranteed to be a string
-    """
-    steps = result.get('intermediate_steps', [])
-    if isinstance(steps, list) and len(steps) > index:
-        step = steps[index]
-        if isinstance(step, (list, tuple)) and len(step) > subindex:
-            observation = step[subindex]
-            # Use extract_text_content to ensure string output
-            return extract_text_content(observation)
-    return default
-
-
-def extract_dom_diff_from_output(tool_output: str) -> dict:
-    """Extract DOM diff information from tool output."""
-    try:
-        # Find DOM_DIFF_DETECTED marker (case-insensitive)
-        if 'dom_diff_detected:' not in tool_output.lower():
-            return {}
-
-        # Extract JSON portion (case-insensitive search)
-        tool_output_lower = tool_output.lower()
-        marker_idx = tool_output_lower.find('dom_diff_detected:')
-        start_idx = marker_idx + len('dom_diff_detected:')
-        # Find next line or end of text
-        end_idx = tool_output.find('\n\n', start_idx)
-        if end_idx == -1:
-            json_str = tool_output[start_idx:].strip()
-        else:
-            json_str = tool_output[start_idx:end_idx].strip()
-
-        return json.loads(json_str)
-    except Exception as e:
-        logging.debug(f'Failed to extract DOM diff from tool output: {e}')
-        return {}
-
-
-def format_elements_for_llm(dom_diff: dict) -> list[dict]:
-    """Format DOM diff information, extracting key information for LLM
-    understanding."""
-    formatted = []
-    for elem_id, elem_data in dom_diff.items():
-        # Get key element information
-        tag_name = elem_data.get('tagName', '').lower()
-        inner_text = elem_data.get('innerText', '')
-        attributes = elem_data.get('attributes', {})
-
-        # Build simplified element description
-        formatted_elem = {
-            'id': elem_id,
-            'type': tag_name,
-            'text': inner_text[:100] if inner_text else '',  # Limit text length
-            'position': {
-                'x': elem_data.get('center_x'),
-                'y': elem_data.get('center_y'),
-            },
-        }
-
-        # Add important attribute information
-        important_attrs = {}
-        if attributes:
-            # Define comprehensive attribute whitelist
-            navigation_attrs = ['href', 'target', 'rel', 'download']
-            form_attrs = [
-                'type',
-                'placeholder',
-                'value',
-                'name',
-                'required',
-                'disabled',
-            ]
-            semantic_attrs = ['role', 'aria-label', 'aria-describedby', 'aria-expanded']
-
-            for key, value in attributes.items():
-                # Include whitelisted attributes
-                if (
-                    key
-                    in ['class', 'id'] + navigation_attrs + form_attrs + semantic_attrs
-                ):
-                    important_attrs[key] = value
-                # Include data-* attributes (often contain behavior info)
-                elif key.startswith('data-'):
-                    # Limit length to prevent token explosion
-                    important_attrs[key] = (
-                        value[:200]
-                        if isinstance(value, str) and len(value) > 200
-                        else value
-                    )
-                # Include style if it indicates visibility/interactivity
-                elif (
-                    key == 'style'
-                    and isinstance(value, str)
-                    and ('display' in value or 'visibility' in value)
-                ):
-                    important_attrs[key] = (
-                        value[:200] + '...' if len(value) > 200 else value
-                    )
-
-        if important_attrs:
-            formatted_elem['attributes'] = important_attrs
-
-        formatted.append(formatted_elem)
-
-    return formatted
-
-
-async def generate_dynamic_steps_with_llm(
-    dom_diff: dict = None,
-    last_action: str = '',
-    test_objective: str = '',
-    executed_steps: int = 0,
-    max_steps: int = 8,
-    llm: any = None,
-    current_case: dict = None,
-    screenshot: str = None,
-    tool_output: str = None,
-    step_success: bool = True,
-    # New parameters for failure recovery mode
-    failure_recovery_mode: bool = False,
-    failed_instruction: str = '',
-    error_message: str = '',
-    report_dir: str = None,
-) -> dict:
-    """Generate dynamic test steps or recover from failed steps using LLM.
-
-    This function operates in two distinct modes:
-    1. DOM Change Mode (failure_recovery_mode=False):
-       Automatically generates test steps when new UI elements appear (dropdowns, modals, forms)
-       to improve test coverage of dynamically revealed components.
-
-    2. Failure Recovery Mode (failure_recovery_mode=True):
-       Intelligently adapts the test plan when steps fail (element not found, operation timeout, etc.)
-       by analyzing the failure and generating alternative instructions.
-
-    Args:
-        dom_diff: New DOM elements detected (used in DOM change mode)
-        last_action: The action that triggered the new elements
-        test_objective: Overall test objective
-        executed_steps: Number of steps executed so far
-        max_steps: Maximum number of steps to generate
-        llm: LLM instance for generation
-        current_case: Complete test case containing all steps for context
-        screenshot: Base64 screenshot of current page state for visual context
-        tool_output: Output from the tool execution for context (optional)
-        step_success: Whether the previous step executed successfully (default: True)
-        failure_recovery_mode: If True, operate in failure recovery mode instead of DOM change mode
-        failed_instruction: The instruction that failed (used in failure recovery mode)
-        error_message: The error message from the failed step (used in failure recovery mode)
-
-    Returns:
-        Dict containing strategy and generated test steps
-        DOM Change Mode: {"strategy": "insert|replace", "reason": "...", "steps": [...]}
-        Failure Recovery Mode: {"strategy": "retry_modified|skip|abort", "reason": "...", "steps": [...], "confidence": 0.0-1.0}
-    """
-
-    # === FAILURE RECOVERY MODE ===
-    if failure_recovery_mode:
-        if not failed_instruction or not error_message:
-            return {
-                'strategy': 'abort',
-                'reason': 'Missing failure context',
-                'steps': [],
-                'confidence': 0.0,
-            }
-        case_payload = {}
-        if isinstance(current_case, dict):
-            case_payload = {
-                'case_id': current_case.get('case_id', ''),
-                'case_name': current_case.get('name', ''),
-            }
-
-        try:
-            # Build failure recovery prompt
-            all_steps = current_case.get('steps', []) if current_case else []
-            remaining_steps = (
-                all_steps[executed_steps:] if executed_steps < len(all_steps) else []
-            )
-            executed_steps_detail = (
-                all_steps[:executed_steps] if executed_steps > 0 else []
-            )
-
-            failure_prompt = f"""## Test Step Failure Recovery Analysis
-
-**Failed Step**: {executed_steps}/{len(all_steps)}
-**Failed Instruction**: {failed_instruction}
-**Error Message**: {error_message}
-
-**Test Context**:
-- Test Name: {current_case.get('name', 'Unknown') if current_case else 'Unknown'}
-- Test Objective: {test_objective}
-- Remaining Steps: {len(remaining_steps)}
-
-**Executed Steps History** (for context):
-{json.dumps(executed_steps_detail, ensure_ascii=False, indent=2) if executed_steps_detail else "None - This is the first step"}
-
-**Current Page State**:
-The screenshot shows the current UI state after the failure occurred.
-
-## Task
-
-Analyze why this step failed and determine the best recovery strategy:
-
-### Strategy Options:
-
-1. **retry_modified**: The element likely exists but with different characteristics. Suggest an alternative instruction that targets similar functionality using elements visible in the current page.
-
-2. **skip**: The step is non-critical or the functionality has already been achieved/tested in previous steps. Skipping won't impact test validity.
-
-3. **abort**: The step is critical to the test objective and cannot be achieved with current page state. Continuing would produce invalid results.
-
-## Decision Guidelines:
-
-- If remaining steps depend on this step's outcome, avoid "skip"
-- If error indicates fundamental issues (page crashed, wrong page), choose "abort"
-- If alternative elements with similar function exist, choose "retry_modified"
-- If functionality was already tested in earlier steps, choose "skip"
-"""
-
-            # Get available action types including custom tools for recovery suggestions
-            action_types_str = ActionTypes.get_prompt_string()
-
-            failure_prompt += f"""
-
-## Available Action Types for Recovery
-
-You can suggest alternative steps using any of these action types:
-
-{action_types_str}
-
-**Recovery Considerations**:
-- Use core UI actions (Tap, Input, Scroll) for alternative interaction paths
-- Consider custom tools if they could diagnose issues or verify system state
-- Provide exactly ONE alternative step that addresses the root cause
-- Ensure the alternative step is contextually appropriate for the current page state
-
-## Response Format (JSON only):
-
-```json
-{{
-  "strategy": "retry_modified|skip|abort",
-  "steps": [{{"action": "alternative instruction"}}],
-  "reason": "detailed explanation of why this strategy was chosen",
-  "confidence": 0.85
-}}
-```
-
-**CRITICAL - Single-Step Enforcement (MUST FOLLOW)**:
-
-## Strategy Decision Tree
-Use this logic to select strategy:
-1. Can the error be resolved by modifying the instruction?
-   → YES: Use `retry_modified` with ONE alternative step
-   → NO: Go to step 2
-2. Is the failed step essential for the test objective?
-   → YES: Use `abort` (test cannot continue meaningfully)
-   → NO: Use `skip` (non-critical step can be bypassed)
-
-## Strict Output Rules
-
-### For `retry_modified`:
-- **MUST**: Generate EXACTLY ONE step in the `steps` array
-- **FORBIDDEN**: Multiple steps, setup steps, cleanup steps
-- **Focus**: Single actionable alternative that directly addresses the error
-- **If multiple steps needed**: Choose the SINGLE most critical step only
-
-### For `skip` or `abort`:
-- **MUST**: Set `steps` to empty array `[]`
-- **FORBIDDEN**: Including any steps
-
-### Confidence Threshold:
-- Range: 0.0 to 1.0
-- **WARNING**: If confidence < 0.7, system **WILL FORCE** abort for safety
-  (Not "may" - this is deterministic behavior)
-
-## Example Responses
-
-✅ Valid retry_modified:
-```json
-{{"strategy": "retry_modified", "steps": [{{"action": "Click the modal close button instead of using browser back"}}], "reason": "GoBack failed because modal doesn't add browser history. Close button is the correct approach.", "confidence": 0.85}}
-```
-
-❌ Invalid (multiple steps - FORBIDDEN):
-```json
-{{"strategy": "retry_modified", "steps": [{{"action": "Wait 2 seconds"}}, {{"action": "Click close button"}}], ...}}
-```
-
-## Self-Validation Checklist (before responding):
-□ Is steps array length exactly 1 for retry_modified?
-□ Is steps array empty for skip/abort?
-□ Is confidence realistic (not always 0.9)?
-□ Does reason explain the root cause?
-"""
-            # Call LLM with multi-modal context
-            if screenshot:
-                messages = [
-                    {
-                        'role': 'system',
-                        'content': 'You are a QA expert analyzing test step failures. Respond with JSON only.',
-                    },
-                    {
-                        'role': 'user',
-                        'content': [
-                            {'type': 'text', 'text': failure_prompt},
-                            {
-                                'type': 'image_url',
-                                'image_url': {'url': screenshot, 'detail': 'low'},
-                            },
-                        ],
-                    },
-                ]
-            else:
-                messages = [
-                    {
-                        'role': 'system',
-                        'content': 'You are a QA expert analyzing test step failures. Respond with JSON only.',
-                    },
-                    {'role': 'user', 'content': failure_prompt},
-                ]
-
-            record_data_flow_event(
-                stage='dynamic_steps',
-                event_type='failure_recovery_request',
-                payload={
-                    **case_payload,
-                    'failed_instruction': failed_instruction,
-                    'error_message': error_message,
-                    'executed_steps': executed_steps,
-                    'messages': messages,
-                },
-                report_dir=report_dir,
-            )
-            response, llm_metrics = await _instrumented_ainvoke(
-                llm,
-                messages,
-                model_name=getattr(llm, 'model_name', 'unknown-model'),
-                capture_metrics=True,
-            )
-            response_text = (
-                response.content if hasattr(response, 'content') else str(response)
-            )
-
-            # Parse JSON response
-            try:
-                json_content = extract_json_from_response(response_text)
-                result = json.loads(json_content)
-
-                # Validate response
-                if not isinstance(result, dict) or 'strategy' not in result:
-                    logging.error("LLM response missing required 'strategy' field")
-                    return {
-                        'strategy': 'abort',
-                        'reason': 'Invalid LLM response format',
-                        'steps': [],
-                        'confidence': 0.0,
-                    }
-
-                strategy = result.get('strategy')
-                if strategy not in ['retry_modified', 'skip', 'abort']:
-                    logging.error(f"Invalid strategy '{strategy}', defaulting to abort")
-                    return {
-                        'strategy': 'abort',
-                        'reason': f'Invalid strategy returned: {strategy}',
-                        'steps': [],
-                        'confidence': 0.0,
-                    }
-
-                # Validate confidence
-                confidence = result.get('confidence', 0.5)
-                if (
-                    not isinstance(confidence, (int, float))
-                    or confidence < 0
-                    or confidence > 1
-                ):
-                    logging.warning(
-                        f'Invalid confidence {confidence}, defaulting to 0.5'
-                    )
-                    confidence = 0.5
-
-                # Safety check: low confidence should abort
-                if confidence < MIN_RECOVERY_CONFIDENCE:
-                    logging.warning(
-                        f'Low confidence ({confidence}) in recovery strategy, overriding to abort'
-                    )
-                    return {
-                        'strategy': 'abort',
-                        'reason': f"Low confidence in recovery. Original suggestion: {result.get('reason', 'N/A')}",
-                        'steps': [],
-                        'confidence': confidence,
-                    }
-
-                # Validate steps for retry_modified
-                if strategy == 'retry_modified':
-                    steps = result.get('steps', [])
-                    if not steps or not isinstance(steps, list) or len(steps) == 0:
-                        logging.error('retry_modified strategy missing valid steps')
-                        return {
-                            'strategy': 'abort',
-                            'reason': 'retry_modified requires new instruction',
-                            'steps': [],
-                            'confidence': 0.0,
-                        }
-
-                    # Warn if LLM returns multiple steps (only first will be used)
-                    if len(steps) > 1:
-                        logging.warning(
-                            f'[RECOVERY] LLM returned {len(steps)} steps for retry_modified, '
-                            f'but only the first step will be used. Consider reviewing prompt constraints.'
-                        )
-
-                    # Validate step format
-                    valid_step = (
-                        steps[0]
-                        if (
-                            isinstance(steps[0], dict)
-                            and ('action' in steps[0] or 'verify' in steps[0])
-                        )
-                        else None
-                    )
-                    if not valid_step:
-                        logging.error('retry_modified step has invalid format')
-                        return {
-                            'strategy': 'abort',
-                            'reason': 'Invalid step format in retry_modified',
-                            'steps': [],
-                            'confidence': 0.0,
-                        }
-
-                logging.info(
-                    f'Failure recovery strategy: {strategy} (confidence: {confidence:.2f})'
-                )
-                logging.debug(f"Recovery reason: {result.get('reason', 'N/A')}")
-                record_data_flow_event(
-                    stage='dynamic_steps',
-                    event_type='failure_recovery_response',
-                    payload={
-                        **case_payload,
-                        'strategy': strategy,
-                        'reason': result.get('reason', 'No reason provided'),
-                        'steps': result.get('steps', []),
-                        'confidence': confidence,
-                        'llm_metrics': llm_metrics,
-                        'raw_response': response_text,
-                    },
-                    report_dir=report_dir,
-                )
-
-                return {
-                    'strategy': strategy,
-                    'reason': result.get('reason', 'No reason provided'),
-                    'steps': result.get('steps', []),
-                    'confidence': confidence,
-                }
-
-            except json.JSONDecodeError as e:
-                logging.error(f'Failed to parse failure recovery LLM response: {e}')
-                record_data_flow_event(
-                    stage='dynamic_steps',
-                    event_type='failure_recovery_response',
-                    payload={
-                        **case_payload,
-                        'strategy': 'abort',
-                        'reason': 'JSON parsing failed',
-                        'error': str(e),
-                        'llm_metrics': llm_metrics,
-                        'raw_response': response_text,
-                    },
-                    report_dir=report_dir,
-                )
-                return {
-                    'strategy': 'abort',
-                    'reason': 'JSON parsing failed',
-                    'steps': [],
-                    'confidence': 0.0,
-                }
-
-        except Exception as e:
-            logging.error(f'Error in failure recovery mode: {e}')
-            record_data_flow_event(
-                stage='dynamic_steps',
-                event_type='failure_recovery_response',
-                payload={
-                    **case_payload,
-                    'strategy': 'abort',
-                    'reason': f'Recovery failed: {str(e)}',
-                    'error': str(e),
-                },
-                report_dir=report_dir,
-            )
-            return {
-                'strategy': 'abort',
-                'reason': f'Recovery failed: {str(e)}',
-                'steps': [],
-                'confidence': 0.0,
-            }
-
-    # === DOM CHANGE MODE (Original Logic) ===
-    if not dom_diff:
-        return {'strategy': 'insert', 'reason': 'No new elements detected', 'steps': []}
-    case_payload = {}
-    if isinstance(current_case, dict):
-        case_payload = {
-            'case_id': current_case.get('case_id', ''),
-            'case_name': current_case.get('name', ''),
-        }
-
-    try:
-        # Prepare new element information
-        new_elements = format_elements_for_llm(dom_diff)
-
-        if not new_elements:
-            return {
-                'strategy': 'insert',
-                'reason': 'No meaningful elements to test',
-                'steps': [],
-            }
-
-        # Build system prompt
-        system_prompt = get_dynamic_step_generation_prompt()
-
-        # Prepare test case context for better coherence
-        test_case_context = ''
-        if current_case and 'steps' in current_case:
-            all_steps = current_case['steps']
-            executed_steps_detail = (
-                all_steps[:executed_steps] if executed_steps > 0 else []
-            )
-            remaining_steps = (
-                all_steps[executed_steps:] if executed_steps < len(all_steps) else []
-            )
-
-            test_case_context = f"""
-Test Case Context:
-- Test Case Name: {current_case.get('name', 'Unnamed')}
-- Test Objective: {current_case.get('objective', test_objective)}
-- Total Steps in Test: {len(all_steps)}
-- Current Position: Step {executed_steps}/{len(all_steps)}
-
-Executed Steps (for context):
-{json.dumps(executed_steps_detail, ensure_ascii=False, indent=2) if executed_steps_detail else "None"}
-
-Remaining Steps (may need adjustment after replan):
-{json.dumps(remaining_steps, ensure_ascii=False, indent=2) if remaining_steps else "None"}
-"""
-
-        # Build multi-modal user prompt with dynamic status context
-        visual_context_section = ''
-        if screenshot:
-            execution_context = (
-                'AFTER the execution of the last action'
-                if step_success
-                else 'AFTER the attempted execution of the last action'
-            )
-            visual_context_section = f"""
-## Current Page Visual Context
-The attached screenshot shows the current state of the page {execution_context}.
-Use this visual information along with the DOM diff to understand the complete UI state.
-"""
-
-        # Build context based on actual execution result
-        if step_success:
-            action_status = f'✅ SUCCESSFULLY EXECUTED: "{last_action}"'
-            status_context = 'The above action has been completed successfully. Do NOT re-plan or duplicate this action.'
-            execution_description = 'After the successful action execution'
-        else:
-            action_status = f'⚠️ FAILED/PARTIAL EXECUTION: "{last_action}"'
-            status_context = 'The above action failed or partially succeeded. Consider recovery steps or alternative approaches.'
-            execution_description = 'After the failed/partial action execution'
-
-        # Include tool output for better context
-        tool_output_section = ''
-        if tool_output:
-            # Truncate if too long to prevent prompt overflow
-            tool_output_section = f"""
-
-## Execution Details
-{tool_output}
-"""
-
-        user_prompt = f"""
-## Previous Action Status
-{action_status}
-{status_context}{tool_output_section}
-
-## New UI Elements Detected
-{execution_description}, {len(new_elements)} new UI elements appeared:
-{json.dumps(new_elements, ensure_ascii=False, indent=2)}
-
-{visual_context_section}
-
-{test_case_context}
-
-## Analysis Context
-Max steps to generate: {max_steps}
-Test Objective: "{test_objective}"
-
-Please analyze these new UI elements using the QAG methodology and generate appropriate test steps if needed.
-        """
-
-        logging.debug(
-            f'Requesting LLM to generate dynamic steps for {len(new_elements)} new elements'
-        )
-
-        # Call LLM with proper message structure
-        if screenshot:
-            # Multi-modal call with screenshot
-            messages = [
-                {'role': 'system', 'content': system_prompt},
-                {
-                    'role': 'user',
-                    'content': [
-                        {'type': 'text', 'text': user_prompt},
-                        {
-                            'type': 'image_url',
-                            'image_url': {'url': screenshot, 'detail': 'low'},
-                        },
-                    ],
-                },
-            ]
-        else:
-            # Text-only call with proper message structure
-            messages = [
-                {'role': 'system', 'content': system_prompt},
-                {'role': 'user', 'content': user_prompt},
-            ]
-
-        record_data_flow_event(
-            stage='dynamic_steps',
-            event_type='dom_change_request',
-            payload={
-                **case_payload,
-                'last_action': last_action,
-                'step_success': step_success,
-                'new_elements_count': len(new_elements),
-                'messages': messages,
-            },
-            report_dir=report_dir,
-        )
-        response, llm_metrics = await _instrumented_ainvoke(
-            llm,
-            messages,
-            model_name=getattr(llm, 'model_name', 'unknown-model'),
-            capture_metrics=True,
-        )
-
-        # Parse response
-        if hasattr(response, 'content'):
-            response_text = response.content
-        else:
-            response_text = str(response)
-
-        # Try to parse JSON response using helper function
-        try:
-            # Extract JSON from markdown formatting
-            json_content = extract_json_from_response(response_text)
-            result = json.loads(json_content)
-
-            # Validate response format
-            if isinstance(result, dict) and 'strategy' in result and 'steps' in result:
-                strategy = result.get('strategy', 'insert')
-                reason = result.get('reason', 'No reason provided')
-                steps = result.get('steps', [])
-
-                # Extract and validate analysis fields (Enhanced QAG format)
-                analysis = result.get('analysis', {})
-                q1_can_complete_alone = (
-                    analysis.get('q1_can_complete_alone', False)
-                    if isinstance(analysis, dict)
-                    else False
-                )
-                q2_different_aspects = (
-                    analysis.get('q2_different_aspects', False)
-                    if isinstance(analysis, dict)
-                    else False
-                )
-                q3_remaining_redundant = (
-                    analysis.get('q3_remaining_redundant', False)
-                    if isinstance(analysis, dict)
-                    else False
-                )
-                q4_abstraction_gap = (
-                    analysis.get('q4_abstraction_gap', False)
-                    if isinstance(analysis, dict)
-                    else False
-                )
-
-                # Validate strategy value
-                if strategy not in ['insert', 'replace']:
-                    logging.warning(
-                        f"Invalid strategy '{strategy}', defaulting to 'insert'"
-                    )
-                    strategy = 'insert'
-
-                # Validate QAG analysis fields
-                if not isinstance(q1_can_complete_alone, bool):
-                    logging.debug(
-                        f'Invalid q1_can_complete_alone {q1_can_complete_alone}, defaulting to False'
-                    )
-                    q1_can_complete_alone = False
-
-                if not isinstance(q2_different_aspects, bool):
-                    logging.debug(
-                        f'Invalid q2_different_aspects {q2_different_aspects}, defaulting to False'
-                    )
-                    q2_different_aspects = False
-
-                if not isinstance(q3_remaining_redundant, bool):
-                    logging.debug(
-                        f'Invalid q3_remaining_redundant {q3_remaining_redundant}, defaulting to False'
-                    )
-                    q3_remaining_redundant = False
-
-                if not isinstance(q4_abstraction_gap, bool):
-                    logging.debug(
-                        f'Invalid q4_abstraction_gap {q4_abstraction_gap}, defaulting to False'
-                    )
-                    q4_abstraction_gap = False
-
-                # Validate and limit step count
-                valid_steps = []
-                if isinstance(steps, list):
-                    for step in steps[:max_steps]:
-                        if isinstance(step, dict) and (
-                            'action' in step or 'verify' in step
-                        ):
-                            valid_steps.append(step)
-
-                # Enhanced logging with QAG analysis data
-                logging.info(
-                    f"Generated {len(valid_steps)} dynamic steps with strategy '{strategy}' from {len(new_elements)} new elements"
-                )
-
-                logging.debug(f'Strategy reason: {reason}')
-                if analysis:
-                    logging.debug(
-                        f'Enhanced QAG Analysis: q1_can_complete_alone={q1_can_complete_alone}, q2_different_aspects={q2_different_aspects}, q3_remaining_redundant={q3_remaining_redundant}, q4_abstraction_gap={q4_abstraction_gap}'
-                    )
-
-                # Return enhanced result with QAG analysis
-                result_data = {
-                    'strategy': strategy,
-                    'reason': reason,
-                    'steps': valid_steps,
-                }
-
-                # Include Enhanced QAG analysis if provided
-                if analysis:
-                    result_data['analysis'] = {
-                        'q1_can_complete_alone': q1_can_complete_alone,
-                        'q2_different_aspects': q2_different_aspects,
-                        'q3_remaining_redundant': q3_remaining_redundant,
-                        'q4_abstraction_gap': q4_abstraction_gap,
-                    }
-                record_data_flow_event(
-                    stage='dynamic_steps',
-                    event_type='dom_change_response',
-                    payload={
-                        **case_payload,
-                        'strategy': strategy,
-                        'reason': reason,
-                        'steps': valid_steps,
-                        'analysis': result_data.get('analysis'),
-                        'llm_metrics': llm_metrics,
-                        'raw_response': response_text,
-                    },
-                    report_dir=report_dir,
-                )
-
-                return result_data
-            else:
-                logging.warning(
-                    'LLM response missing required fields (strategy, steps)'
-                )
-                record_data_flow_event(
-                    stage='dynamic_steps',
-                    event_type='dom_change_response',
-                    payload={
-                        **case_payload,
-                        'strategy': 'insert',
-                        'reason': 'Invalid response format',
-                        'steps': [],
-                        'llm_metrics': llm_metrics,
-                        'raw_response': response_text,
-                    },
-                    report_dir=report_dir,
-                )
-                return {
-                    'strategy': 'insert',
-                    'reason': 'Invalid response format',
-                    'steps': [],
-                }
-
-        except json.JSONDecodeError as e:
-            logging.warning(f'Failed to parse LLM response as JSON: {e}')
-            logging.debug(f'Raw LLM response: {response_text[:500]}...')
-            logging.debug(
-                f'Extracted JSON content: {extract_json_from_response(response_text)[:500]}...'
-            )
-            record_data_flow_event(
-                stage='dynamic_steps',
-                event_type='dom_change_response',
-                payload={
-                    **case_payload,
-                    'strategy': 'insert',
-                    'reason': 'JSON parsing failed',
-                    'steps': [],
-                    'error': str(e),
-                    'llm_metrics': llm_metrics,
-                    'raw_response': response_text,
-                },
-                report_dir=report_dir,
-            )
-            return {'strategy': 'insert', 'reason': 'JSON parsing failed', 'steps': []}
-
-    except Exception as e:
-        logging.error(f'Error generating dynamic steps with LLM: {e}')
-        record_data_flow_event(
-            stage='dynamic_steps',
-            event_type='dom_change_response',
-            payload={
-                'case_id': current_case.get('case_id', '')
-                if isinstance(current_case, dict)
-                else '',
-                'case_name': current_case.get('name', '')
-                if isinstance(current_case, dict)
-                else '',
-                'strategy': 'insert',
-                'reason': f'Generation failed: {str(e)}',
-                'steps': [],
-                'error': str(e),
-            },
-            report_dir=report_dir,
-        )
-        return {
-            'strategy': 'insert',
-            'reason': f'Generation failed: {str(e)}',
-            'steps': [],
-        }
-
-
-def _contains_failure_indicators(text: str) -> bool:
-    """Check if text contains any failure indicators.
-
-    Args:
-        text: Tool output or intermediate output to check
-
-    Returns:
-        bool: True if any failure indicator is found
-    """
-    if not text:
-        return False
-
-    text_lower = text.lower()
-    failure_tags = ['[failure]', '[critical_error:']
-    return any(tag in text_lower for tag in failure_tags)
-
-
-# The node function that will be used in the graph
-
-def _i18n(language: str, zh: str, en: str) -> str:
-    """Select language-appropriate string (shorthand for i18n_select)."""
-    return i18n_select(language, zh, en)
-
-
-def _make_final_summary(language: str, template_zh: str, template_en: str) -> str:
-    """Select language-appropriate FINAL_SUMMARY string.
-
-    Semantic alias for _i18n -- kept for readability at call sites that
-    construct final_summary values.
-    """
-    return _i18n(language, template_zh, template_en)
-
-
-def _make_user_summary(
-    language: str,
-    status: str,
-    objective: str,
-    reason: str = '',
-) -> str:
-    """Generate user-facing summary (shorthand for make_user_summary)."""
-    return make_user_summary(language, status, objective, reason)
-
-
-_USER_SUMMARY_PATTERN = re.compile(r'USER_SUMMARY:\s*(.+)', re.IGNORECASE)
-
-
-def _parse_user_summary(llm_output: str) -> Optional[str]:
-    """Extract USER_SUMMARY line from LLM output."""
-    if not llm_output:
-        return None
-    match = _USER_SUMMARY_PATTERN.search(llm_output)
-    return match.group(1).strip() if match else None
 
 
 async def agent_worker_node(state: dict, config: dict) -> dict:
@@ -1577,7 +127,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     logging.info(f"{icon['running']} Agent worker for test case started: {case_name}")
 
     model_name = llm_config.get('model', 'gpt-4o-mini')
-    provider = _detect_llm_provider(model_name)
+    provider = detect_llm_provider(model_name)
     llm_kwargs = {
         'model': model_name,
         'api_key': llm_config.get('api_key'),
@@ -1680,7 +230,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     enabled_custom_tools = state.get('enabled_custom_tools', [])
     logging.debug(f'Enabled custom tools from config: {enabled_custom_tools}')
 
-    tools = _get_tools(
+    tools = get_tools(
         ui_tester_instance, llm_config, case_recorder, enabled_custom_tools
     )
     logging.debug(f'Tools initialized: {[tool.name for tool in tools]}')
@@ -1738,7 +288,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     'warning_steps': metrics.get('warning_steps', 0),
                     'total_actions': metrics.get('total_actions', 0),
                 },
-                'failed_step_details': _extract_failed_step_details(recorded),
+                'failed_step_details': extract_failed_step_details(recorded),
             },
             'current_case_steps': [],
             'recorded_case': recorded,
@@ -1794,12 +344,12 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         logging.error(
                             f'Preamble GoToPage direct execution failed: {target_url} — {_nav_err}'
                         )
-                        final_summary = _i18n(
+                        final_summary = i18n(
                             language,
                             f"前置导航到 '{target_url}' 失败：{_nav_err}",
                             f"Preamble navigation to '{target_url}' failed: {_nav_err}",
                         )
-                        user_summary = _make_user_summary(language, 'failed', case_objective)
+                        user_summary = build_user_summary(language, 'failed', case_objective)
                         return _finish_preamble_failure(final_summary, user_summary)
 
                 # Non-direct action: include params in instruction so LLM has
@@ -1817,7 +367,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 continue
 
             # Smart check: Skip preamble action if it's a navigation instruction and already on target page
-            if case.get('reset_session', False) and _is_navigation_instruction(
+            if case.get('reset_session', False) and is_navigation_instruction(
                 instruction_to_execute
             ):
                 # Check if already on target page
@@ -1921,21 +471,21 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     result, index=0, subindex=1, default=''
                 )
                 # Check BOTH tool_output and intermediate_output for failures
-                if _contains_failure_indicators(
+                if contains_failure_indicators(
                     intermediate_output
-                ) or _contains_failure_indicators(tool_output):
-                    final_summary = _i18n(language,
-                                          f"前置动作 '{instruction_to_execute}' 失败，无法继续执行测试用例。错误：{tool_output}",
-                                          f"Preamble action '{instruction_to_execute}' failed, cannot proceed with the test case. Error: {tool_output}")
+                ) or contains_failure_indicators(tool_output):
+                    final_summary = i18n(language,
+                                         f"前置动作 '{instruction_to_execute}' 失败，无法继续执行测试用例。错误：{tool_output}",
+                                         f"Preamble action '{instruction_to_execute}' failed, cannot proceed with the test case. Error: {tool_output}")
 
                     extracted_user = (
-                        _parse_user_summary(tool_output)
-                        or _parse_user_summary(intermediate_output)
+                        parse_user_summary(tool_output)
+                        or parse_user_summary(intermediate_output)
                     )
                     if extracted_user:
                         user_summary = extracted_user
                     else:
-                        user_summary = _make_user_summary(language, 'failed', case_objective)
+                        user_summary = build_user_summary(language, 'failed', case_objective)
 
                     logging.error(f'Preamble action {i + 1} failed, aborting test case')
                     _result = _finish_preamble_failure(final_summary, user_summary)
@@ -1995,17 +545,17 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         f'{type(e).__name__}: {e}'
                     )
                     final_summary = get_system_error_summary(e, language)
-                    user_summary = make_user_summary(language, 'warning', case_objective, exception=e)
+                    user_summary = build_user_summary(language, 'warning', case_objective, exception=e)
                     preamble_status = 'warning'
                     preamble_failure_type = 'system_error'
                 else:
-                    final_summary = _i18n(language,
-                                          f"前置动作 '{instruction_to_execute}' 发生异常：{str(e)}",
-                                          f"Preamble action '{instruction_to_execute}' raised exception: {str(e)}")
-                    user_summary = _make_user_summary(language, 'failed', case_objective,
-                                                      _i18n(language,
-                                                            f"前置操作'{instruction_to_execute}'发生异常。",
-                                                            f"Preamble action '{instruction_to_execute}' raised an exception."))
+                    final_summary = i18n(language,
+                                         f"前置动作 '{instruction_to_execute}' 发生异常：{str(e)}",
+                                         f"Preamble action '{instruction_to_execute}' raised exception: {str(e)}")
+                    user_summary = build_user_summary(language, 'failed', case_objective,
+                                                      i18n(language,
+                                                           f"前置操作'{instruction_to_execute}'发生异常。",
+                                                           f"Preamble action '{instruction_to_execute}' raised an exception."))
                     preamble_status = 'failed'
                     preamble_failure_type = 'preamble_exception'
                 _result = _finish_preamble_failure(
@@ -2113,7 +663,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         step = case_steps[i]
 
         # Parse step type (supports core fields and custom tool type field)
-        step_type = _parse_step_type(step)
+        step_type = parse_step_type(step)
 
         # Handle unified format custom tools: {"action": "tool_name", "params": {...}}
         # Convert params to function call instruction for agent_executor
@@ -2284,7 +834,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 logging.error(
                     f'Step {i + 1} ({step_type}) timed out after {step_timeout:.0f}s'
                 )
-                timeout_breakdown = _build_time_breakdown(
+                timeout_breakdown = build_time_breakdown(
                     e2e_duration_seconds=step_timeout,
                     llm_duration_seconds=0.0,
                     message_prep_seconds=message_prep_seconds,
@@ -2321,7 +871,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 _timeout_exc = asyncio.TimeoutError(f'Step timed out after {step_timeout:.0f}s')
                 final_summary = get_system_error_summary(_timeout_exc, language)
                 _obj = case_objective.rstrip('。！？.!?，,；;：:、… ')
-                user_summary = _i18n(
+                user_summary = i18n(
                     language,
                     f'{_obj}，工具执行超时，结果不完整，非产品缺陷。',
                     f'{_obj} tool execution timed out, results incomplete, not a product defect.',
@@ -2369,7 +919,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             # callback-based tracking returns 0 (e.g. direct-mode Action steps
             # where only the outer LangChain LLM call happens).
             if llm_token_usage.get('total_tokens', 0) == 0:
-                llm_token_usage = _extract_token_usage_from_result(result, messages)
+                llm_token_usage = extract_token_usage_from_result(result, messages)
                 if llm_token_usage.get('total_tokens', 0) > 0:
                     logging.debug(
                         f'Step {i + 1} token usage recovered from AIMessage metadata: '
@@ -2378,7 +928,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
             tool_timing_bucket = get_tool_timing_bucket()
             tool_execution_seconds = float(tool_timing_bucket.get('tool_execution_seconds', 0.0))
-            time_breakdown = _build_time_breakdown(
+            time_breakdown = build_time_breakdown(
                 e2e_duration_seconds=duration,
                 llm_duration_seconds=llm_duration_seconds,
                 message_prep_seconds=message_prep_seconds,
@@ -2440,14 +990,14 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             # - NAVIGATION_FAILED: Page navigation failures
             # These errors abort the test immediately to conserve resources.
             # Check BEFORE regular failure handling to prevent wasted retry attempts.
-            if _is_critical_failure_step(tool_output, intermediate_output):
+            if is_critical_failure_step(tool_output, intermediate_output):
 
                 # Smart differentiation: Check if unsupported page + page-agnostic operation
                 is_unsupported_page = 'unsupported_page' in tool_output.lower()
 
                 if is_unsupported_page:
                     # Determine if current operation is page-agnostic
-                    is_agnostic = _is_operation_page_agnostic(
+                    is_agnostic = is_operation_page_agnostic(
                         step_type=step_type, instruction=instruction_to_execute
                     )
 
@@ -2470,17 +1020,17 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         ))
                         # P4: Get current executed step count for accurate error reporting
                         current_executed_step = len(case_recorder.current_case_steps)
-                        final_summary = _make_final_summary(language,
-                                                            f'FINAL_SUMMARY: 严重错误，已执行步骤 {current_executed_step}（计划步骤 {i + 1}）：'
-                                                            f"'{instruction_to_execute}'。"
-                                                            f'DOM 操作无法在不支持的页面类型上执行。错误详情：{tool_output}',
-                                                            f'FINAL_SUMMARY: Critical failure at executed step {current_executed_step} '
-                                                            f'(planned step {i + 1}): '
-                                                            f"'{instruction_to_execute}'. "
-                                                            f'DOM-dependent operation cannot execute on unsupported page type. '
-                                                            f'Error details: {tool_output}')
-                        user_summary = _make_user_summary(language, 'failed', case_objective,
-                                                          _i18n(language, '页面类型不支持自动化测试。', 'Page type does not support automated testing.'))
+                        final_summary = make_final_summary(language,
+                                                           f'FINAL_SUMMARY: 严重错误，已执行步骤 {current_executed_step}（计划步骤 {i + 1}）：'
+                                                           f"'{instruction_to_execute}'。"
+                                                           f'DOM 操作无法在不支持的页面类型上执行。错误详情：{tool_output}',
+                                                           f'FINAL_SUMMARY: Critical failure at executed step {current_executed_step} '
+                                                           f'(planned step {i + 1}): '
+                                                           f"'{instruction_to_execute}'. "
+                                                           f'DOM-dependent operation cannot execute on unsupported page type. '
+                                                           f'Error details: {tool_output}')
+                        user_summary = build_user_summary(language, 'failed', case_objective,
+                                                          i18n(language, '页面类型不支持自动化测试。', 'Page type does not support automated testing.'))
                         logging.error(
                             f'[CRITICAL] Executed step {current_executed_step} (planned step {i + 1}) '
                             f'requires DOM elements but page is unsupported (PDF/plugin). '
@@ -2498,15 +1048,15 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     ))
                     # P4: Get current executed step count for accurate error reporting
                     current_executed_step = len(case_recorder.current_case_steps)
-                    final_summary = _make_final_summary(language,
-                                                        f'FINAL_SUMMARY: 严重错误，已执行步骤 {current_executed_step}（计划步骤 {i + 1}）：'
-                                                        f"'{instruction_to_execute}'。错误详情：{tool_output}",
-                                                        f'FINAL_SUMMARY: Critical failure at executed step {current_executed_step} '
-                                                        f'(planned step {i + 1}): '
-                                                        f"'{instruction_to_execute}'. "
-                                                        f'Error details: {tool_output}')
-                    user_summary = _make_user_summary(language, 'failed', case_objective,
-                                                      _i18n(language, '遇到严重错误，测试终止。', 'Critical error encountered, test terminated.'))
+                    final_summary = make_final_summary(language,
+                                                       f'FINAL_SUMMARY: 严重错误，已执行步骤 {current_executed_step}（计划步骤 {i + 1}）：'
+                                                       f"'{instruction_to_execute}'。错误详情：{tool_output}",
+                                                       f'FINAL_SUMMARY: Critical failure at executed step {current_executed_step} '
+                                                       f'(planned step {i + 1}): '
+                                                       f"'{instruction_to_execute}'. "
+                                                       f'Error details: {tool_output}')
+                    user_summary = build_user_summary(language, 'failed', case_objective,
+                                                      i18n(language, '遇到严重错误，测试终止。', 'Critical error encountered, test terminated.'))
                     logging.error(
                         f'[CRITICAL] Executed step {current_executed_step} (planned step {i + 1}) '
                         f'encountered critical failure. '
@@ -2519,9 +1069,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             # ===================================================================
             # PRIORITY 1: Regular failure check (only executed when not critical)
             # ===================================================================
-            is_failure = _contains_failure_indicators(
+            is_failure = contains_failure_indicators(
                 intermediate_output
-            ) or _contains_failure_indicators(tool_output)
+            ) or contains_failure_indicators(tool_output)
             is_element_not_found = (
                 '[critical_error:element_not_found]' in tool_output.lower()
                 or '[critical_error:element_not_found]' in intermediate_output.lower()
@@ -2556,7 +1106,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 # Priority 1: Try recovery for ELEMENT_NOT_FOUND (recoverable critical error)
                 elif is_element_not_found:
                     # Get dynamic config to check if adaptive recovery is enabled
-                    dynamic_config = _get_dynamic_config(state)
+                    dynamic_config = get_dynamic_config(state)
 
                     if dynamic_config['enabled']:
                         # Adaptive recovery enabled
@@ -2660,19 +1210,19 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                     recovery_strategy='abort',
                                     recovery_reason=recovery_reason,
                                 ))
-                                final_summary = _make_final_summary(language,
-                                                                    f'FINAL_SUMMARY: 测试在已执行步骤 {current_executed_step}（计划步骤 {i + 1}）中止。'
-                                                                    f"{recovery_reason or '严重错误'}",
-                                                                    f'FINAL_SUMMARY: Test aborted at executed step {current_executed_step} '
-                                                                    f"(planned step {i + 1}). {recovery_reason or 'Critical failure'}")
+                                final_summary = make_final_summary(language,
+                                                                   f'FINAL_SUMMARY: 测试在已执行步骤 {current_executed_step}（计划步骤 {i + 1}）中止。'
+                                                                   f"{recovery_reason or '严重错误'}",
+                                                                   f'FINAL_SUMMARY: Test aborted at executed step {current_executed_step} '
+                                                                   f"(planned step {i + 1}). {recovery_reason or 'Critical failure'}")
                                 reason_suffix = f"{recovery_reason.rstrip('.')}." if recovery_reason else ''
-                                user_summary = _make_user_summary(
+                                user_summary = build_user_summary(
                                     language, 'failed', case_objective,
-                                    _i18n(language,
-                                          '目标元素无法定位，自动恢复尝试失败，请排查页面是否存在该目标元素。',
-                                          'Target element could not be located, automatic recovery failed. '
-                                          'Please verify the target element exists on the page.'
-                                          + (f' {reason_suffix}' if reason_suffix else '')))
+                                    i18n(language,
+                                         '目标元素无法定位，自动恢复尝试失败，请排查页面是否存在该目标元素。',
+                                         'Target element could not be located, automatic recovery failed. '
+                                         'Please verify the target element exists on the page.'
+                                         + (f' {reason_suffix}' if reason_suffix else '')))
                                 code_determined_status = 'failed'
                                 code_failure_type = 'recoverable'
                                 break
@@ -2706,7 +1256,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     )
 
                     # Extended LLM adaptive recovery for all failure types
-                    dynamic_config = _get_dynamic_config(state)
+                    dynamic_config = get_dynamic_config(state)
 
                     if dynamic_config['enabled']:
                         # Add retry tracking to prevent infinite loops (consistent with ELEMENT_NOT_FOUND branch)
@@ -2817,7 +1367,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                     ))
                                     # final_summary: keep abort context (step, instruction, reason)
                                     # for agent/executor diagnostics.
-                                    final_summary = _make_final_summary(
+                                    final_summary = make_final_summary(
                                         language,
                                         f'FINAL_SUMMARY: 不可恢复的失败，已执行步骤 {current_executed_step}（计划步骤 {i + 1}）：'
                                         f"'{instruction_to_execute}'。LLM 自适应恢复判断必须终止。原因：{reason}",
@@ -2831,13 +1381,13 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                     # present (forward-compatible — current tools don't emit
                                     # USER_SUMMARY in step output, but custom tools may do so).
                                     extracted_user = (
-                                        _parse_user_summary(tool_output)
-                                        or _parse_user_summary(intermediate_output)
+                                        parse_user_summary(tool_output)
+                                        or parse_user_summary(intermediate_output)
                                     )
                                     if extracted_user:
                                         user_summary = extracted_user
                                     else:
-                                        user_summary = _make_user_summary(language, 'failed', case_objective)
+                                        user_summary = build_user_summary(language, 'failed', case_objective)
                                     code_determined_status = 'failed'
                                     code_failure_type = 'critical'
                                     break  # Abort test case
@@ -2874,7 +1424,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                         ))
 
             # Check for objective achievement signal
-            is_achieved, achievement_reason = _is_objective_achieved(tool_output)
+            is_achieved, achievement_reason = is_objective_achieved(tool_output)
             if is_achieved:
                 objective_achieved = True
                 current_executed_step = len(case_recorder.current_case_steps)
@@ -2882,12 +1432,12 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     f'Test objective achieved at executed step {current_executed_step} '
                     f'(planned step {i + 1}): {achievement_reason}'
                 )
-                final_summary = _make_final_summary(language,
-                                                    f'FINAL_SUMMARY: 测试用例在已执行步骤 {current_executed_step}（计划步骤 {i + 1}/{total_steps}）提前终止，执行成功。{achievement_reason}',
-                                                    f'FINAL_SUMMARY: Test case completed successfully with early '
-                                                    f'termination at executed step {current_executed_step} '
-                                                    f'(planned step {i + 1}/{total_steps}). {achievement_reason}')
-                user_summary = _make_user_summary(language, 'passed', case_objective)
+                final_summary = make_final_summary(language,
+                                                   f'FINAL_SUMMARY: 测试用例在已执行步骤 {current_executed_step}（计划步骤 {i + 1}/{total_steps}）提前终止，执行成功。{achievement_reason}',
+                                                   f'FINAL_SUMMARY: Test case completed successfully with early '
+                                                   f'termination at executed step {current_executed_step} '
+                                                   f'(planned step {i + 1}/{total_steps}). {achievement_reason}')
+                user_summary = build_user_summary(language, 'passed', case_objective)
                 code_determined_status = 'passed'
                 code_failure_type = None
                 break
@@ -2930,7 +1480,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             # Defaults: enabled=True, max_steps=8, threshold=2
             if step_type == 'Action':
                 # Get dynamic step generation config from state
-                dynamic_config = _get_dynamic_config(state)
+                dynamic_config = get_dynamic_config(state)
 
                 dynamic_enabled = dynamic_config['enabled']
                 max_dynamic_steps = dynamic_config['max_dynamic_steps']
@@ -3001,21 +1551,6 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 dynamic_generation_count += 1
 
                                 # Convert dynamic steps to the standard format and filter duplicates
-                                def is_similar_step(step1: dict, step2: dict) -> bool:
-                                    """Check if two steps are similar to avoid
-                                    duplicates."""
-                                    if 'action' in step1 and 'action' in step2:
-                                        return (
-                                            step1['action'].lower().strip()
-                                            == step2['action'].lower().strip()
-                                        )
-                                    if 'verify' in step1 and 'verify' in step2:
-                                        return (
-                                            step1['verify'].lower().strip()
-                                            == step2['verify'].lower().strip()
-                                        )
-                                    return False
-
                                 formatted_dynamic_steps = []
                                 executed_and_remaining = (
                                     case_steps  # All existing steps
@@ -3120,7 +1655,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 float(exc_llm_stats.get('duration_seconds', 0.0)),
                 0.0,
             )
-            exc_breakdown = _build_time_breakdown(
+            exc_breakdown = build_time_breakdown(
                 e2e_duration_seconds=exc_duration,
                 llm_duration_seconds=exc_llm_duration,
                 message_prep_seconds=message_prep_seconds,
@@ -3165,7 +1700,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     model_io=f'System error: {str(e)}',
                 )
                 final_summary = get_system_error_summary(e, language)
-                user_summary = make_user_summary(language, 'warning', case_objective, exception=e)
+                user_summary = build_user_summary(language, 'warning', case_objective, exception=e)
                 code_determined_status = 'warning'
                 code_failure_type = 'system_error'
             else:
@@ -3181,13 +1716,13 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                     step_type=step_type.lower() if step_type else 'action',
                     model_io=f'Exception: {str(e)}',
                 )
-                final_summary = _make_final_summary(language,
-                                                    f"FINAL_SUMMARY: 步骤 '{instruction_to_execute}' 发生异常：{str(e)}",
-                                                    f"FINAL_SUMMARY: Step '{instruction_to_execute}' raised an exception: {str(e)}")
-                user_summary = _make_user_summary(language, 'failed', case_objective,
-                                                  _i18n(language,
-                                                        f"步骤'{instruction_to_execute}'执行时发生异常。",
-                                                        f"Step '{instruction_to_execute}' raised an exception during execution."))
+                final_summary = make_final_summary(language,
+                                                   f"FINAL_SUMMARY: 步骤 '{instruction_to_execute}' 发生异常：{str(e)}",
+                                                   f"FINAL_SUMMARY: Step '{instruction_to_execute}' raised an exception: {str(e)}")
+                user_summary = build_user_summary(language, 'failed', case_objective,
+                                                  i18n(language,
+                                                       f"步骤'{instruction_to_execute}'执行时发生异常。",
+                                                       f"Step '{instruction_to_execute}' raised an exception during execution."))
                 code_determined_status = 'failed'
                 code_failure_type = 'recoverable'
             break
@@ -3199,7 +1734,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     # Only when code_failure_type is None (normal completion / OBJECTIVE_ACHIEVED);
     # critical/system_error/recoverable paths already set a definitive template.
     if code_failure_type is None:
-        parsed_user_summary = _parse_user_summary(tool_output)
+        parsed_user_summary = parse_user_summary(tool_output)
         if parsed_user_summary:
             user_summary = parsed_user_summary
 
@@ -3223,53 +1758,6 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             f'{executed_steps_count} executed steps (expansion ratio: {step_expansion_ratio}x)'
         )
 
-        # Helper function to sanitize messages for summary generation
-        def _sanitize_message_for_summary(msg, max_length: int = 250) -> str:
-            """Clean message content to avoid Azure OpenAI content filter
-            triggers.
-
-            Removes:
-            - Base64 image URLs (main trigger)
-            - HTML tags (XSS detection)
-            - Error keywords that trigger safety filters
-            - DOM dumps
-            """
-            import re
-
-            # Extract content
-            if hasattr(msg, 'content'):
-                content = str(msg.content)
-            else:
-                content = str(msg)
-
-            # Remove base64 image URLs (primary trigger for content filter)
-            content = re.sub(
-                r'data:image/[^;]+;base64,[A-Za-z0-9+/=]+', '[IMAGE_REMOVED]', content
-            )
-
-            # Remove HTML tags (can trigger XSS detection)
-            content = re.sub(r'<[^>]+>', '', content)
-
-            # Remove error keywords that may trigger content filter
-            content = re.sub(
-                r'\b(denied|blocked|failed|error|forbidden|hack|exploit|inject)\b',
-                '[X]',
-                content,
-                flags=re.IGNORECASE,
-            )
-
-            # Remove DOM dumps (can be large and trigger filters)
-            if 'pageDescription' in content or 'dom_tree' in content:
-                content = re.sub(
-                    r'pageDescription.*?(?===|$)',
-                    '[DOM_SUMMARY]',
-                    content,
-                    flags=re.DOTALL,
-                )
-
-            # Truncate to max length
-            return content[:max_length]
-
         # Use the LLM directly to generate the summary (not through the agent)
         try:
             # Prepare context for summary generation
@@ -3289,7 +1777,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 for o in step_outcomes
                 if o.description and o.severity != StepSeverity.PASSED
             ]
-            _diag_header = _i18n(
+            _diag_header = i18n(
                 language,
                 '步骤诊断详情（工具实际发现，优先参考）：',
                 'Step Diagnostic Details (actual tool findings, prioritize these):',
@@ -3396,7 +1884,7 @@ USER_SUMMARY: [Feature name] mostly works, but [user-perceivable non-critical is
             # Get and sanitize recent messages (reduced from 6 to 4 to minimize content filter risk)
             recent_messages = []
             for msg in messages[-4:]:  # Last 2 exchanges (reduced from 6/3)
-                sanitized = _sanitize_message_for_summary(msg, max_length=250)
+                sanitized = sanitize_message_for_summary(msg, max_length=250)
 
                 if isinstance(msg, HumanMessage):
                     recent_messages.append(f'User: {sanitized}')
@@ -3421,7 +1909,7 @@ USER_SUMMARY: [Feature name] mostly works, but [user-perceivable non-critical is
                     logging.debug(
                         f'Attempting summary generation (attempt {attempt + 1}/{max_retries})'
                     )
-                    response = await _instrumented_ainvoke(
+                    response = await instrumented_ainvoke(
                         llm,
                         full_prompt,
                         model_name=getattr(llm, 'model_name', 'unknown-model'),
@@ -3497,60 +1985,60 @@ Generate a brief summary without referencing specific execution details."""
                 )
                 if not _get_failed_step_indices():
                     # P4: Use executed steps count
-                    final_summary = _make_final_summary(language,
-                                                        f'FINAL_SUMMARY: 测试用例"{case_name}"执行完成。共执行 {executed_steps_count} 个步骤。{agent_output}',
-                                                        f'FINAL_SUMMARY: Test case "{case_name}" completed successfully. All {executed_steps_count} executed steps completed. {agent_output}')
+                    final_summary = make_final_summary(language,
+                                                       f'FINAL_SUMMARY: 测试用例"{case_name}"执行完成。共执行 {executed_steps_count} 个步骤。{agent_output}',
+                                                       f'FINAL_SUMMARY: Test case "{case_name}" completed successfully. All {executed_steps_count} executed steps completed. {agent_output}')
                 else:
                     final_summary = (
-                        _make_final_summary(language,
-                                            f'FINAL_SUMMARY: 测试用例"{case_name}"失败。{agent_output}',
-                                            f'FINAL_SUMMARY: Test case "{case_name}" failed. {agent_output}')
+                        make_final_summary(language,
+                                           f'FINAL_SUMMARY: 测试用例"{case_name}"失败。{agent_output}',
+                                           f'FINAL_SUMMARY: Test case "{case_name}" failed. {agent_output}')
                     )
             else:
                 # Use agent_output (not _summary_output) to preserve STATUS line
-                # for _parse_llm_status; stripped post-determination below.
+                # for parse_llm_status; stripped post-determination below.
                 final_summary = (
                     agent_output
                     if agent_output
-                    else _make_final_summary(language,
-                                             f'FINAL_SUMMARY: 测试用例"{case_name}"已完成全部 {executed_steps_count} 个步骤。',
-                                             f'FINAL_SUMMARY: Test case "{case_name}" completed all {executed_steps_count} executed steps.')
+                    else make_final_summary(language,
+                                            f'FINAL_SUMMARY: 测试用例"{case_name}"已完成全部 {executed_steps_count} 个步骤。',
+                                            f'FINAL_SUMMARY: Test case "{case_name}" completed all {executed_steps_count} executed steps.')
                 )
 
             logging.debug(f'Final summary generated: {final_summary}')
 
             # Parse USER_SUMMARY from LLM output
-            user_summary = _parse_user_summary(agent_output) or ''
+            user_summary = parse_user_summary(agent_output) or ''
             if not user_summary:
                 # LLM did not output USER_SUMMARY — use template fallback
                 if not _get_failed_step_indices():
-                    user_summary = _make_user_summary(language, 'passed', case_objective)
+                    user_summary = build_user_summary(language, 'passed', case_objective)
                 else:
-                    user_summary = _make_user_summary(language, 'failed', case_objective)
+                    user_summary = build_user_summary(language, 'failed', case_objective)
 
         except Exception as e:
             logging.error(f'Exception during final summary generation: {str(e)}')
             if is_system_error(e):
                 # Summary LLM itself failed → system error
                 final_summary = get_system_error_summary(e, language)
-                user_summary = make_user_summary(language, 'warning', case_objective, exception=e)
+                user_summary = build_user_summary(language, 'warning', case_objective, exception=e)
                 code_determined_status = 'warning'
                 code_failure_type = 'system_error'
             elif not _get_failed_step_indices():
                 # P4: Use executed steps count
-                final_summary = _make_final_summary(language,
-                                                    f'FINAL_SUMMARY: 测试用例"{case_name}"执行完成。共执行 {executed_steps_count} 个步骤，未检测到失败。',
-                                                    f'FINAL_SUMMARY: Test case "{case_name}" completed successfully. All {executed_steps_count} executed steps completed without detected failures.')
-                user_summary = _make_user_summary(language, 'passed', case_objective)
+                final_summary = make_final_summary(language,
+                                                   f'FINAL_SUMMARY: 测试用例"{case_name}"执行完成。共执行 {executed_steps_count} 个步骤，未检测到失败。',
+                                                   f'FINAL_SUMMARY: Test case "{case_name}" completed successfully. All {executed_steps_count} executed steps completed without detected failures.')
+                user_summary = build_user_summary(language, 'passed', case_objective)
                 code_determined_status = 'passed'
             else:
                 failed_indices = _get_failed_step_indices()
-                final_summary = _make_final_summary(language,
-                                                    f'FINAL_SUMMARY: 测试用例"{case_name}"完成，以下步骤失败：{failed_indices}，请查看执行日志。',
-                                                    f'FINAL_SUMMARY: Test case "{case_name}" completed with failures at steps {failed_indices}. Review execution logs for details.')
-                user_summary = _make_user_summary(language, 'failed', case_objective)
+                final_summary = make_final_summary(language,
+                                                   f'FINAL_SUMMARY: 测试用例"{case_name}"完成，以下步骤失败：{failed_indices}，请查看执行日志。',
+                                                   f'FINAL_SUMMARY: Test case "{case_name}" completed with failures at steps {failed_indices}. Review execution logs for details.')
+                user_summary = build_user_summary(language, 'failed', case_objective)
                 code_determined_status = 'failed'
-                code_failure_type = _derive_failure_type_from_outcomes(step_outcomes)
+                code_failure_type = derive_failure_type_from_outcomes(step_outcomes)
 
     # --- Status Determination: LLM-first + Safety Guard ---
     if code_determined_status is not None:
@@ -3563,19 +2051,19 @@ Generate a brief summary without referencing specific execution details."""
                 f'skipping safety guard'
             )
         else:
-            status = _apply_safety_guard(code_determined_status, step_outcomes)
+            status = apply_safety_guard(code_determined_status, step_outcomes)
         failure_type = code_failure_type
         if status == 'failed' and not failure_type:
-            failure_type = _derive_failure_type_from_outcomes(step_outcomes)
+            failure_type = derive_failure_type_from_outcomes(step_outcomes)
         logging.debug(
             f"Code-determined status for '{case_name}': {status} "
             f'(failure_type={failure_type})'
         )
     else:
         # Path B: Normal completion — LLM STATUS with safety guard + verdict fallback
-        llm_status = _parse_llm_status(final_summary)
+        llm_status = parse_llm_status(final_summary)
         if llm_status:
-            status = _apply_safety_guard(llm_status, step_outcomes)
+            status = apply_safety_guard(llm_status, step_outcomes)
             if status != llm_status:
                 logging.warning(
                     f"Safety guard overrode LLM status '{llm_status}' → '{status}' "
@@ -3585,7 +2073,7 @@ Generate a brief summary without referencing specific execution details."""
                 logging.debug(f"LLM-determined status for '{case_name}': {status}")
         else:
             # Fallback: use deterministic verdict
-            status, _fallback_failure_type = _verdict_fallback(
+            status, _fallback_failure_type = verdict_fallback(
                 step_outcomes, warning_steps, objective_achieved
             )
             logging.warning(
@@ -3596,14 +2084,14 @@ Generate a brief summary without referencing specific execution details."""
         # Determine failure_type
         failure_type = None
         if status == 'failed':
-            failure_type = _derive_failure_type_from_outcomes(step_outcomes)
+            failure_type = derive_failure_type_from_outcomes(step_outcomes)
 
     # Clean LLM formatting markers from final_summary — these were only
     # needed for internal parsing and should not appear in user-facing reports.
     if final_summary:
         final_summary = final_summary.strip()
 
-        # Strip STATUS: line (was only needed for _parse_llm_status)
+        # Strip STATUS: line (was only needed for parse_llm_status)
         if final_summary.startswith('STATUS:'):
             _fs_lines = final_summary.split('\n', 1)
             final_summary = _fs_lines[1].strip() if len(_fs_lines) > 1 else ''
@@ -3644,7 +2132,7 @@ Generate a brief summary without referencing specific execution details."""
     # Extract metrics and failed step details for reflection phase
     # This enriches case_result without additional file I/O
     metrics = recorded_case_data.get('metrics', {}) if recorded_case_data else {}
-    failed_step_details = _extract_failed_step_details(recorded_case_data)
+    failed_step_details = extract_failed_step_details(recorded_case_data)
 
     # Build enriched case_result with detailed metrics for reflection phase
     case_result = {
@@ -3685,321 +2173,3 @@ Generate a brief summary without referencing specific execution details."""
     result['recorded_case'] = recorded_case_data
 
     return result
-
-
-def _is_objective_achieved(tool_output: str) -> tuple[bool, str]:
-    """Check if the agent has signaled that the test objective is achieved.
-
-    Args:
-        tool_output: The output from the step execution
-
-    Returns:
-        tuple: (is_achieved: bool, reason: str)
-    """
-    if not tool_output or 'objective_achieved:' not in tool_output.lower():
-        return False, ''
-
-    try:
-        # Extract the reason after the signal (case-insensitive)
-        tool_output_lower = tool_output.lower()
-        marker_idx = tool_output_lower.find('objective_achieved:')
-        if marker_idx != -1:
-            # Extract from original tool_output to preserve case
-            start_idx = marker_idx + len('objective_achieved:')
-            remaining = tool_output[start_idx:]
-            reason = remaining.split('\n')[0].strip()
-            # Only return True if there's actual content after the signal
-            if reason:
-                return True, reason
-    except Exception as e:
-        logging.debug(f'Error parsing objective achievement signal: {e}')
-
-    return False, ''
-
-
-def _is_operation_page_agnostic(step_type: str, instruction: str) -> bool:
-    """Determine if operation is page-type agnostic (can execute on unsupported
-    page).
-
-    Page-agnostic operations don't depend on DOM elements and can execute on PDF/plugin pages:
-    - Browser navigation: GoBack, GoForward, GoToPage, Sleep
-    - UX verification: UX_Verify (already implements screenshot fallback)
-
-    Args:
-        step_type: Step type (Action, Verify, UX_Verify, UI_Assert)
-        instruction: Instruction text
-
-    Returns:
-        True if operation can execute on unsupported page, False otherwise
-
-    Examples:
-        >>> _is_operation_page_agnostic("Action", "GoBack to previous page")
-        True
-        >>> _is_operation_page_agnostic("Action", "Tap on element 123")
-        False
-        >>> _is_operation_page_agnostic("UX_Verify", "Check page content")
-        True
-    """
-
-    # Priority 1: Direct action type detection (most reliable)
-    # Check if instruction contains action type names directly
-    for action_type in [ActionType.GO_BACK, ActionType.SLEEP]:
-        if action_type in instruction:
-            logging.debug(
-                f'Page-agnostic action detected via action type: {action_type}'
-            )
-            return True
-
-    # Priority 2: Keyword matching (handles varied phrasings)
-    # Get centralized keywords from action_types module
-    # This eliminates code duplication and ensures consistency
-    PAGE_AGNOSTIC_KEYWORDS = get_page_agnostic_keywords()
-
-    # Category C: Hybrid operations (available in degraded mode)
-    DEGRADED_MODE_TYPES = ['UX_Verify']
-
-    # Check step type - UX_Verify is verified to work on PDF pages (uses screenshot analysis)
-    if step_type in DEGRADED_MODE_TYPES:
-        return True
-
-    # Check keywords in instruction
-    instruction_lower = instruction.lower().replace('_', ' ').replace('-', ' ')
-    for keyword in PAGE_AGNOSTIC_KEYWORDS:
-        if keyword in instruction_lower:
-            logging.debug(f"Page-agnostic operation detected via keyword: '{keyword}'")
-            return True
-
-    # Default: DOM-dependent operation (needs to abort)
-    return False
-
-
-def _is_critical_failure_step(tool_output: str, intermediate_output: str = '') -> bool:
-    """Check if tool output or intermediate output contains [CRITICAL_ERROR:]
-    tag."""
-    if not tool_output and not intermediate_output:
-        return False
-
-    # Check both outputs for critical error tags
-    if '[critical_error:' in tool_output.lower():
-        logging.debug('Critical failure detected in tool_output')
-        return True
-
-    if '[critical_error:' in intermediate_output.lower():
-        logging.debug('Critical failure detected in intermediate_output')
-        return True
-
-    return False
-
-
-# ============================================================================
-# Status Determination: LLM-first + Safety Guard helpers
-# ============================================================================
-
-_STATUS_PATTERN = re.compile(
-    r'STATUS:\s*(passed|failed|warning|pass|fail|success|failure)\b',
-    re.IGNORECASE,
-)
-_STATUS_NORMALIZE = {
-    'passed': 'passed', 'pass': 'passed', 'success': 'passed',
-    'failed': 'failed', 'fail': 'failed', 'failure': 'failed',
-    'warning': 'warning',
-}
-
-
-def _parse_llm_status(llm_output: str) -> Optional[str]:
-    """Parse STATUS field from LLM output with tolerant regex + normalization.
-
-    Supports common variants: passed/pass/success → 'passed',
-    failed/fail/failure → 'failed', warning → 'warning'.
-
-    Returns:
-        Normalized status string ('passed', 'failed', 'warning') or None if not found.
-    """
-    if not llm_output:
-        return None
-    match = _STATUS_PATTERN.search(llm_output)
-    if match:
-        return _STATUS_NORMALIZE.get(match.group(1).lower())
-    return None
-
-
-def _derive_failure_type_from_outcomes(step_outcomes: List[StepOutcome]) -> str:
-    """Derive failure_type from step outcomes for reflection skip decisions.
-
-    Returns:
-        'critical', 'product_defect', 'infrastructure', or 'recoverable'.
-    """
-    severities = {o.severity for o in step_outcomes} if step_outcomes else set()
-    if StepSeverity.CRITICAL in severities:
-        return 'critical'
-    if StepSeverity.HARD_FAIL in severities:
-        return 'product_defect'
-    if StepSeverity.SOFT_FAIL in severities:
-        return 'infrastructure'
-    return 'recoverable'
-
-
-def _apply_safety_guard(status: str, step_outcomes: List[StepOutcome]) -> str:
-    """Prevent LLM from downplaying CRITICAL/HARD_FAIL severity.
-
-    Rules:
-    - CRITICAL exists → must be 'failed' (any other status overridden)
-    - HARD_FAIL exists → must be 'failed' (passed/warning overridden)
-    """
-    severities = {o.severity for o in step_outcomes} if step_outcomes else set()
-    if StepSeverity.CRITICAL in severities and status != 'failed':
-        logging.warning(
-            f"Safety guard: CRITICAL exists, overriding '{status}' → 'failed'"
-        )
-        return 'failed'
-    if StepSeverity.HARD_FAIL in severities and status != 'failed':
-        logging.warning(
-            f"Safety guard: HARD_FAIL exists, overriding '{status}' → 'failed'"
-        )
-        return 'failed'
-    return status
-
-
-def _verdict_fallback(
-    step_outcomes: List[StepOutcome],
-    warning_steps: List[int],
-    objective_achieved: bool,
-) -> Tuple[str, Optional[str]]:
-    """Deterministic fallback when LLM STATUS is missing.
-
-    Returns:
-        (status, failure_type) tuple.
-    """
-    severities = {o.severity for o in step_outcomes} if step_outcomes else set()
-    if StepSeverity.CRITICAL in severities:
-        return ('failed', 'critical')
-    if StepSeverity.HARD_FAIL in severities:
-        return ('failed', 'product_defect')
-    if objective_achieved:
-        return ('passed', None)
-    if StepSeverity.SOFT_FAIL in severities:
-        return ('failed', 'infrastructure')
-    if warning_steps:
-        return ('warning', None)
-    return ('passed', None)
-
-
-def _extract_failed_step_details(
-    recorded_data: Optional[Dict[str, Any]]
-) -> List[Dict[str, Any]]:
-    """Extract detailed information about failed steps from recorded case data.
-
-    This provides detailed failure context for the reflection phase to make
-    better REPLAN decisions without requiring additional file I/O.
-
-    Args:
-        recorded_data: The recorded case data from CentralCaseRecorder.get_case_data()
-
-    Returns:
-        List of failed step details, each containing:
-        - step_id: Step identifier
-        - description: What the step was trying to do
-        - status: The failure status (failed/error/failure)
-        - type: Step type (action/verify/ux_verify)
-    """
-    if not recorded_data:
-        return []
-
-    steps = recorded_data.get('steps', [])
-    failed_details: List[Dict[str, Any]] = []
-
-    for step in steps:
-        status = (step.get('status') or '').lower()
-        if status in ('failed', 'error', 'failure'):
-            failed_details.append(
-                {
-                    'step_id': step.get('id'),
-                    'description': step.get('description', ''),
-                    'status': step.get('status'),
-                    'type': step.get('type', 'action'),
-                }
-            )
-
-    return failed_details
-
-
-def _is_navigation_instruction(instruction: str) -> bool:
-    """Determine if the instruction is a navigation instruction.
-
-    Args:
-        instruction: Instruction text to check
-
-    Returns:
-        bool: True if it's a navigation instruction, False otherwise
-    """
-    if not instruction:
-        return False
-
-    # Navigation keywords list (including both English and Chinese for compatibility)
-    navigation_keywords = [
-        'navigate',
-        'go to',
-        'open',
-        'visit',
-        'browse',
-        'load',
-        'access',
-        'enter',
-        'launch',
-        '导航',  # navigate (Chinese)
-        '打开',  # open (Chinese)
-        '访问',  # visit (Chinese)
-        '跳转',  # jump to (Chinese)
-        '前往',  # go to (Chinese)
-    ]
-
-    # Convert instruction to lowercase for matching
-    instruction_lower = instruction.lower()
-
-    # Check if it contains navigation keywords
-    for keyword in navigation_keywords:
-        if keyword in instruction_lower:
-            return True
-
-    # Check URL patterns
-    url_patterns = [
-        r'https?://[^\s]+',
-        r'www\.[^\s]+',
-        r'\.com|\.org|\.net|\.edu|\.gov',
-    ]
-
-    for pattern in url_patterns:
-        if re.search(pattern, instruction_lower):
-            return True
-
-    return False
-
-
-def _detect_llm_provider(model_name: str) -> str:
-    """Detect LLM provider based on model name for LangChain integration.
-
-    Args:
-        model_name: Model name from configuration
-
-    Returns:
-        str: 'anthropic' for Claude models, 'gemini' for Gemini models, 'openai' for GPT models
-    """
-    if not model_name:
-        return 'openai'  # Default to OpenAI
-
-    model_lower = model_name.lower()
-
-    # Claude models (claude-3-*, claude-3.5-*, etc.)
-    if model_lower.startswith('claude-'):
-        return 'anthropic'
-
-    # Google Gemini models (gemini-2.5-*, gemini-3-*, etc.)
-    if model_lower.startswith('gemini-'):
-        return 'gemini'
-
-    # OpenAI models (gpt-*, o1-*, o3-*)
-    if model_lower.startswith(('gpt-', 'o1-', 'o3-')):
-        return 'openai'
-
-    # Default to OpenAI for unknown models
-    return 'openai'
