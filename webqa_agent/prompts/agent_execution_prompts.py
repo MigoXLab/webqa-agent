@@ -752,10 +752,11 @@ When you encounter a file upload element on the page:
 **Selection Rules:**
 - Match file type to the accept attribute (e.g., accept=".pdf" -> choose a .pdf file)
 - If accept allows multiple types, prefer the most common type for the page context
-- For batch upload (multiple attribute), make SEPARATE Upload action calls, one per file
+- For batch upload (multiple attribute), use a SINGLE Upload action with comma-separated
+  full paths as the value (e.g., value="/path/a.pdf, /path/b.pdf, /path/c.jpg")
 - If no matching file exists, skip the upload step
 
-**CRITICAL**: The value parameter MUST be the FULL absolute path exactly as shown
+**CRITICAL**: The value parameter MUST use the FULL absolute path exactly as shown
 in the file list above. Do NOT use just the filename.
 """
 

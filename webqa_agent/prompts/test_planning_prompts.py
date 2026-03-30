@@ -1013,7 +1013,8 @@ and injecting the file — do NOT plan separate "Click upload button" and "Uploa
 When you identify file upload controls (input[type="file"]) on the page:
 - Include ONE upload step per file, using only filenames from the available test files below
 - Do NOT invent filenames; use only files from the list below
-- Example step format: "Upload bench.pdf to the file upload field"
+- For single file: "Upload bench.pdf to the file upload field"
+- For batch upload (if the element supports multiple files): "Upload bench.pdf, bench.docx to the file upload field"
 - Consider testing: successful upload, verify the filename appears on page
 
 Available test files:

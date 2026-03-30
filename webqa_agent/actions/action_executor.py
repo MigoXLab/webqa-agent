@@ -1,7 +1,7 @@
 import asyncio
 import inspect
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 from webqa_agent.actions.action_handler import action_context_var
 
@@ -336,13 +336,13 @@ class ActionExecutor:
                 'error_details': error_details
             }
 
-    async def _execute_upload(self, action, file_path=None):
+    async def _execute_upload(self, action, file_path: Union[str, List[str], None] = None):
         """Execute upload action.
 
         Args:
             action: Action dict with locate.id
-            file_path: File path(s) to upload. If None, returns failure
-                      with guidance to configure test_files_dir.
+            file_path: File path(s) to upload. Single str or list of str for
+                      batch upload. If None, returns failure with guidance.
         """
         if not file_path:
             return {

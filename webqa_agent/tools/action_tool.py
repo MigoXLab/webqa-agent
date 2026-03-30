@@ -183,7 +183,12 @@ class UITool(BaseTool):
             action_phrase = f'Press the {value} key'
         elif action == 'Upload':
             if value:
-                action_phrase = f"Upload file {value} to {target or 'the file input'}"
+                # Parse comma-separated paths once for both phrase building and security validation
+                upload_paths = [p.strip() for p in value.split(',') if p.strip()]
+                if len(upload_paths) == 1:
+                    action_phrase = f"Upload file {upload_paths[0]} to {target or 'the file input'}"
+                else:
+                    action_phrase = f"Upload {len(upload_paths)} files to {target or 'the file input'}"
             else:
                 return (
                     '[WARNING] Upload skipped: no test files available. '
@@ -245,14 +250,18 @@ class UITool(BaseTool):
                         '[WARNING] Upload skipped: test_files_dir is not '
                         'configured. Cannot validate file path security.'
                     )
-                if not test_file_library.validate_file_path(value):
-                    return (
-                        f'[FAILURE:SECURITY] File path "{value}" is outside the '
-                        f'configured test_files_dir. Only files within the test '
-                        f'directory can be uploaded.'
-                    )
+                for path in upload_paths:
+                    if not test_file_library.validate_file_path(path):
+                        return (
+                            f'[FAILURE:SECURITY] File path "{path}" is outside '
+                            'the configured test_files_dir. Only files within '
+                            'the test directory can be uploaded.'
+                        )
+
+                # Pass single path as str, multiple as list
+                file_path_arg = upload_paths[0] if len(upload_paths) == 1 else upload_paths
                 execution_steps, result = await self.ui_tester_instance.action(
-                    instruction, file_path=value
+                    instruction, file_path=file_path_arg
                 )
             else:
                 execution_steps, result = await self.ui_tester_instance.action(
