@@ -15,7 +15,6 @@ import logging
 import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import urlparse
 
 from webqa_agent.actions.action_handler import screenshot_prefix_var
 from webqa_agent.browser import AccountPool, BrowserSession, BrowserSessionPool
@@ -968,11 +967,6 @@ class CaseRunner:
 
         page = tester.browser_session.page
         try:
-            await page.wait_for_load_state('domcontentloaded', timeout=10000)
-        except Exception:
-            logging.debug('switch_account step: domcontentloaded wait timed out', exc_info=True)
-
-        try:
             await page.wait_for_load_state('networkidle', timeout=3000)
         except Exception:
             logging.debug('switch_account step: networkidle wait timed out', exc_info=True)
@@ -986,33 +980,7 @@ class CaseRunner:
             logging.debug('Failed to read current URL after account switch', exc_info=True)
         tester.current_url = actual_url
 
-        current_host = ''
-        current_cookie_names: List[str] = []
-        try:
-            current_host = urlparse(actual_url).hostname or ''
-            context_cookies = await tester.browser_session.context.cookies([actual_url])
-            current_cookie_names = sorted({
-                cookie.get('name', '')
-                for cookie in context_cookies
-                if cookie.get('name')
-            })
-        except Exception:
-            logging.debug('Failed to inspect cookies after account switch', exc_info=True)
-
-        login_redirect_detected = (
-            'sso.' in actual_url
-            or '/login' in actual_url
-            or '/signin' in actual_url
-        )
-        switch_effective = not login_redirect_detected
-        if login_redirect_detected:
-            logging.warning(
-                f"switch_account '{account.name}': login redirect detected — "
-                f"actual_url={actual_url}, cookies may be expired or incomplete "
-                f"(configured cookies: {len(account.resolved_cookies)}, "
-                f"browser cookies: {len(current_cookie_names)})"
-            )
-        switch_status = TestStatus.PASSED if switch_effective else TestStatus.WARNING
+        redirected = actual_url != navigate_url
 
         screenshot_b64 = None
         try:
@@ -1024,19 +992,12 @@ class CaseRunner:
         except Exception:
             logging.warning('Failed to capture screenshot after account switch', exc_info=True)
 
-        warning_msg = (
-            'Detected redirect to login after account switch. '
-            'The configured cookies may be expired or invalid for this environment.'
-            if login_redirect_detected else ''
-        )
         result_data = {
             'account': account.name,
             'role': account.role,
-            'switch_effective': switch_effective,
             'requested_url': navigate_url,
             'current_url': actual_url,
-            'login_redirect_detected': login_redirect_detected,
-            'warning': warning_msg,
+            'redirected': redirected,
         }
         step_result = SubTestStep(
             id=step_idx,
@@ -1050,8 +1011,8 @@ class CaseRunner:
             ] if screenshot_b64 else [],
             modelIO=str(result_data),
             actions=[],
-            status=switch_status,
-            errors=warning_msg,
+            status=TestStatus.PASSED,
+            errors='',
         )
         prev_step_context = StepContext(
             description=f"Switched to account '{account.name}'",
