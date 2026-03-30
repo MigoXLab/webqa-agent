@@ -1,9 +1,13 @@
 """Executor package for WebQA Agent test modes."""
 
-# Core executors (Gen/Run modes)
-from webqa_agent.executor.gen_executor import GenExecutor
 from webqa_agent.executor.result_aggregator import ResultAggregator
-from webqa_agent.executor.run_executor import RunExecutor
+
+try:
+    from webqa_agent.executor.gen_executor import GenExecutor
+    from webqa_agent.executor.run_executor import RunExecutor
+except ModuleNotFoundError:
+    GenExecutor = None
+    RunExecutor = None
 
 __all__ = [
     'GenExecutor',

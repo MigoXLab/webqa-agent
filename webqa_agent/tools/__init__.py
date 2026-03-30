@@ -49,6 +49,7 @@ from webqa_agent.tools.custom import \
 from webqa_agent.tools.custom import \
     link_check_tool  # detect_dynamic_links tool
 from webqa_agent.tools.custom import nuclei_tool  # execute_nuclei_scan tool
+from . import switch_account_tool  # switch_account tool
 from webqa_agent.tools.registry import get_registry, register_tool
 
 __all__ = [

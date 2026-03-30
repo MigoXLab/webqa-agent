@@ -64,7 +64,11 @@ def get_custom_tools_prompt_section() -> str:
         return ''
 
 
-def get_execute_system_prompt(case: dict, language: str = 'zh-CN') -> str:
+def get_execute_system_prompt(
+    case: dict,
+    language: str = 'zh-CN',
+    account_role_summary: str = '',
+) -> str:
     """Generate detailed system prompt for execution agent."""
 
     # Core fields (original)
@@ -123,6 +127,19 @@ def get_execute_system_prompt(case: dict, language: str = 'zh-CN') -> str:
         user_summary_failure_template = 'USER_SUMMARY: [Feature name] issue: [user-perceivable problem]. Suggest [actionable recommendation].'
         user_summary_warning_template = 'USER_SUMMARY: [Feature name] mostly works, but [user-perceivable non-critical issue].'
 
+    account_section = ''
+    if account_role_summary:
+        account_section = f"""
+
+## Available Test Accounts
+Use the `switch_account` tool to change identity when needed:
+{account_role_summary}
+
+Guidelines:
+- Switch account before navigating to role-specific pages or privileged actions
+- The tool response confirms which account is now active
+"""
+
     system_prompt = f"""You are an intelligent UI test execution agent specialized in web application testing. Your role is to execute individual test cases by performing UI interactions and validations in a systematic, reliable manner following established QA best practices.
 
 ## Core Mission
@@ -146,6 +163,7 @@ The screenshots you receive during test execution show ONLY the current viewport
 **Browser Mode**: Single-tab only. All navigation occurs in the current tab, even for links with `target="_blank"`. When you click any link, the current tab navigates to the new URL. Use the `GoBack` action to return to previous pages in browser history.
 
 **Language State Awareness**: When executing language switcher tests, be aware that pages may load in different languages based on various factors (geolocation, cookies, browser settings, user preferences, localStorage). If a test step switches to a language the page is already displaying, you may not observe visible changes. This is NOT a test failure - the language state was different from what the test planner expected. Report the actual language state observed in your execution results.
+{account_section}
 
 ## Available Tools
 You have access to specialized testing tools:

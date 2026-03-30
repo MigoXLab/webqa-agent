@@ -82,6 +82,18 @@ class StepVerify(BaseModel):
         return _parse_string_to_dict(data, 'assertion')
 
 
+class StepSwitchAccount(BaseModel):
+    """Switch-account step configuration."""
+    model_config = ConfigDict(extra='forbid')
+
+    target: str
+
+    @model_validator(mode='before')
+    @classmethod
+    def parse_yaml_format(cls, data: Any) -> Dict[str, Any]:
+        return _parse_string_to_dict(data, 'target')
+
+
 def _merge_step_args(step_key: str, step_value: Any, args_value: Any, content_field: str) -> Dict[str, Any]:
     """Merge flat-format args into step value (action/verify + args)."""
     if args_value is not None:
@@ -103,9 +115,10 @@ class CaseStep(BaseModel):
     """
     model_config = ConfigDict(extra='forbid')
 
-    step_type: str  # 'action' or 'verify'
+    step_type: str  # 'action' | 'verify' | 'switch_account'
     action: Optional[StepAction] = None
     verify: Optional[StepVerify] = None
+    switch_account: Optional[StepSwitchAccount] = None
 
     @model_validator(mode='before')
     @classmethod
@@ -118,28 +131,37 @@ class CaseStep(BaseModel):
         if not isinstance(data, dict):
             raise ValueError(f'Step must be a dict, got {type(data)}')
 
+        _VALID_STEP_TYPES = ('action', 'verify', 'switch_account')
+
         # If already in internal format (e.g. from model_dump), validate and return
         if 'step_type' in data:
             step_type = data.get('step_type')
-            # Validate step_type value
-            if step_type not in ('action', 'verify'):
-                raise ValueError(f'Invalid step_type: {step_type}. Must be "action" or "verify"')
-            # Ensure corresponding field exists
-            if step_type == 'action' and 'action' not in data:
-                raise ValueError('step_type is "action" but "action" field is missing')
-            if step_type == 'verify' and 'verify' not in data:
-                raise ValueError('step_type is "verify" but "verify" field is missing')
+            if step_type not in _VALID_STEP_TYPES:
+                raise ValueError(
+                    f'Invalid step_type: {step_type}. Must be one of {_VALID_STEP_TYPES}'
+                )
+            if step_type not in data:
+                raise ValueError(f'step_type is "{step_type}" but "{step_type}" field is missing')
             return data
 
         # Determine step type
-        step_key = 'action' if 'action' in data else 'verify' if 'verify' in data else None
+        step_key = (
+            'action' if 'action' in data else
+            'verify' if 'verify' in data else
+            'switch_account' if 'switch_account' in data else
+            None
+        )
         if not step_key:
-            raise ValueError(f'Step must contain "action" or "verify": {data}')
+            raise ValueError(f'Step must contain one of {_VALID_STEP_TYPES}: {data}')
 
         # Validate no extra fields
-        extra_keys = set(data.keys()) - {step_key, 'args'}
+        allowed_keys = {step_key, 'args'} if step_key != 'switch_account' else {step_key}
+        extra_keys = set(data.keys()) - allowed_keys
         if extra_keys:
             raise ValueError(f'Extra fields in {step_key} step: {extra_keys}. Check indentation?')
+
+        if step_key == 'switch_account':
+            return {'step_type': step_key, step_key: data[step_key]}
 
         # Merge args if present (flat format)
         content_field = 'description' if step_key == 'action' else 'assertion'
@@ -163,6 +185,7 @@ class Case(BaseModel):
     # Preserve original display name; keep a sanitized copy only for filenames
     safe_name: Optional[str] = None
     steps: List[CaseStep] = []
+    account: Optional[str] = None
     snapshot: Optional[str] = None    # Non-empty = auto-save fixture
     use_snapshot: Optional[str] = None   # Load specific fixture
 

@@ -215,6 +215,30 @@ class _BrowserSession:
             # Re-attach event collector on new page (old page is closed)
             await self._event_collector.reset(self._page)
 
+    async def switch_account(
+        self,
+        cookies: List[Dict[str, Any]],
+        navigate_url: Optional[str] = None,
+    ) -> None:
+        """Atomically switch browser identity by rebuilding the context."""
+        await self.reset_context()
+        if cookies:
+            logging.info(
+                f'[Session {self.session_id}] switch_account: adding {len(cookies)} cookies'
+            )
+            await self._context.add_cookies(cookies)
+        else:
+            logging.warning(f'[Session {self.session_id}] switch_account: no cookies provided')
+
+        target_url = navigate_url or 'about:blank'
+        await self._page.goto(target_url, wait_until='domcontentloaded', timeout=60000)
+        final_url = self._page.url
+        if final_url != target_url:
+            logging.warning(
+                f'[Session {self.session_id}] switch_account: navigation redirected '
+                f'from {target_url} to {final_url}'
+            )
+
     async def initialize(self) -> '_BrowserSession':
         async with self._lock:
             if self._is_closed:
