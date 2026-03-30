@@ -139,10 +139,32 @@ class ActionHandler:
         self.page_data = {}
         self.page_element_buffer = {}  # page element buffer
         self.page = None
+        self.url_validator = None  # URL validator for preventing LLM hallucinations
 
     async def initialize(self, page: Page):
         self.page = page
         return self
+
+    def set_url_validator(self, base_url: str):
+        """Set URL validator based on test session's base URL.
+
+        This enables URL validation to prevent LLM hallucinations where
+        domain names are incorrectly reordered or modified.
+
+        Args:
+            base_url: The test session's starting URL (e.g., config.target_url)
+
+        Example:
+            handler.set_url_validator("https://discovery.intern-ai.org.cn/home")
+        """
+        from webqa_agent.utils.url_validator import URLValidator
+
+        try:
+            self.url_validator = URLValidator(base_url)
+            logging.info(f'URL validator initialized with base domain: {self.url_validator.base_domain}')
+        except ValueError as e:
+            logging.error(f'Failed to initialize URL validator: {e}')
+            self.url_validator = None
 
     def _get_current_page(self) -> Page:
         """Get current active page."""
@@ -212,7 +234,12 @@ class ActionHandler:
                 raise Exception(f'add context cookies error: {e}')
 
         await self.page.goto(url=url, wait_until='domcontentloaded', timeout=60000)
-        await self.page.wait_for_load_state('networkidle', timeout=60000)
+        try:
+            # networkidle is often blocked by long-polling or analytics in clusters.
+            # We use a short timeout so we don't stall the tests unnecessarily.
+            await self.page.wait_for_load_state('networkidle', timeout=3000)
+        except Exception as e:
+            logging.warning(f'Wait for networkidle timed out: {e}. Proceeding since domcontentloaded is complete.')
 
     async def smart_navigate_to_page(self, page: Page, url: str, cookies=None) -> bool | None:
         """Smart navigation to target page, avoiding redundant navigation.
@@ -229,6 +256,24 @@ class ActionHandler:
             # Get current page URL
             current_url = page.url
             logging.debug(f'Smart navigation check - Current URL: {current_url}, Target URL: {url}')
+
+            # URL Validation: Prevent LLM hallucinations (domain reordering, etc.)
+            if self.url_validator:
+                try:
+                    # Attempt to validate and auto-correct URL
+                    original_url = url
+                    url = self.url_validator.validate_or_fix(url)
+
+                    if original_url != url:
+                        logging.warning(
+                            f'URL auto-corrected by validator: {original_url} -> {url}'
+                        )
+                except ValueError as e:
+                    # URL validation failed and cannot be fixed
+                    logging.error(f'URL validation failed: {e}')
+                    return False  # Navigation failed due to invalid URL
+            else:
+                logging.debug('URL validator not initialized, skipping validation')
 
             # Enhanced URL normalization function to handle various domain variations
             def normalize_url(u):
@@ -1768,6 +1813,11 @@ class ActionHandler:
     ) -> bytes:
         """Get page screenshot (binary) and save to disk.
 
+        Includes a fallback strategy for cluster/container stability:
+          1. Normal screenshot with requested settings.
+          2. If full_page times out, retry viewport-only (smaller surface).
+          3. Last resort: inject CSS to override web fonts, then viewport screenshot.
+
         Args:
             page: page object
             full_page: whether to capture the whole page
@@ -1782,36 +1832,60 @@ class ActionHandler:
             The method always returns the screenshot bytes for base64 encoding.
         """
         try:
-            # Shortened and more lenient load state check
-            # Note: page.screenshot() already waits for fonts and basic rendering internally
-            try:
-                await page.wait_for_load_state('domcontentloaded', timeout=10000)
-            except Exception as e:
-                logging.debug(f'Load state check: {e}; proceeding with screenshot')
+            await page.wait_for_load_state('domcontentloaded', timeout=10000)
+        except Exception as e:
+            logging.debug(f'Load state check: {e}; proceeding with screenshot')
 
+        screenshot_options = {
+            'full_page': full_page,
+            'timeout': timeout,
+            'caret': 'hide',
+        }
+        if file_path:
+            screenshot_options['path'] = file_path
+
+        # ── Attempt 1: normal screenshot ──
+        try:
             logging.debug(f'Taking screenshot (full_page={full_page}, timeout={timeout}ms)')
-
-            # Prepare screenshot options with Playwright best practices
-            screenshot_options = {
-                'full_page': full_page,
-                'timeout': timeout,
-                'animations': 'disabled',  # Skip waiting for CSS animations/transitions (Playwright 1.25+)
-                'caret': 'hide',  # Hide text input cursor for cleaner screenshots
-            }
-
-            # Save to disk if file_path is provided
-            if file_path:
-                screenshot_options['path'] = file_path
-                logging.debug(f'Screenshot will be saved to: {file_path}')
-
-            # Capture screenshot with optimized options
             screenshot: bytes = await page.screenshot(**screenshot_options)
-
             logging.debug(f'Screenshot captured successfully ({len(screenshot)} bytes)')
             return screenshot
-
         except Exception as e:
             logging.warning(f'Page screenshot attempt failed: {e}; trying fallback capture')
+
+        # ── Attempt 2: viewport-only fallback (only when full_page failed) ──
+        if full_page:
+            try:
+                logging.info('Screenshot fallback: retrying with viewport-only')
+                screenshot_options['full_page'] = False
+                screenshot_options['timeout'] = min(timeout, 30000)
+                screenshot = await page.screenshot(**screenshot_options)
+                logging.debug(f'Viewport-only fallback succeeded ({len(screenshot)} bytes)')
+                return screenshot
+            except Exception as e:
+                logging.warning(f'Viewport-only fallback failed: {e}')
+
+        # ── Attempt 3: force-disable web fonts via CSS, then viewport screenshot ──
+        try:
+            logging.info('Screenshot fallback: disabling web fonts via CSS injection')
+            await page.evaluate('''() => {
+                const s = document.createElement("style");
+                s.id = "__webqa_no_fonts";
+                s.textContent = "* { font-family: Arial, Helvetica, sans-serif !important; }";
+                document.head.appendChild(s);
+            }''')
+            screenshot_options['full_page'] = False
+            screenshot_options['timeout'] = min(timeout, 30000)
+            screenshot = await page.screenshot(**screenshot_options)
+            await page.evaluate('document.getElementById("__webqa_no_fonts")?.remove()')
+            logging.debug(f'No-fonts fallback succeeded ({len(screenshot)} bytes)')
+            return screenshot
+        except Exception as e:
+            logging.warning(f'No-fonts fallback failed: {e}')
+            try:
+                await page.evaluate('document.getElementById("__webqa_no_fonts")?.remove()')
+            except Exception:
+                pass
             raise
 
     async def go_back(self) -> bool:

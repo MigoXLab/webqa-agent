@@ -1,9 +1,17 @@
+"""Logging utilities for WebQA Agent.
+
+Provides centralized logging configuration with support for:
+- File logging (with rotation)
+- Console output with colored formatting
+- Context-aware logging for parallel test execution
+- Optional file-less mode for containerized environments
+"""
+
+import contextvars
 import logging
 import os
 from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
-import contextvars
-
 
 # Context variable for parallel test execution logging
 test_id_var = contextvars.ContextVar('test_id', default='default')
@@ -17,15 +25,18 @@ LEVEL = {
 }
 
 COLORS = {
-    'DEBUG': '\033[1;34m',  # blue
-    'INFO': '\033[1;32m',  # green
-    'WARNING': '\033[1;33m',  # yellow
-    'ERROR': '\033[1;31m',  # red
+    'DEBUG': '\033[1;34m',     # blue
+    'INFO': '\033[1;32m',      # green
+    'WARNING': '\033[1;33m',   # yellow
+    'ERROR': '\033[1;31m',     # red
     'CRITICAL': '\033[1;31m',  # red
-    'ENDC': '\033[0m'  # reset
+    'ENDC': '\033[0m'          # reset
 }
 
+
 class ColoredFormatter(logging.Formatter):
+    """Formatter that adds ANSI color codes to log messages."""
+
     def format(self, record):
         levelname = record.levelname
         if levelname in COLORS:
@@ -35,7 +46,11 @@ class ColoredFormatter(logging.Formatter):
 
 
 class ContextFilter(logging.Filter):
-    """Filter that adds test_id from contextvars to log records."""
+    """Filter that adds test_id from contextvars to log records.
+
+    Enables tracking logs from parallel test executions by injecting the
+    current test context into each log record.
+    """
 
     def filter(self, record):
         record.test_id = test_id_var.get()
@@ -43,89 +58,102 @@ class ContextFilter(logging.Filter):
 
 
 class GetLog:
+    """Singleton logger factory with configurable output modes.
+
+    Attributes:
+        logger: The shared logger instance
+        stdout: Whether file logging is disabled
+        log_folder: Path to the log directory (when file logging is enabled)
+        save_screenshots_locally: Whether to save screenshots locally
+    """
+
     logger: logging.Logger = None
+    stdout: bool = False
 
     @classmethod
-    def get_log(cls, log_level: str = 'info', save_locally: bool=False, shared_log_folder: str=None):
-        """Get logger and initialize logging system.
+    def get_log(cls, log_level: str = 'info', save_locally: bool = False,
+                shared_log_folder: str = None, stdout: bool = False):
+        """Initialize and return the logger instance.
 
         Args:
-            log_level(str):
-            save_locally (bool): Whether to save screenshots locally, default is False
-            shared_log_folder (str): Shared log folder path for concurrent testing
+            log_level: Log level (debug, info, warning, error, critical)
+            save_locally: Whether to save screenshots locally
+            shared_log_folder: Custom log folder path for concurrent testing
+            stdout: Disable file logging, output to stdout only.
+
+        Returns:
+            Configured logging.Logger instance
+
+        Raises:
+            ValueError: If log_level is not valid
         """
+        # Suppress noisy third-party loggers
         logging.getLogger('httpx').setLevel(logging.ERROR)
         logging.getLogger('httpcore').setLevel(logging.ERROR)
         logging.getLogger('openai').setLevel(logging.ERROR)
-        if log_level not in log_level:
+
+        if log_level not in LEVEL:
             raise ValueError(f'Invalid log level: {log_level}')
 
-        # Set global screenshot save parameter
         cls.save_screenshots_locally = save_locally
+        cls.stdout = stdout
 
         if cls.logger is None:
-            # If shared log folder is provided, use it
-            if shared_log_folder:
-                cls.log_folder = shared_log_folder
-            else:
-                # Get current time and create corresponding log directory
-                log_dir = './logs'
-                current_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-                cls.log_folder = os.path.join(log_dir, current_time)
-
-                # Store timestamp in environment variable
-                os.environ['WEBQA_TIMESTAMP'] = current_time
-
-            # Create log directory if it doesn't exist
-            if not os.path.exists(cls.log_folder):
-                os.makedirs(cls.log_folder)
-
-            # Get logger
             cls.logger = logging.getLogger()
-            # Set log level
             cls.logger.setLevel(LEVEL[log_level])
 
-            # Get handler - main log file handler
-            log_file = os.path.join(cls.log_folder, 'log.log')
-            th = TimedRotatingFileHandler(
-                filename=log_file,
-                when='midnight',
-                interval=1,
-                backupCount=3,
-                encoding='utf-8',
-            )
-            th.name = 'file'
-            th.setLevel(LEVEL[log_level])
-
-            # Get ERROR log handler - error log file handler
-            error_log_file = os.path.join(cls.log_folder, 'error.log')
-            eh = logging.FileHandler(filename=error_log_file, encoding='utf-8')
-            eh.name = 'error'
-            eh.setLevel(LEVEL['warning'])
-
+            # Configure log format
             fmt = '%(asctime)s - %(levelname)s - [%(test_id)s] %(message)s'
             if log_level == 'debug':
                 fmt = '%(asctime)s %(levelname)s [%(test_id)s] [%(name)s] [%(filename)s (%(funcName)s:%(lineno)d)] - %(message)s'
-            fm = logging.Formatter(fmt)
-            console_fm = ColoredFormatter(fmt)
 
-            # Add context filter to include test_id in log records
+            plain_formatter = logging.Formatter(fmt)
+            colored_formatter = ColoredFormatter(fmt)
             context_filter = ContextFilter()
-            th.addFilter(context_filter)
-            eh.addFilter(context_filter)
 
-            th.setFormatter(fm)
-            eh.setFormatter(fm)
+            # File handlers (only when file logging is enabled)
+            if not stdout:
+                if shared_log_folder:
+                    cls.log_folder = shared_log_folder
+                else:
+                    log_dir = './logs'
+                    current_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+                    cls.log_folder = os.path.join(log_dir, current_time)
+                    os.environ['WEBQA_TIMESTAMP'] = current_time
 
-            cls.logger.addHandler(th)
-            cls.logger.addHandler(eh)
+                if not os.path.exists(cls.log_folder):
+                    os.makedirs(cls.log_folder)
 
-            ch = logging.StreamHandler()
-            ch.name = 'stream'
-            ch.setLevel(LEVEL[log_level])
-            ch.addFilter(context_filter)
-            ch.setFormatter(console_fm)
-            cls.logger.addHandler(ch)
+                # Main log file handler (with daily rotation)
+                log_file = os.path.join(cls.log_folder, 'log.log')
+                file_handler = TimedRotatingFileHandler(
+                    filename=log_file,
+                    when='midnight',
+                    interval=1,
+                    backupCount=3,
+                    encoding='utf-8',
+                )
+                file_handler.name = 'file'
+                file_handler.setLevel(LEVEL[log_level])
+                file_handler.addFilter(context_filter)
+                file_handler.setFormatter(plain_formatter)
+                cls.logger.addHandler(file_handler)
 
-        # Return logger
+                # Error log file handler (warnings and above)
+                error_log_file = os.path.join(cls.log_folder, 'error.log')
+                error_handler = logging.FileHandler(filename=error_log_file, encoding='utf-8')
+                error_handler.name = 'error'
+                error_handler.setLevel(LEVEL['warning'])
+                error_handler.addFilter(context_filter)
+                error_handler.setFormatter(plain_formatter)
+                cls.logger.addHandler(error_handler)
+
+            # Stream handler (always enabled for stdout and Display capture)
+            stream_handler = logging.StreamHandler()
+            stream_handler.name = 'stream'
+            stream_handler.setLevel(LEVEL[log_level])
+            stream_handler.addFilter(context_filter)
+            stream_handler.setFormatter(colored_formatter)
+            cls.logger.addHandler(stream_handler)
+
         return cls.logger

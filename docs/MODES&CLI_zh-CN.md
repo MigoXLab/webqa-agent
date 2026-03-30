@@ -93,20 +93,13 @@ target:
   max_concurrent_tests: 2               # 可选，默认并发数 2
 
 test_config:
-  function_test:                        # 功能测试
-    enabled: True
-    type: ai                            # 'default' 或 'ai'
-    business_objectives: 测试搜索功能，生成3个测试用例
-    dynamic_step_generation:
-      enabled: True                     # 启用动态步骤生成
-      max_dynamic_steps: 8              # 每次发现最多生成 8 个步骤
-      min_elements_threshold: 2         # 至少需要 2 个新元素才触发
-  ux_test:                              # 用户体验测试
-    enabled: True
-  performance_test:                     # 性能分析（需要 Lighthouse）
-    enabled: False
-  security_test:                        # 安全扫描（需要 Nuclei）
-    enabled: False
+  business_objectives: 测试搜索功能，生成3个测试用例
+  dynamic_step_generation:
+    enabled: True                       # 启用动态步骤生成
+    max_dynamic_steps: 8                # 每次发现最多生成 8 个步骤
+    min_elements_threshold: 2           # 至少需要 2 个新元素才触发
+  custom_tools:                         # 可选自定义工具（默认：UI 操作、UX 验证）
+    enabled: []                         # 空列表：仅使用默认工具
 ```
 
 1. 开启 功能测试default遍历模式、用户体验测试、性能测试、安全测试
@@ -118,15 +111,11 @@ target:
   max_concurrent_tests: 4               # 可选，默认并发数 2
 
 test_config:
-  function_test:                        # 功能测试
-    enabled: True
-    type: default                       # 'default' 或 'ai'
-  ux_test:                              # 用户体验测试
-    enabled: True
-  performance_test:                     # 性能分析（需要 Lighthouse）
-    enabled: True
-  security_test:                        # 安全扫描（需要 Nuclei）
-    enabled: True
+  business_objectives: 综合测试，包括性能和安全分析
+  custom_tools:                         # 启用自定义工具
+    enabled:
+      - lighthouse                      # Lighthouse 性能测试（需要：npm install -g lighthouse）
+      - nuclei                          # Nuclei 安全扫描（需要：安装 nuclei）
 ```
 
 ## 📋 Run 模式 (用例执行模式)

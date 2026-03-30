@@ -23,6 +23,7 @@ repos:
     hooks:
     -   id: codespell
         args: ["--skip=*.po,*.ts,*.css", "--ignore-regex=\\b\\w{2,3}\\b"]
+        exclude: '^webqa_agent/static/assets/'
 -   repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.3.0
     hooks:
@@ -90,3 +91,4 @@ repos:
     hooks:
     -   id: markdown-link-check
         args: [-q,-c, ./.github/md-link-config.json]
+        exclude: 'MODES&CLI.*\.md$'  # Exclude files with & character

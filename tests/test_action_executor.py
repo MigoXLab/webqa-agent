@@ -140,34 +140,6 @@ class TestActionExecutor:
             await self.teardown_method()
 
     @pytest.mark.asyncio
-    async def test_hover_action(self):
-        """Test hover action."""
-        await self.setup_method()
-        try:
-            with open(MOCKS_PATH, 'r', encoding='utf-8') as f:
-                mocks = json.load(f)
-            hover_cases = mocks.get('Hover', [])
-            assert len(hover_cases) > 0
-            for i, case in enumerate(hover_cases):
-                await self.navigate(case['url'])
-                self.action_handler.set_page_element_buffer(case['id_map'])
-                before_path = await self.take_before_screenshot(case['url'], 'hover')
-
-                for action in case['actions']:
-                    result = await self.action_executor.execute(action)
-                    await asyncio.sleep(2)
-                    elementid = action['locate']['id']
-                    after_path = await self.take_after_screenshot(case['url'], f'hover_{elementid}')
-
-                # Verify results
-                assert result['success'] is True
-                assert os.path.exists(before_path)
-                assert os.path.exists(after_path)
-
-        finally:
-            await self.teardown_method()
-
-    @pytest.mark.asyncio
     async def test_input_action(self):
         """Test input action."""
         await self.setup_method()

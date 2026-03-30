@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: webqa-pvc
+  namespace: webqa
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  # Specify your storageClassName if needed (e.g. "nfs", "efs", "standard")
+  # storageClassName: ""

@@ -1,20 +1,12 @@
-from .case_executor import CaseExecutor
-from .case_mode import CaseMode
-from .parallel_executor import ParallelTestExecutor
-from .parallel_mode import ParallelMode
-from .result_aggregator import ResultAggregator
-from .test_runners import (BasicTestRunner, LighthouseTestRunner,
-                           UIAgentLangGraphRunner, UXTestRunner)
+"""Executor package for WebQA Agent test modes."""
+
+# Core executors (Gen/Run modes)
+from webqa_agent.executor.gen_executor import GenExecutor
+from webqa_agent.executor.result_aggregator import ResultAggregator
+from webqa_agent.executor.run_executor import RunExecutor
 
 __all__ = [
-    'CaseExecutor',
-    'CaseMode',
-    'ParallelMode',
-    'ParallelTestExecutor',
-    'BasicTestRunner',
-    'UIAgentLangGraphRunner',
-    'UXTestRunner',
-    'LighthouseTestRunner',
-    'WebBasicCheckRunner',
+    'GenExecutor',
+    'RunExecutor',
     'ResultAggregator',
 ]

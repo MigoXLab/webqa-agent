@@ -1,7 +1,11 @@
 import asyncio
 import json
 import logging
+import os
+import shutil
+import tempfile
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
@@ -39,6 +43,10 @@ class _BrowserSession:
 
     - Must be created by BrowserSessionPool (token-gated).
     - DO NOT use `async with _BrowserSession` from outside pool.
+
+    Supports two browser modes:
+    - Local: Launches Playwright chromium locally
+    - Cloud: Connects to AgentBay cloud browser via CDP
     """
 
     def __init__(
@@ -59,6 +67,14 @@ class _BrowserSession:
         self.browser_config = {**DEFAULT_CONFIG, **(browser_config or {})}
         self.disable_tab_interception = disable_tab_interception
 
+        # Cloud browser configuration (extracted from browser_config)
+        self._cloud_config = self.browser_config.pop('cloud_config', None)
+        self._is_cloud_mode = bool(self._cloud_config and self._cloud_config.get('enabled', False))
+
+        # AgentBay-specific resources (only used in cloud mode)
+        self._agentbay_client = None
+        self._cloud_session = None
+
         self._browser: Optional[Browser] = None
         self._context: Optional[BrowserContext] = None
         self._page: Optional[Page] = None
@@ -67,6 +83,22 @@ class _BrowserSession:
         self._is_closed = False
         self._lock = asyncio.Lock()  # per-session lock
         self._closed_page_ids = set()  # Track closed page IDs for deduplication
+
+        # Download directory & unified event collector
+        self._downloads_dir = Path(tempfile.mkdtemp(prefix='webqa_downloads_'))
+
+        from webqa_agent.browser.event_collector import BrowserEventCollector
+        self._event_collector = BrowserEventCollector(
+            downloads_dir=str(self._downloads_dir)
+        )
+
+    def __del__(self) -> None:
+        """Safety net: clean up temp download directory if close() was never called."""
+        try:
+            if hasattr(self, '_downloads_dir') and self._downloads_dir and self._downloads_dir.exists():
+                shutil.rmtree(self._downloads_dir, ignore_errors=True)
+        except Exception:
+            pass
 
     @property
     def page(self) -> Page:
@@ -77,6 +109,16 @@ class _BrowserSession:
     def context(self) -> BrowserContext:
         self._check_state()
         return self._context
+
+    @property
+    def downloads_dir(self) -> Path:
+        """Directory where downloaded files are saved."""
+        return self._downloads_dir
+
+    @property
+    def event_collector(self):
+        """Unified browser event collector for per-action event capture."""
+        return self._event_collector
 
     def is_closed(self) -> bool:
         return self._is_closed
@@ -93,7 +135,85 @@ class _BrowserSession:
                     try { sessionStorage.clear(); } catch(e) {}
                 }''')
         except Exception as e:
+            err_str = str(e)
+            if 'Target crashed' in err_str or 'Page crashed' in err_str:
+                # Session is dead — propagate so the caller (worker) can release it as failed
+                logging.warning(f'[Session] clean_state detected crash, propagating: {e}')
+                raise
             logging.warning(f'[Session] Failed to clean state: {e}')
+
+    async def reset_context(self) -> None:
+        async with self._lock:
+            if self._is_closed:
+                return
+
+            # 1. Close old page and context
+            if self._page:
+                try:
+                    await self._page.close()
+                except Exception:
+                    pass
+                self._page = None
+
+            if self._context:
+                try:
+                    await self._context.close()
+                except Exception:
+                    pass
+                self._context = None
+
+            cfg = self.browser_config
+
+            # 2. Re-create context
+            if self._is_cloud_mode:
+                # AgentBay cloud mode usually operates differently with contexts
+                if self._browser and self._browser.contexts:
+                    self._context = self._browser.contexts[0]
+                    # Clear existing context state in cloud mode
+                    await self._context.clear_cookies()
+                else:
+                    self._context = await self._browser.new_context(
+                        viewport=cfg.get('viewport'),
+                        device_scale_factor=1,
+                        locale=cfg.get('language', 'en-US'),
+                        accept_downloads=True,
+                    )
+            else:
+                self._context = await self._browser.new_context(
+                    viewport=cfg.get('viewport'),
+                    device_scale_factor=1,
+                    locale=cfg.get('language', 'en-US'),
+                    accept_downloads=True,
+                )
+
+                # Reset local browser interceptors
+                abort = self._abort_route
+                for pattern in ('**/*.woff', '**/*.woff2', '**/*.ttf', '**/*.otf', '**/*.eot'):
+                    await self._context.route(pattern, abort)
+                await self._context.route('**fonts.googleapis.com/**', abort)
+                await self._context.route('**fonts.gstatic.com/**', abort)
+
+            # 3. Re-apply single-tab enforcement (Layer 0)
+            if not self.disable_tab_interception:
+                await self._enforce_single_tab_dom_preprocessing()
+
+            # 4. Create new page and bind events
+            self._page = await self._context.new_page()
+
+            if not self.disable_tab_interception:
+                await self._setup_tab_interception_listeners()
+
+            # Auto-handle dialogs
+            async def _handle_dialog(dialog):
+                dialog_type = dialog.type
+                message = dialog.message[:200] if dialog.message else ''
+                logging.info(f'[DIALOG] Auto-handled {dialog_type}: {message}')
+                await dialog.accept()
+
+            self._page.on('dialog', _handle_dialog)
+
+            # Re-attach event collector on new page (old page is closed)
+            await self._event_collector.reset(self._page)
 
     async def initialize(self) -> '_BrowserSession':
         async with self._lock:
@@ -103,24 +223,13 @@ class _BrowserSession:
                 return self
 
             cfg = self.browser_config
-            self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.launch(
-                headless=cfg['headless'],
-                args=[
-                    '--disable-dev-shm-usage',
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-gpu',
-                    '--force-device-scale-factor=1',
-                    f'--window-size={cfg["viewport"]["width"]},{cfg["viewport"]["height"]}',
-                    '--block-new-web-contents',
-                ],
-            )
-            self._context = await self._browser.new_context(
-                viewport=cfg['viewport'],
-                device_scale_factor=1,
-                locale=cfg.get('language', 'en-US'),
-            )
+
+            # Branch between local and cloud browser initialization
+            if self._is_cloud_mode:
+                await self._initialize_cloud_browser(cfg)
+                logging.info(f'[Session {self.session_id}] Cloud browser initialized via AgentBay CDP')
+            else:
+                await self._initialize_local_browser(cfg)
 
             # Single-Tab Architecture (Layered Defense with Coordination)
             #
@@ -165,6 +274,9 @@ class _BrowserSession:
 
             self._page.on('dialog', _handle_dialog)
 
+            # Attach unified event collector (download, console error, pageerror, requestfailed)
+            self._event_collector.attach(self._page)
+
             return self
 
     async def close(self) -> None:
@@ -176,6 +288,13 @@ class _BrowserSession:
             if self._is_closed:
                 return
             self._is_closed = True
+
+            # Detach event collector before closing page to reset _attached state
+            try:
+                if self._page and self._event_collector:
+                    self._event_collector.detach(self._page)
+            except Exception:
+                logging.debug('Failed to detach event collector', exc_info=True)
 
             try:
                 if self._page:
@@ -201,6 +320,17 @@ class _BrowserSession:
             except Exception:
                 logging.debug('Failed to stop playwright', exc_info=True)
 
+            # Cleanup downloads directory
+            try:
+                if self._downloads_dir and self._downloads_dir.exists():
+                    shutil.rmtree(self._downloads_dir, ignore_errors=True)
+            except Exception:
+                logging.debug('Failed to clean downloads directory', exc_info=True)
+
+            # Cleanup cloud resources if in cloud mode
+            if self._is_cloud_mode:
+                await self._cleanup_cloud_resources()
+
             self._page = None
             self._context = None
             self._browser = None
@@ -223,7 +353,14 @@ class _BrowserSession:
 
         try:
             await self._page.goto(url, **kwargs)
-            await self._page.wait_for_load_state('networkidle', timeout=60000)
+            # networkidle is unreliable for SPAs with persistent connections
+            # (WebSocket, SSE, analytics heartbeats).  Use a short timeout to
+            # avoid wasting 60 s on every navigation in cluster environments.
+            try:
+                # Use a very short timeout to avoid wasting time on every navigation
+                await self._page.wait_for_load_state('networkidle', timeout=3000)
+            except Exception:
+                logging.debug('networkidle not reached within 3 s; proceeding (domcontentloaded is sufficient)')
             is_blank = await self._page.evaluate(
                 '!document.body || document.body.innerText.trim().length === 0'
             )
@@ -237,6 +374,146 @@ class _BrowserSession:
     async def get_url(self) -> tuple[str, str]:
         self._check_state()
         return self._page.url, await self._page.title()
+
+    @staticmethod
+    async def _abort_route(route) -> None:
+        """Abort an intercepted route.
+
+        Must be async for Playwright's async API.
+        """
+        await route.abort()
+
+    async def _initialize_local_browser(self, cfg: Dict[str, Any]) -> None:
+        """Initialize local browser via Playwright launch."""
+        self._playwright = await async_playwright().start()
+
+        launch_args = [
+            '--force-device-scale-factor=1',
+            f'--window-size={cfg["viewport"]["width"]},{cfg["viewport"]["height"]}',
+            '--num-raster-threads=2',
+            '--disable-dev-shm-usage',
+            '--use-gl=angle',
+            '--enable-unsafe-swiftshader',
+            '--ignore-gpu-blocklist',
+        ]
+
+        # Playwright 1.57+ headless uses chrome-headless-shell (no WebGL).
+        # Force full Chrome binary; achieve headless via Chrome's own flag.
+        if cfg['headless']:
+            launch_args.append('--headless=new')
+
+        self._browser = await self._playwright.chromium.launch(
+            headless=False,
+            args=launch_args,
+        )
+        self._context = await self._browser.new_context(
+            viewport=cfg['viewport'],
+            device_scale_factor=1,
+            is_mobile=False,
+            locale=cfg.get('language', 'en-US'),
+            accept_downloads=True,
+        )
+
+        # ── Cluster stability: intercept external font requests ──
+        abort = self._abort_route
+        for pattern in ('**/*.woff', '**/*.woff2', '**/*.ttf', '**/*.otf', '**/*.eot'):
+            await self._context.route(pattern, abort)
+        await self._context.route('**fonts.googleapis.com/**', abort)
+        await self._context.route('**fonts.gstatic.com/**', abort)
+        logging.debug(f'[Session {self.session_id}] External font requests will be aborted for cluster stability')
+
+    async def _initialize_cloud_browser(self, cfg: Dict[str, Any]) -> None:
+        """Initialize cloud browser via AgentBay CDP connection.
+
+        Flow:
+        1. AgentBay(api_key) - create client
+        2. agent_bay.create(CreateSessionParams(image_id=...)) - create cloud session
+        3. session.browser.initialize(BrowserOption(...)) - init remote browser
+        4. session.browser.get_endpoint_url() - get CDP endpoint
+        5. playwright.chromium.connect_over_cdp(endpoint) - connect via CDP
+        6. browser.contexts[0] - use existing context (avoid cloud profile issues)
+        """
+        try:
+            from agentbay import (AgentBay, BrowserOption, BrowserViewport,
+                                  CreateSessionParams)
+        except ImportError as e:
+            raise RuntimeError(
+                'AgentBay SDK not installed. Run: pip install wuying-agentbay-sdk'
+            ) from e
+
+        # 1. Get API key from cloud_config or environment
+        api_key = self._cloud_config.get('api_key') or os.getenv('AGENTBAY_API_KEY')
+        if not api_key:
+            raise ValueError(
+                'AgentBay API key required. Set AGENTBAY_API_KEY env var or provide api_key in cloud_config.'
+            )
+
+        # 2. Create AgentBay client and session
+        self._agentbay_client = AgentBay(api_key=api_key)
+        image_id = self._cloud_config.get('image_id', 'browser_latest')
+        result = self._agentbay_client.create(CreateSessionParams(image_id=image_id))
+        if not result.success:
+            raise RuntimeError(f'AgentBay session creation failed: {result.error_message}')
+        self._cloud_session = result.session
+        logging.info(f'[Cloud] AgentBay session created: {self._cloud_session.session_id}')
+
+        # 3. Initialize remote browser with viewport from browser_config
+        viewport = cfg.get('viewport', {'width': 1280, 'height': 720})
+        browser_option = BrowserOption(
+            viewport=BrowserViewport(
+                width=viewport.get('width', 1280),
+                height=viewport.get('height', 720),
+            ),
+        )
+        # Note: initialize() is a synchronous method that returns bool
+        ok = self._cloud_session.browser.initialize(browser_option)
+        if not ok:
+            await self._cleanup_cloud_resources()
+            raise RuntimeError('AgentBay browser initialization failed')
+        logging.info(f'[Cloud] Browser initialized with viewport {viewport["width"]}x{viewport["height"]}')
+
+        # 4. Get CDP endpoint
+        cdp_endpoint = self._cloud_session.browser.get_endpoint_url()
+        logging.info(f'[Cloud] CDP endpoint: {cdp_endpoint}')
+
+        # 5. Connect Playwright via CDP
+        self._playwright = await async_playwright().start()
+        timeout_ms = self._cloud_config.get('timeout', 30) * 1000
+
+        try:
+            self._browser = await asyncio.wait_for(
+                self._playwright.chromium.connect_over_cdp(cdp_endpoint),
+                timeout=timeout_ms / 1000
+            )
+        except asyncio.TimeoutError:
+            await self._cleanup_cloud_resources()
+            raise RuntimeError(f'CDP connection timeout after {timeout_ms}ms')
+
+        # 6. Use existing context (preferred for cloud) or create new one
+        if self._browser.contexts:
+            self._context = self._browser.contexts[0]
+            logging.debug('[Cloud] Using existing browser context')
+        else:
+            self._context = await self._browser.new_context(
+                viewport=cfg['viewport'],
+                device_scale_factor=1,
+                locale=cfg.get('language', 'en-US'),
+                accept_downloads=True,
+            )
+            logging.debug('[Cloud] Created new browser context')
+
+        logging.info(f'[Cloud] Session {self.session_id} initialized successfully')
+
+    async def _cleanup_cloud_resources(self) -> None:
+        """Cleanup AgentBay cloud resources."""
+        if self._cloud_session:
+            try:
+                self._cloud_session.release()
+                logging.debug('[Cloud] AgentBay session released')
+            except Exception as e:
+                logging.warning(f'[Cloud] Failed to release AgentBay session: {e}')
+            self._cloud_session = None
+        self._agentbay_client = None
 
     async def _enforce_single_tab_dom_preprocessing(self):
         """
@@ -513,12 +790,24 @@ class BrowserSessionPool:
         config_key = self._make_config_key(session.browser_config)
 
         try:
-            if failed or session.is_closed():
-                logging.info(f'[SessionPool] Recovering failed session: {session.session_id}')
+            # Check if the page itself has crashed or closed (even if failed wasn't explicitly set)
+            page_is_dead = False
+            if hasattr(session, 'page') and session.page:
+                try:
+                    page_is_dead = session.page.is_closed()
+                except Exception:
+                    page_is_dead = True
+
+            if failed or session.is_closed() or page_is_dead:
+                logging.info(f'[SessionPool] Recovering failed/crashed session: {session.session_id}')
                 await self._close_session_safe(session)
                 session = await self._create_session(session.browser_config)
             else:
                 await self._clean_session_state(session)
+                # If clean_session_state failed due to a crash, the session will be closed
+                if session.is_closed():
+                    logging.info(f'[SessionPool] Session crashed during clean state, recovering: {session.session_id}')
+                    session = await self._create_session(session.browser_config)
 
             async with self._lock:
                 self._idle_sessions.setdefault(config_key, []).append(session)
@@ -551,24 +840,27 @@ class BrowserSessionPool:
             logging.debug(f'[SessionPool] Failed to close session {session.session_id}', exc_info=True)
 
     async def _clean_session_state(self, session: _BrowserSession) -> None:
-        """Clean session state to prevent pollution between cases."""
+        """Clean session state to prevent pollution between cases.
+
+        Uses reset_context to completely drop the previous Page and Context to
+        avoid Chromium memory leak accumulations over multiple SPA navs.
+        """
         try:
-            context = session.context
-            if context is None:
+            # If the session is already closed (e.g. Target crashed), don't try to clean it
+            if session.is_closed():
+                logging.debug(f'[SessionPool] Skipping clean state for closed session: {session.session_id}')
                 return
 
-            await context.clear_cookies()
+            await session.reset_context()
+            logging.debug(f'[SessionPool] Reset context for memory release: {session.session_id}')
 
-            page = session.page
-            if page and not page.is_closed():
-                await page.evaluate('''() => {
-                    try { localStorage.clear(); } catch(e) {}
-                    try { sessionStorage.clear(); } catch(e) {}
-                }''')
-
-            logging.debug(f'[SessionPool] Cleaned state: {session.session_id}')
         except Exception as e:
-            logging.warning(f'[SessionPool] Failed to clean state: {e}')
+            logging.warning(f'[SessionPool] Failed to reset context: {e}')
+
+            # If cleaning state fails due to target crashed, the page is dead
+            if 'Target crashed' in str(e) or 'Page crashed' in str(e):
+                logging.error(f'[SessionPool] Marking session as closed due to crash during clean: {session.session_id}')
+                await self._close_session_safe(session)
 
     async def close_all(self) -> None:
         """Close all browser sessions."""

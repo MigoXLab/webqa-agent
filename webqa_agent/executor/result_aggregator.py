@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from webqa_agent.data import TestResult
 from webqa_agent.llm.llm_api import LLMAPI
-from webqa_agent.llm.prompt import LLMPrompt
+from webqa_agent.prompts.ui_automation_prompts import LLMPrompt
 from webqa_agent.utils import i18n
 
 
@@ -203,7 +203,7 @@ class ResultAggregator:
                         index_data['count'] = count
                         aggregated[mode]['index'] = index_data
         except Exception as backfill_err:
-                logging.warning(f'Failed to backfill aggregated results: {backfill_err}')
+            logging.warning(f'Failed to backfill aggregated results: {backfill_err}')
 
         # Normalize any file-system paths to POSIX style so HTML works cross-platform
         try:

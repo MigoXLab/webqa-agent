@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "webqa-agent"
-version = "0.2.3.3"
+version = "0.3.0"
 description = "WebQA Agent is an autonomous web browser agent that audits performance, functionality & UX for engineers and vibe-coding creators."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -34,7 +34,7 @@ dependencies = [
     "langgraph-checkpoint==2.1.0",
     "openai>=1.93.0",
     "pillow==11.3.0",
-    "playwright==1.52.0",
+    "playwright==1.58",
     "pre-commit>=4.5.1",
     "pydantic==2.9.2",
     "pytest>=8.4.1",
@@ -59,9 +59,11 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["webqa_agent*", "app_gradio*", "config*"]
+include = ["webqa_agent*", "app_gradio*"]
 
 [tool.setuptools.package-data]
-webqa_agent = ["static/*", "static/**/*", "crawler/js/*"]
+webqa_agent = ["static/*", "static/**/*", "crawler/js/*", "templates/*.yaml.example", "templates/**"]
 app_gradio = ["*.json"]
-config = ["*.yaml.example"]
+
+[project.optional-dependencies]
+ui = ["gradio>=5.44.0"]

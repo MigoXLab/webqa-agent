@@ -74,12 +74,12 @@ WebQA Agent is an autonomous web browser testing framework using AI-powered agen
 
 ### Critical Files
 
-- `webqa_agent/testers/case_gen/tools/base.py` - Base classes, response tags, metadata
-- `webqa_agent/testers/case_gen/tools/registry.py` - Singleton registry, tool discovery
-- `webqa_agent/testers/case_gen/graph.py` - LangGraph workflow orchestration
-- `webqa_agent/testers/case_gen/agents/execute_agent.py` - Tool execution and control flow
-- `webqa_agent/testers/case_gen/tools/element_action_tool.py` - Browser interaction reference
-- `webqa_agent/testers/case_gen/tools/custom/link_detection_tool.py` - Custom tool example
+- `webqa_agent/tools/base.py` - Base classes, response tags, metadata
+- `webqa_agent/tools/registry.py` - Singleton registry, tool discovery
+- `webqa_agent/executor/gen/graph.py` - LangGraph workflow orchestration
+- `webqa_agent/executor/gen/agents/execute_agent.py` - Tool execution and control flow
+- `webqa_agent/tools/action_tool.py` - Browser interaction reference
+- `webqa_agent/tools/custom/link_check_tool.py` - Custom tool example
 
 ### Project Directory Structure
 
@@ -90,11 +90,11 @@ webqa_agent/
 │       ├── tools/
 │       │   ├── base.py              # WebQABaseTool, WebQAToolMetadata, ResponseTags
 │       │   ├── registry.py          # ToolRegistry singleton, @register_tool
-│       │   ├── element_action_tool.py  # Browser interaction patterns (UITool)
+│       │   ├── action_tool.py  # Browser interaction patterns (UITool)
 │       │   ├── ux_tool.py          # UX testing tools
 │       │   ├── custom/              # ← YOUR CUSTOM TOOLS HERE
 │       │   │   ├── __init__.py
-│       │   │   ├── link_detection_tool.py  # Example custom tool
+│       │   │   ├── link_check_tool.py  # Example custom tool
 │       │   │   └── {{your_tool}}.py        # Place your tool here
 │       │   └── __init__.py
 │       ├── graph.py                # LangGraph workflow orchestration
@@ -120,7 +120,7 @@ config/
 
 **Key Locations**:
 
-- **Custom Tools**: `webqa_agent/testers/case_gen/tools/custom/`
+- **Custom Tools**: `webqa_agent/tools/custom/`
 - **Tests**: `tests/custom_tools/`
 - **Config**: `config/config.yaml`
 
@@ -155,7 +155,7 @@ ______________________________________________________________________
 
 ### File Location Rules
 
-- **Custom tools**: `webqa_agent/testers/case_gen/tools/custom/your_tool.py`
+- **Custom tools**: `webqa_agent/tools/custom/your_tool.py`
 - **Tests**: `tests/custom_tools/test_your_tool.py`
 - **Config**: `config/config.yaml` (for test configuration)
 
@@ -174,17 +174,17 @@ ______________________________________________________________________
 
 ```python
 """
-File: webqa_agent/testers/case_gen/tools/custom/{{TOOL_NAME_SNAKE}}.py
+File: webqa_agent/tools/custom/{{TOOL_NAME_SNAKE}}.py
 
 {{TOOL_DESCRIPTION}}
 """
 from typing import Any, Type
 from pydantic import BaseModel, Field
-from webqa_agent.testers.case_gen.tools.base import (
+from webqa_agent.tools.base import (
     WebQABaseTool,
     WebQAToolMetadata,
 )
-from webqa_agent.testers.case_gen.tools.registry import register_tool
+from webqa_agent.tools.registry import register_tool
 
 # Step 1: Define parameter schema
 class {{TOOL_NAME_PASCAL}}Schema(BaseModel):
@@ -429,13 +429,13 @@ ______________________________________________________________________
 1. **Syntax Check**:
 
    ```bash
-   python -m py_compile webqa_agent/testers/case_gen/tools/custom/my_tool.py
+   python -m py_compile webqa_agent/tools/custom/my_tool.py
    ```
 
 2. **Registration Check**:
 
    ```python
-   from webqa_agent.testers.case_gen.tools.registry import get_registry
+   from webqa_agent.tools.registry import get_registry
    assert 'my_tool' in get_registry().get_tool_names()
    ```
 
@@ -444,7 +444,7 @@ ______________________________________________________________________
    ```python
    # tests/custom_tools/test_my_tool.py
    import pytest
-   from webqa_agent.testers.case_gen.tools.custom.my_tool import MyTool
+   from webqa_agent.tools.custom.my_tool import MyTool
 
    @pytest.mark.asyncio
    async def test_my_tool_success():
@@ -466,13 +466,12 @@ ______________________________________________________________________
 
    ```yaml
    test_config:
-     function_test:
+     business_objectives: "Test functionality using my_tool"
+     dynamic_step_generation:
        enabled: true
-       type: "ai"  # AI mode - LLM generates test steps
-       business_objectives: "Test functionality using my_tool"
-       dynamic_step_generation:
-         enabled: true
-         max_dynamic_steps: 8
+       max_dynamic_steps: 8
+     custom_tools:
+       enabled: []  # Your custom tool will be auto-discovered
    ```
 
    Run: `webqa-agent run -c config.yaml`
@@ -481,13 +480,13 @@ ______________________________________________________________________
 
 ```bash
 # Format code
-black webqa_agent/testers/case_gen/tools/custom/my_tool.py
+black webqa_agent/tools/custom/my_tool.py
 
 # Sort imports
-isort webqa_agent/testers/case_gen/tools/custom/my_tool.py
+isort webqa_agent/tools/custom/my_tool.py
 
 # Lint (must pass)
-flake8 webqa_agent/testers/case_gen/tools/custom/my_tool.py
+flake8 webqa_agent/tools/custom/my_tool.py
 ```
 
 ______________________________________________________________________
@@ -945,19 +944,19 @@ ______________________________________________________________________
 
 ### Key Files to Reference
 
-**Base Classes**: `webqa_agent/testers/case_gen/tools/base.py:1-519`
+**Base Classes**: `webqa_agent/tools/base.py:1-519`
 
 - `WebQABaseTool`, `WebQAToolMetadata`, `ResponseTags`, `ActionTypes`
 
-**Registry**: `webqa_agent/testers/case_gen/tools/registry.py`
+**Registry**: `webqa_agent/tools/registry.py`
 
 - Singleton pattern, auto-discovery, dependency checking
 
-**Element Actions**: `webqa_agent/testers/case_gen/tools/element_action_tool.py`
+**Element Actions**: `webqa_agent/tools/action_tool.py`
 
 - Reference for browser interaction patterns
 
-**Custom Tool Example**: `webqa_agent/testers/case_gen/tools/custom/link_detection_tool.py`
+**Custom Tool Example**: `webqa_agent/tools/custom/link_check_tool.py`
 
 - Real-world custom tool implementation
 
@@ -967,12 +966,12 @@ ______________________________________________________________________
 # Standard imports for all tools
 from typing import Any, Type, Dict, List, Optional
 from pydantic import BaseModel, Field
-from webqa_agent.testers.case_gen.tools.base import (
+from webqa_agent.tools.base import (
     WebQABaseTool,
     WebQAToolMetadata,
     ResponseTags,
 )
-from webqa_agent.testers.case_gen.tools.registry import register_tool
+from webqa_agent.tools.registry import register_tool
 
 # Browser interactions
 from playwright.async_api import Page, Error as PlaywrightError

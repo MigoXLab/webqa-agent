@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: webqa-be-sa
+  namespace: webqa
+  labels:
+    app: webqa-be
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: webqa-agent-sa
+  namespace: webqa
+  labels:
+    app: webqa-agent
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: webqa-be-role
+  namespace: webqa
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: webqa-be-rolebinding
+  namespace: webqa
+subjects:
+  - kind: ServiceAccount
+    name: webqa-be-sa
+    namespace: webqa
+roleRef:
+  kind: Role
+  name: webqa-be-role
+  apiGroup: rbac.authorization.k8s.io

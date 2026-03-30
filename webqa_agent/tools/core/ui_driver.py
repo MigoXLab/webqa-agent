@@ -1,0 +1,1517 @@
+import asyncio
+import json
+import logging
+import re
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
+
+from webqa_agent.actions.action_executor import ActionExecutor
+from webqa_agent.actions.action_handler import ActionHandler
+from webqa_agent.actions.action_types import (ActionType,
+                                              get_page_agnostic_keywords)
+from webqa_agent.browser import BrowserSession
+from webqa_agent.crawler.deep_crawler import DeepCrawler, ElementKey
+from webqa_agent.llm.llm_api import LLMAPI
+from webqa_agent.prompts.ui_automation_prompts import LLMPrompt
+
+
+class UITester:
+
+    def __init__(
+        self,
+        llm_config: Dict[str, Any],
+        browser_session: BrowserSession = None,
+        ignore_rules: Optional[Dict[str, List[Dict]]] = None,
+        execution_mode: str = 'gen',
+        language: str = 'zh-CN',
+    ):
+        """Initialize UITester.
+
+        Args:
+            llm_config: LLM configuration dictionary
+            browser_session: Browser session instance (optional, can be set later)
+            ignore_rules: Console/network error ignore rules (optional)
+            execution_mode: Execution mode - 'gen' (AI-driven test generation) or 'run' (YAML case execution).
+                          - 'gen': Conservative approach, aborts on unsupported pages (PDF, plugins)
+                          - 'run': Trusts user intent, allows degraded execution on unsupported pages
+                          Default: 'gen' (backward compatible)
+            language: Output language for LLM responses ('zh-CN' or 'en-US'). Default: 'zh-CN'
+        """
+        self.llm_config = llm_config
+        self.browser_session = browser_session
+        self.page = None
+        self.ignore_rules = ignore_rules or {}
+        self.execution_mode = execution_mode  # Store execution mode for page-agnostic operation handling
+        self.language = language
+
+        # Create component instances
+        self._actions = ActionHandler()
+        self._action_executor = ActionExecutor(self._actions)
+        self.llm = LLMAPI(llm_config)
+
+        # Execution status
+        self.is_initialized = False
+        self.test_results = []
+
+        # Data storage related properties
+        self.current_test_name: Optional[str] = None
+        self.current_case_data: Optional[Dict[str, Any]] = None
+        self.current_case_steps: List[Dict[str, Any]] = []
+        self.all_cases_data: List[Dict[str, Any]] = []  # Store complete data for all cases
+        self.step_counter: int = 0  # Used to generate step ID
+        # Central recorder for unified case storage (used by LangGraph path and tools)
+        # self.central_case_recorder: Optional[CentralCaseRecorder] = None
+
+        # Context tracking for enhanced verification (backward compatible)
+        self.last_action_context: Optional[Dict[str, Any]] = None
+        self.execution_history: List[Dict[str, Any]] = []
+        self.current_test_objective: Optional[str] = None
+        self.current_success_criteria: List[str] = []  # Store test success criteria
+
+    def _localize_system_prompt(self, system_prompt: str) -> str:
+        """Append language output instruction to a system prompt."""
+        if self.language == 'zh-CN':
+            return system_prompt + '\n\n**输出语言要求**: 所有分析、描述、结论均使用中文输出。'
+        return system_prompt
+
+    async def initialize(self, browser_session: BrowserSession = None):
+        if browser_session:
+            self.browser_session = browser_session
+
+        if not self.browser_session:
+            raise ValueError('Browser session is required')
+
+        self.page = self.browser_session.page
+
+        await self._actions.initialize(page=self.page)
+        await self._action_executor.initialize()
+        await self.llm.initialize()
+
+        self.is_initialized = True
+        return self
+
+    async def start_session(self, url: str, cookies=None):
+        if not self.is_initialized:
+            raise RuntimeError('ParallelUITester not initialized')
+
+        # Configure ignore rules on the session's unified event collector
+        collector = self.browser_session.event_collector
+        collector.set_ignore_rules(
+            console_rules=self.ignore_rules.get('console', []),
+            network_rules=self.ignore_rules.get('network', []),
+        )
+        collector.reset_session()
+
+        await self._actions.go_to_page(self.page, url, cookies=cookies)
+
+    async def action(self, test_step: str, file_path: str = None, viewport_only: bool = False, full_page: bool = True) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Execute AI-driven test instructions and return (step_dict,
+        summary_dict)
+
+        Args:
+            test_step: Test step description
+            file_path: File path (for upload operations)
+
+        Returns:
+            Tuple (step_dict, summary_dict)
+        """
+        if not self.is_initialized:
+            raise RuntimeError('ParallelUITester not initialized')
+
+        start_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        all_execution_steps = []
+        all_plans = []  # Collect all planning iterations for modelIO
+        all_ordered_screenshots = []  # Collect all screenshots in chronological order
+        all_ordered_screenshots_paths = []  # Collect all screenshots paths in chronological order
+        plan_json = {}  # Pre-initialize for error handler safety
+        final_execution_result = {'success': False, 'message': 'No execution performed'}
+        last_check_thought = None
+        global_before_screenshot = None  # Will be assigned in the first iteration
+
+        try:
+            logging.debug(f'Executing AI instruction: {test_step}')
+            self.page = self.browser_session.page
+
+            # Pre-check if operation is page-agnostic before crawling
+            # This allows page-agnostic operations to execute on PDF/plugin pages
+            is_likely_page_agnostic = self._is_instruction_page_agnostic(test_step)
+
+            # # Remove any existing markers before taking the global before screenshot
+            # dp_pre = DeepCrawler(self.page)
+            # await dp_pre.remove_marker()
+
+            # Take global before screenshot (not included in action step screenshots)
+            global_before_screenshot, global_before_screenshot_path = await self._actions.b64_page_screenshot(
+                full_page=full_page,
+                file_name='global_before_screenshot',
+                context='verify'
+            )
+
+            # Iterative planning loop for tasks that need check actions
+            max_iterations = 5
+            for iteration in range(max_iterations):
+                if iteration > 0:
+                    logging.debug(f'Iterative planning loop - iteration {iteration + 1}')
+
+                # Crawl current page state
+                dp = DeepCrawler(self.page)
+                prev = await dp.crawl(highlight=True, viewport_only=viewport_only, cache_dom=True)
+
+                # Extract page status information for LLM context
+                page_status = prev.page_status
+                page_type = prev.page_type or 'html'
+
+                # Handle unsupported page types (PDF, plugins, etc.) based on execution mode
+                if page_status == 'UNSUPPORTED_PAGE':
+                    # Determine if execution should continue
+                    can_continue = self.execution_mode == 'run' or is_likely_page_agnostic
+
+                    if can_continue:
+                        # RUN mode or page-agnostic operation: allow degraded execution
+                        mode_label = 'RUN MODE' if self.execution_mode == 'run' else 'GEN MODE'
+                        op_type = 'user-specified' if self.execution_mode == 'run' else 'page-agnostic'
+                        logging.info(
+                            f"[{mode_label}] Executing {op_type} operation '{test_step}' on {page_type} page "
+                            f'(degraded mode - limited DOM interaction)'
+                        )
+                    else:
+                        # GEN mode + DOM-dependent operation: abort to save resources
+                        error_msg = f"Cannot execute action: page type '{page_type}' is unsupported for DOM operations"
+                        logging.error(f'[GEN MODE] {error_msg}')
+
+                        return self._build_unsupported_page_error(
+                            test_step=test_step,
+                            page_type=page_type,
+                            start_time=start_time,
+                            all_execution_steps=all_execution_steps,
+                            global_before_screenshot=global_before_screenshot,
+                            error_msg=error_msg
+                        )
+
+                await self._actions.update_element_buffer(prev.raw_dict())
+
+                # Take screenshot
+                marker_screenshot, marker_screenshot_path = await self._actions.b64_page_screenshot(
+                    full_page=full_page,
+                    file_name=f'action_planning_marker_iter_{iteration}',
+                    context='test'
+                )
+                all_ordered_screenshots.append(marker_screenshot)
+                all_ordered_screenshots_paths.append(marker_screenshot_path)
+
+                # Remove marker
+                await dp.remove_marker()
+
+                # Prepare LLM input with comprehensive element data for better planning
+                # Include ATTRIBUTES for input types, placeholders, and other action-relevant info
+                planning_template = [
+                    str(ElementKey.TAG_NAME),
+                    str(ElementKey.INNER_TEXT),
+                    str(ElementKey.ATTRIBUTES),
+                    str(ElementKey.CENTER_X),
+                    str(ElementKey.CENTER_Y)
+                ]
+
+                # If we are in an iteration, add some context about what happened before
+                iterative_context = ''
+                if iteration > 0 and all_execution_steps:
+                    done_actions = [s.get('description', '') for s in all_execution_steps]
+                    iterative_context = f"\n\n**Progress**: We have already performed these actions: {', '.join(done_actions)}."
+                    if last_check_thought:
+                        iterative_context += f'\n**Last Observation**: {last_check_thought}'
+                    iterative_context += '\nNow continuing with the task.'
+
+                user_prompt = self._prepare_prompt_action(
+                    test_step + iterative_context,
+                    prev.to_llm_json(template=planning_template),
+                    LLMPrompt.planner_output_prompt,
+                    page_status=page_status,
+                    page_type=page_type,
+                    is_page_agnostic=is_likely_page_agnostic
+                )
+                logging.debug(f'User prompt (iteration {iteration + 1}): {test_step + iterative_context}')
+
+                # Generate plan
+                plan_json = await self._generate_plan(self._localize_system_prompt(LLMPrompt.planner_system_prompt), user_prompt, marker_screenshot)
+                all_plans.append({
+                    'iteration': iteration + 1,
+                    'plan': plan_json
+                })
+
+                logging.debug(f'Generated plan (iteration {iteration + 1}): {plan_json}')
+
+                # Execute plan
+                execution_steps, execution_result = await self._execute_plan(plan_json=plan_json, file_path=file_path, viewport_only=viewport_only, full_page=full_page)
+
+                # Aggregate steps
+                all_execution_steps.extend(execution_steps)
+                final_execution_result = execution_result
+
+                # Add check LLM outputs to modelIO trace
+                for step in execution_steps:
+                    if step.get('raw_output'):
+                        all_plans.append({
+                            'iteration': iteration + 1,
+                            'check': step.get('raw_output')
+                        })
+
+                # Add action screenshots from this iteration to the ordered list
+                for step in execution_steps:
+                    if step.get('screenshot'):
+                        # Collect to top-level list
+                        all_ordered_screenshots.append(step.get('screenshot'))
+                        all_ordered_screenshots_paths.append(step.get('screenshot_path'))
+                        # Remove from individual action dict so it doesn't end up in "actions" list
+                        step.pop('screenshot', None)
+                        step.pop('screenshot_path', None)
+
+                # Check if we should continue iterating
+                if execution_result.get('check_result') == 'continue':
+                    last_check_thought = execution_result.get('thought')
+                    logging.debug(f"Check action result is 'continue'. Iterating planning for task: {test_step}")
+                    continue
+                else:
+                    break
+
+            execution_steps = all_execution_steps
+            execution_result = final_execution_result
+
+            # Ensure the before_screenshot is the global one from the very beginning
+            if global_before_screenshot:
+                execution_result['before_screenshot'] = global_before_screenshot
+                execution_result['before_screenshot_path'] = global_before_screenshot_path
+
+            end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            # Re-fetch page after execution
+            # This ensures DOM diff is computed on the correct page
+            self.page = self.browser_session.page
+            dp.page = self.page
+            curr = await dp.crawl(highlight=True, viewport_only=viewport_only, cache_dom=True)
+            diff_elems = curr.diff_dict([str(ElementKey.TAG_NAME), str(ElementKey.INNER_TEXT), str(ElementKey.ATTRIBUTES), str(ElementKey.CENTER_X), str(ElementKey.CENTER_Y)])
+            if diff_elems:
+                logging.debug(f'Diff element map after action: {diff_elems}')
+
+            # Check if local saving is enabled to avoid memory buildup with base64 strings
+            save_locally = getattr(self._actions, '_save_screenshots_locally', False)
+
+            # Aggregate screenshots: include only valid (non-None) images in the correct chronological order
+            # If local saving is enabled, DO NOT keep the huge base64 strings in memory
+            screenshots_list = [{'type': 'base64', 'data': ss} for ss in all_ordered_screenshots if ss] if not save_locally else []
+            screenshots_paths_list = [{'type': 'path', 'data': path} for path in all_ordered_screenshots_paths if path]
+
+            # Build structure for case step format
+            status_str = 'passed' if execution_result.get('success') else 'failed'
+            execution_steps_dict = {
+                # id and number will be filled by outer process (e.g. LangGraph node)
+                'description': f'action: {test_step}',
+                'actions': execution_steps,  # All actions aggregated together
+                'screenshots': screenshots_list,  # All screenshots aggregated together
+                'screenshots_paths': screenshots_paths_list,  # All screenshots paths aggregated together
+                'modelIO': json.dumps(all_plans, indent=2, ensure_ascii=False, default=str) if all_plans else '',
+                'status': status_str,
+                'start_time': start_time,
+                'end_time': end_time,
+                'dom_diff': diff_elems,  # DOM difference information
+            }
+
+            # 在execution_result中也添加DOM差异信息
+            execution_result['dom_diff'] = diff_elems
+
+            # Automatically store step data
+            # self.add_step_data(execution_steps_dict, step_type="action")
+
+            # Update execution history for context-aware verification
+            self.execution_history.append({
+                'description': test_step,
+                'success': execution_result.get('success'),
+                'timestamp': end_time,
+                'dom_diff': diff_elems,
+                'actions': execution_steps
+            })
+
+            # Clean up markers before returning to ensure clean state for next step
+            if curr.page_status != 'UNSUPPORTED_PAGE':
+                await dp.remove_marker()
+            return execution_steps_dict, execution_result
+
+        except Exception as e:
+            error_msg = f'AI instruction failed: {str(e)}'
+            logging.error(error_msg)
+
+            end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            # Build error case execution step dictionary structure
+            save_locally = getattr(self._actions, '_save_screenshots_locally', False)
+            error_screenshots = [{'type': 'base64', 'data': ss} for ss in all_ordered_screenshots if ss] if not save_locally else []
+            error_screenshots_paths = [{'type': 'path', 'data': path} for path in all_ordered_screenshots_paths if path]
+
+            error_model_io = all_plans.copy() if all_plans else []
+            error_model_io.append({'error': str(e)})
+
+            error_execution_steps = {
+                'description': f'action: {test_step}',
+                'actions': all_execution_steps,
+                'screenshots': error_screenshots,
+                'screenshots_paths': error_screenshots_paths,
+                'modelIO': json.dumps(error_model_io, indent=2, ensure_ascii=False, default=str),
+                'status': 'failed',
+                'error': str(e),
+                'start_time': start_time,
+                'end_time': end_time,
+            }
+
+            self.execution_history.append({
+                'description': test_step,
+                'success': False,
+                'timestamp': end_time,
+                'dom_diff': {},
+                'actions': []
+            })
+
+            # Automatically store error step data
+            # self.add_step_data(error_execution_steps, step_type="action")
+
+            return error_execution_steps, {'success': False, 'message': f'An exception occurred in action: {str(e)}'}
+
+    def _format_execution_context(self, execution_context: Dict[str, Any]) -> str:
+        """Format execution context for LLM prompt."""
+        if not execution_context:
+            return ''
+
+        context_parts = []
+
+        # Last action information
+        if 'last_action' in execution_context and execution_context['last_action']:
+            last_action = execution_context['last_action']
+            context_parts.append(f"""**Last Action:**
+                - Description: {last_action.get('description', 'N/A')}
+                - Type: {last_action.get('action_type', 'N/A')}
+                - Target: {last_action.get('target', 'N/A')}
+                - Status: {last_action.get('status', 'unknown').upper()}
+                - Result: {last_action.get('result', {}).get('message', 'N/A')}""")
+
+            # DOM changes
+            dom_diff = last_action.get('dom_diff', {})
+            if dom_diff:
+                context_parts.append(f'- DOM Changes: {len(dom_diff)} elements added/modified')
+
+            # Browser events (download, console errors, JS exceptions, request failures)
+            browser_events = last_action.get('browser_events') or last_action.get('result', {}).get('browser_events')
+            if browser_events:
+                events_lines = []
+                if 'download' in browser_events:
+                    dl = browser_events['download']
+                    if dl.get('success'):
+                        size_str = f", size: {dl['file_size']} bytes" if dl.get('file_size') is not None else ''
+                        saved_str = f", saved_to: {dl['saved_path']}" if dl.get('saved_path') else ''
+                        events_lines.append(
+                            f"  - DOWNLOAD_VERIFIED: filename='{dl['suggested_filename']}'{size_str}{saved_str}, url={dl['url']}"
+                        )
+                    else:
+                        events_lines.append(
+                            f"  - DOWNLOAD_FAILED: filename='{dl.get('suggested_filename', 'unknown')}', error={dl.get('failure', 'unknown')}"
+                        )
+                for err in browser_events.get('console_errors', [])[:3]:
+                    events_lines.append(f"  - CONSOLE_ERROR: {err['text']}")
+                for err in browser_events.get('page_errors', [])[:3]:
+                    events_lines.append(f"  - JS_EXCEPTION: {err['message']}")
+                for req in browser_events.get('request_failures', [])[:3]:
+                    events_lines.append(f"  - REQUEST_FAILED: {req['method']} {req['url']}")
+                if events_lines:
+                    context_parts.append('- Browser Events:\n' + '\n'.join(events_lines))
+
+            # Diagnostic summary from batch/scan tools (e.g., button traversal, link check)
+            _diag = last_action.get('diagnostic_summary')
+            if _diag:
+                context_parts.append(
+                    '- Diagnostic Summary (actual tool findings — use as verification evidence):\n'
+                    + '\n'.join(f'  {line}' for line in _diag.splitlines())
+                )
+
+        # Test objective
+        if 'test_objective' in execution_context and execution_context['test_objective']:
+            context_parts.append(f"\n**Test Objective:** {execution_context['test_objective']}")
+
+        # Success criteria
+        if 'success_criteria' in execution_context and execution_context['success_criteria']:
+            criteria_str = '; '.join(execution_context['success_criteria'])
+            context_parts.append(f'**Success Criteria:** {criteria_str}')
+
+        # Execution history
+        completed = execution_context.get('completed_steps', [])
+        failed = execution_context.get('failed_steps', [])
+        if completed or failed:
+            context_parts.append('\n**Execution History:**')
+            if completed:
+                context_parts.append(f'- Completed steps: {len(completed)}')
+            if failed:
+                context_parts.append(f'- Failed steps: {len(failed)}')
+
+        return '\n'.join(context_parts) if context_parts else ''
+
+    def _determine_verification_strategy(self, execution_context: Optional[Dict[str, Any]]) -> str:
+        """Determine verification strategy based on execution context.
+
+        Returns:
+            "maintain" - Use original assertion (default)
+            "skip" - Skip verification (prerequisite action failed)
+        """
+        if not execution_context:
+            return 'maintain'
+
+        last_action = execution_context.get('last_action')
+        if not last_action:
+            return 'maintain'
+
+        action_status = last_action.get('status', 'unknown')
+
+        # If last action failed with critical error, skip verification
+        if action_status == 'failed':
+            result = last_action.get('result', {})
+            error_details = result.get('error_details', {})
+            error_type = error_details.get('error_type', '')
+
+            # Critical errors that prevent meaningful verification
+            critical_errors = ['element_not_found', 'playwright_error', 'scroll_failed']
+            if error_type in critical_errors:
+                return 'skip'
+
+        return 'maintain'
+
+    def _build_context_aware_prompt(self, assertion: str, page_info: str, page_structure: str, execution_context: Dict[str, Any]) -> str:
+        """Build context-aware verification prompt."""
+        context_str = self._format_execution_context(execution_context)
+
+        # Use enhanced prompt with context
+        enhanced_prompt = LLMPrompt.verification_prompt_with_context.format(
+            execution_context=context_str
+        )
+
+        return self._prepare_prompt_verify(
+            f'assertion: {assertion}', page_info, enhanced_prompt, page_structure
+        )
+
+    async def verify(
+        self,
+        assertion: str,
+        execution_context: Optional[Dict[str, Any]] = None,
+        focus_region: Optional[str] = None,
+        viewport_only: bool = False,
+        full_page: bool = True,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Execute AI-driven assertion verification.
+
+        Args:
+            assertion: Assertion description
+            execution_context: Optional execution context for context-aware verification
+                             {
+                                 "last_action": {...},
+                                 "test_objective": "...",
+                                 "success_criteria": [...],
+                                 "completed_steps": [...],
+                                 "failed_steps": [...]
+                             }
+            focus_region: Optional page region to focus verification on (e.g., "header navigation", "main content")
+
+        Returns:
+            Tuple (step_dict, model_output)
+        """
+        if not self.is_initialized:
+            raise RuntimeError('ParallelUITester not initialized')
+
+        start_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        try:
+            logging.debug(f'Executing AI assertion: {assertion}')
+
+            # Use instance context if not provided as parameter
+            if execution_context is None and self.last_action_context is not None:
+                execution_context = {
+                    'last_action': self.last_action_context,
+                    'test_objective': self.current_test_objective,
+                }
+                logging.debug('Using instance-stored execution context for verification')
+
+            # Determine verification strategy
+            verification_strategy = self._determine_verification_strategy(execution_context)
+            logging.debug(f'Verification strategy: {verification_strategy}')
+
+            # Handle skip strategy (prerequisite action failed)
+            if verification_strategy == 'skip':
+                last_action = execution_context.get('last_action', {})
+                skip_result = {
+                    'Validation Result': 'Cannot Verify',
+                    'Failure Type': 'ACTION_EXECUTION_FAILURE',
+                    'Details': [
+                        f"Previous action '{last_action.get('description', 'unknown')}' failed: {last_action.get('result', {}).get('message', 'unknown error')}",
+                        'Verification cannot proceed without successful action execution'
+                    ],
+                    'Recommendation': 'Fix the action execution issue before attempting verification'
+                }
+
+                end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                skip_step = {
+                    'description': f'verify: {assertion}',
+                    'actions': [],
+                    'screenshots': [],
+                    'screenshots_paths': [],
+                    'modelIO': json.dumps(skip_result, ensure_ascii=False),
+                    'status': 'failed',
+                    'start_time': start_time,
+                    'end_time': end_time,
+                }
+                # self.add_step_data(skip_step, step_type="assertion")
+                return skip_step, skip_result
+
+            # ========================================================================
+            # SCREENSHOT EXTRACTION AND MODE DETECTION
+            # ========================================================================
+
+            # Extract before/after screenshots from execution_context
+            before_screenshot = None
+            after_screenshot = None
+            before_screenshot_path = None
+            after_screenshot_path = None
+
+            if execution_context and execution_context.get('last_action'):
+                result = execution_context['last_action'].get('result', {})
+                before_screenshot = result.get('before_screenshot')
+                after_screenshot = result.get('after_screenshot')
+                before_screenshot_path = result.get('before_screenshot_path')
+                after_screenshot_path = result.get('after_screenshot_path')
+
+            # Validate screenshots if present
+            if before_screenshot and not isinstance(before_screenshot, str):
+                logging.warning('before_screenshot is not a string, treating as missing')
+                before_screenshot = None
+            if after_screenshot and not isinstance(after_screenshot, str):
+                logging.warning('after_screenshot is not a string, treating as missing')
+                after_screenshot = None
+
+            # Determine mode: comparison (both available) or fallback (either missing)
+            if before_screenshot and after_screenshot:
+                mode = 'comparison'
+                logging.debug('Screenshot comparison mode: ENABLED (both before/after screenshots available)')
+            else:
+                mode = 'fallback'
+                if before_screenshot:
+                    logging.debug('Screenshot comparison mode: FALLBACK (only before screenshot available)')
+                elif after_screenshot:
+                    logging.debug('Screenshot comparison mode: FALLBACK (only after screenshot available)')
+                else:
+                    logging.debug('Screenshot comparison mode: FALLBACK (no before/after screenshots available)')
+
+            # Normalize focus_region: treat empty string as None
+            if focus_region is not None and not focus_region.strip():
+                focus_region = None
+                logging.debug('Empty focus_region provided, treating as None')
+
+            # ========================================================================
+            # MODE EXECUTION: COMPARISON vs FALLBACK
+            # ========================================================================
+
+            if mode == 'comparison':
+                # ====================================================================
+                # COMPARISON MODE: Use before + after + current screenshots
+                # ====================================================================
+                logging.debug('Using comparison mode with before/after screenshots')
+
+                # Prepare images list for LLM (chronological order: before, after, current)
+                images_for_llm = [before_screenshot, after_screenshot]
+
+                # Use saved context from action execution time (time-consistent verification)
+                result = execution_context['last_action'].get('result', {})
+                saved_url = result.get('after_action_url')
+                saved_title = result.get('after_action_title')
+                saved_page_structure = result.get('after_action_page_structure')
+
+                # Fallback to current page if saved context not available (backward compatibility)
+                if saved_url and saved_page_structure:
+                    page_url = saved_url
+                    page_title = saved_title
+                    page_structure = saved_page_structure
+                    logging.debug(f'Using saved action-time context: {page_url}')
+                else:
+                    page_url, page_title = await self.browser_session.get_url()
+                    dp = DeepCrawler(self.page)
+                    await dp.crawl(highlight=False, filter_text=True, viewport_only=viewport_only)
+                    page_structure = dp.get_text()
+                    logging.warning('Saved action context not available, using current page state (may cause time mismatch)')
+
+                # Capture current screenshot (real-time state at verification time)
+                current_screenshot = None
+                current_screenshot_path = None
+                current_page_structure = None
+                current_url = None
+                current_title = None
+                try:
+                    current_screenshot, current_screenshot_path = await self._actions.b64_page_screenshot(
+                        full_page=full_page,
+                        file_name='verification_current',
+                        context='verify'
+                    )
+                    if current_screenshot:
+                        images_for_llm.append(current_screenshot)
+                        # Get current page info for context
+                        current_url, current_title = await self.browser_session.get_url()
+                        dp = DeepCrawler(self.page)
+                        await dp.crawl(highlight=False, filter_text=True, viewport_only=viewport_only)
+                        current_page_structure = dp.get_text()
+                        logging.debug(f'Current screenshot captured for comparison: {current_url}')
+                except Exception as e:
+                    logging.warning(f'Failed to capture current screenshot, falling back to 2-screenshot mode: {e}')
+
+                # Prepare LLM input with comparison instructions
+                page_info = f'url: {page_url}, title: {page_title}'
+                if current_url and current_url != page_url:
+                    page_info += f'\ncurrent url: {current_url}, current title: {current_title}'
+
+                # Build page structure section with both saved and current
+                combined_page_structure = page_structure
+                if current_page_structure and current_page_structure != page_structure:
+                    combined_page_structure = (
+                        f'[After-Action Page Structure]:\n{page_structure}\n\n'
+                        f'[Current Page Structure]:\n{current_page_structure}'
+                    )
+
+                # Add focus region guidance if specified
+                region_guidance = ''
+                if focus_region:
+                    region_guidance = f"\n\n**FOCUS REGION**: {focus_region}\n**INSTRUCTION**: Pay primary attention to elements within the '{focus_region}' region when evaluating the assertion."
+                    logging.debug(f'Adding focus region guidance: {focus_region}')
+
+                # Build prompt using dedicated comparison prompts
+                if execution_context:
+                    # Use context-aware comparison prompt
+                    comparison_base_prompt = LLMPrompt.verification_prompt_with_context_comparison.format(
+                        execution_context=self._format_execution_context(execution_context)
+                    )
+                    user_prompt = self._prepare_prompt_verify(
+                        f'assertion: {assertion}', page_info, comparison_base_prompt, combined_page_structure
+                    )
+                else:
+                    # Use standard comparison prompt
+                    comparison_base_prompt = LLMPrompt.verification_prompt_comparison
+                    user_prompt = self._prepare_prompt_verify(
+                        f'assertion: {assertion}', page_info, comparison_base_prompt, combined_page_structure
+                    )
+
+                # Add region guidance if specified
+                if region_guidance:
+                    user_prompt = user_prompt + region_guidance
+
+                # Store screenshots for step data
+                verification_screenshots = []
+                if before_screenshot:
+                    verification_screenshots.append({'type': 'base64', 'data': before_screenshot, 'label': 'Before Action'})
+                if after_screenshot:
+                    verification_screenshots.append({'type': 'base64', 'data': after_screenshot, 'label': 'After Action'})
+                if current_screenshot:
+                    verification_screenshots.append({'type': 'base64', 'data': current_screenshot, 'label': 'Current State'})
+
+                verification_screenshots_paths = []
+                if before_screenshot_path:
+                    verification_screenshots_paths.append({'type': 'path', 'data': before_screenshot_path, 'label': 'Before Action'})
+                if after_screenshot_path:
+                    verification_screenshots_paths.append({'type': 'path', 'data': after_screenshot_path, 'label': 'After Action'})
+                if current_screenshot_path:
+                    verification_screenshots_paths.append({'type': 'path', 'data': current_screenshot_path, 'label': 'Current State'})
+
+            else:
+                # ====================================================================
+                # FALLBACK MODE: Capture new screenshot (existing behavior)
+                # ====================================================================
+                logging.debug('Using fallback mode - capturing new screenshot')
+
+                # Get page info
+                page_url, page_title = await self.browser_session.get_url()
+                logging.debug(f'verification page url: {page_url}, title: {page_title}')
+
+                # Crawl current page
+                dp = DeepCrawler(self.page)
+                await dp.crawl(highlight=False, filter_text=True, viewport_only=viewport_only)
+
+                # Capture new screenshot
+                screenshot, screenshot_path = await self._actions.b64_page_screenshot(
+                    full_page=full_page,
+                    file_name='verification_clean',
+                    context='test'
+                )
+
+                # Prepare images for LLM (single screenshot)
+                images_for_llm = [screenshot] if screenshot else None
+
+                # Get page structure
+                page_structure = dp.get_text()
+
+                # Prepare LLM input (standard or context-aware, NO comparison instructions)
+                page_info = f'url: {page_url}, title: {page_title}'
+
+                # Add focus region guidance if specified
+                region_guidance = ''
+                if focus_region:
+                    region_guidance = f"\n\n**FOCUS REGION**: {focus_region}\n**INSTRUCTION**: Pay primary attention to elements within the '{focus_region}' region when evaluating the assertion. While you should maintain awareness of the full page context, prioritize verification of elements and content specifically within this region."
+                    logging.debug(f'Adding focus region guidance: {focus_region}')
+
+                if execution_context:
+                    logging.debug('Using context-aware verification prompt')
+                    user_prompt = self._build_context_aware_prompt(assertion, page_info, page_structure, execution_context)
+                    if region_guidance:
+                        user_prompt = user_prompt + region_guidance
+                else:
+                    logging.debug('Using standard verification prompt')
+                    base_prompt = LLMPrompt.verification_prompt
+                    if region_guidance:
+                        base_prompt = base_prompt + region_guidance
+                    user_prompt = self._prepare_prompt_verify(
+                        f'assertion: {assertion}', page_info, base_prompt, page_structure
+                    )
+
+                # Store screenshot for step data
+                verification_screenshots = [{'type': 'base64', 'data': screenshot}] if screenshot else []
+                verification_screenshots_paths = [{'type': 'path', 'data': screenshot_path}] if screenshot_path else []
+            # ========================================================================
+            # LLM CALL (unified for both modes)
+            # ========================================================================
+            # Select appropriate system prompt based on mode
+            if mode == 'comparison':
+                system_prompt = self._localize_system_prompt(LLMPrompt.verification_system_prompt_comparison)
+                logging.debug('Using comparison-specific system prompt')
+            else:
+                system_prompt = self._localize_system_prompt(LLMPrompt.verification_system_prompt)
+                logging.debug('Using standard system prompt')
+
+            result = await self.llm.get_llm_response(
+                system_prompt, user_prompt, images=images_for_llm
+            )
+
+            # Process result
+            if isinstance(result, str):
+                try:
+                    model_output = json.loads(result)
+                except json.JSONDecodeError:
+                    model_output = {
+                        'Validation Result': 'Validation Failed',
+                        'Details': f'LLM returned invalid JSON: {result}',
+                    }
+            elif isinstance(result, dict):
+                model_output = result
+            else:
+                model_output = {
+                    'Validation Result': 'Validation Failed',
+                    'Details': f'LLM returned unexpected type: {type(result)}',
+                }
+
+            # Determine status
+            is_passed = model_output.get('Validation Result') == 'Validation Passed'
+
+            end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            # Build verification result
+            status_str = 'passed' if is_passed else 'failed'
+            verify_action_list = [{
+                'description': 'Verify',
+                'success': is_passed,
+                'index': 1,
+            }]
+            verification_step = {
+                'description': f'verify: {assertion}',
+                'actions': verify_action_list,
+                'screenshots': verification_screenshots,  # Use mode-specific screenshots
+                'screenshots_paths': verification_screenshots_paths,  # Use mode-specific screenshots paths
+                'modelIO': result if isinstance(result, str) else json.dumps(result, ensure_ascii=False),
+                'status': status_str,
+                'start_time': start_time,
+                'end_time': end_time,
+            }
+
+            # Automatically store assertion step data
+            # self.add_step_data(verification_step, step_type="assertion")
+
+            return verification_step, model_output
+
+        except Exception as e:
+            error_msg = f'AI assertion failed: {str(e)}'
+            logging.error(error_msg)
+
+            # Try to get basic page information even if it fails
+            try:
+                basic_screenshot, basic_screenshot_path = await self._actions.b64_page_screenshot(
+                    full_page=full_page,
+                    file_name='assertion_failed',
+                    context='error'
+                )
+            except Exception:
+                basic_screenshot = None
+                basic_screenshot_path = None
+
+            end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            save_locally = getattr(self._actions, '_save_screenshots_locally', False)
+            error_step = {
+                'description': f'verify: {assertion}',
+                'actions': [],
+                'screenshots': [{'type': 'base64', 'data': basic_screenshot}] if basic_screenshot and not save_locally else [],
+                'screenshots_paths': [{'type': 'path', 'data': basic_screenshot_path}] if basic_screenshot_path else [],
+                'modelIO': json.dumps({'error': str(e)}, ensure_ascii=False),
+                'status': 'failed',
+                'error': str(e),
+                'start_time': start_time,
+                'end_time': end_time,
+            }
+
+            # Error assertion step data
+            # self.add_step_data(error_step, step_type="assertion")
+
+            # Return error_step and a failed model output
+            return error_step, {'Validation Result': 'Validation Failed', 'Details': error_msg}
+
+    def _prepare_prompt_action(
+        self,
+        test_step: str,
+        browser_elements: str,
+        prompt_template: str,
+        page_status: str = 'SUPPORTED',
+        page_type: str = 'html',
+        is_page_agnostic: bool = False
+    ) -> str:
+        """Prepare LLM prompt with execution mode and page status awareness.
+
+        Args:
+            test_step: The test step instruction
+            browser_elements: Interactive elements description
+            prompt_template: The prompt template
+            page_status: Page status (SUPPORTED or UNSUPPORTED_PAGE)
+            page_type: Type of page content (html, pdf, plugin, etc.)
+            is_page_agnostic: Whether this is a page-agnostic browser-level operation
+        """
+        prompt_parts = [
+            f'test step: {test_step}',
+            '===================='
+        ]
+
+        # Check if DOM is empty or minimal
+        dom_is_empty = (
+            not browser_elements or
+            browser_elements.strip() in ['{}', ''] or
+            browser_elements.strip() == 'null'
+        )
+
+        # Determine if we should add special guidance
+        # Add guidance when: page is unsupported OR operation is page-agnostic
+        should_add_guidance = (
+            page_status == 'UNSUPPORTED_PAGE' or
+            is_page_agnostic
+        )
+
+        if should_add_guidance:
+            # Determine appropriate status message
+            if page_status == 'UNSUPPORTED_PAGE':
+                status_message = f'Current page is {page_type} content (non-HTML).'
+            elif dom_is_empty:
+                status_message = 'Current page has no interactive elements (empty DOM or minimal content).'
+            else:
+                status_message = 'Note: This is a browser-level operation.'
+
+            # Log diagnostic information
+            logging.debug(
+                f'Adding guidance: page_status={page_status}, '
+                f'execution_mode={self.execution_mode}, '
+                f'is_page_agnostic={is_page_agnostic}, dom_is_empty={dom_is_empty}, '
+                f"instruction='{test_step[:60]}...'"
+            )
+
+            # Build guidance based on execution mode
+            if is_page_agnostic:
+                # Page-agnostic operations: same guidance for both modes
+                prompt_parts.extend([
+                    '⚠️ **OPERATION TYPE**: Page-agnostic browser-level operation',
+                    f'**PAGE STATUS**: {page_status}',
+                    f'**IMPORTANT**: {status_message}',
+                    '',
+                    '**ALLOWED ACTIONS** (work at browser level, no DOM needed):',
+                    '  - GoBack, GoToPage: Browser navigation',
+                    '  - Sleep: Utility operations',
+                    '',
+                    '**CRITICAL**: Plan the page-agnostic action even when pageDescription is empty!',
+                    '**DO NOT**: Return empty actions array for browser-level operations.',
+                    '===================='
+                ])
+            elif self.execution_mode == 'run' and page_status == 'UNSUPPORTED_PAGE':
+                # RUN mode + UNSUPPORTED_PAGE + DOM-dependent operation
+                # Trust user intent, attempt to plan the action
+                prompt_parts.extend([
+                    '⚠️ **EXECUTION MODE**: RUN (User-Specified Test Case)',
+                    f'**PAGE STATUS**: {page_status} (page_type: {page_type})',
+                    f'**IMPORTANT**: {status_message} However, user explicitly requested this operation.',
+                    '',
+                    '**RUN MODE POLICY**:',
+                    '  - User has explicitly specified this operation in a test case',
+                    '  - Trust user intent and attempt to plan the action',
+                    '  - The system will handle any execution failures gracefully',
+                    '  - DO NOT return empty actions array just because page is unsupported',
+                    '',
+                    '**GUIDANCE**:',
+                    '  - Plan the action as requested by the user',
+                    '  - Use any available DOM elements from pageDescription',
+                    '  - If pageDescription is empty but instruction is clear, still plan the action',
+                    '  - Example: "Click button X" → Plan Tap action even if pageDescription is minimal',
+                    '',
+                    '**CRITICAL**: In RUN mode, plan the user-requested action. Empty actions array means "cannot understand instruction", NOT "page is unsupported".',
+                    '===================='
+                ])
+            elif page_status == 'UNSUPPORTED_PAGE':
+                # GEN mode + UNSUPPORTED_PAGE + DOM-dependent operation
+                # Conservative approach: return empty actions
+                prompt_parts.extend([
+                    '⚠️ **EXECUTION MODE**: GEN (AI Exploration)',
+                    f'**PAGE STATUS**: {page_status} (page_type: {page_type})',
+                    f'**IMPORTANT**: {status_message} DOM interaction not possible.',
+                    '',
+                    '**GEN MODE POLICY**:',
+                    '  - Conservative approach for unsupported pages',
+                    '  - Only plan actions that can work without DOM elements',
+                    '  - Return empty actions array for DOM-dependent operations',
+                    '',
+                    '**ALLOWED ACTIONS** on unsupported pages:',
+                    '  - GoBack, GoToPage: Browser navigation',
+                    '  - Sleep: Utility operations',
+                    '',
+                    '**FORBIDDEN ACTIONS** on unsupported pages:',
+                    '  - Tap, Input, Hover, Scroll, SelectDropdown (require DOM elements)',
+                    '===================='
+                ])
+
+        prompt_parts.append(f'pageDescription (interactive elements): {browser_elements}')
+        prompt_parts.append('====================')
+        prompt_parts.append(prompt_template)
+
+        return '\n'.join(prompt_parts)
+
+    def _prepare_prompt_verify(self, test_step: str, page_info: str, prompt_template: str, page_structure: str) -> str:
+        """Prepare LLM prompt."""
+        return (
+            f'test step: {test_step}\n'
+            f'====================\n'
+            f'page info: {page_info}\n'
+            f'page_structure (full text content): {page_structure}\n'
+            f'====================\n'
+            f'{prompt_template}'
+        )
+
+    async def _generate_plan(self, system_prompt: str, prompt: str, browser_screenshot: str) -> Dict[str, Any]:
+        """Generate test plan."""
+        max_retries = 2
+
+        for attempt in range(max_retries):
+            try:
+                # Get LLM response
+                test_plan = await self.llm.get_llm_response(system_prompt, prompt, images=browser_screenshot)
+
+                # Process API error
+                if isinstance(test_plan, dict) and 'error' in test_plan:
+                    raise ValueError(f"LLM API error: {test_plan['error']}")
+
+                # Verify response
+                if not test_plan or not (isinstance(test_plan, str) and test_plan.strip()):
+                    raise ValueError(f'Empty response from LLM: {test_plan}')
+
+                try:
+                    plan_json = json.loads(test_plan)
+                except json.JSONDecodeError as je:
+                    raise ValueError(f'Invalid JSON response: {str(je)}')
+
+                if not plan_json.get('actions'):
+                    logging.error(f'No valid actions found in plan: {test_plan}')
+                    raise ValueError('No valid actions found in plan')
+
+                return plan_json
+
+            except ValueError as e:
+                if attempt == max_retries - 1:
+                    raise ValueError(f'Failed to generate valid plan after {max_retries} attempts: {str(e)}')
+
+                logging.warning(f'Plan generation attempt {attempt + 1} failed: {str(e)}, retrying...')
+                await asyncio.sleep(1)
+
+    async def _execute_plan(self, plan_json: Dict[str, Any], file_path: str = None, viewport_only: bool = False, full_page: bool = True) -> Dict[str, Any]:
+        """Execute test plan."""
+        execute_results = []
+        action_count = len(plan_json.get('actions', []))
+
+        # Capture initial screenshot BEFORE any actions (plan-level before state)
+        initial_screenshot, initial_screenshot_path = await self._actions.b64_page_screenshot(
+            full_page=full_page,
+            file_name='plan_initial_screenshot',
+            context='verify'
+        )
+
+        for index, action in enumerate(plan_json.get('actions', []), 1):
+            action_desc = f"{action.get('type', 'Unknown')}"
+            logging.debug(f'Executing step {index}/{action_count}: {action_desc}')
+
+            try:
+                # Execute action
+                if action.get('type') == 'Upload' and file_path:
+                    execution_result = await self._action_executor._execute_upload(action, file_path)
+                elif action.get('type') == 'Check':
+                    execution_result = await self._execute_plan_check(action, viewport_only=True, full_page=False)
+                else:
+                    execution_result = await self._action_executor.execute(action)
+
+                # Process execution result
+                if isinstance(execution_result, dict):
+                    success = execution_result.get('success', False)
+                    message = execution_result.get('message', 'No message provided')
+                    check_result = execution_result.get('check_result')
+                else:
+                    success = bool(execution_result)
+                    message = 'Legacy boolean result'
+                    check_result = None
+
+                # Wait for page to stabilize
+                self.page = self.browser_session.page
+                try:
+                    await self.page.wait_for_load_state('networkidle', timeout=3000)
+                    await asyncio.sleep(1.5)
+                except Exception as e:
+                    logging.warning(f'Page did not become network idle: {e}')
+                    await asyncio.sleep(1)
+
+                # Take screenshot
+                # Optimization: If Check action already returned a screenshot with markers, use it
+                if action.get('type') == 'Check' and execution_result.get('screenshot'):
+                    post_action_ss = execution_result.get('screenshot')
+                    post_action_path = execution_result.get('screenshot_path')
+                else:
+                    post_action_ss, post_action_path = await self._actions.b64_page_screenshot(
+                        file_name=f'action_{action_desc}_{index}',
+                        context='test'
+                    )
+
+                action_result = {
+                    'description': action_desc,
+                    'success': success,
+                    'message': message,
+                    'screenshot': post_action_ss,
+                    'screenshot_path': post_action_path,
+                    'index': index,
+                }
+                if check_result:
+                    action_result['check_result'] = check_result
+                    action_result['thought'] = execution_result.get('thought')
+                    if execution_result.get('raw_output'):
+                        action_result['raw_output'] = execution_result.get('raw_output')
+
+                execute_results.append(action_result)
+
+                if not success:
+                    logging.error(f'Action {index} failed: {message}')
+                    # Capture final screenshot even on failure
+                    final_screenshot, final_screenshot_path = await self._actions.b64_page_screenshot(
+                        full_page=full_page,
+                        file_name='plan_final_screenshot_failed',
+                        context='verify'
+                    )
+                    # Capture page context at failure time (for time-consistent verification)
+                    try:
+                        after_action_url, after_action_title = await self.browser_session.get_url()
+                    except Exception:
+                        after_action_url, after_action_title = '', ''
+                    # Add plan-level screenshots and context to failure result
+                    action_result['before_screenshot'] = initial_screenshot
+                    action_result['before_screenshot_path'] = initial_screenshot_path
+                    action_result['after_screenshot'] = final_screenshot
+                    action_result['after_screenshot_path'] = final_screenshot_path
+                    action_result['after_action_url'] = after_action_url
+                    action_result['after_action_title'] = after_action_title
+                    action_result['after_action_page_structure'] = ''  # 失败场景可为空
+                    return execute_results, action_result
+
+                # If Check action returned 'stop', always stop the current plan immediately
+                # If it returned 'continue', we continue executing the rest of the current plan
+                # (e.g., executing a 'Sleep' that was planned after the 'Check')
+                if action.get('type') == 'Check' and check_result == 'stop':
+                    logging.info('Check action returned stop, finishing current plan')
+                    break
+
+            except Exception as e:
+                error_msg = f'Action {index} failed with error: {str(e)}'
+                logging.error(error_msg)
+                # Capture final screenshot even on exception
+                try:
+                    final_screenshot, final_screenshot_path = await self._actions.b64_page_screenshot(
+                        full_page=full_page,
+                        file_name='plan_final_screenshot_exception',
+                        context='verify'
+                    )
+                except Exception:
+                    final_screenshot = None
+                    final_screenshot_path = None
+
+                # Capture page context at exception time (for time-consistent verification)
+                try:
+                    after_action_url, after_action_title = await self.browser_session.get_url()
+                except Exception:
+                    after_action_url, after_action_title = '', ''
+
+                failure_result = {
+                    'success': False,
+                    'message': f'Exception occurred: {str(e)}',
+                    'screenshot': None,
+                    'before_screenshot': initial_screenshot,
+                    'before_screenshot_path': initial_screenshot_path,
+                    'after_screenshot': final_screenshot,
+                    'after_screenshot_path': final_screenshot_path,
+                    'after_action_url': after_action_url,
+                    'after_action_title': after_action_title,
+                    'after_action_page_structure': ''  # 异常场景可为空
+                }
+                return execute_results, failure_result
+
+        logging.debug('All actions executed successfully')
+        # Capture final screenshot AFTER all actions (plan-level after state)
+        # Optimization: Reuse the screenshot from the last executed action if possible
+        if execute_results and execute_results[-1].get('screenshot'):
+            final_screenshot = execute_results[-1].get('screenshot')
+            final_screenshot_path = execute_results[-1].get('screenshot_path')
+        else:
+            final_screenshot, final_screenshot_path = await self._actions.b64_page_screenshot(
+                full_page=full_page,
+                file_name='plan_final_screenshot',
+                context='verify'
+            )
+
+        # Capture page context at action completion time (for time-consistent verification)
+        try:
+            after_action_url, after_action_title = await self.browser_session.get_url()
+            dp_after = DeepCrawler(self.page)
+            await dp_after.crawl(highlight=False, filter_text=True, viewport_only=viewport_only)
+            after_action_page_structure = dp_after.get_text()[:5000]  # 限制长度避免内存开销
+        except Exception as e:
+            logging.warning(f'Failed to capture action-time context: {str(e)}')
+            after_action_url, after_action_title = '', ''
+            after_action_page_structure = ''
+
+        post_action_ss, _ = await self._actions.b64_page_screenshot(
+            file_name='final_success',
+            context='test'
+        )
+
+        final_result = {
+            'success': True,
+            'message': 'All actions executed successfully',
+            'screenshot': post_action_ss,
+            'before_screenshot': initial_screenshot,
+            'after_screenshot': final_screenshot,
+            'after_screenshot_path': final_screenshot_path,
+            'after_action_url': after_action_url,
+            'after_action_title': after_action_title,
+            'after_action_page_structure': after_action_page_structure,
+        }
+
+        # Find the latest Check action's result in the execution history of this plan
+        for step in reversed(execute_results):
+            if 'check_result' in step:
+                final_result['check_result'] = step['check_result']
+                final_result['thought'] = step.get('thought')
+                break
+
+        return execute_results, final_result
+
+    async def _execute_plan_check(self, action: Dict[str, Any], viewport_only: bool = False, full_page: bool = True) -> Dict[str, Any]:
+        """Execute check action to determine if the plan should continue.
+
+        The Check action asks LLM to evaluate if a completion condition is met.
+        LLM directly returns "stop" (condition met) or "continue" (condition
+        not met).
+        """
+        condition = action.get('param', {}).get('condition', '')
+        if not condition:
+            return {'success': False, 'message': 'Missing condition for Check action'}
+
+        try:
+            # Capture current state for checking
+            dp = DeepCrawler(self.page)
+            curr = await dp.crawl(highlight=True, viewport_only=viewport_only, cache_dom=True)
+
+            # Extract page status information
+            page_status = getattr(curr, 'page_status', 'SUPPORTED')
+            page_type = getattr(curr, 'page_type', 'html')
+
+            # Take screenshot with markers
+            marker_screenshot, _ = await self._actions.b64_page_screenshot(
+                full_page=full_page,
+                file_name='check_action_marker',
+                context='test'
+            )
+
+            # Remove markers
+            await dp.remove_marker()
+
+            # Prepare prompt for check
+            check_template = [
+                str(ElementKey.TAG_NAME),
+                str(ElementKey.INNER_TEXT),
+                str(ElementKey.ATTRIBUTES),
+                str(ElementKey.CENTER_X),
+                str(ElementKey.CENTER_Y)
+            ]
+
+            prompt = (
+                f'Condition: {condition}\n'
+                f'====================\n'
+                f'PAGE STATUS: {page_status} ({page_type})\n'
+                f'pageDescription: {curr.to_llm_json(template=check_template)}'
+            )
+
+            # Call LLM
+            response = await self.llm.get_llm_response(self._localize_system_prompt(LLMPrompt.check_system_prompt), prompt, images=marker_screenshot)
+
+            if isinstance(response, str):
+                try:
+                    result_json = json.loads(response)
+                except json.JSONDecodeError:
+                    # Try to extract JSON from markdown if necessary
+                    match = re.search(r'\{.*\}', response, re.DOTALL)
+                    if match:
+                        result_json = json.loads(match.group())
+                    else:
+                        raise ValueError(f'Invalid JSON response from LLM: {response}')
+            else:
+                result_json = response
+
+            # Parse LLM result - LLM directly decides "stop" or "continue"
+            check_result = result_json.get('result', 'stop')
+            thought = result_json.get('thought', 'No thought provided')
+
+            logging.debug(f'Check action result: {check_result} (Thought: {thought})')
+
+            return {
+                'success': True,
+                'message': f'Check completed: {check_result}. {thought}',
+                'check_result': check_result,
+                'thought': thought,
+                'raw_output': result_json
+            }
+
+        except Exception as e:
+            logging.error(f'Check action failed: {str(e)}')
+            return {'success': False, 'message': f'Check action failed: {str(e)}'}
+
+    def get_monitoring_results(self) -> Dict[str, Any]:
+        """Get monitoring results from the unified event collector."""
+        if self.browser_session:
+            try:
+                return self.browser_session.event_collector.get_session_summary()
+            except Exception:
+                pass
+        return {}
+
+    async def end_session(self) -> Dict[str, Any]:
+        """End session: collect monitoring data.
+
+        This method **must not** propagate exceptions. Listeners are managed
+        by the session-level event collector and cleaned up when the session
+        closes, so no manual listener removal is needed here.
+        """
+        results: dict = {}
+        try:
+            results = self.get_monitoring_results() or {}
+        except BaseException as e:
+            logging.warning(
+                f'UITester end_session monitoring warning: {e!r} (type: {type(e)})'
+            )
+        return results
+
+    async def cleanup(self):
+        """Comprehensive cleanup of all resources.
+
+        Event listeners are managed by the session-level BrowserEventCollector
+        and cleaned up when the browser session closes.
+        """
+        # 1. End session (collect monitoring data)
+        try:
+            await self.end_session()
+        except Exception as e:
+            logging.warning(f'UITester.end_session error during cleanup: {e}')
+
+        # 2. Close LLM API client (releases httpx connections)
+        try:
+            if self.llm:
+                await asyncio.wait_for(self.llm.close(), timeout=5.0)
+                logging.debug('LLM API client closed')
+        except asyncio.TimeoutError:
+            logging.warning('LLM client close timed out after 5s, skipping')
+        except Exception as e:
+            logging.warning(f'Failed to close LLM client: {e}')
+        finally:
+            self.llm = None
+
+        # 3. Clear references to browser objects
+        self.page = None
+
+        # 4. Clear data structures to free memory
+        self.test_results = []
+        self.all_cases_data = []
+        self.current_case_steps = []
+        self.execution_history = []
+        self.last_action_context = None
+        self.current_case_data = None
+
+        # 5. Mark as not initialized
+        self.is_initialized = False
+
+        logging.debug('UITester cleanup completed')
+
+    def set_current_test_name(self, name: str):
+        """Set the current test case name (stub for compatibility with
+        LangGraph workflow)."""
+        self.current_test_name = name
+
+    async def get_current_page(self):
+        return self.browser_session.page
+
+    def _build_unsupported_page_error(
+        self,
+        test_step: str,
+        page_type: str,
+        start_time: str,
+        all_execution_steps: List[Dict[str, Any]],
+        global_before_screenshot: Optional[str],
+        error_msg: str
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Build error response for unsupported page scenarios.
+
+        Args:
+            test_step: The test step description
+            page_type: Type of unsupported page (pdf, plugin, etc.)
+            start_time: Start time of the action
+            all_execution_steps: Steps executed before the error
+            global_before_screenshot: Screenshot taken before the action
+            error_msg: Error message to include
+
+        Returns:
+            Tuple of (error_steps_dict, error_result)
+        """
+        end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        error_steps_dict = {
+            'description': f'action: {test_step}',
+            'actions': all_execution_steps,
+            'screenshots': [],
+            'screenshots_paths': [],
+            'modelIO': json.dumps({'error': error_msg}, ensure_ascii=False),
+            'status': 'failed',
+            'error': error_msg,
+            'start_time': start_time,
+            'end_time': end_time,
+            'dom_diff': {}
+        }
+
+        error_result = {
+            'success': False,
+            'unsupported_page': True,
+            'page_type': page_type,
+            'message': error_msg,
+            'before_screenshot': global_before_screenshot,
+            'dom_diff': {}
+        }
+
+        return error_steps_dict, error_result
+
+    def _is_instruction_page_agnostic(self, test_step: str) -> bool:
+        """Check if instruction likely represents a page-agnostic operation.
+
+        Uses priority-based detection to prevent false positives:
+        1. DOM operations (HIGHEST PRIORITY) → NOT page-agnostic
+        2. Action type names → page-agnostic
+        3. Page-agnostic phrases → page-agnostic
+
+        Page-agnostic operations work at browser level and don't require DOM elements:
+        - Browser navigation: GoBack, GoForward, GoToPage
+        - Utility: Sleep
+
+        Args:
+            test_step: The test step instruction
+
+        Returns:
+            True if operation is likely page-agnostic, False otherwise
+
+        Examples:
+            >>> self._is_instruction_page_agnostic("Tap button to switch back")
+            False  # "Tap" indicates DOM operation
+            >>> self._is_instruction_page_agnostic("Go back to previous page")
+            True   # Legitimate navigation
+            >>> self._is_instruction_page_agnostic("Click the back button")
+            False  # "Click" indicates DOM operation
+        """
+        # Normalize instruction for case-insensitive matching
+        instruction_lower = test_step.lower().replace('_', ' ').replace('-', ' ')
+
+        # ========================================================================
+        # PRIORITY 1: Check for explicit DOM operations (HIGHEST PRIORITY)
+        # ========================================================================
+        # If instruction explicitly mentions DOM operations, it's NOT page-agnostic
+        # This prevents false positives from ambiguous keywords like "back"
+        DOM_OPERATION_INDICATORS = [
+            # Click/Tap operations
+            'tap', 'click', 'press', 'touch',
+            # Input operations
+            'input', 'type', 'enter', 'fill',
+            # Selection operations
+            'select', 'choose', 'dropdown',
+            # Mouse operations
+            'hover', 'mouse over',
+            # Scroll operations
+            'scroll', 'swipe',
+            # Drag operations
+            'drag', 'drop',
+            # Upload operations
+            'upload', 'attach',
+            # UI state changes (these require DOM interaction)
+            'toggle', 'switch',  # e.g., "toggle button"
+            'check', 'uncheck',  # checkboxes
+            'expand', 'collapse',  # accordions
+        ]
+
+        for dom_keyword in DOM_OPERATION_INDICATORS:
+            if dom_keyword in instruction_lower:
+                logging.debug(
+                    f"DOM operation '{dom_keyword}' detected in '{test_step[:60]}...' "
+                    f'→ instruction is NOT page-agnostic'
+                )
+                return False
+
+        # ========================================================================
+        # PRIORITY 2: Check for action type names in instruction
+        # ========================================================================
+        # Handle cases where LLM uses action type directly in description
+        for action_type in [ActionType.GO_BACK, ActionType.SLEEP]:
+            # Case-insensitive check (handles "GoBack", "goback", "go back")
+            if action_type.lower() in instruction_lower:
+                logging.debug(
+                    f"Action type '{action_type}' detected in '{test_step[:60]}...' "
+                    f'→ instruction IS page-agnostic'
+                )
+                return True
+
+        # ========================================================================
+        # PRIORITY 3: Check for page-agnostic phrases
+        # ========================================================================
+        # Use refined keyword list with contextual phrases only
+        PAGE_AGNOSTIC_KEYWORDS = get_page_agnostic_keywords()
+
+        for keyword in PAGE_AGNOSTIC_KEYWORDS:
+            if keyword in instruction_lower:
+                logging.debug(
+                    f"Page-agnostic keyword '{keyword}' detected in '{test_step[:60]}...' "
+                    f'→ instruction IS page-agnostic'
+                )
+                return True
+
+        # ========================================================================
+        # DEFAULT: Assume DOM-dependent (safe default)
+        # ========================================================================
+        return False

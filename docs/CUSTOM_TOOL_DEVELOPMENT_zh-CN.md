@@ -9,11 +9,11 @@
 ```python
 from typing import Any, Type
 from pydantic import BaseModel, Field
-from webqa_agent.testers.case_gen.tools.base import (
+from webqa_agent.tools.base import (
     WebQABaseTool,
     WebQAToolMetadata,
 )
-from webqa_agent.testers.case_gen.tools.registry import register_tool
+from webqa_agent.tools.registry import register_tool
 
 class HelloToolSchema(BaseModel):
     message: str = Field(description="要显示的消息")
@@ -65,7 +65,7 @@ class HelloTool(WebQABaseTool):
 ## 文件结构
 
 ```
-webqa_agent/testers/case_gen/tools/
+webqa_agent/tools/
 ├── base.py              # 基类
 ├── registry.py          # 注册系统
 ├── custom/              # 你的工具放这里
@@ -81,7 +81,7 @@ tests/custom_tools/
 ### WebQABaseTool
 
 ```python
-from webqa_agent.testers.case_gen.tools.base import WebQABaseTool
+from webqa_agent.tools.base import WebQABaseTool
 
 class MyTool(WebQABaseTool):
     name: str = "my_tool"
@@ -181,7 +181,7 @@ class MyTool(WebQABaseTool):
 
 #### 完整示例
 
-基于 `link_detection_tool.py`：
+基于 `link_check_tool.py`：
 
 ```python
 @classmethod
@@ -356,20 +356,20 @@ if self.case_recorder:
 
 ```bash
 # 检查注册
-python -c "from webqa_agent.testers.case_gen.tools.registry import get_registry; print('my_tool' in get_registry().get_tool_names())"
+python -c "from webqa_agent.tools.registry import get_registry; print('my_tool' in get_registry().get_tool_names())"
 
 # 运行测试
 pytest tests/custom_tools/test_my_tool.py -v
 
 # 格式化和检查
-black webqa_agent/ && isort webqa_agent/ && flake8 webqa_agent/testers/case_gen/tools/custom/my_tool.py
+black webqa_agent/ && isort webqa_agent/ && flake8 webqa_agent/tools/custom/my_tool.py
 ```
 
 ## 配置示例
 
 使用自定义工具的步骤：
 
-1. 将工具放置在 `webqa_agent/testers/case_gen/tools/custom/` 目录
+1. 将工具放置在 `webqa_agent/tools/custom/` 目录
 2. 使用 `@register_tool` 装饰器 - LLM 会自动发现它
 3. 在配置文件中设置业务目标
 
@@ -383,14 +383,13 @@ target:
 
 # 测试配置 - AI模式下不需要 test_steps！
 test_config:
-  function_test:
-    enabled: true
-    type: "ai"  # AI模式 - LLM自动生成测试步骤
-    business_objectives: "测试自定义功能，使用 my_tool 工具"
-    dynamic_step_generation:
-      enabled: true  # 启用自适应恢复
-      max_dynamic_steps: 8
-      min_elements_threshold: 2
+  business_objectives: "测试自定义功能，使用 my_tool 工具"
+  dynamic_step_generation:
+    enabled: true  # 启用自适应恢复
+    max_dynamic_steps: 8
+    min_elements_threshold: 2
+  custom_tools:
+    enabled: []  # 您的自定义工具将被自动发现
 
 # LLM配置
 llm_config:
@@ -426,11 +425,11 @@ browser_config:
 import re
 from typing import Any, Type
 from pydantic import BaseModel, Field
-from webqa_agent.testers.case_gen.tools.base import (
+from webqa_agent.tools.base import (
     WebQABaseTool,
     WebQAToolMetadata,
 )
-from webqa_agent.testers.case_gen.tools.registry import register_tool
+from webqa_agent.tools.registry import register_tool
 
 class TitleCheckerSchema(BaseModel):
     expected_title: str = Field(description="期望的页面标题模式 (正则表达式)")
@@ -476,10 +475,10 @@ class TitleCheckerTool(WebQABaseTool):
 
 ## 参考资料
 
-- `webqa_agent/testers/case_gen/tools/base.py` - 基类
-- `webqa_agent/testers/case_gen/tools/element_action_tool.py` - UITool 参考
-- `webqa_agent/testers/case_gen/tools/custom/link_detection_tool.py` - 自定义工具示例
-- `webqa_agent/testers/case_gen/tools/registry.py` - 工具注册表
+- `webqa_agent/tools/base.py` - 基类
+- `webqa_agent/tools/action_tool.py` - UITool 参考
+- `webqa_agent/tools/custom/link_check_tool.py` - 自定义工具示例
+- `webqa_agent/tools/registry.py` - 工具注册表
 
 ## 术语对照
 

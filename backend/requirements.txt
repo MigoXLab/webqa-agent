@@ -1,0 +1,38 @@
+alembic==1.14.0
+# Scheduler
+apscheduler==3.10.4
+asyncpg==0.30.0
+croniter==2.0.1
+docker>=7.0.0
+# FastAPI
+# FastAPI
+fastapi==0.115.6
+httpx==0.28.1
+kubernetes==34.1.0
+
+# OSS
+oss2==2.19.1
+psycopg2-binary==2.9.10
+
+# SSO Auth
+pycryptodome==3.21.0
+
+# Validation & Serialization
+pydantic==2.9.2
+pydantic-settings==2.7.1
+
+# Utils
+python-dotenv==1.1.1
+python-multipart==0.0.19
+pytz==2024.2
+
+# YAML
+pyyaml==6.0.2
+
+# Redis (progress cache)
+redis==5.2.1
+requests==2.32.4
+
+# Database
+sqlalchemy==2.0.36
+uvicorn[standard]==0.34.0

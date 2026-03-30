@@ -1,0 +1,41 @@
+# Copy this file to ingress.yaml and update the host to your domain.
+#
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: webqa-ingress
+  namespace: webqa
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "10g"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: webqa.example.com   # <-- Change to your domain
+      http:
+        paths:
+          # Frontend
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: webqa-fe-svc
+                port:
+                  number: 80
+          # Backend API
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: webqa-be
+                port:
+                  number: 8000
+  # Uncomment to enable TLS
+  # tls:
+  #   - hosts:
+  #       - webqa.example.com
+  #     secretName: webqa-tls

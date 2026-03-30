@@ -228,6 +228,7 @@ __marimo__/
 report/
 reports/
 output/
+data/
 .pytest*
 test.py
 test_cases_*.json
@@ -237,5 +238,5 @@ tests/file
 
 #config
 config/config*.yaml
-config*.yaml
+config/file
 test*.yaml

@@ -20,7 +20,12 @@ Responses API (GPT-5 family):
   - Use reasoning.effort and text.verbosity as alternatives
 """
 
+from __future__ import annotations
+
+import contextvars
 import logging
+import time
+from typing import Any
 
 import openai
 from openai import AsyncOpenAI
@@ -42,6 +47,166 @@ EXTENDED_THINKING_EFFORT_MAPPING = {
     'medium': 10000,   # Balanced (recommended)
     'high': 20000,     # Deep analysis
 }
+
+# ---------------------------------------------------------------------------
+# Data-flow metrics collection (context-var based, used by data_flow_reporter)
+# ---------------------------------------------------------------------------
+
+_last_llm_call_metrics_var: contextvars.ContextVar[dict[str, Any] | None] = (
+    contextvars.ContextVar('webqa_last_llm_call_metrics', default=None)
+)
+_llm_duration_stats_var: contextvars.ContextVar[dict[str, Any] | None] = (
+    contextvars.ContextVar('webqa_llm_duration_stats', default=None)
+)
+_llm_io_log_var: contextvars.ContextVar[list[dict[str, Any]] | None] = (
+    contextvars.ContextVar('webqa_llm_io_log', default=None)
+)
+
+
+def set_last_llm_call_metrics(metrics: dict[str, Any] | None) -> None:
+    """Store latest LLM call metrics for current async context."""
+    _last_llm_call_metrics_var.set(metrics)
+
+
+def get_last_llm_call_metrics() -> dict[str, Any] | None:
+    """Read latest LLM call metrics for current async context."""
+    return _last_llm_call_metrics_var.get()
+
+
+def reset_llm_io_log() -> None:
+    """Reset LLM I/O log for current async context."""
+    _llm_io_log_var.set([])
+
+
+def append_llm_io_log(entry: dict[str, Any]) -> None:
+    """Append one LLM call I/O entry for current async context."""
+    log = _llm_io_log_var.get()
+    if log is None:
+        _llm_io_log_var.set([entry])
+    else:
+        log.append(entry)
+
+
+def get_llm_io_log() -> list[dict[str, Any]]:
+    """Read accumulated LLM I/O log for current async context."""
+    return _llm_io_log_var.get() or []
+
+
+def reset_llm_duration_stats() -> None:
+    """Reset aggregated llm duration stats for current async context."""
+    _llm_duration_stats_var.set(
+        {
+            'duration_seconds': 0.0,
+            'token_usage': {
+                'prompt_tokens': 0,
+                'completion_tokens': 0,
+                'total_tokens': 0,
+            },
+            'calls': 0,
+        }
+    )
+
+
+def accumulate_llm_duration_stats(
+    *,
+    duration_seconds: float,
+    usage_details: dict[str, int] | None = None,
+) -> None:
+    """Accumulate one LLM call duration/token stats for current async context."""
+    stats = _llm_duration_stats_var.get()
+    if stats is None:
+        reset_llm_duration_stats()
+        stats = _llm_duration_stats_var.get() or {}
+
+    usage = usage_details or {}
+    token_usage = dict(stats.get('token_usage', {}))
+    token_usage['prompt_tokens'] = int(token_usage.get('prompt_tokens', 0)) + int(
+        usage.get('prompt_tokens', 0)
+    )
+    token_usage['completion_tokens'] = int(
+        token_usage.get('completion_tokens', 0)
+    ) + int(usage.get('completion_tokens', 0))
+    token_usage['total_tokens'] = int(token_usage.get('total_tokens', 0)) + int(
+        usage.get('total_tokens', 0)
+    )
+
+    stats['duration_seconds'] = float(stats.get('duration_seconds', 0.0)) + max(
+        float(duration_seconds), 0.0
+    )
+    stats['token_usage'] = token_usage
+    stats['calls'] = int(stats.get('calls', 0)) + 1
+    _llm_duration_stats_var.set(stats)
+
+
+def get_llm_duration_stats() -> dict[str, Any]:
+    """Get aggregated llm duration stats snapshot for current async context."""
+    stats = _llm_duration_stats_var.get()
+    if not isinstance(stats, dict):
+        return {
+            'duration_seconds': 0.0,
+            'token_usage': {
+                'prompt_tokens': 0,
+                'completion_tokens': 0,
+                'total_tokens': 0,
+            },
+            'calls': 0,
+        }
+    return stats
+
+
+def extract_usage_details(
+    usage: Any,
+) -> tuple[dict[str, int], dict[str, Any]]:
+    """Normalize provider-specific token usage to a standard dict.
+
+    Returns:
+        (usage_details, usage_raw) where usage_details has prompt/completion/total_tokens.
+    """
+    if usage is None:
+        return {}, {}
+
+    if hasattr(usage, 'model_dump'):
+        try:
+            usage_dict = usage.model_dump(exclude_none=True)
+        except Exception:
+            usage_dict = {}
+    elif isinstance(usage, dict):
+        usage_dict = dict(usage)
+    else:
+        usage_dict = {}
+        for key in (
+            'input_tokens',
+            'output_tokens',
+            'total_tokens',
+            'prompt_tokens',
+            'completion_tokens',
+            'reasoning_tokens',
+            'cache_creation_input_tokens',
+            'cache_read_input_tokens',
+        ):
+            value = getattr(usage, key, None)
+            if value is not None:
+                usage_dict[key] = value
+
+    prompt_tokens = usage_dict.get('prompt_tokens', usage_dict.get('input_tokens'))
+    completion_tokens = usage_dict.get(
+        'completion_tokens', usage_dict.get('output_tokens')
+    )
+    total_tokens = usage_dict.get('total_tokens')
+    if total_tokens is None and (
+        prompt_tokens is not None and completion_tokens is not None
+    ):
+        total_tokens = int(prompt_tokens) + int(completion_tokens)
+
+    usage_details: dict[str, int] = {}
+    if prompt_tokens is not None:
+        usage_details['prompt_tokens'] = int(prompt_tokens)
+    if completion_tokens is not None:
+        usage_details['completion_tokens'] = int(completion_tokens)
+    if total_tokens is not None:
+        usage_details['total_tokens'] = int(total_tokens)
+
+    return usage_details, usage_dict
 
 
 class LLMAPI:
@@ -189,6 +354,8 @@ class LLMAPI:
             reasoning = self.llm_config.get('reasoning')
 
         try:
+            set_last_llm_call_metrics(None)
+
             # Resolve common parameters
             resolved_max_tokens = max_tokens if max_tokens is not None else self.llm_config.get('max_tokens')
 
@@ -261,6 +428,21 @@ class LLMAPI:
 
             else:
                 raise ValueError(f"Unknown provider '{actual_provider}' for model '{actual_model}'")
+
+            # Record LLM I/O for data flow reporting
+            _io_entry: dict[str, Any] = {
+                'model': actual_model,
+                'provider': actual_provider,
+                'system_prompt': system_prompt,
+                'user_prompt': prompt if isinstance(prompt, str) else str(prompt)[:5000],
+                'image_count': len(images) if isinstance(images, list) else (1 if images else 0),
+                'response': result[:5000] if isinstance(result, str) else str(result)[:5000],
+            }
+            _last_metrics = get_last_llm_call_metrics()
+            if _last_metrics:
+                _io_entry['duration_ms'] = _last_metrics.get('duration_ms')
+                _io_entry['token_usage'] = _last_metrics.get('token_usage')
+            append_llm_io_log(_io_entry)
 
             return result
         except Exception as e:
@@ -418,6 +600,7 @@ class LLMAPI:
                 create_kwargs.get('text'),
             )
 
+            request_started = time.perf_counter()
             response = await self.client.responses.create(**create_kwargs)
 
             # Extract output text from response
@@ -438,13 +621,31 @@ class LLMAPI:
                 content = str(response)
 
             # logging.debug(f"Responses API response received, length: {len(content) if content else 0}")
+            usage_details, usage_raw = extract_usage_details(
+                getattr(response, 'usage', None)
+            )
+            duration_ms = int((time.perf_counter() - request_started) * 1000)
             content = self._clean_response(content)
+            set_last_llm_call_metrics(
+                {
+                    'provider': self.provider,
+                    'model': actual_model,
+                    'duration_ms': duration_ms,
+                    'duration_seconds': duration_ms / 1000.0,
+                    'token_usage': usage_details,
+                    'usage_raw': usage_raw,
+                }
+            )
+            accumulate_llm_duration_stats(
+                duration_seconds=duration_ms / 1000.0,
+                usage_details=usage_details,
+            )
             return content
 
         except Exception as e:
-            error_msg = f"Responses API request failed for model '{model}': {str(e)}"
+            error_msg = f"Responses API request failed for model '{model}': {e}"
             logging.error(error_msg)
-            raise ValueError(error_msg)
+            raise ValueError(error_msg) from e
 
     async def _call_chat_completions_api(
         self,
@@ -514,6 +715,7 @@ class LLMAPI:
                 create_kwargs.get('max_tokens'),
             )
 
+            request_started = time.perf_counter()
             completion = await self.client.chat.completions.create(**create_kwargs)
 
             # Defensive response extraction - handles both ChatCompletion objects and string responses
@@ -547,7 +749,25 @@ class LLMAPI:
                     f'Base URL: {self.base_url}, Model: {actual_model}'
                 )
 
+            usage_details, usage_raw = extract_usage_details(
+                getattr(completion, 'usage', None)
+            )
+            duration_ms = int((time.perf_counter() - request_started) * 1000)
             content = self._clean_response(content)
+            set_last_llm_call_metrics(
+                {
+                    'provider': self.provider,
+                    'model': actual_model,
+                    'duration_ms': duration_ms,
+                    'duration_seconds': duration_ms / 1000.0,
+                    'token_usage': usage_details,
+                    'usage_raw': usage_raw,
+                }
+            )
+            accumulate_llm_duration_stats(
+                duration_seconds=duration_ms / 1000.0,
+                usage_details=usage_details,
+            )
             return content
 
         # Official OpenAI SDK error handling patterns
@@ -689,6 +909,7 @@ class LLMAPI:
                 create_kwargs.get('thinking'),
             )
 
+            request_started = time.perf_counter()
             response = await self.client.messages.create(**create_kwargs)
 
             # Extract content from response
@@ -701,7 +922,25 @@ class LLMAPI:
                 content = str(response)
 
             logging.debug(f'Anthropic Messages API response received, length: {len(content) if content else 0}')
+            usage_details, usage_raw = extract_usage_details(
+                getattr(response, 'usage', None)
+            )
+            duration_ms = int((time.perf_counter() - request_started) * 1000)
             content = self._clean_response(content)
+            set_last_llm_call_metrics(
+                {
+                    'provider': 'anthropic',
+                    'model': actual_model,
+                    'duration_ms': duration_ms,
+                    'duration_seconds': duration_ms / 1000.0,
+                    'token_usage': usage_details,
+                    'usage_raw': usage_raw,
+                }
+            )
+            accumulate_llm_duration_stats(
+                duration_seconds=duration_ms / 1000.0,
+                usage_details=usage_details,
+            )
             return content
 
         # Catch-all exception handler for Anthropic Messages API
@@ -725,7 +964,7 @@ class LLMAPI:
                 error_msg = f"Anthropic Messages API request failed for model '{model}': {error_str}"
 
             logging.error(error_msg)
-            raise ValueError(error_msg)
+            raise ValueError(error_msg) from e
 
     def _map_effort_to_thinking(self, reasoning, model: str, max_tokens: int = None) -> dict:
         """Map reasoning.effort to Anthropic thinking configuration with

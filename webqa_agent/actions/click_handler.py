@@ -120,7 +120,9 @@ class ClickHandler:
             if new_page:
                 click_result['has_new_page'] = True
                 try:
-                    await new_page.wait_for_load_state('networkidle', timeout=30000)
+                    await new_page.wait_for_load_state('networkidle', timeout=3000)
+                except Exception:
+                    pass
 
                     new_page_action_handler = ActionHandler()
                     new_page_action_handler.page = new_page
@@ -128,7 +130,8 @@ class ClickHandler:
                         file_name=f'element_{element_index}_new_page',
                         context='test'
                     )
-                    click_result['new_page_screenshot'] = screenshot_b64
+                    save_locally = getattr(new_page_action_handler, '_save_screenshots_locally', False)
+                    click_result['new_page_screenshot'] = screenshot_b64 if not save_locally else None
                     click_result['new_page_screenshot_path'] = screenshot_path
                     logging.debug('New page screenshot saved')
 
@@ -136,13 +139,17 @@ class ClickHandler:
                     click_result['error'] = f'Failed to handle new page: {e}'
                     logging.warning(f'Failed to handle new page: {e}')
 
-                await page.wait_for_load_state('networkidle', timeout=30000)
+                try:
+                    await page.wait_for_load_state('networkidle', timeout=3000)
+                except Exception:
+                    pass
             else:
                 screenshot_b64, screenshot_path = await action_handler.b64_page_screenshot(
                     file_name=f'element_{element_index}_after_click',
                     context='test'
                 )
-                click_result['screenshot_after'] = screenshot_b64
+                save_locally = getattr(action_handler, '_save_screenshots_locally', False)
+                click_result['screenshot_after'] = screenshot_b64 if not save_locally else None
                 click_result['screenshot_after_path'] = screenshot_path
                 logging.debug('After click screenshot saved')
 

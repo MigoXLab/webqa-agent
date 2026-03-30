@@ -1,12 +1,11 @@
-# Case Mode Structures
-from .case_structures import (ActionArgs, Case, CaseStep, StepAction,
-                              StepContext, StepVerify, VerifyArgs)
-# Test Structures
-from .test_structures import (ParallelTestSession, SubTestAction,
-                              SubTestReport, SubTestResult, SubTestScreenshot,
-                              SubTestStep, TestConfiguration,
-                              TestExecutionContext, TestResult, TestStatus,
-                              TestType, get_default_test_name)
+# Run Mode Structures
+# Gen Mode Structures
+from .gen_structures import (ParallelTestSession, SubTestAction, SubTestReport,
+                             SubTestResult, SubTestScreenshot, SubTestStep,
+                             TestCategory, TestConfiguration, TestResult,
+                             TestStatus)
+from .run_structures import (ActionArgs, Case, CaseStep, StepAction,
+                             StepContext, StepVerify, VerifyArgs)
 
 __all__ = [
     # Case Mode
@@ -18,13 +17,11 @@ __all__ = [
     'StepVerify',
     'VerifyArgs',
     # Test Structures
-    'TestType',
     'TestStatus',
+    'TestCategory',
     'TestConfiguration',
-    'TestExecutionContext',
     'TestResult',
     'ParallelTestSession',
-    'get_default_test_name',
     'SubTestStep',
     'SubTestResult',
     'SubTestScreenshot',

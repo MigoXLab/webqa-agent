@@ -31,7 +31,7 @@ async def check_playwright_browsers_async():
         return False
 
 
-def check_lighthouse_installation():
+def check_lighthouse_installation(silent: bool = False):
     """Check if Lighthouse is properly installed.
 
     Checks for Lighthouse in the following locations (in order):
@@ -39,6 +39,9 @@ def check_lighthouse_installation():
     2. Local installation in script directory (node_modules/.bin)
     3. Docker container (/app/node_modules/.bin)
     4. Global installation (PATH)
+
+    Args:
+        silent: If True, suppress print output. Default False for backward compatibility.
 
     Returns:
         bool: True if Lighthouse is found, False otherwise
@@ -63,17 +66,22 @@ def check_lighthouse_installation():
             result = subprocess.run([path, '--version'], capture_output=True, text=True, timeout=10)
             if result.returncode == 0:
                 version = result.stdout.strip()
-                print(f'✅ Lighthouse available: {version}')
+                if not silent:
+                    print(f'✅ Lighthouse available: {version}')
                 return True
         except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
             continue
 
-    print('❌ Lighthouse not found')
+    if not silent:
+        print('❌ Lighthouse not found')
     return False
 
 
-def check_nuclei_installation():
+def check_nuclei_installation(silent: bool = False):
     """Check if Nuclei is properly installed.
+
+    Args:
+        silent: If True, suppress print output. Default False for backward compatibility.
 
     Returns:
         bool: True if Nuclei is found, False otherwise
@@ -82,9 +90,11 @@ def check_nuclei_installation():
         result = subprocess.run(['nuclei', '-version'], capture_output=True, text=True, timeout=10)
         if result.returncode == 0:
             version = result.stdout.strip()
-            print(f'✅ Nuclei available: {version}')
+            if not silent:
+                print(f'✅ Nuclei available: {version}')
             return True
     except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
         pass
-    print('❌ Nuclei not found')
+    if not silent:
+        print('❌ Nuclei not found')
     return False

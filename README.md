@@ -54,6 +54,7 @@ vibecoding, vibe coding, web evaluation, autonomous exploration, web testing aut
 - [Quick Start](#-quick-start)
 - [Usage](#usage)
 - [Extending WebQA Agent Tools](#extending-webqa-agent-tools)
+- [Deployment](#-deployment)
 - [RoadMap](#roadmap)
 - [Acknowledgements](#acknowledgements)
 - [License](#-license)
@@ -71,6 +72,30 @@ vibecoding, vibe coding, web evaluation, autonomous exploration, web testing aut
 | **User Input**    | **Minimal**: Only URL or a one-sentence business goal                                          | **Structured**: Simple natural language step descriptions                                 |
 | **Advantages**    | Reflection-based planning, adaptive to UI changes; Configurable functional / performance / security / UX evaluation for comprehensive QA | Stable and predictable results; No selector maintenance; Real-time Console and Network monitoring |
 
+### 🛠️ Tool System
+
+**Default Tools** (Always Enabled):
+
+- **UI Actions**: Browser interactions (click, type, navigate)
+- **UI Assertions**: State verification
+- **UX Verification**: Text typo checking, layout analysis
+
+**Custom Tools** (Optional, Configuration-Enabled):
+
+- **Performance**: Lighthouse-based performance testing
+- **Security**: Nuclei vulnerability scanning
+- **Link Detection**: Dynamic link discovery
+
+Enable custom tools in `config.yaml`:
+
+```yaml
+test_config:
+  custom_tools:
+    enabled:
+      - lighthouse
+      - nuclei
+```
+
 ### 🧭 Architecture
 
 <p>
@@ -86,8 +111,6 @@ vibecoding, vibe coding, web evaluation, autonomous exploration, web testing aut
 <p align="left">
   <img src="docs/images/baidu-gif.gif" alt="Baidu Image Generation Test Demo" width="600" />
 </p>
-
-Try Demo: [🤗Hugging Face](https://huggingface.co/spaces/mmmay0722/WebQA-Agent) · [🚀ModelScope](https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary)
 
 ## 🚀 Quick Start
 
@@ -136,19 +159,6 @@ nuclei -ut               # Update templates
 # Linux/Windows: https://github.com/projectdiscovery/nuclei/releases
 ```
 
-### 🐳 Generate Mode - Docker One-liner Start
-
-Please ensure Docker is installed (recommended Docker >= 24.0, Docker Compose >= 2.32). Official guide: [Docker Installation](https://docs.docker.com/get-started/get-docker/)
-
-```bash
-mkdir -p config \
-  && curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/config/config.yaml.example -o config/config.yaml
-
-# Edit config.yaml: set target.url, llm_config.api_key, etc.
-
-curl -fsSL https://raw.githubusercontent.com/MigoXLab/webqa-agent/main/start.sh | bash
-```
-
 <a id="usage"></a>
 
 ## ⚙️ Usage
@@ -174,16 +184,17 @@ target:
   description: Website QA testing
 
 test_config:
-  function_test:                        # Functional testing
-    enabled: True
-    type: ai                            # 'default' or 'ai'
-    business_objectives: Test search functionality, generate 3 test cases
-  ux_test:                              # User experience testing
-    enabled: True
-  performance_test:                     # Performance analysis (requires Lighthouse)
-    enabled: False
-  security_test:                        # Security scanning (requires Nuclei)
-    enabled: False
+  business_objectives: Test search functionality, generate 3 test cases
+  custom_tools:                         # Optional: Enable custom testing tools (by step_type)
+    enabled:
+      # - lighthouse                    # Lighthouse performance testing
+                                        # Requires: npm install lighthouse chrome-launcher (local, recommended)
+                                        # or: npm install -g lighthouse chrome-launcher (global)
+      # - nuclei                        # Nuclei security scanning
+                                        # Requires: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+                                        # or download from: https://github.com/projectdiscovery/nuclei/releases
+      # - traverse_clickable_elements   # Clickable element traversal testing
+      # - detect_dynamic_links          # Dynamic link discovery and validation
 
 llm_config:                             # LLM configuration, supports OpenAI, Anthropic Claude, Google Gemini, and OpenAI-compatible models (e.g., Doubao, Qwen)
   model: gpt-4.1-2025-04-14             # Primary model
@@ -261,7 +272,23 @@ WebQA Agent supports **custom tool development** for domain-specific testing cap
 | **[Custom Tool Development](docs/CUSTOM_TOOL_DEVELOPMENT.md)** | Quick reference for creating custom tools                               |
 | **[LLM Context Document](docs/CUSTOM_TOOL_DEVELOPMENT_AI.md)** | Comprehensive guide for AI-assisted development, useful for vibe coding |
 
-We welcome contributions! Check out [existing tools](webqa_agent/testers/case_gen/tools/custom/) for examples.
+We welcome contributions! Check out [existing tools](webqa_agent/tools/custom/) for examples.
+
+<a id="deployment"></a>
+
+## 🖥️ Deployment
+
+For teams that need a **persistent web dashboard** with test management, scheduled tasks, and execution history, deploy the full-stack platform:
+
+| Method            | Use Case                    | Guide                                                  |
+| ----------------- | --------------------------- | ------------------------------------------------------ |
+| Local Development | Personal dev & debugging    | [deploy/README.md](deploy/README.md#local-development) |
+| Docker Compose    | Single-machine / Team trial | [deploy/README.md](deploy/README.md#docker-compose)    |
+| Kubernetes        | Production cluster          | [deploy/k8s/README.md](deploy/k8s/README.md)           |
+
+> **💡 Extending Internal Logic:** WebQA Agent supports extending internal logic based on your team's infrastructure (such as integrating internal SSO, OSS object storage, internal LLMs, etc.). You are free to customize and develop it to fit your needs. [deploy/README.md](deploy/README.md#custom-extensions)
+
+> **Note:** The web dashboard platform is currently only available in Chinese.
 
 <a id="roadmap"></a>
 
