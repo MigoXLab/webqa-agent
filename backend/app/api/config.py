@@ -14,7 +14,7 @@ async def get_available_models(mode: Optional[str] = None):
     """Get available LLM models.
 
     Args:
-        mode: 'gen' for AI探索 mode, otherwise returns Run mode models.
+        mode: 'gen' for AI exploration mode, otherwise returns Run mode models.
     """
     if mode == 'gen':
         return APIResponse(

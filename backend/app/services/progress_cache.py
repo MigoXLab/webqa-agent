@@ -1,11 +1,13 @@
 """Progress cache service using Redis.
 
-支持本地开发和集群部署的统一进度缓存方案。 执行完成后进度数据仍保留（TTL 过期自动清理），支持查看历史执行的日志。
+Unified progress caching for local development and cluster deployments.
+Progress data remains after execution completes (cleaned up automatically when
+TTL expires), supporting viewing logs from historical runs.
 """
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import redis.asyncio as redis
 from app.config import get_settings
@@ -13,18 +15,18 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# Redis 连接池（懒加载）
+# Redis connection pool (lazy-loaded)
 _redis_pool: Optional[redis.ConnectionPool] = None
 _redis_client: Optional[redis.Redis] = None
 
 
 def _get_progress_key(execution_id: str) -> str:
-    """生成进度缓存的 Redis key."""
+    """Build the Redis key for progress cache."""
     return f'webqa:progress:{execution_id}'
 
 
 async def get_redis_client() -> Optional[redis.Redis]:
-    """获取 Redis 客户端（单例模式）"""
+    """Get Redis client (singleton)."""
     global _redis_pool, _redis_client
 
     if _redis_client is not None:
@@ -38,7 +40,7 @@ async def get_redis_client() -> Optional[redis.Redis]:
         )
         _redis_client = redis.Redis(connection_pool=_redis_pool)
 
-        # 测试连接
+        # Test connection
         await _redis_client.ping()
         logger.info(f'[Redis] 连接成功: {settings.redis_url}')
         return _redis_client
@@ -48,21 +50,21 @@ async def get_redis_client() -> Optional[redis.Redis]:
         return None
 
 
-# 内存缓存回退（Redis 不可用时使用）
+# In-memory fallback when Redis is unavailable
 _memory_cache: Dict[str, Dict] = {}
 
 
 async def set_progress(execution_id: str, progress_data: Dict[str, Any]) -> bool:
-    """保存执行进度到缓存。
+    """Persist execution progress to cache.
 
     Args:
-        execution_id: 执行 ID
-        progress_data: 进度数据，包含 completed, running, logs 等字段
+        execution_id: Execution ID
+        progress_data: Progress payload (e.g. completed, running, logs)
 
     Returns:
-        是否保存成功
+        Whether the save succeeded
     """
-    # 添加元数据
+    # Add metadata
     data = {
         **progress_data,
         'execution_id': execution_id,
@@ -83,19 +85,19 @@ async def set_progress(execution_id: str, progress_data: Dict[str, Any]) -> bool
         except Exception as e:
             logger.warning(f'[Redis] 写入进度失败: {e}')
 
-    # 回退到内存缓存
+    # Fall back to in-memory cache
     _memory_cache[execution_id] = data
     return True
 
 
 async def get_progress(execution_id: str) -> Optional[Dict[str, Any]]:
-    """获取执行进度。
+    """Load execution progress.
 
     Args:
-        execution_id: 执行 ID
+        execution_id: Execution ID
 
     Returns:
-        进度数据，如果不存在返回 None
+        Progress data, or None if missing
     """
     client = await get_redis_client()
 
@@ -108,18 +110,19 @@ async def get_progress(execution_id: str) -> Optional[Dict[str, Any]]:
         except Exception as e:
             logger.warning(f'[Redis] 读取进度失败: {e}')
 
-    # 回退到内存缓存
+    # Fall back to in-memory cache
     return _memory_cache.get(execution_id)
 
 
 async def refresh_progress_ttl(execution_id: str) -> bool:
-    """刷新进度缓存的 TTL（执行完成后调用，延长过期时间供前端查看）。
+    """Refresh progress cache TTL (call after execution completes to extend
+    expiry for the UI).
 
     Args:
-        execution_id: 执行 ID
+        execution_id: Execution ID
 
     Returns:
-        是否刷新成功
+        Whether the refresh succeeded
     """
     client = await get_redis_client()
 
@@ -131,18 +134,18 @@ async def refresh_progress_ttl(execution_id: str) -> bool:
         except Exception as e:
             logger.warning(f'[Redis] 刷新 TTL 失败: {e}')
 
-    # 内存缓存不需要 TTL 管理
+    # In-memory cache has no TTL management
     return True
 
 
 async def delete_progress(execution_id: str) -> bool:
-    """删除进度缓存（可选，通常让 TTL 自动过期）。
+    """Delete progress cache (optional; usually rely on TTL expiry).
 
     Args:
-        execution_id: 执行 ID
+        execution_id: Execution ID
 
     Returns:
-        是否删除成功
+        Whether the delete succeeded
     """
     client = await get_redis_client()
 
@@ -154,13 +157,13 @@ async def delete_progress(execution_id: str) -> bool:
         except Exception as e:
             logger.warning(f'[Redis] 删除进度失败: {e}')
 
-    # 回退到内存缓存
+    # Fall back to in-memory cache
     _memory_cache.pop(execution_id, None)
     return True
 
 
 async def close_redis() -> None:
-    """关闭 Redis 连接（应用关闭时调用）"""
+    """Close Redis connections (call on application shutdown)."""
     global _redis_client, _redis_pool
 
     if _redis_client:

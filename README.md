@@ -53,8 +53,8 @@ vibecoding, vibe coding, web evaluation, autonomous exploration, web testing aut
 - [Examples](#-examples)
 - [Quick Start](#-quick-start)
 - [Usage](#usage)
-- [Deployment](#-deployment)
 - [Extending WebQA Agent Tools](#extending-webqa-agent-tools)
+- [Deployment](#-deployment)
 - [RoadMap](#roadmap)
 - [Acknowledgements](#acknowledgements)
 - [License](#-license)
@@ -261,18 +261,6 @@ cases:                                  # Test case list
 
 Test reports are generated in the `reports/` directory. Open the HTML file to view detailed results.
 
-## 🖥️ Deployment
-
-> **Note:** The web dashboard platform is currently only available in Chinese.
-
-For teams that need a **persistent web dashboard** with test management, scheduled tasks, and execution history, deploy the full-stack platform:
-
-| Method            | Use Case                    | Guide                                                  |
-| ----------------- | --------------------------- | ------------------------------------------------------ |
-| Local Development | Personal dev & debugging    | [deploy/README.md](deploy/README.md#local-development) |
-| Docker Compose    | Single-machine / Team trial | [deploy/README.md](deploy/README.md#docker-compose)    |
-| Kubernetes        | Production cluster          | [deploy/k8s/README.md](deploy/k8s/README.md)           |
-
 <a id="extending-webqa-agent-tools"></a>
 
 ## 🛠️ Extending WebQA Agent Tools
@@ -285,6 +273,22 @@ WebQA Agent supports **custom tool development** for domain-specific testing cap
 | **[LLM Context Document](docs/CUSTOM_TOOL_DEVELOPMENT_AI.md)** | Comprehensive guide for AI-assisted development, useful for vibe coding |
 
 We welcome contributions! Check out [existing tools](webqa_agent/tools/custom/) for examples.
+
+<a id="deployment"></a>
+
+## 🖥️ Deployment
+
+For teams that need a **persistent web dashboard** with test management, scheduled tasks, and execution history, deploy the full-stack platform:
+
+| Method            | Use Case                    | Guide                                                  |
+| ----------------- | --------------------------- | ------------------------------------------------------ |
+| Local Development | Personal dev & debugging    | [deploy/README.md](deploy/README.md#local-development) |
+| Docker Compose    | Single-machine / Team trial | [deploy/README.md](deploy/README.md#docker-compose)    |
+| Kubernetes        | Production cluster          | [deploy/k8s/README.md](deploy/k8s/README.md)           |
+
+> **💡 Extending Internal Logic:** WebQA Agent supports extending internal logic based on your team's infrastructure (such as integrating internal SSO, OSS object storage, internal LLMs, etc.). You are free to customize and develop it to fit your needs. [deploy/README.md](deploy/README.md#custom-extensions)
+
+> **Note:** The web dashboard platform is currently only available in Chinese.
 
 <a id="roadmap"></a>
 

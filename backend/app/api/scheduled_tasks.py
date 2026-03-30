@@ -462,7 +462,7 @@ async def trigger_scheduled_task(
         )
 
     # Create execution record using task's configuration
-    # trigger_type='manual' 用于区分手动触发和定时触发
+    # trigger_type='manual' distinguishes manual trigger from scheduled (cron) trigger
     execution = Execution(
         business_id=task.business_id,
         environment_id=task.environment_id,

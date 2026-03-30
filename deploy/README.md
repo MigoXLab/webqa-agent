@@ -199,12 +199,31 @@ For production cluster deployments, see [deploy/k8s/README.md](k8s/README.md).
 
 ______________________________________________________________________
 
-## Comparison
+## Custom Extensions
 
-|                    | Local Dev        | Docker Compose   | Kubernetes          |
-| ------------------ | ---------------- | ---------------- | ------------------- |
-| Agent execution    | Subprocess       | Docker container | K8s Job Pod         |
-| Resource isolation | None             | Container limits | Pod resource quotas |
-| Data persistence   | Local filesystem | Docker Volume    | PVC                 |
-| Team size          | 1 person         | 1–5 people       | Team / Production   |
-| Ops complexity     | Low              | Medium           | High                |
+WebQA Agent provides a flexible extension mechanism, allowing teams to customize and integrate their internal infrastructure (such as SSO, OSS object storage, internal LLMs, etc.).
+
+### 1. SSO (Single Sign-On) Integration
+
+If your team uses an internal SSO, you can:
+
+- Implement your SSO login and cookie generation logic in `backend/app/api/environments.py` or the relevant Auth Provider modules.
+- In the frontend (`frontend/src/components/BusinessManager.tsx`), you can keep or modify the existing SSO form fields (username, password, environment, etc.) to adapt to your internal SSO API.
+
+### 2. OSS (Object Storage Service) Integration
+
+By default, test reports are saved locally. If you want to upload reports to an internal OSS:
+
+- Implement the report upload logic in `backend/app/api/internal.py`.
+- In `backend/app/providers/__init__.py`, the system supports auto-detecting internal deployment implementations. You can place your internal OSS client code in a specific provider directory, and the system will automatically load and use it.
+
+### 3. Internal LLM Integration
+
+If your team uses internally deployed LLMs:
+
+- Configure the corresponding environment variables in `.env` (e.g., `LLM_API_KEY_INTERNAL_MODEL`, `LLM_BASE_URL_INTERNAL_MODEL`).
+- Add or modify the model mapping logic in `backend/app/config.py` to ensure internal models are selectable in the frontend and routed correctly.
+
+> **Tip**: The codebase provides an auto-load mechanism in `backend/app/providers/__init__.py` to distinguish between "open-source" and "internal deployment" versions.
+
+______________________________________________________________________

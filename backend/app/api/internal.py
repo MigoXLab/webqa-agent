@@ -27,21 +27,21 @@ router = APIRouter()
 
 
 # =============================================================================
-# Progress API - Agent 推送进度
+# Progress API - Agent progress push
 # =============================================================================
 
 class TaskProgressItem(BaseModel):
-    """单个任务的进度信息."""
+    """Progress information for a single task."""
     name: str
     duration: Optional[float] = None
     elapsed: Optional[float] = None
-    status: Optional[str] = None  # 执行状态: 'success' | 'failed'
+    status: Optional[str] = None  # Execution status: 'success' | 'failed'
     error: Optional[str] = None
-    result: Optional[str] = None  # 测试结果: 'passed' | 'failed' | 'warning'
+    result: Optional[str] = None  # Test result: 'passed' | 'failed' | 'warning'
 
 
 class ProgressUpdateRequest(BaseModel):
-    """Agent 推送进度的请求体."""
+    """Request body for Agent progress push."""
     completed: List[TaskProgressItem] = []
     running: List[TaskProgressItem] = []
     logs: List[str] = []
@@ -52,10 +52,12 @@ async def update_execution_progress(
     execution_id: str,
     request: ProgressUpdateRequest,
 ):
-    """接收 Agent 推送的进度更新。
+    """Receive progress updates pushed by the Agent.
 
-    Agent 执行过程中每 1-2 秒推送一次进度到此接口。 数据存入 Redis 缓存（TTL 自动过期），供前端轮询查询。
-    执行完成后进度仍保留，可查看历史执行日志。
+    The Agent pushes progress to this endpoint every 1-2 seconds during
+    execution. Data is stored in Redis cache (with TTL auto-expiration) for
+    frontend polling. Progress is retained after execution completes to view
+    historical execution logs.
     """
     progress_data = {
         'completed': [t.model_dump() for t in request.completed],
@@ -63,7 +65,7 @@ async def update_execution_progress(
         'logs': request.logs,
     }
 
-    # 存入 Redis 缓存（带 TTL）
+    # Store in Redis cache (with TTL)
     await set_progress(execution_id, progress_data)
 
     return {'success': True}
@@ -72,18 +74,18 @@ async def update_execution_progress(
 class ExecutionCompleteRequest(BaseModel):
     """Request body for execution complete callback.
 
-    执行层面状态（status）:
-    - completed: Agent 正常完成执行（可查看报告）
-    - failed: Agent 异常退出/崩溃
-    - timeout: 执行超时（由 Backend 超时检测设置）
+    Execution level status (status):
+    - completed: Agent finished execution normally (report available)
+    - failed: Agent exited abnormally/crashed
+    - timeout: Execution timed out (set by Backend timeout detection)
 
-    Case 结果通过 result_count 展示:
+    Case results are shown via result_count:
     - { total: 10, passed: 8, failed: 1, warning: 1 }
     """
     status: str  # completed, failed, timeout
     result_count: Optional[Dict[str, Any]] = None
-    report_path: Optional[str] = None  # 共享存储中的报告路径
-    log_path: Optional[str] = None     # 共享存储中的日志路径
+    report_path: Optional[str] = None  # Report path in shared storage
+    log_path: Optional[str] = None     # Log path in shared storage
     error_message: Optional[str] = None
 
 
@@ -95,13 +97,13 @@ class ExecutionCompleteResponse(BaseModel):
 
 
 def cleanup_local_report(report_path: str) -> bool:
-    """清理本地报告目录（OSS 上传成功后调用）。
+    """Remove the local report directory (call after OSS upload succeeds).
 
     Args:
-        report_path: 报告目录路径
+        report_path: Path to the report directory
 
     Returns:
-        是否清理成功
+        True if cleanup succeeded
     """
     try:
         if report_path and os.path.exists(report_path):
@@ -116,18 +118,18 @@ def cleanup_local_report(report_path: str) -> bool:
 
 @router.post('/executions/{execution_id}/complete', response_model=ExecutionCompleteResponse)
 async def execution_complete(execution_id: str, request: ExecutionCompleteRequest):
-    """Agent 执行完成后的回调接口。
+    """Callback after Agent execution completes.
 
-    - 更新执行状态
-    - 从共享存储读取报告并上传到 OSS
-    - 上传成功后清理本地报告目录
-    - 返回 OSS URL
+    - Update execution status
+    - Read report from shared storage and upload to OSS
+    - Remove local report directory after successful upload
+    - Return OSS URL
     """
     logger.info(f'[Internal] 收到执行完成回调: execution_id={execution_id}, status={request.status}, result_count={request.result_count}, report_path={request.report_path}, error={request.error_message}')
 
     async with AsyncSessionLocal() as db:
         try:
-            # 查找执行记录
+            # Look up execution record
             result = await db.execute(
                 select(Execution).where(Execution.id == UUID(execution_id))
             )
@@ -136,7 +138,7 @@ async def execution_complete(execution_id: str, request: ExecutionCompleteReques
             if not execution:
                 raise HTTPException(status_code=404, detail=f'Execution {execution_id} not found')
 
-            # 更新执行状态
+            # Update execution status
             execution.status = request.status
             execution.result_count = request.result_count
             execution.completed_at = now_with_tz()
@@ -147,7 +149,7 @@ async def execution_complete(execution_id: str, request: ExecutionCompleteReques
             if request.report_path:
                 execution.local_report_path = request.report_path
 
-            # 上传报告到 OSS（路径使用「时间_id 的第一部分」：YYYYMMDD_HHMMSS_exec_id 前 8 位）
+            # Upload report to OSS (path uses time_id prefix: YYYYMMDD_HHMMSS + first 8 chars of exec id)
             oss_url = None
             if request.report_path and os.path.exists(request.report_path):
                 oss_key_dir = _time_id_prefix(execution_id, execution.started_at)
@@ -164,7 +166,7 @@ async def execution_complete(execution_id: str, request: ExecutionCompleteReques
                     execution.oss_report_url = oss_url
                     logger.info(f'[Internal] OSS 上传成功: {oss_url}')
 
-                    # OSS 上传成功后，清理本地报告目录
+                    # After OSS upload, remove local report directory
                     cleanup_local_report(request.report_path)
                 else:
                     logger.warning('[Internal] OSS 上传失败，保留本地报告目录')
@@ -173,15 +175,15 @@ async def execution_complete(execution_id: str, request: ExecutionCompleteReques
 
             await db.commit()
 
-            # 刷新进度缓存 TTL（保留历史日志，TTL 过期后自动清理）
+            # Refresh progress cache TTL (keeps history until TTL expires)
             await refresh_progress_ttl(execution_id)
 
-            # 通知：如果是定时任务触发（含手动触发），发送结果通知
+            # Notification: if triggered by a scheduled task (including manual), send result notification
             if execution.scheduled_task_id:
                 try:
                     notifier = get_provider('notification')
 
-                    # 查找关联的定时任务，获取 webhook_url
+                    # Load scheduled task for webhook_url
                     task_result = await db.execute(
                         select(ScheduledTask).where(ScheduledTask.id == execution.scheduled_task_id)
                     )
@@ -190,14 +192,14 @@ async def execution_complete(execution_id: str, request: ExecutionCompleteReques
                     task_webhook = scheduled_task.webhook_url if scheduled_task else None
                     feishu_user_ids = scheduled_task.feishu_notify_user_id if scheduled_task else None
 
-                    # 获取业务名称
+                    # Resolve business name
                     biz_result = await db.execute(
                         select(Business).where(Business.id == execution.business_id)
                     )
                     business = biz_result.scalar_one_or_none()
-                    business_name = business.name if business else '未知业务'
+                    business_name = business.name if business else 'Unknown business'
 
-                    # 获取执行环境名称
+                    # Resolve environment name
                     environment_name = None
                     if execution.environment_id:
                         env_result = await db.execute(
@@ -219,10 +221,10 @@ async def execution_complete(execution_id: str, request: ExecutionCompleteReques
                         task_name=task_name,
                     )
 
-                    # 默认通知
+                    # Default notification
                     asyncio.create_task(notifier.send(**notification_kwargs))
 
-                    # 用户自定义 webhook：失败或手动触发时额外发送
+                    # Custom webhook: also send on failure or manual trigger
                     if task_webhook:
                         failed_count = (request.result_count or {}).get('failed', 0)
                         is_manual = execution.trigger_type != 'scheduled'

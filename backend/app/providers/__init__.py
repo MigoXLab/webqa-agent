@@ -1,12 +1,10 @@
-"""Provider abstraction layer for pluggable authentication, storage, and notification.
+"""Provider abstraction layer for pluggable authentication, storage, and
+notification.
 
-Supports three loading strategies (in priority order):
-1. Explicit: Set env var (e.g. AUTH_PROVIDER=openxlab_sso) to load a specific module
-2. Auto-detect: Internal implementations are loaded automatically if their modules exist
+Supports two loading strategies (in priority order):
+1. Explicit: Set env var (e.g. AUTH_PROVIDER=custom_sso) to load a specific module
+2. Default: Open-source fallback implementations (cookies auth, local storage, no notifications)
 3. Default: Open-source fallback implementations (cookies auth, local storage, no notifications)
-
-For internal deployments (GitLab), internal files exist and are auto-detected.
-For open-source deployments (GitHub), internal files are absent and defaults are used.
 """
 import importlib
 import logging
@@ -14,7 +12,7 @@ import os
 from typing import Any
 
 from .auth import AuthProvider, CookiesAuthProvider
-from .notification import Notifier, NoopNotifier
+from .notification import NoopNotifier, Notifier
 from .storage import LocalStorageProvider, StorageProvider
 
 __all__ = [

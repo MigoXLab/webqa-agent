@@ -17,10 +17,10 @@ class ExecutionCreate(BaseModel):
     model: str = settings.LLM_DEFAULT_MODEL
     workers: int = Field(default=settings.DEFAULT_WORKERS, ge=1)
     trigger_type: str = Field(default='manual', pattern='^(manual|debug|gen)$')
-    # Debug 模式：前端直传 case 数据，不存 DB
-    # 格式: {case_id_str: {login_required: bool, name: str, steps: [...], ...}}
+    # Debug mode: frontend passes case data directly; not persisted to DB
+    # Format: {case_id_str: {login_required: bool, name: str, steps: [...], ...}}
     case_data: Optional[Dict[str, Any]] = None
-    # Gen 模式配置 (raw dict, api_key injected by executor)
+    # Gen mode config (raw dict; api_key injected by executor)
     gen_config: Optional[Dict[str, Any]] = None
 
     @field_validator('workers')

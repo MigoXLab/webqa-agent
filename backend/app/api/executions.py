@@ -22,24 +22,26 @@ from sqlalchemy.orm import selectinload
 # Progress Response Schema
 # =============================================================================
 
+
 class TaskProgress(BaseModel):
-    """单个任务的进度信息."""
+    """Progress information for a single task."""
     name: str
     duration: Optional[float] = None
     elapsed: Optional[float] = None
     status: Optional[str] = None
     error: Optional[str] = None
-    result: Optional[str] = None  # 测试结果: 'passed' | 'failed' | 'warning'
+    result: Optional[str] = None  # Test result: 'passed' | 'failed' | 'warning'
 
 
 class ExecutionProgress(BaseModel):
-    """执行进度响应."""
+    """Execution progress response."""
     execution_id: str
     status: str
     updated_at: Optional[str] = None
     completed: List[TaskProgress] = []
     running: List[TaskProgress] = []
     logs: List[str] = []
+
 
 router = APIRouter()
 settings = get_settings()
@@ -105,7 +107,7 @@ async def create_execution(
         if not business:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail={'code': 2001, 'message': '业务不存在'}
+                detail={'code': 2001, 'message': 'Business not found'}
             )
     else:
         business = None
@@ -410,14 +412,14 @@ async def get_execution_progress(
     execution_id: UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    """获取执行任务的实时进度。
+    """Get real-time progress for an execution.
 
-    前端轮询此接口获取实时进度，建议轮询间隔：
-    - running 状态：2 秒
-    - pending 状态：5 秒
-    - completed/failed/timeout：停止轮询
+    The frontend polls this endpoint for live progress. Suggested poll intervals:
+    - running: 2 seconds
+    - pending: 5 seconds
+    - completed/failed/timeout: stop polling
     """
-    # 查询执行记录
+    # Query execution record
     result = await db.execute(
         select(Execution).where(Execution.id == execution_id)
     )
@@ -431,7 +433,7 @@ async def get_execution_progress(
 
     execution_id_str = str(execution_id)
 
-    # 从 Redis 缓存获取进度（无论执行状态，都尝试获取历史日志）
+    # Get progress from Redis cache (always try for historical logs regardless of execution status)
     cached = await get_progress(execution_id_str)
 
     if cached:
@@ -444,7 +446,7 @@ async def get_execution_progress(
             logs=cached.get('logs', []),
         ))
 
-    # 缓存中没有数据（Agent 可能还没开始推送，或缓存已过期）
+    # No data in cache (agent may not have started pushing yet, or cache expired)
     return APIResponse(data=ExecutionProgress(
         execution_id=execution_id_str,
         status=execution.status,

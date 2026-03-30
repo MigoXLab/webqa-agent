@@ -15,9 +15,10 @@ settings = get_settings()
 
 
 class JobMonitor:
-    """K8s Job 状态监控器。
+    """Kubernetes Job status monitor.
 
-    定期检查处于 'running' 状态的 Kubernetes 任务。 如果发现对应的 K8s Job 已经失败或不存在，则更新数据库状态。
+    Periodically checks executions in 'running' state. If the corresponding K8s
+    Job has failed or no longer exists, updates the database status.
     """
 
     def __init__(self, interval_seconds: int = 30):
@@ -25,17 +26,17 @@ class JobMonitor:
         self._stop_event = asyncio.Event()
         self._task: Optional[asyncio.Task] = None
 
-        # K8s client 延迟初始化
+        # Lazy initialization of K8s client
         self._batch_v1 = None
         self._core_v1 = None
         self._k8s_initialized = False
 
     def start(self):
-        """启动监控任务。"""
+        """Start the monitoring task."""
         if self._task:
             return
 
-        # 仅在 kubernetes 模式下运行
+        # Only run in kubernetes mode
         if settings.EXECUTION_MODE.lower() != 'kubernetes':
             logger.info('[Monitor] 非 Kubernetes 模式，跳过 Job 监控')
             return
@@ -45,7 +46,7 @@ class JobMonitor:
         logger.info(f'[Monitor] Job 监控已启动 (间隔: {self.interval_seconds}s)')
 
     async def stop(self):
-        """停止监控任务。"""
+        """Stop the monitoring task."""
         if not self._task:
             return
 
@@ -58,21 +59,21 @@ class JobMonitor:
         logger.info('[Monitor] Job 监控已停止')
 
     async def _monitor_loop(self):
-        """监控循环。"""
+        """Main monitoring loop."""
         while not self._stop_event.is_set():
             try:
                 await self._check_running_jobs()
             except Exception as e:
                 logger.exception(f'[Monitor] 检查 Job 状态失败: {e}')
 
-            # 等待下一次检查，支持响应停止事件
+            # Wait until next check; supports responding to stop event
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=self.interval_seconds)
             except asyncio.TimeoutError:
                 continue
 
     def _init_k8s_client(self):
-        """初始化 K8s 客户端。"""
+        """Initialize the K8s client."""
         if self._k8s_initialized:
             return True
 
@@ -80,7 +81,7 @@ class JobMonitor:
             from kubernetes import client
             from kubernetes import config as k8s_config
 
-            # 加载 K8s 配置
+            # Load K8s configuration
             k8s_config_path = os.getenv('K8S_CONFIG_PATH')
             if k8s_config_path:
                 k8s_config.load_kube_config(config_file=k8s_config_path)
@@ -96,14 +97,14 @@ class JobMonitor:
             return False
 
     async def _check_running_jobs(self):
-        """检查所有 running 状态的任务。"""
+        """Check all tasks in running state."""
         if not self._init_k8s_client():
             return
 
         k8s_namespace = os.getenv('K8S_NAMESPACE', 'cloud-staging')
 
         async with AsyncSessionLocal() as db:
-            # 查询所有 running 的任务
+            # Query all running executions
             result = await db.execute(
                 select(Execution).where(Execution.status == 'running')
             )
@@ -118,29 +119,27 @@ class JobMonitor:
                 await self._check_single_job(db, execution, k8s_namespace)
 
     async def _check_single_job(self, db, execution: Execution, namespace: str):
-        """检查单个 Job 的状态。"""
-        # Gen 模式和 Run 模式使用不同的 Job 命名前缀
+        """Check the status of a single Job."""
+        # Gen mode and Run mode use different Job name prefixes
         if execution.trigger_type == 'gen':
             job_name = f'webqa-gen-{str(execution.id)[:8]}'
         else:
             job_name = f'webqa-exec-{str(execution.id)[:8]}'
 
         try:
-            # 1. 获取 Job 状态
-            # 注意：kubernetes python client 的同步 API 在 asyncio 中会阻塞
-            # 理想情况下应使用 run_in_executor，为了简单起见这里直接调用（假设并发低）
+            # 1. Fetch Job status
+            # Note: kubernetes python client's sync API blocks in asyncio;
+            # ideally use run_in_executor; direct call kept for simplicity (low concurrency assumed)
             job = await asyncio.to_thread(
                 self._batch_v1.read_namespaced_job, job_name, namespace
             )
 
-            # 2. 检查 Job 状态
+            # 2. Inspect Job status
             status = job.status
 
             if status.failed and status.failed > 0:
-                # Job 已失败
                 logger.warning(f'[Monitor] Job 已失败: {job_name}')
 
-                # 尝试获取 Pod 日志或事件以确定原因
                 reason = 'K8s Job 执行失败'
                 if status.conditions:
                     reason = f'K8s Job 失败: {status.conditions[0].message}'
@@ -148,8 +147,8 @@ class JobMonitor:
                 await self._fail_execution(db, execution, reason)
                 return
 
-            # 3. 检查 Pod 状态 (处理 ImagePullBackOff 等情况)
-            # Job 可能没 failed，但 Pod 一直起不来
+            # 3. Check Pod status (handles ImagePullBackOff, etc.)
+            # Job may not be marked failed while Pods never come up
             pods = await asyncio.to_thread(
                 self._core_v1.list_namespaced_pod,
                 namespace,
@@ -157,14 +156,14 @@ class JobMonitor:
             )
 
             if not pods.items:
-                # 找不到 Pod，可能 Job 刚创建还没调度，或者是异常
-                # 暂时忽略，等待下次检查（或者可以检查创建时间是否超时）
+                # No Pod yet: Job may have just been created, or something is wrong
+                # Ignore for now; wait for next check (or could timeout by creation time)
                 return
 
             pod = pods.items[0]
             pod_status = pod.status
 
-            # 检查容器状态
+            # Inspect container state
             if pod_status.container_statuses:
                 for container_status in pod_status.container_statuses:
                     state = container_status.state
@@ -172,14 +171,14 @@ class JobMonitor:
                         reason = state.waiting.reason
                         message = state.waiting.message
 
-                        # 常见致命错误
+                        # Common fatal conditions
                         fatal_errors = ['ImagePullBackOff', 'ErrImagePull', 'CreateContainerConfigError', 'InvalidImageName']
                         if reason in fatal_errors:
                             logger.warning(f'[Monitor] Pod 处于致命错误状态: {job_name}, reason={reason}')
                             error_msg = f'启动失败: {reason} - {message}'
                             await self._fail_execution(db, execution, error_msg)
 
-                            # 尝试删除错误的 Job 以清理资源
+                            # Try to delete the bad Job to free resources
                             try:
                                 await asyncio.to_thread(
                                     self._batch_v1.delete_namespaced_job,
@@ -192,10 +191,10 @@ class JobMonitor:
                             return
 
         except Exception as e:
-            # 如果是 NotFound 错误 (404)
+            # NotFound (404)
             if hasattr(e, 'status') and e.status == 404:
-                # Job 不存在，可能是被手动删除了，或者还没创建成功
-                # 检查任务开始时间，如果已经过去很久（例如 5 分钟）还找不到 Job，则判定失败
+                # Job missing: manually deleted, or not created yet
+                # If started long ago (e.g. 5+ minutes) and still no Job, mark as failed
                 start_time = execution.started_at
                 if start_time and (now_with_tz() - start_time) > timedelta(minutes=5):
                     logger.warning(f'[Monitor] Job 不存在且已超时: {job_name}')
@@ -204,7 +203,7 @@ class JobMonitor:
                 logger.error(f'[Monitor] 检查 Job {job_name} 出错: {e}')
 
     async def _fail_execution(self, db, execution: Execution, error_message: str):
-        """将任务标记为失败。"""
+        """Mark the execution as failed."""
         execution.status = 'failed'
         execution.error_message = error_message
         execution.completed_at = now_with_tz()
@@ -212,5 +211,5 @@ class JobMonitor:
         logger.info(f'[Monitor] 已更新任务 {execution.id} 为 failed: {error_message}')
 
 
-# 全局单例
+# Global singleton
 job_monitor = JobMonitor()

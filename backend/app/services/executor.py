@@ -1,9 +1,9 @@
 """
-Execution service - 统一执行模式
+Execution service - Unified execution mode
 
-所有模式都通过启动独立的 Agent 进程执行，Agent 完成后回调 Backend API。
-- local: 启动子进程运行 run_webqa.py
-- kubernetes: 创建 K8s Job 运行
+All modes execute by starting an independent Agent process, which callbacks Backend API upon completion.
+- local: Start subprocess to run run_webqa.py
+- kubernetes: Create K8s Job to run
 """
 import asyncio
 import json
@@ -28,13 +28,13 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 
 
 def _compute_k8s_resources(workers: int, business_id: Optional[UUID] = None) -> tuple[int, int]:
-    """计算 K8s Job 的资源配额。
+    """Calculate resource quotas for K8s Job.
 
-    Chromium 使用 --disable-dev-shm-usage，不再需要 /dev/shm emptyDir volume，
-    内存随 worker 数线性扩展。
+    Chromium uses --disable-dev-shm-usage, no longer needs /dev/shm emptyDir volume,
+    memory scales linearly with the number of workers.
 
-    高内存业务（HEAVY_RESOURCE_BUSINESS_IDS）每个 worker 分配更多内存，
-    适合 AI 对话等流式渲染（JS heap 可达 1.5Gi/实例）场景。
+    High memory businesses (HEAVY_RESOURCE_BUSINESS_IDS) allocate more memory per worker,
+    suitable for streaming rendering scenarios like AI chat (JS heap can reach 1.5Gi/instance).
 
     Returns:
         (cpu_limit, memory_gi)
@@ -45,16 +45,16 @@ def _compute_k8s_resources(workers: int, business_id: Optional[UUID] = None) -> 
 
     w = max(1, workers)
     if is_heavy:
-        # 高内存模式：每 worker 2Gi（JS heap 重）+ 2Gi Python/基础开销
-        # workers │ CPU │ 内存
+        # High memory mode: 2Gi per worker (JS heap heavy) + 2Gi Python/base overhead
+        # workers │ CPU │ Memory
         # 1       │ 2c  │ 4Gi
         # 2       │ 4c  │ 6Gi
         # 3       │ 6c  │ 8Gi
         cpu_limit = w * 2
         memory_gi = w * 2 + 2
     else:
-        # 标准模式：每 worker 1Gi + 1Gi Python/基础开销
-        # workers │ CPU │ 内存
+        # Standard mode: 1Gi per worker + 1Gi Python/base overhead
+        # workers │ CPU │ Memory
         # 1       │ 2c  │ 2Gi
         # 2       │ 3c  │ 3Gi
         # 3       │ 4c  │ 4Gi
@@ -119,7 +119,7 @@ async def _stop_k8s_job(execution_id: str) -> bool:
         batch_v1 = client.BatchV1Api()
         k8s_namespace = os.getenv('K8S_NAMESPACE', 'webqa')
 
-        # 查询 execution 的 trigger_type 确定 Job 名前缀
+        # Query execution trigger_type to determine Job name prefix
         async with AsyncSessionLocal() as db:
             result = await db.execute(
                 select(Execution).where(Execution.id == UUID(execution_id))
@@ -135,7 +135,7 @@ async def _stop_k8s_job(execution_id: str) -> bool:
         else:
             job_name = f'webqa-exec-{execution_id[:8]}'
 
-        # 删除 Job 及其 Pod（propagationPolicy=Background 会级联删除 Pod）
+        # Delete Job and its Pods (propagationPolicy=Background will cascade delete Pods)
         await asyncio.to_thread(
             batch_v1.delete_namespaced_job,
             job_name,
@@ -148,17 +148,17 @@ async def _stop_k8s_job(execution_id: str) -> bool:
     except Exception as e:
         if hasattr(e, 'status') and e.status == 404:
             logger.warning(f'[Executor] K8s Job not found (already deleted): {execution_id[:8]}')
-            return True  # Job 已经不在了，视为成功
+            return True  # Job is no longer there, consider it successful
         logger.error(f'[Executor] Failed to delete K8s Job: {e}')
         return False
 
 
 def generate_sso_cookies(username: str, password: str, env: str = 'prod') -> Tuple[Optional[str], Optional[List[Dict]]]:
-    """使用认证 provider 生成 cookies。
+    """Generate cookies using authentication provider.
 
-    Provider 由 backend/app/providers/ 自动发现：
-    - 内部部署：自动加载 OpenXLab SSO 实现
-    - 开源部署：回退到 CookiesAuthProvider（不支持从凭据生成）
+    Provider is auto-discovered from backend/app/providers/:
+    - Internal deployment: Auto-load custom SSO implementation
+    - Open-source deployment: Fallback to CookiesAuthProvider (does not support generating from credentials)
     """
     try:
         from app.providers import get_provider
@@ -174,7 +174,10 @@ def generate_sso_cookies(username: str, password: str, env: str = 'prod') -> Tup
 
 
 def _time_id_prefix(execution_id: str, started_at=None) -> str:
-    """生成 OSS 路径用的「时间_id 的第一部分」：{YYYYMMDD_HHMMSS}_{exec_id 前 8 位}。"""
+    """Generate the 'time_id first part' used for remote storage paths:
+
+    {YYYYMMDD_HHMMSS}_{exec_id first 8 chars}.
+    """
     from datetime import datetime
 
     id_part = (execution_id or '').replace('-', '')[:8]
@@ -189,11 +192,11 @@ def _time_id_prefix(execution_id: str, started_at=None) -> str:
 
 
 def upload_report_to_oss(report_dir: str, oss_key_dir: str) -> Optional[str]:
-    """上传报告目录到远程存储。
+    """Upload report directory to remote storage.
 
-    Provider 由 backend/app/providers/ 自动发现：
-    - 内部部署：自动加载 OSS 实现
-    - 开源部署：回退到 LocalStorageProvider（不上传，返回 None）
+    Provider is auto-discovered from backend/app/providers/:
+    - Internal deployment: Auto-load custom storage implementation
+    - Open-source deployment: Fallback to LocalStorageProvider (does not upload, returns None)
     """
     if not report_dir or not os.path.exists(report_dir):
         logger.warning(f'[Storage] 报告目录不存在: {report_dir}')
@@ -203,7 +206,7 @@ def upload_report_to_oss(report_dir: str, oss_key_dir: str) -> Optional[str]:
         from app.providers import get_provider
 
         storage = get_provider('storage')
-        # 兼容调用方仅传 execution_id 的情况，统一转换为时间前缀目录
+        # Compatibility for callers passing only execution_id, uniformly converting to time-prefixed directory
         normalized_key = (
             oss_key_dir if oss_key_dir and '_' in oss_key_dir else _time_id_prefix(oss_key_dir)
         )
@@ -224,19 +227,19 @@ def upload_report_to_oss(report_dir: str, oss_key_dir: str) -> Optional[str]:
 
 
 async def run_execution(execution_id: str, case_data: Optional[Dict[str, Any]] = None, gen_config_dict: Optional[Dict[str, Any]] = None):
-    """执行测试任务（入口函数）。
+    """Execute test task (entry function).
 
-    根据 EXECUTION_MODE 配置选择启动方式：
-    - local: 启动子进程
-    - kubernetes: 创建 K8s Job
+    Select startup method based on EXECUTION_MODE configuration:
+    - local: Start subprocess
+    - kubernetes: Create K8s Job
 
-    所有模式统一通过回调 API 接收结果。
+    All modes uniformly receive results via callback API.
 
     Args:
-        execution_id: 执行记录 ID
-        case_data: Debug 模式下前端直传的 case 数据，不存 DB。
-            格式: {case_id_str: {login_required: bool, name: str, steps: [...], ...}}
-        gen_config_dict: Gen 模式的原始配置字典（不含 api_key，由 executor 注入）
+        execution_id: Execution record ID
+        case_data: Case data passed directly from frontend in Debug mode, not saved to DB.
+            Format: {case_id_str: {login_required: bool, name: str, steps: [...], ...}}
+        gen_config_dict: Raw config dict for Gen mode (without api_key, injected by executor)
     """
     # Check execution trigger_type first
     trigger_type = None
@@ -266,7 +269,7 @@ async def run_execution(execution_id: str, case_data: Optional[Dict[str, Any]] =
     elif mode == 'docker':
         await _start_agent_docker(execution_id, case_data=case_data)
     else:
-        # local 模式（默认）
+        # local mode (default)
         await _start_agent_subprocess(execution_id, case_data=case_data)
 
 
@@ -410,7 +413,7 @@ async def _start_gen_executor(execution_id: str, gen_config_dict: Optional[Dict[
 
 
 # =============================================================================
-# GEN + KUBERNETES MODE: 创建 K8s Job 运行 gen_webqa
+# GEN + KUBERNETES MODE: Create K8s Job to run gen_webqa
 # =============================================================================
 
 async def _start_gen_k8s(execution_id: str, gen_config_dict: Optional[Dict[str, Any]] = None):
@@ -608,14 +611,15 @@ async def _create_gen_k8s_job(
 
 
 # =============================================================================
-# COMMON: Run 模式公共准备逻辑
+# COMMON: Shared preparation logic for Run mode
 # =============================================================================
 
 def _build_cases_from_request(
     case_data: Dict[str, Any],
     business_id: Optional[UUID] = None,
 ) -> list:
-    """直接从前端传入的 case 数据构建 case 对象列表，不查 DB。"""
+    """Build case object list from frontend-passed case data without querying
+    the DB."""
     from types import SimpleNamespace
 
     cases = []
@@ -639,14 +643,14 @@ async def _prepare_run_config(
     execution_id: str,
     case_data: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Run 模式公共准备逻辑：获取数据、生成配置、写入共享存储。
+    """Shared preparation for Run mode: fetch data, build config, write to shared storage.
 
-    所有 Run 模式（local/docker/k8s）共享此准备流程。
-    成功时更新 execution.status='running'，失败时更新为 'failed'。
+    All Run modes (local/docker/k8s) share this preparation flow.
+    On success updates execution.status to 'running'; on failure to 'failed'.
 
     Returns:
-        成功返回 dict(config_path, config_dir, api_key, base_url, workers, business_id)，
-        失败返回 None（DB 状态已更新）。
+        On success: dict with config_path, config_dir, api_key, base_url, workers, business_id.
+        On failure: None (DB status already updated).
     """
     async with AsyncSessionLocal() as db:
         try:
@@ -758,11 +762,11 @@ async def _prepare_run_config(
 
 
 # =============================================================================
-# LOCAL MODE: 启动子进程
+# LOCAL MODE: Start subprocess
 # =============================================================================
 
 async def _start_agent_subprocess(execution_id: str, case_data: Optional[Dict[str, Any]] = None):
-    """Local 模式：启动子进程运行 Agent。"""
+    """Local mode: start a subprocess to run the Agent."""
     prep = await _prepare_run_config(execution_id, case_data)
     if not prep:
         return
@@ -857,10 +861,12 @@ async def _start_agent_subprocess(execution_id: str, case_data: Optional[Dict[st
                 pass
 
 # =============================================================================
-# KUBERNETES MODE: 创建 K8s Job
+# KUBERNETES MODE: Create K8s Job
 # =============================================================================
+
+
 async def _start_agent_k8s(execution_id: str, case_data: Optional[Dict[str, Any]] = None):
-    """Kubernetes 模式：创建 K8s Job 运行 Agent。"""
+    """Kubernetes mode: create a K8s Job to run the Agent."""
     async with AsyncSessionLocal() as db:
         try:
             result = await db.execute(
@@ -872,7 +878,7 @@ async def _start_agent_k8s(execution_id: str, case_data: Optional[Dict[str, Any]
                 logger.error(f'[K8s] Execution not found: {execution_id}')
                 return
 
-            # 获取环境和用例
+            # Fetch environment and test cases
             environment, test_cases, error = await _fetch_execution_data(db, execution)
             if error:
                 logger.error(f'[K8s] 获取执行数据失败: execution_id={execution_id}, error={error}')
@@ -882,7 +888,7 @@ async def _start_agent_k8s(execution_id: str, case_data: Optional[Dict[str, Any]
                 await db.commit()
                 return
 
-            # Debug 模式：前端传入的 case 用前端数据，其余（如 snapshot 依赖）用 DB 数据
+            # Debug mode: cases from the frontend use frontend data; the rest (e.g. snapshot) use DB data
             if case_data:
                 frontend_cases = _build_cases_from_request(
                     case_data, business_id=execution.business_id
@@ -898,12 +904,12 @@ async def _start_agent_k8s(execution_id: str, case_data: Optional[Dict[str, Any]
                 await db.commit()
                 return
 
-            # 更新状态
+            # Update status
             execution.status = 'running'
             execution.started_at = now_with_tz()
             await db.commit()
 
-            # 创建 K8s Job
+            # Create K8s Job
             try:
                 job_name = await _create_k8s_job(
                     execution_id=execution_id,
@@ -935,14 +941,14 @@ async def _create_k8s_job(
     workers: int,
     business_id: Optional[UUID] = None,
 ) -> str:
-    """创建 Kubernetes Job 来运行 webqa-agent。"""
+    """Create a Kubernetes Job to run webqa-agent."""
     try:
         from kubernetes import client
         from kubernetes import config as k8s_config
     except ImportError:
         raise RuntimeError('kubernetes 库未安装，请运行: pip install kubernetes')
 
-    # 加载 K8s 配置
+    # Load K8s configuration
     k8s_config_path = os.getenv('K8S_CONFIG_PATH')
     if k8s_config_path:
         k8s_config.load_kube_config(config_file=k8s_config_path)
@@ -951,7 +957,7 @@ async def _create_k8s_job(
 
     batch_v1 = client.BatchV1Api()
 
-    # 从环境变量获取 K8s 配置 (默认值适用于标准部署)
+    # Read K8s settings from environment (defaults suit standard deployment)
     k8s_namespace = os.getenv('K8S_NAMESPACE', 'webqa')
     k8s_job_image = os.getenv('K8S_JOB_IMAGE', 'webqa-agent:latest')
     k8s_pvc_name = os.getenv('K8S_PVC_NAME', 'webqa-pvc')
@@ -959,7 +965,7 @@ async def _create_k8s_job(
 
     cpu_limit, memory_gi = _compute_k8s_resources(workers, business_id)
 
-    # 获取认证 cookies
+    # Fetch auth cookies
     cookies = None
     if environment.auth_type == 'sso' and environment.sso_username:
         sso_env = getattr(environment, 'sso_env', 'prod') or 'prod'
@@ -967,13 +973,13 @@ async def _create_k8s_job(
     elif environment.auth_type == 'cookies' and environment.cookies:
         cookies = environment.cookies
 
-    # 按 login_required 分组构建配置
+    # Build configs grouped by login_required
     configs = _build_agent_configs(environment, test_cases, workers, cookies)
 
     if not configs:
         raise ValueError('没有可执行的测试用例')
 
-    # 添加 LLM 配置
+    # Add LLM configuration
     api_key = settings.get_api_key_for_model(model)
     base_url = settings.get_base_url_for_model(model)
     for config in configs:
@@ -1021,7 +1027,7 @@ async def _create_k8s_job(
                             image=k8s_job_image,
                             command=['python', '-m', 'backend.run_webqa'],
                             args=[
-                                '-c', '/shared/reports/exec_' + execution_id + '/config.yaml',  # 使用生成的配置文件路径
+                                '-c', '/shared/reports/exec_' + execution_id + '/config.yaml',  # Generated config file path
                                 '--execution-id', execution_id,
                                 '--workers', str(workers),
                                 '--report-dir', report_dir,
@@ -1067,7 +1073,7 @@ async def _create_k8s_job(
 
 
 # =============================================================================
-# DOCKER MODE: 创建独立 agent 容器
+# DOCKER MODE: Create standalone agent container
 # =============================================================================
 
 def _create_docker_container(
@@ -1209,7 +1215,7 @@ async def _stop_docker_container(execution_id: str) -> bool:
 
 
 async def _start_agent_docker(execution_id: str, case_data: Optional[Dict[str, Any]] = None):
-    """Docker 模式：创建独立 agent 容器运行测试。"""
+    """Docker mode: create a standalone agent container to run tests."""
     prep = await _prepare_run_config(execution_id, case_data)
     if not prep:
         return
@@ -1360,20 +1366,20 @@ async def _start_gen_docker(execution_id: str, gen_config_dict: Optional[Dict[st
 
 
 # =============================================================================
-# 公共辅助函数
+# Shared helper functions
 # =============================================================================
 
 async def _fetch_execution_data(
     db, execution: Execution
 ) -> Tuple[Optional[Environment], Optional[List[TestCase]], Optional[str]]:
-    """获取执行所需的环境和测试用例数据。"""
+    """Fetch environment and test case data required for execution."""
     env_result = await db.execute(
         select(Environment).where(Environment.id == execution.environment_id)
     )
     environment = env_result.scalar_one_or_none()
 
     if not environment:
-        return None, None, '环境不存在'
+        return None, None, 'Environment does not exist'
 
     test_cases = []
     for case_id in execution.test_case_ids:
@@ -1390,7 +1396,7 @@ async def _fetch_execution_data(
 
 
 def _build_case_dict(case: TestCase) -> Dict[str, Any]:
-    """构建单个 case 的配置字典。"""
+    """Build the configuration dict for a single case."""
     case_dict = {
         'name': case.name,
         'case_id': str(case.id),
@@ -1404,20 +1410,20 @@ def _build_case_dict(case: TestCase) -> Dict[str, Any]:
         elif step.get('step_type') == 'verify':
             step_dict['verify'] = step.get('assertion', '')
 
-        # 处理参数，特别是文件路径
+        # Handle args, especially file paths
         args = (step.get('args') or {}).copy()
         if args.get('file_path'):
             file_path = args['file_path']
             base_path = f'{settings.effective_shared_storage_path}/files/{case.business_id}'
 
-            # 支持单个文件(字符串)或多个文件(数组)
+            # Support single file (string) or multiple files (array)
             if isinstance(file_path, list):
-                # 多个文件：转换每个路径
+                # Multiple files: convert each path
                 full_paths = [f'{base_path}/{fn}' for fn in file_path]
                 args['file_path'] = full_paths
                 logger.info(f'[Config] Step file_path 转换: {file_path} -> {full_paths}')
             else:
-                # 单个文件
+                # Single file
                 full_path = f'{base_path}/{file_path}'
                 args['file_path'] = full_path
                 logger.info(f'[Config] Step file_path 转换: {file_path} -> {full_path}')
@@ -1441,15 +1447,15 @@ def _build_agent_configs(
     workers: int,
     cookies: Optional[List[Dict]] = None,
 ) -> List[Dict[str, Any]]:
-    """按 login_required 分组构建 webqa-agent 配置列表。
+    """Build webqa-agent config list grouped by login_required.
 
-    - 需要登录的 cases → 带 cookies
-    - 不需要登录的 cases → 不带 cookies
+    - Cases that require login → include cookies
+    - Cases that do not require login → no cookies
 
     Returns:
-        配置列表，可能包含 1-2 个配置
+        List of one or two configs.
     """
-    # 分组
+    # Group by login requirement
     login_cases = [c for c in test_cases if c.login_required]
     no_login_cases = [c for c in test_cases if not c.login_required]
 
@@ -1457,8 +1463,7 @@ def _build_agent_configs(
 
     configs = []
 
-    # 处理 ignore_rules 中的转义问题
-    # JSON 传输时 \ 会被转义为 \\，需要还原
+    # Fix escaping in ignore_rules (JSON may turn \ into \\)
     def _fix_ignore_rules_escaping(rules: dict) -> dict:
         if not rules:
             return rules
@@ -1469,24 +1474,23 @@ def _build_agent_configs(
                 for rule in rules[key]:
                     fixed_rule = dict(rule)
                     if 'pattern' in fixed_rule and isinstance(fixed_rule['pattern'], str):
-                        # 将双反斜杠还原为单反斜杠
+                        # Restore double backslashes to single backslashes
                         fixed_rule['pattern'] = fixed_rule['pattern'].replace('\\\\', '\\')
                     fixed[key].append(fixed_rule)
             elif key in rules:
                 fixed[key] = rules[key]
         return fixed
 
-    # 修复 ignore_rules 的转义问题
     fixed_ignore_rules = _fix_ignore_rules_escaping(environment.ignore_rules) if environment.ignore_rules else None
 
-    # 基础浏览器配置
+    # Base browser configuration
     base_browser_config = environment.browser_config or {
         'viewport': {'width': 1500, 'height': 800},
         'headless': True,
         'language': 'zh-CN',
     }
 
-    # 构建需要登录的配置（带 cookies）
+    # Build config for login-required cases (with cookies)
     if login_cases:
         browser_config_with_auth = {**base_browser_config}
         if cookies:
@@ -1510,14 +1514,14 @@ def _build_agent_configs(
             logger.info('[Config] 没有配置 ignore_rules')
         configs.append(config_with_auth)
 
-    # 构建不需要登录的配置（不带 cookies）
+    # Build config for cases that do not require login (no cookies)
     if no_login_cases:
         config_no_auth = {
             'target': {
                 'url': environment.url,
                 'max_concurrent_tests': workers,
             },
-            'browser_config': {**base_browser_config},  # 不带 cookies
+            'browser_config': {**base_browser_config},  # no cookies
             'cases': [_build_case_dict(c) for c in no_login_cases],
         }
         if fixed_ignore_rules:

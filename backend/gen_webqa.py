@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""WebQA Agent 执行脚本.
+"""WebQA Agent execution script.
 
-功能：
-1. 加载配置文件并执行 webqa-agent 测试
-2. 执行完成后回调 Backend API 通知结果
+Features:
+1. Load configuration and run webqa-agent tests
+2. On completion, call the Backend API to report results
 
-使用方式：
+Usage:
   python -m backend.gen_webqa -c config.yaml --execution-id xxx
 """
 
@@ -198,7 +198,7 @@ def main():
         os.environ['WEBQA_STDOUT'] = 'true'
         from webqa_agent.utils.task_display_util import Display
         Display.init(language='zh-CN', no_terminal_ui=True)
-        print(f'[Gen] stdout mode enabled, logs pushed to Backend API')
+        print('[Gen] stdout mode enabled, logs pushed to Backend API')
 
         if BACKEND_CALLBACK_URL:
             progress_pusher = ProgressPusher(BACKEND_CALLBACK_URL, execution_id, interval=1.0)
@@ -207,7 +207,7 @@ def main():
         if progress_pusher:
             progress_pusher.start()
 
-        print(f'\n[Gen] Starting WebQA Agent (Gen Mode)...')
+        print('\n[Gen] Starting WebQA Agent (Gen Mode)...')
         print(f'[Gen] Config: {config_path}')
         print(f'[Gen] Report Dir: {report_dir}')
 

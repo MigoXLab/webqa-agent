@@ -8,9 +8,10 @@ from pydantic import BaseModel, Field
 
 class TestStepArgs(BaseModel):
     """Test step arguments."""
-    # file_path 支持单个文件(字符串)或多个文件(数组)
+    # file_path supports single file (string) or multiple files (array)
     file_path: Optional[Union[str, List[str]]] = None
     use_context: Optional[bool] = None
+
     # Allow additional args
     class Config:
         extra = 'allow'

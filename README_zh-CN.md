@@ -53,8 +53,8 @@ Vibecoding, Vibe coding, 网页测试自动化, 浏览器测试工具, AI驱动�
 - [示例演示](#-示例演示)
 - [快速开始](#-快速开始)
 - [使用说明](#使用说明)
-- [全栈部署](#-全栈部署)
 - [扩展 WebQA Agent 工具](#扩展-webqa-agent-工具)
+- [全栈部署](#-全栈部署)
 - [RoadMap](#roadmap)
 - [致谢](#致谢)
 - [开源许可证](#-开源许可证)
@@ -257,18 +257,6 @@ cases:                                  # 测试用例列表
 
 测试报告生成在 `reports/` 目录下，打开 HTML 文件即可查看详细结果。
 
-## 🖥️ 全栈部署
-
-> **注意：** 当前 Web 管理平台仅提供中文界面。
-
-如果团队需要一个**持续使用的 Web 管理平台**（测试管理、定时任务、执行历史），可以部署完整的前后端服务。我们支持三种部署方式：
-
-| 方式           | 适用场景            | 参考文档                                                        |
-| -------------- | ------------------- | --------------------------------------------------------------- |
-| 本地开发       | 个人开发调试        | [deploy/README_zh-CN.md](deploy/README_zh-CN.md#本地开发)       |
-| Docker Compose | 单机部署 / 团队试用 | [deploy/README_zh-CN.md](deploy/README_zh-CN.md#docker-compose) |
-| Kubernetes     | 生产集群            | [deploy/k8s/README.md](deploy/k8s/README.md)                    |
-
 <a id="扩展-webqa-agent-工具"></a>
 
 ## 🛠️ 扩展 WebQA Agent 工具
@@ -281,6 +269,22 @@ WebQA Agent 支持**自定义工具开发**，满足特定领域的测试需求�
 | **[LLM 上下文文档](docs/CUSTOM_TOOL_DEVELOPMENT_AI.md)**    | AI 辅助开发的完整指南，可用于氛围编程 |
 
 欢迎贡献！查看[现有工具示例](webqa_agent/tools/custom/)获取参考。
+
+<a id="全栈部署"></a>
+
+## 🖥️ 全栈部署
+
+如果团队需要一个**持续使用的 Web 管理平台**（测试管理、定时任务、执行历史），可以部署完整的前后端服务。我们支持三种部署方式：
+
+| 方式           | 适用场景            | 参考文档                                                        |
+| -------------- | ------------------- | --------------------------------------------------------------- |
+| 本地开发       | 个人开发调试        | [deploy/README_zh-CN.md](deploy/README_zh-CN.md#本地开发)       |
+| Docker Compose | 单机部署 / 团队试用 | [deploy/README_zh-CN.md](deploy/README_zh-CN.md#docker-compose) |
+| Kubernetes     | 生产集群            | [deploy/k8s/README.md](deploy/k8s/README.md)                    |
+
+> **💡 扩展内部逻辑：** WebQA Agent 支持根据团队基础设施扩展内部逻辑（如接入内部的 SSO 单点登录、OSS 对象存储、内部大模型等），您可以自由进行定制和二次开发。[deploy/README_zh-CN.md](deploy/README_zh-CN.md#自定义扩展)
+
+> **注意：** 当前 Web 管理平台仅提供中文界面。
 
 <a id="roadmap"></a>
 

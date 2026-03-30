@@ -29,7 +29,7 @@ pytz==2024.2
 # YAML
 pyyaml==6.0.2
 
-# Redis (进度缓存)
+# Redis (progress cache)
 redis==5.2.1
 requests==2.32.4
 

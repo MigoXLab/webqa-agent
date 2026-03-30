@@ -1,7 +1,7 @@
 """Datetime utilities with timezone support."""
 from datetime import datetime, timedelta, timezone
 
-# 东八区时区对象
+# UTC+8 timezone object
 UTC_PLUS_8 = timezone(timedelta(hours=8))
 
 
