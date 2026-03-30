@@ -627,10 +627,6 @@ Examples:
   webqa-agent run -c config_run.yaml        Run mode with custom config
   webqa-agent run -c config_folder -w 4     Run mode with 4 workers
 
-  # Launch web UI
-  webqa-agent ui                            Start Gradio interface
-  webqa-agent ui --lang zh-CN               Start with Chinese interface
-
 Modes:
   - Gen Mode: AI-driven test generation (function, UX, performance, security)
   - Run Mode: Execute predefined YAML test cases

@@ -26,7 +26,6 @@
 </p>
 
 <p align="center">
-  Try Demo 🤗<a href="https://huggingface.co/spaces/mmmay0722/WebQA-Agent">HuggingFace</a> | 🚀<a href="https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary">ModelScope</a><br>
   Join us on 🎮<a href="https://discord.gg/fG5QAxYyNr">Discord</a> | 💬<a href="https://aicarrier.feishu.cn/docx/NRNXdIirXoSQEHxhaqjchUfenzd">WeChat</a>
 </p>
 
@@ -40,7 +39,7 @@
   </a>
 </p>
 
-<p align="center">🤖 <strong>WebQA Agent</strong> is a fully automated web testing agent for multi-modal understanding, test generation, and end-to-end evaluation of functionality, performance, and UX. ✨</p>
+<p align="center">🤖 <strong>WebQA Agent</strong> is a fully automated web testing agent that understands the web like a human — generating test cases, evaluating functionality, performance, and UX end-to-end. ✨ Available as GUI/CLI for direct use, or as an OpenClaw skill. </p>
 </div>
 
 <!-- Additional SEO Keywords and Context
@@ -49,17 +48,19 @@ vibecoding, vibe coding, web evaluation, autonomous exploration, web testing aut
 
 ## 📑 Table of Contents
 
-- [Core Features](#-core-features)
-- [Examples](#-examples)
-- [Quick Start](#-quick-start)
-- [Usage](#usage)
+- [Core Features](#core-features)
+- [Examples](#examples)
+- [Quick Start](#quick-start)
+- [CLI Usage](#cli-usage)
 - [Extending WebQA Agent Tools](#extending-webqa-agent-tools)
-- [Deployment](#-deployment)
+- [Deployment](#deployment)
 - [RoadMap](#roadmap)
 - [Acknowledgements](#acknowledgements)
-- [License](#-license)
+- [License](#license)
 
 ## 🚀 Core Features
+
+<a id="core-features"></a>
 
 ### 📋 Feature Overview
 
@@ -71,6 +72,8 @@ vibecoding, vibe coding, web evaluation, autonomous exploration, web testing aut
 | **Use Cases**     | New feature, comprehensive quality assurance                                                   | Repeatable and regression testing scenarios                                               |
 | **User Input**    | **Minimal**: Only URL or a one-sentence business goal                                          | **Structured**: Simple natural language step descriptions                                 |
 | **Advantages**    | Reflection-based planning, adaptive to UI changes; Configurable functional / performance / security / UX evaluation for comprehensive QA | Stable and predictable results; No selector maintenance; Real-time Console and Network monitoring |
+
+**Usage & Deployment**: Supports CLI execution (see [CLI Usage](#cli-usage)); also supports full-stack deployment (Local / Docker / K8s) with a web interface for visual management. See [Deployment](#deployment).
 
 ### 🛠️ Tool System
 
@@ -104,77 +107,104 @@ test_config:
 
 ## 📹 Examples
 
-- **🤖 Conversational UI**: [Autonomously plans goals and interacts across a dynamic chat interface](https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/%E6%99%BA%E8%83%BDCase%E7%94%9F%E6%88%90.mp4)
-- **🎨 Creative Page**: [Explores page structure, identifies elements](https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/vibecoding.mp4)
-- **🖼️ Testing Baidu Image Generation**:
+<a id="examples"></a>
 
 <p align="left">
-  <img src="docs/images/baidu-gif.gif" alt="Baidu Image Generation Test Demo" width="600" />
+  <video src="https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/gen-baidu.mp4" width="600" controls="controls" muted="muted" autoplay="autoplay" loop="loop"></video>
 </p>
 
 ## 🚀 Quick Start
 
-### 🏎️ Recommended [uv](https://github.com/astral-sh/uv) (Python>=3.11):
+<a id="quick-start"></a>
+
+Choose between **🛠️ CLI Quick Start** or **🖥️ Full-stack Deployment (Web Dashboard)**.
+
+### 🛠️ CLI Quick Start (Recommended for Developers)
+
+Recommended using [uv](https://github.com/astral-sh/uv) (Python>=3.11):
 
 ```bash
-# 1) Create project and install package
+# 1) Create project and install
 uv init my-webqa && cd my-webqa
 uv add webqa-agent
 
-# 2) Install browser (required)
+# 2) Install browser (Required)
 uv run playwright install chromium
 
 # 3) Generate Mode
-# Initialize Gen mode configuration (config.yaml)
-uv run webqa-agent init -m gen
-# Edit config.yaml: target.url, llm_config.api_key
-# Configure test_config
-# For more details, see "Usage > Generate Mode - Configuration" below
-# Run Generate Mode
-uv run webqa-agent gen
-# Generate Mode with specified config and 4 parallel workers
-uv run webqa-agent gen -c /path/to/config.yaml -w 4
+uv run webqa-agent init -m gen  # Init config, edit config.yaml with URL & API Key
+uv run webqa-agent gen          # Start AI-driven testing
 
 # 4) Run Mode
-# Initialize Run mode configuration (config_run.yaml)
-uv run webqa-agent init -m run
-# Edit config.yaml: target.url, llm_config.api_key
-# Write natural language test cases
-# For more details, see "Usage > Run Mode - Configuration" below
-# Run Run Mode
-uv run webqa-agent run
-# Run Mode with specified config and 4 parallel workers
-uv run webqa-agent run -c /path/to/config_run.yaml -w 4
+uv run webqa-agent init -m run  # Init config, write natural language cases
+uv run webqa-agent run          # Start execution
 ```
 
-### 🔧 Generate Mode - Optional Dependencies
+> See [CLI Usage](#cli-usage) for more CLI details.
 
-Performance testing (Lighthouse): `npm install lighthouse chrome-launcher` (requires Node.js ≥18)
+### 🖥️ Full-stack Deployment (Recommended for Teams)
 
-Security testing (Nuclei):
+For visual dashboard, test management, and history, start with Docker Compose:
 
 ```bash
-brew install nuclei      # macOS
-nuclei -ut               # Update templates
-# Linux/Windows: https://github.com/projectdiscovery/nuclei/releases
+git clone https://github.com/MigoXLab/webqa-agent.git
+cd webqa-agent/deploy/docker-compose
+cp .env.example .env
+# Edit .env: fill in your LLM API Key
+./start.sh
 ```
+
+> Access via `http://localhost:3000`. For other deployment methods, see [Deployment](#deployment).
 
 <a id="usage"></a>
 
-## ⚙️ Usage
+## ⚙️ CLI Usage
+
+<a id="cli-usage"></a>
+
+### CLI Parameter Details
+
+WebQA Agent provides a concise command-line interface for initialization, autonomous exploration, case execution, and launching the Web UI.
+
+| Command | Description                                              | Common Arguments                                                                      |
+| :------ | :------------------------------------------------------- | :------------------------------------------------------------------------------------ |
+| `init`  | Initialize configuration file                            | `-m <gen/run>`: Specify mode; `-o <path>`: Output path; `--force`: Overwrite existing |
+| `gen`   | **Generate Mode**: AI-driven test generation & execution | `-c <path>`: Config path; `-w <n>`: Parallel workers                                  |
+| `run`   | **Run Mode**: Execute YAML-defined test cases            | `-c <path/dir>`: Config file or folder; `-w <n>`: Parallel workers                    |
+
+**Examples:**
+
+```bash
+# Initialize Run mode configuration
+webqa-agent init -m run
+
+# Run all cases in a directory with 4 parallel workers
+webqa-agent run -c ./my_cases -w 4
+```
+
+______________________________________________________________________
 
 ### Generate Mode - Configuration
 
+#### 🔧 Optional Dependencies (Custom Tools)
+
+- Performance testing (Lighthouse): `npm install lighthouse chrome-launcher` (requires Node.js ≥18)
+- Security testing (Nuclei):
+
+```bash
+  brew install nuclei      # macOS
+  nuclei -ut               # Update templates
+  # Linux/Windows: https://github.com/projectdiscovery/nuclei/releases
+```
+
+#### 📄 Configuration Details
+
 The configuration file must include the `test_config` field to define test types.
 
-- **Functional Testing (AI type)**: Validates correctness of page functionality. Optional configurations:
-  1. business_objectives: Specifies business goals to steer test focus and coverage.
-  2. dynamic_step_generation: Enables automatic generation of additional steps when new UI elements are detected during execution.
-  3. filter_model: Configures a lightweight model for pre-filtering page elements to improve planning efficiency.
-- **Functional Testing (default type)**: Does not rely on LLMs; focuses only on interaction success (clicks, navigation, etc.).
-- **User Experience Testing**: Evaluates visual quality, typography/grammar, layout rendering, and provides optimization suggestions based on best practices.
-- **Performance Testing**: Based on Lighthouse; evaluates performance, SEO, and related metrics.
-- **Security Testing**: Based on Nuclei, scans web security vulnerabilities and potential risks.
+- **Business Objectives**: Specifies business goals to steer AI test focus and coverage.
+- **Custom Tools**: Optional tools like Performance (Lighthouse), Security (Nuclei), button checks, and link detection.
+- **Dynamic Step Generation**: Automatically generates additional test steps when new UI elements are detected during execution.
+- **Filter Model**: Configures a lightweight model for pre-filtering page elements to improve planning efficiency.
 
 For more details, please refer to [docs/MODES&CLI.md](docs/MODES&CLI.md)
 
@@ -197,8 +227,8 @@ test_config:
       # - detect_dynamic_links          # Dynamic link discovery and validation
 
 llm_config:                             # LLM configuration, supports OpenAI, Anthropic Claude, Google Gemini, and OpenAI-compatible models (e.g., Doubao, Qwen)
-  model: gpt-4.1-2025-04-14             # Primary model
-  filter_model: gpt-4o-mini             # Lightweight model for element filtering (optional)
+  model: gpt-5.4                        # Primary model
+  filter_model: gpt-5-mini              # Lightweight model for element filtering (optional)
   api_key: your_api_key                 # Or set via environment variable (OPENAI_API_KEY)
   base_url: https://api.openai.com/v1   # Optional, API endpoint. For OpenAI-compatible models (Doubao, Qwen, etc.), set to their API endpoint
 
@@ -226,7 +256,7 @@ target:
 
 llm_config:                             # LLM configuration
   api: openai
-  model: gpt-4o-mini
+  model: gpt-5-mini
   api_key: your_api_key_here
   base_url: https://api.openai.com/v1
 
@@ -307,5 +337,7 @@ For teams that need a **persistent web dashboard** with test management, schedul
 - [browser-use](https://github.com/browser-use/browser-use/): AI Agent for Browser control
 
 ## 📄 License
+
+<a id="license"></a>
 
 This project is licensed under the [Apache 2.0 License](LICENSE).
