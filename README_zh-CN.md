@@ -110,7 +110,7 @@ test_config:
 <a id="示例演示"></a>
 
 <p align="left">
-  <video src="https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/gen-baidu.mp4" width="600" controls="controls" muted="muted" autoplay="autoplay" loop="loop"></video>
+  🎬 <a href="https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/gen-baidu.mp4" target="_blank">查看演示：百度网站一键测试</a>
 </p>
 
 ## 🚀 快速开始

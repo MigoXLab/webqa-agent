@@ -101,7 +101,7 @@ class JobMonitor:
         if not self._init_k8s_client():
             return
 
-        k8s_namespace = os.getenv('K8S_NAMESPACE', 'cloud-staging')
+        k8s_namespace = os.getenv('K8S_NAMESPACE', 'webqa')
 
         async with AsyncSessionLocal() as db:
             # Query all running executions

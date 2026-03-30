@@ -4,7 +4,6 @@ notification.
 Supports two loading strategies (in priority order):
 1. Explicit: Set env var (e.g. AUTH_PROVIDER=custom_sso) to load a specific module
 2. Default: Open-source fallback implementations (cookies auth, local storage, no notifications)
-3. Default: Open-source fallback implementations (cookies auth, local storage, no notifications)
 """
 import importlib
 import logging

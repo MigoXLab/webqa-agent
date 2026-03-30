@@ -110,7 +110,7 @@ test_config:
 <a id="examples"></a>
 
 <p align="left">
-  <video src="https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/gen-baidu.mp4" width="600" controls="controls" muted="muted" autoplay="autoplay" loop="loop"></video>
+  🎬 <a href="https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/gen-baidu.mp4" target="_blank">Watch Demo: One-click testing of Baidu.com</a>
 </p>
 
 ## 🚀 Quick Start
