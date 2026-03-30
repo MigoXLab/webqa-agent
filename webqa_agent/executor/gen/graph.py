@@ -119,12 +119,6 @@ def _extract_json_from_response(response: str) -> list:
     raise ValueError('No JSON array or object found in the response.')
 
 
-def _resolve_initial_cookies(state: MainGraphState) -> Any:
-    """Resolve initial cookies from account pool (preferred) or raw cookies."""
-    pool = state.get('account_pool')
-    return pool.resolve_cookies(None) if pool else state.get('cookies')
-
-
 async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any]]]:
     """Analyzes the initial page and generates test cases."""
     # 重置 case_id 计数器（每次新的测试运行从 case_1 开始）
@@ -149,7 +143,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
     logging.info('Stage 0: Collecting full-page data...')
     s = await sp.acquire(timeout=300.0)
     try:
-        initial_cookies = _resolve_initial_cookies(state)
+        initial_cookies = state.get('cookies')
         await s.navigate_to(state['url'], cookies=initial_cookies)
         ui_tester = UITester(
             llm_config=llm_cfg,
@@ -387,7 +381,6 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
             all_page_links=all_page_links,
             navigation_map=navigation_map,
             enabled_custom_tools=enabled_custom_tools,
-            account_role_summary=state.get('account_role_summary', ''),
             file_catalog=_lib.get_catalog_for_llm() if _lib else '',
         )
         record_data_flow_event(
@@ -603,7 +596,7 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                 s = await sp.acquire(timeout=300.0)
                 logging.debug(f"Worker {worker_id}: Acquired session for '{case_name}'")
 
-                initial_cookies = _resolve_initial_cookies(state)
+                initial_cookies = state.get('cookies')
                 await s.navigate_to(state['url'], cookies=initial_cookies)
 
                 ui_tester = UITester(
@@ -613,10 +606,6 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                     language=state.get('language', 'zh-CN'),
                 )
                 await ui_tester.initialize()
-                ui_tester.current_account_name = (
-                    state['account_pool'].resolve_account_name(None)
-                    if state.get('account_pool') else None
-                )
                 ui_tester.target_url = state.get('url')
                 ui_tester.current_url = state.get('url')
 

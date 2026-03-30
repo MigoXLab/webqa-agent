@@ -4,11 +4,10 @@ import logging
 import os
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
-from webqa_agent.config_models.base_config import (AccountConfig, BrowserConfig, LLMConfig,
-                                                   LogConfig, ReportConfig,
-                                                   warn_if_dual_cookies)
+from webqa_agent.config_models.base_config import (BrowserConfig, LLMConfig,
+                                                   LogConfig, ReportConfig)
 
 
 class DynamicStepConfig(BaseModel):
@@ -73,10 +72,6 @@ class GenConfig(BaseModel):
     max_concurrent_tests: int = Field(
         default=4, ge=1, le=10, description='Maximum concurrent test execution'
     )
-    accounts: Optional[List[AccountConfig]] = Field(
-        default=None, description='Optional named browser accounts for multi-role testing'
-    )
-
     skip_reflection: bool = Field(
         default=True, description='Skip reflection/self-correction phase'
     )
@@ -99,9 +94,3 @@ class GenConfig(BaseModel):
             logging.warning(f'test_files_dir does not exist: {resolved}')
             return None
         return resolved
-
-    @model_validator(mode='after')
-    def warn_dual_cookies(self) -> 'GenConfig':
-        """Warn when both accounts and browser cookies are configured."""
-        warn_if_dual_cookies(self.accounts, self.browser_config.cookies)
-        return self

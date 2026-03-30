@@ -12,8 +12,6 @@ class MainGraphState(TypedDict):
     business_objectives: Optional[str]
     language: Optional[str]
     cookies: Optional[str]
-    account_pool: Any
-    account_role_summary: Optional[str]
 
     # Test data
     test_cases: List[dict]

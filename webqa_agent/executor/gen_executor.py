@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from webqa_agent.actions.action_handler import ActionHandler
-from webqa_agent.browser import AccountPool, BrowserSessionPool
+from webqa_agent.browser import BrowserSessionPool
 from webqa_agent.config_models.gen_config import GenConfig
 from webqa_agent.data import (ParallelTestSession, SubTestReport,
                               SubTestResult, SubTestScreenshot, SubTestStep,
@@ -286,22 +286,12 @@ class GenExecutor:
                 )
                 test_file_library = None
 
-        account_pool = (
-            AccountPool(
-                accounts=self.config.accounts,
-                fallback_cookies=self.config.browser_config.cookies,
-            )
-            if self.config.accounts else None
-        )
-
         # Build state for LangGraph
         initial_state = {
             # Core configuration
             'url': self.config.target_url,
             'business_objectives': self.config.business_objectives,
             'cookies': self.config.browser_config.cookies,
-            'account_pool': account_pool,
-            'account_role_summary': account_pool.get_role_summary() if account_pool else '',
             'language': self.config.report_config.language,
 
             # Test data

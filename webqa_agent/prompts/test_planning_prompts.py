@@ -740,7 +740,6 @@ def get_test_case_planning_system_prompt(
     business_objectives: str,
     language: str = 'zh-CN',
     enabled_custom_tools: list[str] | None = None,
-    account_role_summary: str = '',
     file_catalog: str = '',
 ) -> str:
     """Generate system prompt for test case planning.
@@ -969,23 +968,10 @@ For each test case, provide:
     # 2. mode_section: Task definition (primacy zone - LLM pays high attention)
     # 3. custom_tools_section: Available tools (high-attention zone)
     # 4. shared_standards: Reference material (middle - OK for reference)
-    accounts_section = ''
-    if account_role_summary:
-        accounts_section = f"""
-
-## Test Accounts Available
-{account_role_summary}
-
-The execution agent can dynamically switch between accounts during execution.
-Reserve multi-account cases for permission boundaries, role-specific UI, and cross-role interaction checks.
-"""
-
     system_prompt = f"""
 {role_and_objective}
 
 {mode_section}
-
-{accounts_section}
 
 {custom_tools_section}
 
@@ -1232,7 +1218,6 @@ def get_planning_prompt(
     all_page_links: list = None,
     navigation_map: dict = None,
     enabled_custom_tools: list[str] | None = None,
-    account_role_summary: str = '',
     file_catalog: str = '',
 ) -> tuple[str, str]:
     """Generate prompts for planning (returns system and user prompt).
@@ -1257,7 +1242,6 @@ def get_planning_prompt(
         business_objectives,
         language,
         enabled_custom_tools,
-        account_role_summary,
         file_catalog,
     )
     user_prompt = get_test_case_planning_user_prompt(

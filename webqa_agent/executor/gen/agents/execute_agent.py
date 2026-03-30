@@ -156,7 +156,6 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     system_prompt_string = get_execute_system_prompt(
         case,
         language=language,
-        account_role_summary=state.get('account_role_summary', ''),
     )
     logging.debug(
         f'Generated system prompt length: {len(system_prompt_string)} characters'
@@ -285,7 +284,6 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         llm_config,
         case_recorder,
         enabled_custom_tools,
-        account_pool=state.get('account_pool'),
     )
     logging.debug(f'Tools initialized: {[tool.name for tool in tools]}')
 

@@ -22,7 +22,6 @@ def get_tools(
     llm_config: dict,
     case_recorder: Any,
     enabled_custom_tools: Optional[list[str]] = None,
-    account_pool: Any = None,
 ) -> list:
     """Get tools combining core tools with registry tools.
 
@@ -64,7 +63,6 @@ def get_tools(
                 ui_tester_instance=ui_tester_instance,
                 llm_config=llm_config,
                 case_recorder=case_recorder,
-                account_pool=account_pool,
                 enabled_custom_tools=enabled_custom_tools,  # Pass filtering parameter
             )
             if registry_tools:

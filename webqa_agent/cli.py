@@ -286,8 +286,6 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
     config_dir = resolve_config_dir(config_path)
     cookies_value = browser_cfg_raw.get('cookies', [])
     cookies = load_cookies(cookies_value, config_dir=config_dir)
-    accounts = load_accounts(cfg.get('accounts'), source_file=config_path)
-
     browser_config = BrowserConfig(
         browser_type=browser_cfg_raw.get('browser_type', 'chromium'),
         headless=headless,
@@ -345,7 +343,6 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
         max_concurrent_tests=workers,
         skip_reflection=skip_reflection,
         test_files_dir=test_files_dir,
-        accounts=accounts,
     )
 
     # Display configuration
