@@ -338,22 +338,3 @@ Run 模式支持批量执行文件夹中的多个 YAML 配置文件。
 # 指定执行文件夹，使用 4 个并行 Worker 执行测试
 webqa-agent run -c config/case_folder -w 4
 ```
-
-1. UI - 可视化界面
-
-Gen模式 提供gradio托管
-
-```bash
-# 安装 Gradio（如果尚未安装）
-uv add "gradio>=5.44.0"
-
-# 启动 Web UI（默认英文界面）
-webqa-agent ui
-# 访问地址：http://localhost:7860
-
-# 启动中文界面
-webqa-agent ui -l zh-CN
-
-# 自定义 host 和 port，且不自动打开浏览器
-webqa-agent ui --host 0.0.0.0 --port 9000 --no-browser
-```

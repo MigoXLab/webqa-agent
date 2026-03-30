@@ -26,7 +26,6 @@
 </p>
 
 <p align="center">
-  体验Demo 🤗<a href="https://huggingface.co/spaces/mmmay0722/WebQA-Agent">HuggingFace</a> | 🚀<a href="https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary">ModelScope</a><br>
   加入我们 🎮<a href="https://discord.gg/fG5QAxYyNr">Discord</a> | 💬<a href="https://aicarrier.feishu.cn/docx/NRNXdIirXoSQEHxhaqjchUfenzd">微信群</a>
 </p>
 
@@ -40,7 +39,7 @@
   </a>
 </p>
 
-<p align="center">🤖 <strong>WebQA Agent</strong> 是全自动网页评估测试 Agent，具备多模态网页理解、智能生成测试用例、精准执行的核心能力，一键完成性能、功能与交互体验的全面测试评估 ✨</p>
+<p align="center">🤖 <strong>WebQA Agent</strong> 是全自动网页评估测试 Agent，具备多模态网页理解、智能生成测试用例、精准执行的核心能力，一键完成性能、功能与交互体验的全面测试评估 ✨ 支持 GUI/CLI 直接使用，且支持 OpenClaw Skill 调用</p>
 </div>
 
 <!-- Additional SEO Keywords and Context
@@ -54,7 +53,7 @@ Vibecoding, Vibe coding, 网页测试自动化, 浏览器测试工具, AI驱动�
 - [快速开始](#-快速开始)
 - [使用说明](#使用说明)
 - [扩展 WebQA Agent 工具](#扩展-webqa-agent-工具)
-- [全栈部署](#-全栈部署)
+- [全栈部署](#全栈部署)
 - [RoadMap](#roadmap)
 - [致谢](#致谢)
 - [开源许可证](#-开源许可证)
@@ -102,14 +101,10 @@ test_config:
   <img src="docs/images/webqa2.svg" alt="WebQA Agent 架构图" />
 </p>
 
-## 📹 示例演示
-
-- **🤖 对话界面**: [AI 自主生成目标与步骤，在动态聊天页面中理解上下文并执行](https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/%E6%99%BA%E8%83%BDCase%E7%94%9F%E6%88%90.mp4)
-- **🎨 静态页面**: [AI 自主探索页面结构、识别元素](https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/vibecoding.mp4)
-- **🖼️ 测试百度图片生成功能**:
+## 📹 百度示例演示
 
 <p align="left">
-  <img src="docs/images/baidu-gif.gif" alt="百度图片生成功能测试演示" width="600" />
+  <video src="https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/gen-baidu.mp4" width="600" controls="controls" muted="muted" autoplay="autoplay" loop="loop"></video>
 </p>
 
 ## 🚀 快速开始

@@ -337,22 +337,3 @@ Run Mode also supports batch execution of YAML files in a directory.
 # Specify execution folder, execute tests with 4 parallel workers
 webqa-agent run -c config/case_folder -w 4
 ```
-
-1. UI - Visual Interface
-
-Generate Mode provides Gradio hosting
-
-```bash
-# Install Gradio (if not already installed)
-uv add "gradio>=5.44.0"
-
-# Launch Web UI (default English interface)
-webqa-agent ui
-# Access at: http://localhost:7860
-
-# Launch with Chinese interface
-webqa-agent ui -l zh-CN
-
-# Custom host and port, and don't auto-open browser
-webqa-agent ui --host 0.0.0.0 --port 9000 --no-browser
-```

@@ -26,7 +26,6 @@
 </p>
 
 <p align="center">
-  Try Demo 🤗<a href="https://huggingface.co/spaces/mmmay0722/WebQA-Agent">HuggingFace</a> | 🚀<a href="https://modelscope.cn/studios/mmmmei22/WebQA-Agent/summary">ModelScope</a><br>
   Join us on 🎮<a href="https://discord.gg/fG5QAxYyNr">Discord</a> | 💬<a href="https://aicarrier.feishu.cn/docx/NRNXdIirXoSQEHxhaqjchUfenzd">WeChat</a>
 </p>
 
@@ -40,7 +39,7 @@
   </a>
 </p>
 
-<p align="center">🤖 <strong>WebQA Agent</strong> is a fully automated web testing agent for multi-modal understanding, test generation, and end-to-end evaluation of functionality, performance, and UX. ✨</p>
+<p align="center">🤖 <strong>WebQA Agent</strong> is a fully automated web testing agent that understands the web like a human — generating test cases, evaluating functionality, performance, and UX end-to-end. ✨ Available as GUI/CLI for direct use, or as an OpenClaw skill. </p>
 </div>
 
 <!-- Additional SEO Keywords and Context
@@ -54,7 +53,7 @@ vibecoding, vibe coding, web evaluation, autonomous exploration, web testing aut
 - [Quick Start](#-quick-start)
 - [Usage](#usage)
 - [Extending WebQA Agent Tools](#extending-webqa-agent-tools)
-- [Deployment](#-deployment)
+- [Deployment](#deployment)
 - [RoadMap](#roadmap)
 - [Acknowledgements](#acknowledgements)
 - [License](#-license)
@@ -104,12 +103,8 @@ test_config:
 
 ## 📹 Examples
 
-- **🤖 Conversational UI**: [Autonomously plans goals and interacts across a dynamic chat interface](https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/%E6%99%BA%E8%83%BDCase%E7%94%9F%E6%88%90.mp4)
-- **🎨 Creative Page**: [Explores page structure, identifies elements](https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/vibecoding.mp4)
-- **🖼️ Testing Baidu Image Generation**:
-
 <p align="left">
-  <img src="docs/images/baidu-gif.gif" alt="Baidu Image Generation Test Demo" width="600" />
+  <video src="https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/gen-baidu.mp4" width="600" controls="controls" muted="muted" autoplay="autoplay" loop="loop"></video>
 </p>
 
 ## 🚀 Quick Start

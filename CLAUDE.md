@@ -188,7 +188,6 @@ uv run pytest tests/test_action_executor.py -v    # Run specific test
 webqa-agent init                                  # Generate config.yaml template
 webqa-agent gen                                   # Generate test cases (AI mode)
 webqa-agent run                                   # Run tests (auto-discovers config)
-webqa-agent ui                                    # Launch Gradio web interface
 
 # Browser Setup
 uv run playwright install chromium                # Install browser
@@ -463,7 +462,6 @@ When `dynamic_step_generation.enabled = true`:
 uv sync                                           # Install dependencies
 uv run playwright install chromium                # Install browser
 webqa-agent run                                   # Run tests
-webqa-agent ui                                    # Launch web UI
 ```
 
 ### Docker Setup
