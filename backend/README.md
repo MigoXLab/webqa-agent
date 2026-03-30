@@ -1,240 +1,252 @@
 # WebQA Backend
 
-WebQA 后端服务，基于 FastAPI 构建，提供测试用例管理和执行的 API 服务。
+WebQA backend service, built with FastAPI, provides API services for test case management and execution.
 
-## 本地开发
+## Local Development
 
-### 前置依赖
+### Prerequisites
 
 - Python 3.11+
 - PostgreSQL 14+
 - Redis 6+
 
-### 1. 安装 PostgreSQL
+### 1. Install PostgreSQL
 
 #### macOS (Homebrew)
 
 ```bash
-# 安装
+# Install
 brew install postgresql@14
 
-# 启动服务
+# Start service
 brew services start postgresql@14
 
-# 创建数据库
+# Create database
 createdb webqa
 ```
 
-#### 验证连接
+#### Verify Connection
 
 ```bash
 psql -d webqa -c "SELECT version();"
 ```
 
-### 2. 安装 Redis
+### 2. Install Redis
 
 #### macOS (Homebrew)
 
 ```bash
-# 安装
+# Install
 brew install redis
 
-# 启动服务
+# Start service
 brew services start redis
 ```
 
-#### 验证连接
+#### Verify Connection
 
 ```bash
 redis-cli ping
-# 应返回 PONG
+# Should return PONG
 ```
 
-### 3. 配置环境变量
+### 3. Configure Environment Variables
 
 ```bash
 cd backend
 
-# 复制环境变量模板
+# Copy environment template
 cp env.example .env
 
-# 编辑 .env 文件，根据你的环境修改配置
+# Edit .env file according to your environment
 ```
 
-关键配置项说明：
+Key configuration items:
 
 ```bash
-# 数据库连接 (修改为你的数据库信息)
+# Database connection (modify with your DB info)
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/webqa
 
-# Redis 连接 (通常不需要修改)
+# Redis connection (usually no need to change)
 REDIS_URL=redis://localhost:6379/0
 
-# LLM 配置 (必须配置)
+# LLM Configuration (Required)
 LLM_API=openai
-LLM_API_KEY=sk-xxx  # 你的 API Key
+LLM_API_KEY=sk-xxx  # Your API Key
 LLM_BASE_URL=https://api.openai.com/v1
 
-# 执行模式 (本地开发使用 local)
+# Execution Mode (use local for local development)
 EXECUTION_MODE=local
 ```
 
-### 4. 安装 Python 依赖
+### 4. Install Python Dependencies
 
 ```bash
 cd backend
 
-# 创建虚拟环境 (推荐)
+# Create virtual environment (recommended)
 python -m venv venv
 source venv/bin/activate  # Linux/macOS
 # venv\Scripts\activate  # Windows
 
-# 安装依赖
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 5. 初始化数据库
+### 5. Initialize Database
 
 ```bash
 cd backend
 
-# 运行数据库迁移
+# Run database migrations
 alembic upgrade head
 ```
 
-如果需要创建新的迁移：
+If you need to create a new migration:
 
 ```bash
-# 自动生成迁移脚本
+# Auto-generate migration script
 alembic revision --autogenerate -m "description of changes"
 
-# 应用迁移
+# Apply migration
 alembic upgrade head
 ```
 
-### 6. 启动后端服务
+### 6. Start Backend Service
 
 ```bash
 cd backend
 
-# 方式1：使用 run.py (开发模式，支持热重载)
+# Method 1: Using run.py (development mode, supports hot reload)
 python run.py
 
-# 方式2：使用 uvicorn
+# Method 2: Using uvicorn
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-服务启动后可访问：
+Once started, you can access:
 
-- API 文档: http://localhost:8000/docs
-- 健康检查: http://localhost:8000/health
+- API Documentation: http://localhost:8000/docs
+- Health Check: http://localhost:8000/health
 
-### 7. 启动前端 (可选)
+### 7. Start Frontend (Optional)
 
 ```bash
 cd frontend
 
-# 安装依赖
+# Install dependencies
 npm install
 
-# 启动开发服务器
+# Start development server
 npm run dev
 ```
 
-前端默认运行在 http://localhost:5173
+The frontend runs on http://localhost:5173 by default.
 
-## 项目结构
+## Project Structure
 
-```
+```text
 backend/
-├── alembic/              # 数据库迁移
-│   ├── versions/         # 迁移脚本
-│   └── env.py           # 迁移环境配置
+├── alembic/              # Database migrations
+│   ├── versions/         # Migration scripts
+│   └── env.py            # Migration environment config
 ├── app/
-│   ├── api/             # API 路由
-│   │   ├── business.py  # 业务线管理
-│   │   ├── cases.py     # 用例管理
-│   │   ├── executions.py # 执行管理
-│   │   ├── internal.py  # 内部 API (Agent 回调)
-│   │   └── ...
-│   ├── models/          # 数据库模型
-│   ├── schemas/         # Pydantic 模型
-│   ├── services/        # 业务逻辑
-│   │   └── executor.py  # 执行器 (创建 Agent Job)
-│   ├── utils/           # 工具函数
-│   ├── config.py        # 配置管理
-│   ├── database.py      # 数据库连接
-│   └── main.py          # 应用入口
-├── alembic.ini          # Alembic 配置
-├── env.example          # 环境变量模板
-├── requirements.txt     # Python 依赖
-├── run.py               # 开发服务器启动脚本
+│   ├── api/              # API routes
+│   │   ├── businesses.py # Business line management
+│   │   ├── environments.py # Environment management
+│   │   ├── test_cases.py # Test case management
+│   │   ├── executions.py # Execution management
+│   │   ├── scheduled_tasks.py # Scheduled tasks management
+│   │   ├── files.py      # File management
+│   │   ├── config.py     # Frontend config API
+│   │   └── internal.py   # Internal API (Agent callbacks)
+│   ├── models/           # SQLAlchemy Database models
+│   ├── schemas/          # Pydantic schemas
+│   ├── services/         # Business logic
+│   │   ├── executor.py   # Executor (creates Agent Jobs)
+│   │   ├── job_monitor.py # K8s Job monitor
+│   │   ├── task_scheduler.py # Cron task scheduler
+│   │   ├── progress_cache.py # Redis progress cache
+│   │   └── feishu_notify.py # Notification service
+│   ├── providers/        # Extension providers (Auth, Storage, Notification)
+│   ├── utils/            # Utility functions
+│   ├── config.py         # Configuration management
+│   ├── database.py       # Database connection
+│   └── main.py           # Application entry point
+├── alembic.ini           # Alembic configuration
+├── env.example           # Environment variables template
+├── requirements.txt      # Python dependencies
+├── run.py                # Dev server startup script
+├── run_webqa.py          # Run mode execution script
+├── gen_webqa.py          # Gen mode execution script
+├── Dockerfile            # Dockerfile for backend service
+├── Dockerfile.k8s        # Dockerfile for K8s Agent
 └── README.md
 ```
 
-## 常用命令
+## Common Commands
 
 ```bash
-# 启动服务 (开发模式)
+# Start service (dev mode)
 python run.py
 
-# 数据库迁移
-alembic upgrade head          # 应用所有迁移
-alembic downgrade -1          # 回退一个版本
-alembic revision --autogenerate -m "msg"  # 生成迁移
+# Database migrations
+alembic upgrade head          # Apply all migrations
+alembic downgrade -1          # Revert one version
+alembic revision --autogenerate -m "msg"  # Generate migration
 
-# 查看 API 文档
+# View API documentation
 open http://localhost:8000/docs
 ```
 
-## 环境变量说明
+## Environment Variables
 
-| 变量名                | 说明                            | 默认值                                                        |
-| --------------------- | ------------------------------- | ------------------------------------------------------------- |
-| `DATABASE_URL`        | PostgreSQL 连接字符串           | `postgresql+asyncpg://postgres:postgres@localhost:5432/webqa` |
-| `REDIS_URL`           | Redis 连接字符串                | `redis://localhost:6379/0`                                    |
-| `LLM_API`             | LLM 提供商                      | `openai`                                                      |
-| `LLM_API_KEY`         | LLM API Key                     | -                                                             |
-| `LLM_BASE_URL`        | LLM API 地址                    | `https://api.openai.com/v1`                                   |
-| `EXECUTION_MODE`      | 执行模式 (`local`/`kubernetes`) | `local`                                                       |
-| `JOB_TIMEOUT_SECONDS` | Job 超时时间(秒)                | `7200`                                                        |
-| `MAX_CONCURRENT_JOBS` | 最大并发 Job 数                 | `5`                                                           |
+| Variable | Description | Default Value |
+| --- | --- | --- |
+| `DATABASE_URL` | PostgreSQL connection string | `postgresql+asyncpg://postgres:postgres@localhost:5432/webqa` |
+| `REDIS_URL` | Redis connection string | `redis://localhost:6379/0` |
+| `LLM_API` | LLM Provider | `openai` |
+| `LLM_API_KEY` | LLM API Key | - |
+| `LLM_BASE_URL` | LLM API Base URL | `https://api.openai.com/v1` |
+| `EXECUTION_MODE` | Execution mode (`local`/`kubernetes`) | `local` |
+| `JOB_TIMEOUT_SECONDS` | Job timeout limit (seconds) | `7200` |
+| `MAX_CONCURRENT_JOBS` | Max concurrent jobs | `5` |
 
-## 故障排除
+## Troubleshooting
 
-### 数据库连接失败
+### Database Connection Failed
 
 ```bash
-# 检查 PostgreSQL 是否运行
+# Check if PostgreSQL is running
 pg_isready
 
-# 检查数据库是否存在
+# Check if database exists
 psql -l | grep webqa
 
-# 创建数据库
+# Create database
 createdb webqa
 ```
 
-### Redis 连接失败
+### Redis Connection Failed
 
 ```bash
-# 检查 Redis 是否运行
+# Check if Redis is running
 redis-cli ping
 
-# 如果没有响应，启动 Redis
+# If no response, start Redis
 brew services start redis  # macOS
 sudo systemctl start redis  # Linux
 ```
 
-### 迁移失败
+### Migration Failed
 
 ```bash
-# 查看当前迁移状态
+# Check current migration status
 alembic current
 
-# 回退到初始状态
+# Revert to base state
 alembic downgrade base
 
-# 重新应用所有迁移
+# Re-apply all migrations
 alembic upgrade head
 ```
