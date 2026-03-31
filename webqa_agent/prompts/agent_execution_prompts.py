@@ -64,7 +64,10 @@ def get_custom_tools_prompt_section() -> str:
         return ''
 
 
-def get_execute_system_prompt(case: dict, language: str = 'zh-CN') -> str:
+def get_execute_system_prompt(
+    case: dict,
+    language: str = 'zh-CN',
+) -> str:
     """Generate detailed system prompt for execution agent."""
 
     # Core fields (original)

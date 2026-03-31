@@ -63,6 +63,10 @@ class Environment(Base):
         JSONB,
         nullable=True
     )
+    accounts: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(
+        JSONB,
+        nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

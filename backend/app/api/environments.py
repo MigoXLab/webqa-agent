@@ -43,6 +43,7 @@ async def create_environment(
         sso_username=data.sso_username,
         sso_password=data.sso_password,
         cookies=data.cookies,
+        accounts=data.accounts,
     )
     db.add(env)
     await db.commit()
@@ -106,6 +107,8 @@ async def update_environment(
         env.sso_password = data.sso_password
     if data.cookies is not None:
         env.cookies = data.cookies
+    if data.accounts is not None:
+        env.accounts = data.accounts
 
     await db.commit()
     await db.refresh(env)

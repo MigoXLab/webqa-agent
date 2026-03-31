@@ -1239,7 +1239,10 @@ def get_planning_prompt(
         tuple: (system_prompt, user_prompt)
     """
     system_prompt = get_test_case_planning_system_prompt(
-        business_objectives, language, enabled_custom_tools, file_catalog
+        business_objectives,
+        language,
+        enabled_custom_tools,
+        file_catalog,
     )
     user_prompt = get_test_case_planning_user_prompt(
         state_url, page_text_summary, priority_elements, all_page_links, navigation_map

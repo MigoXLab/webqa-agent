@@ -38,6 +38,9 @@ class TestCase(Base):
         nullable=False
     )
 
+    # Default account name for this case (multi-account switching)
+    account: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
     # Test steps in JSONB format
     # Format: [{"step_type": "action/verify", "description": "...", "args": {...}}]
     steps: Mapped[List[Dict[str, Any]]] = mapped_column(

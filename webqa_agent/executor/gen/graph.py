@@ -604,7 +604,6 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                     language=state.get('language', 'zh-CN'),
                 )
                 await ui_tester.initialize()
-
                 # P0 Fix: Initialize URLValidator to prevent LLM URL hallucinations in worker execution
                 if state.get('url'):
                     ui_tester._actions.set_url_validator(state['url'])

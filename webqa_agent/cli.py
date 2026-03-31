@@ -18,8 +18,9 @@ from webqa_agent.executor.gen_executor import GenExecutor
 from webqa_agent.utils import (check_lighthouse_installation,
                                check_nuclei_installation,
                                check_playwright_browsers_async,
-                               find_config_file, load_cookies, load_yaml,
-                               load_yaml_files)
+                               find_config_file, load_accounts,
+                               load_cookies, load_yaml, load_yaml_files,
+                               resolve_config_dir)
 
 
 def get_version():
@@ -228,10 +229,9 @@ async def run_tests(cfg, execution_mode, config_path: str = None, workers: int =
         except (ValueError, TypeError):
             workers = 4
         print('🎯 Mode: Gen Mode (AI-driven test generation)')
-        await execute_gen_mode(cfg, workers=workers)
+        await execute_gen_mode(cfg, config_path=config_path, workers=workers)
 
-
-async def execute_gen_mode(cfg, workers: int = 1):
+async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1):
     """Execute Gen mode tests using GenConfig and GenExecutor."""
     # Get config sections
     tconf = cfg.get('test_config', {})
@@ -283,9 +283,9 @@ async def execute_gen_mode(cfg, workers: int = 1):
     is_docker = os.getenv('DOCKER_ENV') == 'true'
     headless = True if is_docker else browser_cfg_raw.get('headless', True)
 
+    config_dir = resolve_config_dir(config_path)
     cookies_value = browser_cfg_raw.get('cookies', [])
-    cookies = load_cookies(cookies_value)
-
+    cookies = load_cookies(cookies_value, config_dir=config_dir)
     browser_config = BrowserConfig(
         browser_type=browser_cfg_raw.get('browser_type', 'chromium'),
         headless=headless,
@@ -407,7 +407,10 @@ async def execute_run_mode(config_path: str, workers: int = None):
     for cfg in configs:
         raw_cookies = cfg.get('cookies') or cfg.get('browser_config', {}).get('cookies')
         if raw_cookies:
-            loaded_cookies = load_cookies(raw_cookies)
+            loaded_cookies = load_cookies(
+                raw_cookies,
+                config_dir=resolve_config_dir(cfg.get('_source_file') or config_path),
+            )
             # Update both possible locations to ensure consistency
             if 'cookies' in cfg:
                 cfg['cookies'] = loaded_cookies
@@ -445,7 +448,11 @@ async def execute_run_mode(config_path: str, workers: int = None):
             log_config=LogConfig(**configs[0].get('log', {'level': 'info'})),
             cases_path=config_path,  # Pass original path for RunExecutor to load
             workers=workers,
-            ignore_rules=configs[0].get('ignore_rules')
+            ignore_rules=configs[0].get('ignore_rules'),
+            accounts=load_accounts(
+                configs[0].get('accounts'),
+                source_file=configs[0].get('_source_file') or config_path,
+            ),
         )
     except Exception as e:
         print(f'❌ Failed to create RunConfig: {e}', file=sys.stderr)
@@ -529,7 +536,7 @@ def cmd_gen(args):
         print('💡 Create a Gen mode config: webqa-agent init', file=sys.stderr)
         sys.exit(1)
 
-    asyncio.run(run_tests(cfg, execution_mode='gen', workers=workers))
+    asyncio.run(run_tests(cfg, execution_mode='gen', config_path=config_path, workers=workers))
 
 
 def cmd_ui(args):

@@ -360,9 +360,18 @@ class ToolRegistry:
 
                 # Build kwargs for instantiation
                 kwargs = {}
+                missing_required = []
                 for param_name, source in required.items():
                     if source in context and context[source] is not None:
                         kwargs[param_name] = context[source]
+                    else:
+                        missing_required.append(source)
+
+                if missing_required:
+                    logger.debug(
+                        f"Skipping tool {name}: missing required context {missing_required}"
+                    )
+                    continue
 
                 # Instantiate tool
                 tool = tool_class(**kwargs)
