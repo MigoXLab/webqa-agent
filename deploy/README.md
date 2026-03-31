@@ -140,7 +140,6 @@ docker compose up -d
 After startup:
 
 - Frontend: http://localhost
-- Backend API: http://localhost:8000/docs
 
 ### Management Commands
 

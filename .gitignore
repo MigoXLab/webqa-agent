@@ -228,7 +228,7 @@ __marimo__/
 report/
 reports/
 output/
-data/
+/data/
 .pytest*
 test.py
 test_cases_*.json

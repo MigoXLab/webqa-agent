@@ -140,7 +140,6 @@ docker compose up -d
 启动后访问：
 
 - 前端：http://localhost
-- 后端 API：http://localhost:8000/docs
 
 ### 管理命令
 

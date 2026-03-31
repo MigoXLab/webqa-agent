@@ -48,17 +48,19 @@ Vibecoding, Vibe coding, 网页测试自动化, 浏览器测试工具, AI驱动�
 
 ## 📑 目录
 
-- [核心特性](#-核心特性)
-- [示例演示](#-示例演示)
-- [快速开始](#-快速开始)
-- [使用说明](#使用说明)
+- [核心特性](#核心特性)
+- [示例演示](#示例演示)
+- [快速开始](#快速开始)
+- [CLI 使用说明](#cli-使用说明)
 - [扩展 WebQA Agent 工具](#扩展-webqa-agent-工具)
 - [全栈部署](#全栈部署)
 - [RoadMap](#roadmap)
 - [致谢](#致谢)
-- [开源许可证](#-开源许可证)
+- [开源许可证](#开源许可证)
 
 ## 🚀 核心特性
+
+<a id="核心特性"></a>
 
 ### 📋 功能介绍
 
@@ -70,6 +72,8 @@ Vibecoding, Vibe coding, 网页测试自动化, 浏览器测试工具, AI驱动�
 | **适用场景** | 新功能探索、全面质量保障                                                   | 适合可重复、可回归的测试场景                                          |
 | **用户输入** | **极简**：只需 URL 或一句话业务目标                                        | **结构化**：简单的自然语言步骤描述                                    |
 | **优势**     | 具备反思能力，自适应 UI 变化；配置功能/性能/安全/UX 评估，提供全面质量保障 | 结果稳定可预期，摆脱繁琐的Selector维护；实时监控 Console/Network 状态 |
+
+**使用与部署**：支持 CLI 命令行运行，可参考 [CLI 使用说明](#cli-使用说明)；同时支持以完整前后端形态部署（Local / Docker / K8s），通过 Web 界面进行可视化管理。详见 [全栈部署](#全栈部署)。
 
 ### 🛠️ 工具系统
 
@@ -101,15 +105,23 @@ test_config:
   <img src="docs/images/webqa2.svg" alt="WebQA Agent 架构图" />
 </p>
 
-## 📹 百度示例演示
+## 📹 示例演示
+
+<a id="示例演示"></a>
 
 <p align="left">
-  <video src="https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/gen-baidu.mp4" width="600" controls="controls" muted="muted" autoplay="autoplay" loop="loop"></video>
+  🎬 <a href="https://pub-2c31c87660254d7bba9707e2b56fc15b.r2.dev/gen-baidu.mp4" target="_blank">查看演示：百度网站一键测试</a>
 </p>
 
 ## 🚀 快速开始
 
-### 🏎️ 推荐使用 [uv](https://github.com/astral-sh/uv) (Python>=3.11) 安装
+<a id="快速开始"></a>
+
+您可以根据需求选择 **🛠️ 命令行快速上手** 或 **🖥️ 全栈部署 (Web 管理平台)**。
+
+### 🛠️ 命令行快速上手 (推荐开发者使用)
+
+推荐使用 [uv](https://github.com/astral-sh/uv) (Python>=3.11) 安装:
 
 ```bash
 # 1) 创建项目并安装包
@@ -119,46 +131,73 @@ uv add webqa-agent
 # 2) 安装浏览器（必需）
 uv run playwright install chromium
 
-# 3) Generate 模式
-# 初始化 Gen 模式配置 (config.yaml)
-uv run webqa-agent init -m gen
-# 编辑 config.yaml：target.url、llm_config.api_key
-# 配置 test_config
-# 更多说明见下方“使用说明 > Gen 模式 - 配置介绍”
-# 运行 Gen 模式
-uv run webqa-agent gen
-# 指定配置文件路径，使用 4 个并行 Worker
-uv run webqa-agent gen -c /path/to/config.yaml -w 4
+# 3) 自动探索模式 (Generate)
+uv run webqa-agent init -m gen  # 初始化配置，编辑 config.yaml 填入 URL 和 API Key
+uv run webqa-agent gen          # 启动 AI 自动测试
 
-# 4) Run 模式
-# 初始化 Run 模式配置 (config_run.yaml)
-uv run webqa-agent init -m run
-# 编辑 config.yaml：target.url、llm_config.api_key
-# 编写自然语言用例
-# 更多说明见下方“使用说明 > Run 模式 - 配置介绍”
-# 运行 Run 模式
-uv run webqa-agent run
-# 指定配置文件路径，使用 4 个并行 Worker
-uv run webqa-agent run -c /path/to/config.yaml -w 4
+# 4) 执行模式 (Run)
+uv run webqa-agent init -m run  # 初始化配置，编写自然语言测试用例
+uv run webqa-agent run          # 启动测试执行
 ```
 
-### 🔧 Generate 模式 - 可选依赖
+> 详见 [CLI 使用说明](#cli-使用说明) 获取更多 CLI 参数。
 
-性能测试（Lighthouse）：`npm install lighthouse chrome-launcher`（需 Node.js ≥18）
+### 🖥️ 全栈部署 (推荐团队使用)
 
-安全测试（Nuclei）：
+如果您需要可视化界面、测试管理和执行历史，请使用 Docker Compose 一键启动：
 
 ```bash
-brew install nuclei      # macOS
-nuclei -ut               # 更新模板
-# Linux/Windows: https://github.com/projectdiscovery/nuclei/releases
+git clone https://github.com/MigoXLab/webqa-agent.git
+cd webqa-agent/deploy/docker-compose
+cp .env.example .env
+# 编辑 .env 文件，填入您的 LLM API Key
+./start.sh
 ```
+
+> 启动后访问 `http://localhost`。其他部署方式请查看 [全栈部署](#全栈部署)。
 
 <a id="使用说明"></a>
 
-## ⚙️ 使用说明
+## ⚙️ CLI 使用说明
+
+<a id="cli-使用说明"></a>
+
+### CLI 参数说明
+
+WebQA Agent 提供简洁的命令行工具，支持初始化、自动探索、用例执行及 Web UI 启动。
+
+| 命令   | 说明                                    | 常用参数                                                             |
+| :----- | :-------------------------------------- | :------------------------------------------------------------------- |
+| `init` | 初始化配置文件                          | `-m <gen/run>`: 指定模式；`-o <path>`: 输出路径；`--force`: 强制覆盖 |
+| `gen`  | **自动探索模式**：AI 自动生成并执行用例 | `-c <path>`: 指定配置文件；`-w <n>`: 并发 Worker 数                  |
+| `run`  | **执行模式**：运行 YAML 定义的测试用例  | `-c <path/dir>`: 指定文件或文件夹；`-w <n>`: 并发 Worker 数          |
+
+**示例：**
+
+```bash
+# 初始化 Run 模式配置
+webqa-agent init -m run
+
+# 以 4 并发运行指定目录下的所有测试用例
+webqa-agent run -c ./my_cases -w 4
+```
+
+______________________________________________________________________
 
 ### Generate 模式 - 配置介绍
+
+#### 🔧 可选依赖项 (自定义工具)
+
+- 性能测试（Lighthouse）：`npm install lighthouse chrome-launcher`（需 Node.js ≥18）
+- 安全测试（Nuclei）：
+
+```bash
+  brew install nuclei      # macOS
+  nuclei -ut               # 更新模板
+  # Linux/Windows: https://github.com/projectdiscovery/nuclei/releases
+```
+
+#### 📄 配置文件说明
 
 配置文件需包含 `test_config` 字段，用于定义需要执行的测试类型。
 
@@ -188,8 +227,8 @@ test_config:
       # - detect_dynamic_links          # 动态链接发现和验证
 
 llm_config:                             # LLM 配置，支持 OpenAI、Anthropic Claude、Google Gemini 以及 OpenAI 兼容格式模型（如豆包、通义千问等）
-  model: gpt-4.1-2025-04-14             # 主模型
-  filter_model: gpt-4o-mini             # 轻量级模型用于元素过滤（可选）
+  model: gpt-5.4                        # 主模型
+  filter_model: gpt-5-mini              # 轻量级模型用于元素过滤（可选）
   api_key: your_api_key                 # 或通过环境变量设置 (OPENAI_API_KEY)
   base_url: https://api.openai.com/v1   # 可选，API 端点。对于 OpenAI 兼容格式模型（豆包、通义千问等），设置为对应的 API 端点
 
@@ -217,7 +256,7 @@ target:
 
 llm_config:                             # LLM 配置
   api: openai
-  model: gpt-4o-mini
+  model: gpt-5-mini
   api_key: your_api_key_here
   base_url: https://api.openai.com/v1
 

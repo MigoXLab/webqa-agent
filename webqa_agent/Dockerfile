@@ -10,16 +10,15 @@ ENV PYTHONPATH=/app
 RUN apt-get update && apt-get install -y curl unzip \
     && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
     && apt-get install -y nodejs \
+    && curl -L -o /tmp/nuclei.zip https://github.com/projectdiscovery/nuclei/releases/download/v3.3.7/nuclei_3.3.7_linux_amd64.zip \
+    && unzip -o /tmp/nuclei.zip -d /usr/local/bin/ \
+    && chmod +x /usr/local/bin/nuclei \
+    && rm /tmp/nuclei.zip \
     && apt-get purge -y curl && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY webqa_agent/package.json /app/package.json
 RUN npm install
-
-COPY vendor/nuclei_3.3.7_linux_amd64.zip /tmp/nuclei.zip
-RUN unzip -o /tmp/nuclei.zip -d /usr/local/bin/ \
-    && chmod +x /usr/local/bin/nuclei \
-    && rm /tmp/nuclei.zip
 
 COPY webqa_agent/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir --default-timeout=300 -r requirements.txt

@@ -18,13 +18,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from webqa_agent.actions.action_handler import screenshot_prefix_var
 from webqa_agent.browser import AccountPool, BrowserSession, BrowserSessionPool
-from webqa_agent.llm.llm_api import (
-    get_llm_duration_stats, reset_llm_duration_stats,
-    get_llm_io_log, reset_llm_io_log,
-)
 from webqa_agent.data import (CaseStep, StepContext, SubTestResult,
                               SubTestScreenshot, SubTestStep,
                               TestConfiguration, TestStatus)
+from webqa_agent.llm.llm_api import (get_llm_duration_stats, get_llm_io_log,
+                                     reset_llm_duration_stats,
+                                     reset_llm_io_log)
 from webqa_agent.utils import Display, i18n
 from webqa_agent.utils.data_flow_reporter import record_data_flow_event
 from webqa_agent.utils.get_log import test_id_var
@@ -67,6 +66,10 @@ class CaseRunner:
         self.test_specific_config = test_config.test_specific_config
         self.report_dir = report_dir
         self.account_pool = account_pool
+
+        # Pre-compute invariant i18n values for display
+        report_lang = self.report_config.get('language', 'zh-CN') if self.report_config else 'zh-CN'
+        self._display_prefix = i18n.t(report_lang, 'tools.run_mode.display_text', 'Run Mode')
 
         # Pre-compute invariant i18n values for display
         report_lang = self.report_config.get('language', 'zh-CN') if self.report_config else 'zh-CN'
@@ -397,6 +400,10 @@ class CaseRunner:
         case_id = case.get('case_id', f'case_{case_index}')
         start_time = datetime.now()
 
+        # Clean session state for case isolation (clear cookies/storage from previous case)
+        # This runs before navigate_to which will inject new cookies if configured
+        await session.clean_state()
+
         # Get case-specific config if available (for multi-YAML support)
         case_config = case.get('_config', {})
         url = case_config.get('url') or self.test_specific_config.get('url')
@@ -406,7 +413,7 @@ class CaseRunner:
             available = ', '.join(account_pool.account_names)
             logging.warning(
                 f"[{case_id}] Account '{requested_account}' not found. "
-                f"Available accounts: [{available}]. Falling back to default account."
+                f'Available accounts: [{available}]. Falling back to default account.'
             )
         cookies = (
             account_pool.resolve_cookies(requested_account)
@@ -1001,7 +1008,7 @@ class CaseRunner:
         }
         step_result = SubTestStep(
             id=step_idx,
-            description=f"switch_account: {account.name}",
+            description=f'switch_account: {account.name}',
             screenshots=[
                 SubTestScreenshot(
                     type='base64',
