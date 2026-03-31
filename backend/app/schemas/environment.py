@@ -18,6 +18,7 @@ class EnvironmentCreate(BaseModel):
     sso_password: Optional[str] = None
     sso_env: str = Field(default='prod', pattern='^(prod|staging|dev)$')
     cookies: Optional[List[Dict[str, Any]]] = None
+    accounts: Optional[List[Dict[str, Any]]] = None
 
 
 class EnvironmentUpdate(BaseModel):
@@ -31,6 +32,7 @@ class EnvironmentUpdate(BaseModel):
     sso_password: Optional[str] = None
     sso_env: Optional[str] = Field(None, pattern='^(prod|staging|dev)$')
     cookies: Optional[List[Dict[str, Any]]] = None
+    accounts: Optional[List[Dict[str, Any]]] = None
 
 
 class EnvironmentResponse(BaseModel):
@@ -46,6 +48,7 @@ class EnvironmentResponse(BaseModel):
     sso_env: str = 'prod'
     # Note: sso_password is not returned for security
     cookies: Optional[List[Dict[str, Any]]] = None
+    accounts: Optional[List[Dict[str, Any]]] = None
     created_at: datetime
 
     class Config:

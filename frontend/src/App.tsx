@@ -8,7 +8,8 @@ import { ExecutionDetail } from './components/ExecutionDetail';
 import { CaseEditorPage } from './components/CaseEditorPage';
 import { GenPage } from './components/GenPage';
 import { LayoutDashboard, History, Box, Loader2, Github, Sparkles } from 'lucide-react';
-import { apiClient, Business as APIBusiness, TestCase as APITestCase, Execution as APIExecution } from './api/client';
+import { apiClient, Business as APIBusiness, Execution as APIExecution } from './api/client';
+import { toFrontendTestCase } from './utils/testCaseUtils';
 
 // Re-export types for backward compatibility
 export type Environment = {
@@ -20,6 +21,7 @@ export type Environment = {
   sso_password?: string;
   sso_env?: 'prod' | 'staging' | 'dev';
   cookies?: any[];
+  accounts?: Array<{ id: string; name: string; cookies: any[] }>;
   ignore_rules?: {
     network?: Array<{ pattern: string; type: string }>;
     console?: Array<{ pattern: string; match_type: string }>;
@@ -55,6 +57,7 @@ export type TestCase = {
   name: string;
   description: string;
   login_required: boolean;
+  account?: string;
   steps: TestStep[];
   version?: string;
   snapshot?: string;
@@ -75,7 +78,7 @@ export type VerifyArgs = {
 export type TestStep = {
   id: string;
   order: number;
-  step_type: 'action' | 'verify';
+  step_type: 'action' | 'verify' | 'switch_account';
   action?: {
     description: string;
     args?: ActionArgs;
@@ -84,6 +87,7 @@ export type TestStep = {
     assertion: string;
     args?: VerifyArgs;
   };
+  switch_account?: string;
 };
 
 export type ExecutionResult = {
@@ -142,66 +146,16 @@ function toFrontendBusiness(apiBusiness: APIBusiness): Business {
       sso_password: env.sso_password,
       sso_env: env.sso_env || 'prod',
       cookies: env.cookies || [],
+      accounts: (env.accounts || []).map((acc: any) => ({
+        id: acc.id || crypto.randomUUID(),
+        name: acc.name || '',
+        cookies: acc.cookies || [],
+      })),
       ignore_rules: env.ignore_rules || {},
       browser_config: env.browser_config || {},
     })),
     files: [], // Files are managed separately via OSS
     createdAt: (apiBusiness.created_at || new Date().toISOString()).split('T')[0],
-  };
-}
-
-function toFrontendTestCase(apiCase: APITestCase): TestCase {
-  if (!apiCase) {
-     console.error('Invalid test case data:', apiCase);
-     return {} as TestCase;
-  }
-  return {
-    id: apiCase.id,
-    businessId: apiCase.business_id,
-    name: apiCase.name,
-    description: apiCase.description || '',
-    login_required: apiCase.login_required ?? false,
-    steps: (apiCase.steps || []).map((step, idx) => {
-      // Handle malformed data where description/assertion might be objects
-      let description = '';
-      let assertion = '';
-      let args = step.args || {};
-
-      if (step.step_type === 'action') {
-        // If description is an object with nested structure, extract it
-        if (typeof step.description === 'object' && step.description !== null) {
-          const descObj = step.description as any;
-          description = descObj.description || JSON.stringify(step.description);
-          // Merge args if present in the nested object
-          if (descObj.args) {
-            args = { ...args, ...descObj.args };
-          }
-        } else {
-          description = step.description || '';
-        }
-      } else {
-        assertion = step.assertion || '';
-      }
-
-      return {
-        id: crypto.randomUUID(),
-        order: idx + 1,
-        step_type: step.step_type,
-        action: step.step_type === 'action' ? {
-          description,
-          args,
-        } : undefined,
-        verify: step.step_type === 'verify' ? {
-          assertion,
-          args,
-        } : undefined,
-      };
-    }),
-    version: apiCase.version,
-    snapshot: apiCase.snapshot,
-    use_snapshot: apiCase.use_snapshot,
-    createdAt: (apiCase.created_at || new Date().toISOString()).split('T')[0],
-    status: (apiCase.status || 'active') as 'draft' | 'active' | 'disabled',
   };
 }
 

@@ -18,6 +18,7 @@ export interface Environment {
   sso_password?: string;
   sso_env?: 'prod' | 'staging';
   cookies?: Array<Record<string, any>>;
+  accounts?: Array<{ name: string; cookies: Array<Record<string, any>> }>;
   created_at?: string;
 }
 
@@ -30,9 +31,10 @@ export interface Business {
 }
 
 export interface TestStep {
-  step_type: 'action' | 'verify';
+  step_type: 'action' | 'verify' | 'switch_account';
   description?: string;
   assertion?: string;
+  switch_account?: string;
   args?: Record<string, any>;
 }
 
@@ -42,6 +44,7 @@ export interface TestCase {
   name: string;
   description?: string;
   login_required: boolean;
+  account?: string;
   steps: TestStep[];
   version?: string;
   snapshot?: string;
@@ -218,6 +221,7 @@ class APIClient {
     name: string;
     description?: string;
     login_required?: boolean;
+    account?: string;
     steps: TestStep[];
     version?: string;
     snapshot?: string;

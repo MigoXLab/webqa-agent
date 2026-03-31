@@ -3,6 +3,45 @@ import { Business, Environment } from '../App';
 import React, { useState, useEffect } from 'react';
 import { apiClient } from '../api/client';
 
+/** Cookies JSON textarea with local string state to avoid controlled-input revert bug. */
+function CookiesTextarea({ cookies, onChange }: { cookies: any[]; onChange: (cookies: any[]) => void }) {
+  const serialized = JSON.stringify(cookies || [], null, 2);
+  const [raw, setRaw] = useState(serialized);
+  const [error, setError] = useState(false);
+  const lastCommitted = React.useRef(serialized);
+
+  // Sync only when cookies change externally (not from our own onChange)
+  if (serialized !== lastCommitted.current) {
+    lastCommitted.current = serialized;
+    setRaw(serialized);
+    setError(false);
+  }
+
+  return (
+    <>
+      <textarea
+        value={raw}
+        onChange={(e) => {
+          setRaw(e.target.value);
+          try {
+            const parsed = JSON.parse(e.target.value);
+            const newSerialized = JSON.stringify(parsed, null, 2);
+            lastCommitted.current = newSerialized;
+            onChange(parsed);
+            setError(false);
+          } catch {
+            setError(true);
+          }
+        }}
+        className={`w-full px-2 py-1.5 border rounded text-sm font-mono bg-white ${error ? 'border-red-400' : ''}`}
+        rows={1}
+        placeholder='[{"name": "session", "value": "..."}]'
+      />
+      {error && <p className="text-xs text-red-500 mt-0.5">JSON 格式不正确</p>}
+    </>
+  );
+}
+
 type Props = {
   businesses: Business[];
   setBusinesses: (businesses: Business[]) => void;
@@ -66,6 +105,29 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+
+    // Validate accounts before submit
+    for (const env of formData.environments) {
+      if (env.auth_type === 'cookies' && env.accounts && env.accounts.length > 0) {
+        for (const acc of env.accounts) {
+          if (!acc.name.trim()) {
+            setError(`环境「${env.name}」中存在未命名的账户，请填写账户名称`);
+            return;
+          }
+          if (!acc.cookies || acc.cookies.length === 0) {
+            setError(`环境「${env.name}」中账户「${acc.name}」的 Cookies 为空`);
+            return;
+          }
+        }
+        const names = env.accounts.map(a => a.name.trim());
+        const duplicates = names.filter((n, i) => names.indexOf(n) !== i);
+        if (duplicates.length > 0) {
+          setError(`环境「${env.name}」中存在重复的账户名称「${duplicates[0]}」`);
+          return;
+        }
+      }
+    }
+
     setSaving(true);
 
     try {
@@ -82,6 +144,7 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
             sso_password: env.sso_password,
             sso_env: env.sso_env || 'prod',
             cookies: env.cookies,
+            accounts: env.accounts?.map(({ name, cookies }) => ({ name, cookies })),
             browser_config: env.browser_config,
             ignore_rules: env.ignore_rules,
           })),
@@ -98,6 +161,7 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
             sso_password: env.sso_password,
             sso_env: env.sso_env || 'prod',
             cookies: env.cookies,
+            accounts: env.accounts?.map(({ name, cookies }) => ({ name, cookies })),
             browser_config: env.browser_config,
             ignore_rules: env.ignore_rules,
           })),
@@ -336,7 +400,13 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
                                   type="radio"
                                   name={`auth-${env.id}`}
                                   checked={env.auth_type === 'cookies'}
-                                  onChange={() => updateEnvironment(index, { auth_type: 'cookies' })}
+                                  onChange={() => {
+                                    const updates: Partial<Environment> = { auth_type: 'cookies' };
+                                    if (!env.accounts || env.accounts.length === 0) {
+                                      updates.accounts = [{ id: crypto.randomUUID(), name: '', cookies: [] }];
+                                    }
+                                    updateEnvironment(index, updates);
+                                  }}
                                 />
                                 Cookies
                               </label>
@@ -406,22 +476,61 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
                             )}
 
                             {env.auth_type === 'cookies' && (
-                              <div className="bg-blue-50 p-3 rounded-lg">
-                                <label className="block text-xs text-gray-500 mb-1">Cookies (JSON 格式)</label>
-                                <textarea
-                                  value={JSON.stringify(env.cookies || [], null, 2)}
-                                  onChange={(e) => {
-                                    try {
-                                      const cookies = JSON.parse(e.target.value);
-                                      updateEnvironment(index, { cookies });
-                                    } catch (err) {
-                                      // ignore invalid json while typing
-                                    }
+                              <div className="space-y-3">
+                                {(env.accounts || []).map((account, accIdx) => (
+                                  <div key={account.id} className="bg-blue-50 p-3 rounded-lg">
+                                    <div className="flex gap-3">
+                                      <div className="w-1/4 flex-shrink-0">
+                                        <label className="block text-xs text-gray-500 mb-1">账户名称</label>
+                                        <input
+                                          type="text"
+                                          value={account.name}
+                                          onChange={(e) => {
+                                            const newAccounts = [...(env.accounts || [])];
+                                            newAccounts[accIdx] = { ...newAccounts[accIdx], name: e.target.value };
+                                            updateEnvironment(index, { accounts: newAccounts });
+                                          }}
+                                          className="w-full px-2 py-1.5 border rounded text-sm bg-white"
+                                          placeholder="例如：admin"
+                                        />
+                                      </div>
+                                      <div className="flex-1">
+                                        <label className="block text-xs text-gray-500 mb-1">Cookies (JSON 格式)</label>
+                                        <CookiesTextarea
+                                          cookies={account.cookies}
+                                          onChange={(cookies) => {
+                                            const newAccounts = [...(env.accounts || [])];
+                                            newAccounts[accIdx] = { ...newAccounts[accIdx], cookies };
+                                            updateEnvironment(index, { accounts: newAccounts });
+                                          }}
+                                        />
+                                      </div>
+                                      {(env.accounts || []).length > 1 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const newAccounts = (env.accounts || []).filter((_, i) => i !== accIdx);
+                                            updateEnvironment(index, { accounts: newAccounts });
+                                          }}
+                                          className="p-1.5 mt-auto mb-1 text-red-600 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
+                                          title="删除账户"
+                                        >
+                                          <Trash2 className="w-4 h-4" />
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                ))}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const newAccounts = [...(env.accounts || []), { id: crypto.randomUUID(), name: '', cookies: [] }];
+                                    updateEnvironment(index, { accounts: newAccounts });
                                   }}
-                                  className="w-full px-2 py-1.5 border rounded text-sm font-mono bg-white"
-                                  rows={3}
-                                  placeholder='[{"name": "session", "value": "..."}]'
-                                />
+                                  className="text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50 px-2 py-1 rounded-md font-medium transition-colors"
+                                >
+                                  + 添加账户
+                                </button>
                               </div>
                             )}
                           </div>

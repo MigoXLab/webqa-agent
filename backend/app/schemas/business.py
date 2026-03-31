@@ -18,6 +18,7 @@ class EnvironmentInBusiness(BaseModel):
     sso_password: Optional[str] = None
     sso_env: str = 'prod'
     cookies: Optional[List[Dict[str, Any]]] = None
+    accounts: Optional[List[Dict[str, Any]]] = None
 
 
 class BusinessCreate(BaseModel):
@@ -46,6 +47,7 @@ class EnvironmentResponse(BaseModel):
     sso_env: str = 'prod'
     # Note: sso_password is not returned for security
     cookies: Optional[List[Dict[str, Any]]] = None
+    accounts: Optional[List[Dict[str, Any]]] = None
     created_at: datetime
 
     class Config:

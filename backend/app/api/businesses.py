@@ -82,6 +82,7 @@ async def create_business(
             sso_password=env_data.sso_password,
             sso_env=env_data.sso_env or 'prod',
             cookies=env_data.cookies,
+            accounts=env_data.accounts,
         )
         db.add(env)
 
@@ -184,6 +185,7 @@ async def update_business(
                     env.sso_password = env_data.sso_password
                 env.sso_env = env_data.sso_env or env.sso_env or 'prod'
                 env.cookies = env_data.cookies
+                env.accounts = env_data.accounts
             else:
                 # Create new
                 env = Environment(
@@ -197,6 +199,7 @@ async def update_business(
                     sso_password=env_data.sso_password,
                     sso_env=env_data.sso_env or 'prod',
                     cookies=env_data.cookies,
+                    accounts=env_data.accounts,
                 )
                 db.add(env)
 
