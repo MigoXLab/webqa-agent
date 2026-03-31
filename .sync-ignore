@@ -13,6 +13,9 @@ k8s/
 Dockerfile.k8s
 backend/Dockerfile.k8s
 frontend/Dockerfile.k8s
+Dockerfile.zadig
+backend/Dockerfile.zadig
+frontend/Dockerfile.zadig
 
 # --- 同步与 CI 配置自身 ---
 .sync-ignore
