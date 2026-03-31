@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS environments (
     sso_password VARCHAR(200),
     sso_env VARCHAR(20) DEFAULT 'prod' NOT NULL,
     cookies JSONB,
+    accounts JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
@@ -55,6 +56,7 @@ CREATE TABLE IF NOT EXISTS test_cases (
     status VARCHAR(20) DEFAULT 'active' NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0,
     version VARCHAR(50),
+    account VARCHAR(100),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
@@ -121,6 +123,6 @@ CREATE TABLE IF NOT EXISTS alembic_version (
     CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)
 );
 DELETE FROM alembic_version;
-INSERT INTO alembic_version (version_num) VALUES ('009_make_business_id_nullable');
+INSERT INTO alembic_version (version_num) VALUES ('011_add_account_to_test_cases');
 
 COMMIT;
