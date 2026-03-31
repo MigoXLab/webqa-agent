@@ -143,8 +143,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
     logging.info('Stage 0: Collecting full-page data...')
     s = await sp.acquire(timeout=300.0)
     try:
-        initial_cookies = state.get('cookies')
-        await s.navigate_to(state['url'], cookies=initial_cookies)
+        await s.navigate_to(state['url'], cookies=state.get('cookies'))
         ui_tester = UITester(
             llm_config=llm_cfg,
             browser_session=s,
@@ -596,8 +595,7 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                 s = await sp.acquire(timeout=300.0)
                 logging.debug(f"Worker {worker_id}: Acquired session for '{case_name}'")
 
-                initial_cookies = state.get('cookies')
-                await s.navigate_to(state['url'], cookies=initial_cookies)
+                await s.navigate_to(state['url'], cookies=state.get('cookies'))
 
                 ui_tester = UITester(
                     llm_config=state['llm_config'],
@@ -606,9 +604,6 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                     language=state.get('language', 'zh-CN'),
                 )
                 await ui_tester.initialize()
-                ui_tester.target_url = state.get('url')
-                ui_tester.current_url = state.get('url')
-
                 # P0 Fix: Initialize URLValidator to prevent LLM URL hallucinations in worker execution
                 if state.get('url'):
                     ui_tester._actions.set_url_validator(state['url'])

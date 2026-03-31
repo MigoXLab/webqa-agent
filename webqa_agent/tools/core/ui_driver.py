@@ -605,12 +605,20 @@ class UITester:
             # Determine mode: comparison (both available) or fallback (either missing)
             if before_screenshot and after_screenshot:
                 mode = 'comparison'
+                logging.debug('Screenshot comparison mode: ENABLED (both before/after screenshots available)')
             else:
                 mode = 'fallback'
+                if before_screenshot:
+                    logging.debug('Screenshot comparison mode: FALLBACK (only before screenshot available)')
+                elif after_screenshot:
+                    logging.debug('Screenshot comparison mode: FALLBACK (only after screenshot available)')
+                else:
+                    logging.debug('Screenshot comparison mode: FALLBACK (no before/after screenshots available)')
 
             # Normalize focus_region: treat empty string as None
             if focus_region is not None and not focus_region.strip():
                 focus_region = None
+                logging.debug('Empty focus_region provided, treating as None')
 
             # ========================================================================
             # MODE EXECUTION: COMPARISON vs FALLBACK
@@ -620,6 +628,7 @@ class UITester:
                 # ====================================================================
                 # COMPARISON MODE: Use before + after + current screenshots
                 # ====================================================================
+                logging.debug('Using comparison mode with before/after screenshots')
 
                 # Prepare images list for LLM (chronological order: before, after, current)
                 images_for_llm = [before_screenshot, after_screenshot]
@@ -635,6 +644,7 @@ class UITester:
                     page_url = saved_url
                     page_title = saved_title
                     page_structure = saved_page_structure
+                    logging.debug(f'Using saved action-time context: {page_url}')
                 else:
                     page_url, page_title = await self.browser_session.get_url()
                     dp = DeepCrawler(self.page)
@@ -1481,6 +1491,10 @@ class UITester:
 
         for dom_keyword in DOM_OPERATION_INDICATORS:
             if dom_keyword in instruction_lower:
+                logging.debug(
+                    f"DOM operation '{dom_keyword}' detected in '{test_step[:60]}...' "
+                    f'→ instruction is NOT page-agnostic'
+                )
                 return False
 
         # ========================================================================
@@ -1490,6 +1504,10 @@ class UITester:
         for action_type in [ActionType.GO_BACK, ActionType.SLEEP]:
             # Case-insensitive check (handles "GoBack", "goback", "go back")
             if action_type.lower() in instruction_lower:
+                logging.debug(
+                    f"Action type '{action_type}' detected in '{test_step[:60]}...' "
+                    f'→ instruction IS page-agnostic'
+                )
                 return True
 
         # ========================================================================
@@ -1500,6 +1518,10 @@ class UITester:
 
         for keyword in PAGE_AGNOSTIC_KEYWORDS:
             if keyword in instruction_lower:
+                logging.debug(
+                    f"Page-agnostic keyword '{keyword}' detected in '{test_step[:60]}...' "
+                    f'→ instruction IS page-agnostic'
+                )
                 return True
 
         # ========================================================================
