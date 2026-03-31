@@ -564,7 +564,7 @@ async def _create_gen_k8s_job(
                     restart_policy='Never',
                     service_account_name=k8s_sa_name or None,
                     image_pull_secrets=[
-                        client.V1LocalObjectReference(name='regcred-vpc')
+                        client.V1LocalObjectReference(name='regcred')
                     ],
                     containers=[
                         client.V1Container(
@@ -1015,7 +1015,7 @@ async def _create_k8s_job(
                     restart_policy='Never',
                     service_account_name=k8s_sa_name or None,
                     image_pull_secrets=[
-                        client.V1LocalObjectReference(name='regcred-vpc')
+                        client.V1LocalObjectReference(name='regcred')
                     ],
                     containers=[
                         client.V1Container(
