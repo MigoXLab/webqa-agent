@@ -9,9 +9,16 @@ type Props = {
   onFilesChange: (files: BusinessFile[]) => void;
   onClose?: () => void;
   inline?: boolean;
+  selectable?: boolean;
+  selectedFiles?: string[];
+  onSelectionChange?: (filenames: string[]) => void;
+  hideDelete?: boolean;
 };
 
-export function FileManager({ businessId, files, onFilesChange, onClose, inline = false }: Props) {
+export function FileManager({
+  businessId, files, onFilesChange, onClose, inline = false,
+  selectable = false, selectedFiles, onSelectionChange, hideDelete = false,
+}: Props) {
   const [dragActive, setDragActive] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -100,6 +107,9 @@ export function FileManager({ businessId, files, onFilesChange, onClose, inline 
       try {
         await apiClient.deleteFile(businessId, file.name);
         onFilesChange(files.filter(f => f.id !== file.id));
+        if (onSelectionChange && selectedFiles?.includes(file.name)) {
+          onSelectionChange(selectedFiles.filter(f => f !== file.name));
+        }
       } catch (err) {
         alert('删除失败: ' + (err instanceof Error ? err.message : '未知错误'));
       }
@@ -166,7 +176,12 @@ export function FileManager({ businessId, files, onFilesChange, onClose, inline 
 
       {/* File List */}
       <div>
-        <h3 className="mb-4 text-sm text-gray-700">已上传文件 ({files.length})</h3>
+        <h3 className="mb-4 text-sm text-gray-700">
+          已上传文件 ({files.length})
+          {selectable && (
+            <span className="ml-1.5 text-xs text-gray-400 font-normal"> 不勾选则由 AI 自主选择</span>
+          )}
+        </h3>
 
         {files.length === 0 ? (
           <div className="text-center py-8 border border-gray-200 rounded-lg bg-gray-50">
@@ -180,6 +195,21 @@ export function FileManager({ businessId, files, onFilesChange, onClose, inline 
                 key={file.id}
                 className="flex items-center gap-3 p-3 sm:p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
               >
+                {selectable && (
+                  <input
+                    type="checkbox"
+                    checked={selectedFiles?.includes(file.name) ?? false}
+                    onChange={(e) => {
+                      if (!onSelectionChange) return;
+                      if (e.target.checked) {
+                        onSelectionChange([...(selectedFiles || []), file.name]);
+                      } else {
+                        onSelectionChange((selectedFiles || []).filter(f => f !== file.name));
+                      }
+                    }}
+                    className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500 flex-shrink-0"
+                  />
+                )}
                 <div className="flex-shrink-0">
                   {getFileIcon(file.type)}
                 </div>
@@ -201,13 +231,15 @@ export function FileManager({ businessId, files, onFilesChange, onClose, inline 
                   >
                     <Download className="w-4 h-4" />
                   </button>
-                  <button
-                    onClick={() => handleDelete(file)}
-                    className="p-1.5 hover:bg-red-50 rounded-lg transition-colors"
-                    title="删除"
-                  >
-                    <Trash2 className="w-4 h-4 text-red-600" />
-                  </button>
+                  {!hideDelete && (
+                    <button
+                      onClick={() => handleDelete(file)}
+                      className="p-1.5 hover:bg-red-50 rounded-lg transition-colors"
+                      title="删除"
+                    >
+                      <Trash2 className="w-4 h-4 text-red-600" />
+                    </button>
+                  )}
                 </div>
               </div>
             ))}

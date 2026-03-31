@@ -29,7 +29,7 @@ import mimetypes
 import os
 from dataclasses import dataclass
 from itertools import cycle
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -142,14 +142,20 @@ class TestFileLibrary:
     # Prevent pytest from collecting this as a test class
     __test__ = False
 
-    def __init__(self, directory: str) -> None:
+    def __init__(self, directory: str, file_whitelist: Optional[List[str]] = None) -> None:
         """Initialize the library and scan the directory.
 
         Args:
             directory: Path to the test-files directory.  Resolved to its
                 real path (symlinks dereferenced) for security.
+            file_whitelist: Optional list of filenames to include.
+                When provided, only files whose name matches an entry
+                in this list are indexed.  When None, all files are indexed.
         """
         self._directory: str = os.path.realpath(directory)
+        self._file_whitelist: Optional[frozenset] = (
+            frozenset(file_whitelist) if file_whitelist is not None else None
+        )
         self.files: List[FileEntry] = []
         self._scan()
 
@@ -173,6 +179,10 @@ class TestFileLibrary:
             self._directory, followlinks=False
         ):
             for filename in filenames:
+                # Apply file whitelist filter
+                if self._file_whitelist is not None and filename not in self._file_whitelist:
+                    continue
+
                 filepath = os.path.join(dirpath, filename)
 
                 # Skip non-regular files (devices, sockets, etc.)

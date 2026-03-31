@@ -274,7 +274,10 @@ class GenExecutor:
         test_file_library = None
         if self.config.test_files_dir:
             from webqa_agent.utils.test_file_library import TestFileLibrary
-            test_file_library = TestFileLibrary(self.config.test_files_dir)
+            test_file_library = TestFileLibrary(
+                self.config.test_files_dir,
+                file_whitelist=self.config.test_files,
+            )
             if test_file_library.files:
                 logger.info(
                     f'TestFileLibrary loaded: {len(test_file_library.files)} files '
