@@ -83,6 +83,13 @@ class GenConfig(BaseModel):
                     'when encountering upload controls in Gen mode.',
     )
 
+    test_files: Optional[List[str]] = Field(
+        default=None,
+        description='List of specific filenames to include for upload testing. '
+                    'When set, only these files from test_files_dir are available '
+                    'to the agent. When None, all files in the directory are used.',
+    )
+
     @field_validator('test_files_dir')
     @classmethod
     def validate_test_files_dir(cls, v: Optional[str]) -> Optional[str]:

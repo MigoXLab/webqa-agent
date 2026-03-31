@@ -312,8 +312,15 @@ async def _start_gen_executor(execution_id: str, gen_config_dict: Optional[Dict[
                 llm_cfg['base_url'] = settings.get_base_url_for_model(model_name)
             if not llm_cfg.get('max_tokens'):
                 llm_cfg['max_tokens'] = 8192
-            if not llm_cfg.get('max_tokens'):
-                llm_cfg['max_tokens'] = 8192
+
+            # Inject test_files_dir when business has uploaded files
+            if execution.business_id:
+                _files_dir = os.path.join(
+                    settings.effective_shared_storage_path, 'files', str(execution.business_id)
+                )
+                if os.path.isdir(_files_dir) and os.listdir(_files_dir):
+                    gen_config_dict['test_files_dir'] = _files_dir
+                    logger.info(f'[Gen] Injected test_files_dir: {_files_dir}')
 
             api_key = llm_cfg.get('api_key', '')
             base_url = llm_cfg.get('base_url', '')
@@ -457,6 +464,15 @@ async def _start_gen_k8s(execution_id: str, gen_config_dict: Optional[Dict[str, 
                 llm_cfg['base_url'] = settings.get_base_url_for_model(model_name)
             if not llm_cfg.get('max_tokens'):
                 llm_cfg['max_tokens'] = 8192
+
+            # Inject test_files_dir when business has uploaded files
+            if execution.business_id:
+                _files_dir = os.path.join(
+                    settings.effective_shared_storage_path, 'files', str(execution.business_id)
+                )
+                if os.path.isdir(_files_dir) and os.listdir(_files_dir):
+                    gen_config_dict['test_files_dir'] = f'/shared/files/{execution.business_id}'
+                    logger.info(f'[Gen K8s] Injected test_files_dir for business {execution.business_id}')
 
             api_key = llm_cfg.get('api_key', '')
             base_url = llm_cfg.get('base_url', '')
@@ -1297,6 +1313,15 @@ async def _start_gen_docker(execution_id: str, gen_config_dict: Optional[Dict[st
                 llm_cfg['base_url'] = settings.get_base_url_for_model(model_name)
             if not llm_cfg.get('max_tokens'):
                 llm_cfg['max_tokens'] = 8192
+
+            # Inject test_files_dir when business has uploaded files
+            if execution.business_id:
+                _files_dir = os.path.join(
+                    settings.effective_shared_storage_path, 'files', str(execution.business_id)
+                )
+                if os.path.isdir(_files_dir) and os.listdir(_files_dir):
+                    gen_config_dict['test_files_dir'] = f'/shared/files/{execution.business_id}'
+                    logger.info(f'[Gen Docker] Injected test_files_dir for business {execution.business_id}')
 
             api_key = llm_cfg.get('api_key', '')
             base_url = llm_cfg.get('base_url', '')

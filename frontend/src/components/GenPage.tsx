@@ -4,7 +4,6 @@ import {
   Sparkles,
   AlertCircle,
   Loader2,
-  Globe,
   Target,
   Zap,
   Link,
@@ -16,6 +15,8 @@ import {
   Cpu,
 } from 'lucide-react';
 import { apiClient } from '../api/client';
+import { FileManager } from './FileManager';
+import { BusinessFile } from '../App';
 
 const TEST_ITEMS = [
   { key: 'functional' as const, label: '功能测试', icon: Target },
@@ -55,12 +56,22 @@ export function GenPage() {
   const [cookies, setCookies] = useState('');
   const [error, setError] = useState<string | null>(null);
 
+  // File upload
+  const [businesses, setBusinesses] = useState<{ id: string; name: string }[]>([]);
+  const [selectedBusinessId, setSelectedBusinessId] = useState<string>('');
+  const [files, setFiles] = useState<BusinessFile[]>([]);
+  const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
+
   useEffect(() => {
     const init = async () => {
       try {
-        const models = await apiClient.getAvailableModels('gen');
+        const [models, bizResp] = await Promise.all([
+          apiClient.getAvailableModels('gen'),
+          apiClient.getBusinesses(),
+        ]);
         setAvailableModels(models.models);
         setSelectedModel(models.default);
+        setBusinesses(bizResp.items.map((b) => ({ id: b.id, name: b.name })));
       } catch (err) {
         console.error('Failed to load init data:', err);
         setError('加载初始化数据失败');
@@ -124,6 +135,7 @@ export function GenPage() {
       }
 
       const execution = await apiClient.createExecution({
+        business_id: selectedBusinessId || undefined,
         trigger_type: 'gen',
         model: selectedModel,
         workers: workers,
@@ -138,6 +150,7 @@ export function GenPage() {
           skip_reflection: !enableReflection,
           dynamic_step_generation: { enabled: dynamicStepGeneration },
           max_concurrent_tests: workers,
+          ...(selectedFiles.length > 0 ? { test_files: selectedFiles } : {}),
         }
       });
 
@@ -223,6 +236,43 @@ export function GenPage() {
               value={businessObjectives}
               onChange={(e) => setBusinessObjectives(e.target.value)}
             />
+          </div>
+
+          {/* Test Files — optional business association for file upload testing */}
+          <div>
+            <label className="block text-sm font-medium mb-1.5 text-gray-700">
+              测试文件
+              <span className="ml-1.5 text-xs text-gray-400 font-normal">【可选】关联业务后，可选择文件用于上传测试</span>
+            </label>
+            <select
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm bg-white"
+              value={selectedBusinessId}
+              onChange={(e) => {
+                setSelectedBusinessId(e.target.value);
+                setFiles([]);
+                setSelectedFiles([]);
+              }}
+            >
+              <option value="">不关联</option>
+              {businesses.map((b) => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
+
+            {selectedBusinessId && (
+              <div className="mt-3 border border-gray-200 rounded-lg p-3">
+                <FileManager
+                  businessId={selectedBusinessId}
+                  files={files}
+                  onFilesChange={setFiles}
+                  inline
+                  selectable
+                  selectedFiles={selectedFiles}
+                  onSelectionChange={setSelectedFiles}
+                  hideDelete
+                />
+              </div>
+            )}
           </div>
 
           {/* Execution Config — collapsible, default expanded */}

@@ -309,6 +309,58 @@ class TestFileLibraryPathValidation:
         assert lib.validate_file_path(str(file_library_dir)) is False
 
 
+class TestFileWhitelist:
+    """Test file_whitelist filtering behavior."""
+
+    def test_whitelist_filters_to_matching_files(self, file_library_dir):
+        """Only files in the whitelist should be indexed."""
+        lib = TestFileLibrary(str(file_library_dir), file_whitelist=['resume.pdf', 'data.csv'])
+        names = {entry.name for entry in lib.files}
+        assert names == {'resume.pdf', 'data.csv'}
+
+    def test_whitelist_none_indexes_all(self, file_library_dir):
+        """None whitelist should index all valid files (default behavior)."""
+        lib = TestFileLibrary(str(file_library_dir), file_whitelist=None)
+        names = {entry.name for entry in lib.files}
+        assert 'resume.pdf' in names
+        assert 'photo.jpg' in names
+        assert len(names) >= 5  # resume.pdf, data.csv, notes.txt, photo.jpg, logo.png
+
+    def test_whitelist_empty_list_indexes_nothing(self, file_library_dir):
+        """Empty whitelist should index zero files."""
+        lib = TestFileLibrary(str(file_library_dir), file_whitelist=[])
+        assert lib.files == []
+
+    def test_whitelist_nonexistent_file_yields_empty(self, file_library_dir):
+        """Whitelist with names that don't exist on disk should yield
+        nothing."""
+        lib = TestFileLibrary(str(file_library_dir), file_whitelist=['nonexistent.pdf'])
+        assert lib.files == []
+
+    def test_whitelist_partial_match(self, file_library_dir):
+        """Whitelist with mix of existing and non-existing files."""
+        lib = TestFileLibrary(
+            str(file_library_dir),
+            file_whitelist=['resume.pdf', 'nonexistent.doc'],
+        )
+        names = {entry.name for entry in lib.files}
+        assert names == {'resume.pdf'}
+
+    def test_whitelist_includes_subdirectory_files(self, file_library_dir):
+        """Whitelist should match files in subdirectories too."""
+        lib = TestFileLibrary(str(file_library_dir), file_whitelist=['photo.jpg'])
+        names = {entry.name for entry in lib.files}
+        assert names == {'photo.jpg'}
+
+    def test_whitelist_catalog_only_shows_whitelisted(self, file_library_dir):
+        """Catalog should only contain whitelisted files."""
+        lib = TestFileLibrary(str(file_library_dir), file_whitelist=['resume.pdf'])
+        catalog = lib.get_catalog_for_llm()
+        assert 'resume.pdf' in catalog
+        assert 'data.csv' not in catalog
+        assert 'photo.jpg' not in catalog
+
+
 class TestGenConfigTestFilesDir:
     """Tests for test_files_dir field in GenConfig."""
 
@@ -334,6 +386,21 @@ class TestGenConfigTestFilesDir:
             test_files_dir='/nonexistent/path/xyz',
         )
         assert config.test_files_dir is None
+
+    def test_test_files_default_is_none(self):
+        config = GenConfig(
+            target_url='https://example.com',
+            llm_config=LLMConfig(model='gpt-4o', api_key='test-key'),
+        )
+        assert config.test_files is None
+
+    def test_test_files_with_list(self):
+        config = GenConfig(
+            target_url='https://example.com',
+            llm_config=LLMConfig(model='gpt-4o', api_key='test-key'),
+            test_files=['resume.pdf', 'photo.png'],
+        )
+        assert config.test_files == ['resume.pdf', 'photo.png']
 
 
 @pytest.fixture
