@@ -24,6 +24,7 @@ import { FileManager } from './FileManager';
 import { ScheduledTaskManager, ScheduledTask } from './ScheduledTaskManager';
 import { BusinessManager } from './BusinessManager';
 import { apiClient } from '../api/client';
+import { ResolutionSelector } from './ResolutionSelector';
 import {
   formToYaml,
   yamlToForm,
@@ -112,6 +113,7 @@ export function TestCaseManager({
 
   // Model selection
   const [selectedModel, setSelectedModel] = useState<string>(availableModels.default);
+  const [selectedResolutions, setSelectedResolutions] = useState<string[]>([]);
   const [workers, setWorkers] = useState<number>(1);
   const [businessFiles, setBusinessFiles] = useState<BusinessFile[]>([]);
 
@@ -548,6 +550,7 @@ export function TestCaseManager({
         test_case_ids: selectedCases,
         model: selectedModel,
         workers: workers,
+        resolutions: selectedResolutions.length > 0 ? selectedResolutions : undefined,
       });
 
       // Create frontend execution object
@@ -1016,6 +1019,13 @@ export function TestCaseManager({
                     <option key={n} value={n}>并发 {n}</option>
                   ))}
                 </select>
+
+                <ResolutionSelector
+                  selectedResolutions={selectedResolutions}
+                  onChange={setSelectedResolutions}
+                  className="w-40 px-3 py-1.5 border border-blue-200 rounded-lg text-sm flex-shrink-0 bg-blue-50 text-blue-700"
+                  style={{ minWidth: '160px' }}
+                />
 
                 <button
                   onClick={handleBatchRun}

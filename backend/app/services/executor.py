@@ -716,7 +716,7 @@ async def _prepare_run_config(
                     return None
 
             configs = _build_agent_configs(
-                environment, test_cases, execution.workers, cookies, accounts
+                environment, test_cases, execution.workers, cookies, accounts, execution.resolutions
             )
             if not configs:
                 execution.status = 'failed'
@@ -931,6 +931,7 @@ async def _start_agent_k8s(execution_id: str, case_data: Optional[Dict[str, Any]
                     test_cases=test_cases,
                     model=execution.model,
                     workers=execution.workers,
+                    resolutions=execution.resolutions,
                     business_id=execution.business_id,
                 )
 
@@ -953,6 +954,7 @@ async def _create_k8s_job(
     test_cases: List[TestCase],
     model: str,
     workers: int,
+    resolutions: Optional[List[str]] = None,
     business_id: Optional[UUID] = None,
 ) -> str:
     """Create a Kubernetes Job to run webqa-agent."""
@@ -986,7 +988,7 @@ async def _create_k8s_job(
         _, cookies = generate_sso_cookies(environment.sso_username, environment.sso_password, sso_env)
 
     # Build configs grouped by login_required
-    configs = _build_agent_configs(environment, test_cases, workers, cookies, accounts)
+    configs = _build_agent_configs(environment, test_cases, workers, cookies, accounts, resolutions)
 
     if not configs:
         raise ValueError('没有可执行的测试用例')
@@ -1416,10 +1418,11 @@ async def _fetch_execution_data(
     return environment, test_cases, None
 
 
-def _build_case_dict(case: TestCase) -> Dict[str, Any]:
+def _build_case_dict(case: TestCase, suffix: str = '') -> Dict[str, Any]:
     """Build the configuration dict for a single case."""
+    case_name = f"{case.name} [{suffix}]" if suffix else case.name
     case_dict = {
-        'name': case.name,
+        'name': case_name,
         'case_id': str(case.id),
         'steps': [],
     }
@@ -1492,6 +1495,7 @@ def _build_agent_configs(
     workers: int,
     cookies: Optional[List[Dict]] = None,
     accounts: Optional[List[Dict]] = None,
+    resolutions: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """Build webqa-agent config list grouped by login_required.
 
@@ -1536,47 +1540,71 @@ def _build_agent_configs(
         'language': 'zh-CN',
     }
 
-    # Build config for login-required cases (with cookies or accounts)
-    if login_cases:
-        browser_config_with_auth = {**base_browser_config}
-        if accounts:
-            logger.info(f'[Config] 需要登录的 cases 使用 accounts ({len(accounts)} 个账户)')
-        elif cookies:
-            browser_config_with_auth['cookies'] = cookies
-            logger.info('[Config] 需要登录的 cases 已添加 cookies')
-        else:
-            logger.warning(f'[Config] 有 {len(login_cases)} 个 case 需要登录，但环境未配置认证')
+    # Determine viewports to use
+    viewports = []
+    if resolutions:
+        for res in resolutions:
+            if not res or res == 'default':
+                viewports.append({'viewport': base_browser_config.get('viewport'), 'suffix': ''})
+            else:
+                try:
+                    w, h = map(int, res.split('x'))
+                    viewports.append({'width': w, 'height': h, 'suffix': res})
+                except Exception:
+                    logger.warning(f'[Config] Invalid resolution format: {res}')
+    if not viewports:
+        viewports.append({'viewport': base_browser_config.get('viewport'), 'suffix': ''})
 
-        config_with_auth = {
-            'target': {
-                'url': environment.url,
-                'max_concurrent_tests': workers,
-            },
-            'browser_config': browser_config_with_auth,
-            'cases': [_build_case_dict(c) for c in login_cases],
-        }
-        if accounts:
-            config_with_auth['accounts'] = accounts
-        if fixed_ignore_rules:
-            config_with_auth['ignore_rules'] = fixed_ignore_rules
-            logger.info(f'[Config] ignore_rules 已添加到配置: {fixed_ignore_rules}')
-        else:
-            logger.info('[Config] 没有配置 ignore_rules')
-        configs.append(config_with_auth)
+    for vp in viewports:
+        current_browser_config = {**base_browser_config}
+        if 'viewport' in vp and vp['viewport']:
+            current_browser_config['viewport'] = vp['viewport']
+        elif 'width' in vp and 'height' in vp:
+            current_browser_config['viewport'] = {'width': vp['width'], 'height': vp['height']}
+        
+        suffix = vp['suffix']
 
-    # Build config for cases that do not require login (no cookies)
-    if no_login_cases:
-        config_no_auth = {
-            'target': {
-                'url': environment.url,
-                'max_concurrent_tests': workers,
-            },
-            'browser_config': {**base_browser_config},  # no cookies
-            'cases': [_build_case_dict(c) for c in no_login_cases],
-        }
-        if fixed_ignore_rules:
-            config_no_auth['ignore_rules'] = fixed_ignore_rules
-        configs.append(config_no_auth)
-        logger.info('[Config] 不需要登录的 cases 配置完成（无 cookies）')
+        # Build config for login-required cases (with cookies or accounts)
+        if login_cases:
+            browser_config_with_auth = {**current_browser_config}
+            if accounts:
+                logger.info(f'[Config] 需要登录的 cases 使用 accounts ({len(accounts)} 个账户)')
+            elif cookies:
+                browser_config_with_auth['cookies'] = cookies
+                logger.info('[Config] 需要登录的 cases 已添加 cookies')
+            else:
+                logger.warning(f'[Config] 有 {len(login_cases)} 个 case 需要登录，但环境未配置认证')
+
+            config_with_auth = {
+                'target': {
+                    'url': environment.url,
+                    'max_concurrent_tests': workers,
+                },
+                'browser_config': browser_config_with_auth,
+                'cases': [_build_case_dict(c, suffix) for c in login_cases],
+            }
+            if accounts:
+                config_with_auth['accounts'] = accounts
+            if fixed_ignore_rules:
+                config_with_auth['ignore_rules'] = fixed_ignore_rules
+                logger.info(f'[Config] ignore_rules 已添加到配置: {fixed_ignore_rules}')
+            else:
+                logger.info('[Config] 没有配置 ignore_rules')
+            configs.append(config_with_auth)
+
+        # Build config for cases that do not require login (no cookies)
+        if no_login_cases:
+            config_no_auth = {
+                'target': {
+                    'url': environment.url,
+                    'max_concurrent_tests': workers,
+                },
+                'browser_config': {**current_browser_config},  # no cookies
+                'cases': [_build_case_dict(c, suffix) for c in no_login_cases],
+            }
+            if fixed_ignore_rules:
+                config_no_auth['ignore_rules'] = fixed_ignore_rules
+            configs.append(config_no_auth)
+            logger.info('[Config] 不需要登录的 cases 配置完成（无 cookies）')
 
     return configs

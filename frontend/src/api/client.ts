@@ -64,6 +64,7 @@ export interface Execution {
   scheduled_task_id?: string;
   model: string;
   workers: number;
+  resolutions?: string[];
   test_case_ids: string[];
   status: 'pending' | 'running' | 'passed' | 'failed' | 'warning' | 'timeout' | 'completed';
   oss_report_url?: string;
@@ -303,6 +304,7 @@ class APIClient {
     test_case_ids?: string[];
     model?: string;
     workers?: number;
+    resolutions?: string[];
     trigger_type?: 'manual' | 'debug' | 'gen';
     case_data?: Record<string, any>;
     gen_config?: {
@@ -433,6 +435,7 @@ class APIClient {
     test_case_ids: string[];
     model: string;
     workers: number;
+    resolutions?: string[];
     cron_expression: string;
     enabled: boolean;
     webhook_url?: string;
@@ -466,6 +469,7 @@ class APIClient {
     test_case_ids: string[];
     model: string;
     workers: number;
+    resolutions?: string[];
     cron_expression: string;
     enabled: boolean;
     webhook_url?: string;
@@ -484,6 +488,7 @@ class APIClient {
     test_case_ids?: string[];
     model?: string;
     workers?: number;
+    resolutions?: string[];
     cron_expression?: string;
     enabled?: boolean;
     webhook_url?: string | null;

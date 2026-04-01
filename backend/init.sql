@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS executions (
     scheduled_task_id UUID,
     model VARCHAR(100) NOT NULL,
     workers INTEGER DEFAULT 1 NOT NULL,
+    resolutions JSONB,
     test_case_ids JSONB DEFAULT '[]'::jsonb NOT NULL,
     status VARCHAR(20) DEFAULT 'pending' NOT NULL,
     oss_report_url VARCHAR(1000),
@@ -101,6 +102,7 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
     test_case_ids JSONB NOT NULL,
     model VARCHAR(100) NOT NULL,
     workers INTEGER NOT NULL DEFAULT 1,
+    resolutions JSONB,
     cron_expression VARCHAR(100) NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     webhook_url VARCHAR(500),
@@ -123,6 +125,6 @@ CREATE TABLE IF NOT EXISTS alembic_version (
     CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)
 );
 DELETE FROM alembic_version;
-INSERT INTO alembic_version (version_num) VALUES ('011_add_account_to_test_cases');
+INSERT INTO alembic_version (version_num) VALUES ('012_add_resolutions');
 
 COMMIT;

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Calendar, Trash2, Edit, Plus, Clock, CheckCircle2, XCircle, AlertCircle, Loader2, ChevronDown, ChevronUp, Play, RefreshCw } from 'lucide-react';
 import { apiClient } from '../api/client';
+import { ResolutionSelector } from './ResolutionSelector';
 
 export type ScheduledTask = {
   id: string;
@@ -13,6 +14,7 @@ export type ScheduledTask = {
   test_case_ids: string[];
   model: string;
   workers: number;
+  resolutions?: string[];
   cron_expression: string;
   enabled: boolean;
   webhook_url?: string;
@@ -94,6 +96,7 @@ export function ScheduledTaskManager({
     test_case_ids: [],
     model: availableModels.default,
     workers: 2,
+    resolutions: [],
     cron_expression: '0 8 * * *',
     enabled: true,
     webhook_url: '',
@@ -245,6 +248,7 @@ export function ScheduledTaskManager({
           test_case_ids: formData.test_case_ids,
           model: formData.model,
           workers: formData.workers,
+          resolutions: formData.resolutions,
           cron_expression: formData.cron_expression,
           enabled: formData.enabled,
           webhook_url: formData.webhook_url || null,
@@ -260,6 +264,7 @@ export function ScheduledTaskManager({
           test_case_ids: formData.test_case_ids!,
           model: formData.model!,
           workers: formData.workers!,
+          resolutions: formData.resolutions,
           cron_expression: formData.cron_expression!,
           enabled: formData.enabled!,
           webhook_url: formData.webhook_url || undefined,
@@ -286,6 +291,7 @@ export function ScheduledTaskManager({
       test_case_ids: [],
       model: availableModels.default,
       workers: 2,
+      resolutions: [],
       cron_expression: '0 8 * * *',
       enabled: true,
       webhook_url: '',
@@ -313,6 +319,7 @@ export function ScheduledTaskManager({
       test_case_ids: task.test_case_ids,
       model: task.model,
       workers: task.workers,
+      resolutions: task.resolutions || [],
       cron_expression: task.cron_expression,
       enabled: task.enabled,
       webhook_url: task.webhook_url || '',
@@ -734,6 +741,14 @@ export function ScheduledTaskManager({
                         <option key={n} value={n}>{n}</option>
                       ))}
                     </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-2 text-gray-700">分辨率 (多选)</label>
+                    <ResolutionSelector
+                      selectedResolutions={formData.resolutions || []}
+                      onChange={resolutions => setFormData({...formData, resolutions})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                    />
                   </div>
                 </div>
 

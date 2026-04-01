@@ -191,6 +191,7 @@ class TaskScheduler:
                     scheduled_task_id=task.id,
                     model=task.model,
                     workers=task.workers,
+                    resolutions=task.resolutions,
                     test_case_ids=[str(case_id) for case_id in task.test_case_ids],
                     status='pending',
                 )

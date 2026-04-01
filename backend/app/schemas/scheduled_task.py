@@ -15,6 +15,7 @@ class ScheduledTaskCreate(BaseModel):
     test_case_ids: List[UUID] = Field(..., min_length=1)
     model: str
     workers: int = Field(default=1, ge=1, le=5)
+    resolutions: Optional[List[str]] = None
     cron_expression: str = Field(..., min_length=1, max_length=100)
     enabled: bool = True
     webhook_url: Optional[str] = Field(None, max_length=500)
@@ -40,6 +41,7 @@ class ScheduledTaskUpdate(BaseModel):
     test_case_ids: Optional[List[UUID]] = Field(None, min_length=1)
     model: Optional[str] = None
     workers: Optional[int] = Field(None, ge=1, le=5)
+    resolutions: Optional[List[str]] = None
     cron_expression: Optional[str] = Field(None, min_length=1, max_length=100)
     enabled: Optional[bool] = None
     webhook_url: Optional[str] = Field(None, max_length=500)
@@ -72,6 +74,7 @@ class ScheduledTaskResponse(BaseModel):
     test_case_ids: List[str]
     model: str
     workers: int
+    resolutions: Optional[List[str]] = None
     cron_expression: str
     enabled: bool
     webhook_url: Optional[str] = None

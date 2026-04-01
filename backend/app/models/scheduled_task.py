@@ -48,6 +48,7 @@ class ScheduledTask(Base):
     # Execution configuration
     model: Mapped[str] = mapped_column(String(100), nullable=False)
     workers: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    resolutions: Mapped[Optional[List[str]]] = mapped_column(JSONB, nullable=True)
 
     # Cron configuration
     cron_expression: Mapped[str] = mapped_column(String(100), nullable=False)
