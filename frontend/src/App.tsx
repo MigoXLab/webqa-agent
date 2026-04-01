@@ -12,6 +12,20 @@ import { apiClient, Business as APIBusiness, Execution as APIExecution } from '.
 import { toFrontendTestCase } from './utils/testCaseUtils';
 
 // Re-export types for backward compatibility
+export type AccountEntry = {
+  id: string;           // Frontend-only key
+  name: string;
+  role?: string;
+  is_default: boolean;
+  // SSO fields
+  sso_username?: string;
+  sso_password?: string;
+  sso_env?: 'prod' | 'staging' | 'dev';
+  has_password?: boolean;  // Backend flag: password exists but not returned
+  // Cookies fields
+  cookies?: any[];
+};
+
 export type Environment = {
   id: string;
   name: string;
@@ -21,7 +35,7 @@ export type Environment = {
   sso_password?: string;
   sso_env?: 'prod' | 'staging' | 'dev';
   cookies?: any[];
-  accounts?: Array<{ id: string; name: string; cookies: any[] }>;
+  accounts?: AccountEntry[];
   ignore_rules?: {
     network?: Array<{ pattern: string; type: string }>;
     console?: Array<{ pattern: string; match_type: string }>;
@@ -149,6 +163,12 @@ function toFrontendBusiness(apiBusiness: APIBusiness): Business {
       accounts: (env.accounts || []).map((acc: any) => ({
         id: acc.id || crypto.randomUUID(),
         name: acc.name || '',
+        role: acc.role || undefined,
+        is_default: acc.is_default ?? false,
+        sso_username: acc.sso_username,
+        sso_password: acc.sso_password,
+        sso_env: acc.sso_env,
+        has_password: acc.has_password ?? false,
         cookies: acc.cookies || [],
       })),
       ignore_rules: env.ignore_rules || {},

@@ -104,7 +104,15 @@ class AccountConfig(BaseModel):
     @classmethod
     def from_raw(cls, raw: Dict[str, Any], config_dir: Optional[str] = None) -> 'AccountConfig':
         """Build an account config with config-dir-aware cookie resolution."""
-        return cls.model_validate(dict(raw), context={'config_dir': config_dir})
+        normalized = dict(raw)
+        if normalized.get('role') is None:
+            normalized['role'] = ''
+
+        legacy_default = normalized.pop('is_default', None)
+        if normalized.get('default') is None and legacy_default is not None:
+            normalized['default'] = bool(legacy_default)
+
+        return cls.model_validate(normalized, context={'config_dir': config_dir})
 
 
 class ReportConfig(BaseModel):
