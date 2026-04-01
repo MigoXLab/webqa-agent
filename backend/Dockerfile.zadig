@@ -1,4 +1,4 @@
-FROM eng-center-registry.cn-shanghai.cr.aliyuncs.com/qa/python:3.11-slim
+FROM acr-openxlab-prod-registry-vpc.cn-shanghai.cr.aliyuncs.com/public/python:3.11-slim
 
 WORKDIR /app
 
