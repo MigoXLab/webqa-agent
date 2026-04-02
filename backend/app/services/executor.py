@@ -27,6 +27,44 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 
 
+def _is_default_account(account: Dict[str, Any]) -> bool:
+    """Support both runtime and legacy account default flags."""
+    return bool(account.get('default', account.get('is_default', False)))
+
+
+def _resolve_sso_accounts(
+    accounts: List[Dict[str, Any]],
+    log_prefix: str,
+) -> List[Dict[str, Any]]:
+    """Generate cookies for SSO accounts and normalize them for run config."""
+    resolved_accounts: List[Dict[str, Any]] = []
+    for acc in accounts:
+        acc_env = acc.get('sso_env', 'prod') or 'prod'
+        acc_name = acc.get('name', '?')
+        acc_user = acc.get('sso_username', '?')
+        has_pwd = bool(acc.get('sso_password'))
+        logger.info(
+            f"[{log_prefix}] Generating cookies: account='{acc_name}', "
+            f"username='{acc_user}', env='{acc_env}', has_password={has_pwd}"
+        )
+        try:
+            _, acc_cookies = generate_sso_cookies(
+                acc['sso_username'], acc['sso_password'], acc_env,
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"账户 '{acc_name}' (username={acc_user}, sso_env={acc_env}) 登录失败: {e}"
+            ) from e
+        resolved_accounts.append({
+            'name': acc_name,
+            'role': acc.get('role') or '',
+            'default': acc.get('is_default', False),
+            'cookies': acc_cookies,
+        })
+
+    return resolved_accounts
+
+
 def _compute_k8s_resources(workers: int, business_id: Optional[UUID] = None) -> tuple[int, int]:
     """Calculate resource quotas for K8s Job.
 
@@ -645,6 +683,7 @@ def _build_cases_from_request(
             business_id=business_id,
             name=data.get('name', 'Draft Case'),
             login_required=data.get('login_required', False),
+            account=data.get('account'),
             steps=data.get('steps', []),
             snapshot=data.get('snapshot'),
             use_snapshot=data.get('use_snapshot'),
@@ -703,11 +742,15 @@ async def _prepare_run_config(
                 return None
 
             cookies, accounts = _resolve_auth(environment)
-            if cookies is None and accounts is None and environment.auth_type == 'sso':
+            if environment.auth_type == 'sso':
                 try:
-                    sso_env = getattr(environment, 'sso_env', 'prod') or 'prod'
-                    logger.info(f"[SSO] Environment ID: {environment.id}, sso_env from DB: '{environment.sso_env}', using: '{sso_env}'")
-                    _, cookies = generate_sso_cookies(environment.sso_username, environment.sso_password, sso_env)
+                    if accounts:
+                        accounts = _resolve_sso_accounts(accounts, 'SSO')
+                    elif environment.sso_username:
+                        # Legacy single SSO account fallback
+                        sso_env = getattr(environment, 'sso_env', 'prod') or 'prod'
+                        logger.info(f"[SSO] Environment ID: {environment.id}, sso_env from DB: '{environment.sso_env}', using: '{sso_env}'")
+                        _, cookies = generate_sso_cookies(environment.sso_username, environment.sso_password, sso_env)
                 except Exception as e:
                     execution.status = 'failed'
                     execution.error_message = f'SSO 认证失败: {e}'
@@ -983,9 +1026,13 @@ async def _create_k8s_job(
 
     # Fetch auth cookies/accounts
     cookies, accounts = _resolve_auth(environment)
-    if cookies is None and accounts is None and environment.auth_type == 'sso' and environment.sso_username:
-        sso_env = getattr(environment, 'sso_env', 'prod') or 'prod'
-        _, cookies = generate_sso_cookies(environment.sso_username, environment.sso_password, sso_env)
+    if environment.auth_type == 'sso':
+        if accounts:
+            accounts = _resolve_sso_accounts(accounts, 'SSO/K8s')
+        elif environment.sso_username:
+            # Legacy single SSO account fallback
+            sso_env = getattr(environment, 'sso_env', 'prod') or 'prod'
+            _, cookies = generate_sso_cookies(environment.sso_username, environment.sso_password, sso_env)
 
     # Build configs grouped by login_required
     configs = _build_agent_configs(environment, test_cases, workers, cookies, accounts, resolutions)
@@ -1418,7 +1465,11 @@ async def _fetch_execution_data(
     return environment, test_cases, None
 
 
-def _build_case_dict(case: TestCase, suffix: str = '') -> Dict[str, Any]:
+def _build_case_dict(
+    case: TestCase,
+    suffix: str = '',
+    default_account: Optional[str] = None,
+) -> Dict[str, Any]:
     """Build the configuration dict for a single case."""
     case_name = f"{case.name} [{suffix}]" if suffix else case.name
     case_dict = {
@@ -1427,8 +1478,9 @@ def _build_case_dict(case: TestCase, suffix: str = '') -> Dict[str, Any]:
         'steps': [],
     }
 
-    if case.account:
-        case_dict['account'] = case.account
+    account = case.account or default_account
+    if account:
+        case_dict['account'] = account
 
     for step in case.steps:
         step_dict = {}
@@ -1477,15 +1529,18 @@ def _resolve_auth(
 
     Returns:
         (cookies, accounts) — accounts takes priority over cookies.
+        For SSO with accounts, returns raw SSO credentials (caller generates cookies).
+        For SSO without accounts, returns (None, None) and caller uses legacy sso_username.
     """
-    if environment.auth_type == 'cookies':
-        if environment.accounts:
-            return None, environment.accounts
-        if environment.cookies:
-            return environment.cookies, None
-    elif environment.auth_type == 'sso' and environment.sso_username:
-        # SSO cookies are generated by the caller
+    if environment.auth_type == 'none':
         return None, None
+    if environment.accounts:
+        # New multi-account path (both SSO and cookies)
+        return None, environment.accounts
+    if environment.auth_type == 'cookies' and environment.cookies:
+        # Legacy cookies fallback
+        return environment.cookies, None
+    # SSO legacy path or no auth: caller handles sso_username directly
     return None, None
 
 
@@ -1512,6 +1567,15 @@ def _build_agent_configs(
     logger.info(f'[Config] Cases 分组: 需要登录={len(login_cases)}, 不需要登录={len(no_login_cases)}')
 
     configs = []
+
+    # Determine default account name from accounts list
+    default_account: Optional[str] = None
+    if accounts:
+        default_acc = next((a for a in accounts if _is_default_account(a)), None)
+        if default_acc:
+            default_account = default_acc.get('name')
+        elif accounts:
+            default_account = accounts[0].get('name')
 
     # Fix escaping in ignore_rules (JSON may turn \ into \\)
     def _fix_ignore_rules_escaping(rules: dict) -> dict:
@@ -1581,7 +1645,7 @@ def _build_agent_configs(
                     'max_concurrent_tests': workers,
                 },
                 'browser_config': browser_config_with_auth,
-                'cases': [_build_case_dict(c, suffix) for c in login_cases],
+                'cases': [_build_case_dict(c, suffix, default_account) for c in login_cases],
             }
             if accounts:
                 config_with_auth['accounts'] = accounts
@@ -1600,7 +1664,7 @@ def _build_agent_configs(
                     'max_concurrent_tests': workers,
                 },
                 'browser_config': {**current_browser_config},  # no cookies
-                'cases': [_build_case_dict(c, suffix) for c in no_login_cases],
+                'cases': [_build_case_dict(c, suffix, default_account) for c in no_login_cases],
             }
             if fixed_ignore_rules:
                 config_no_auth['ignore_rules'] = fixed_ignore_rules

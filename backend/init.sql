@@ -125,6 +125,6 @@ CREATE TABLE IF NOT EXISTS alembic_version (
     CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)
 );
 DELETE FROM alembic_version;
-INSERT INTO alembic_version (version_num) VALUES ('012_add_resolutions');
+INSERT INTO alembic_version (version_num) VALUES ('013_unify_accounts_format');
 
 COMMIT;

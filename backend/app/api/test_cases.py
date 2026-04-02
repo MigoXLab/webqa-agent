@@ -120,26 +120,26 @@ async def update_test_case(
             detail={'code': 2003, 'message': '用例不存在'}
         )
 
-    # Update fields
-    if data.name is not None:
+    # Update fields. Nullable fields must support explicit clearing.
+    if 'name' in data.model_fields_set and data.name is not None:
         test_case.name = data.name
-    if data.description is not None:
+    if 'description' in data.model_fields_set:
         test_case.description = data.description
-    if data.login_required is not None:
+    if 'login_required' in data.model_fields_set and data.login_required is not None:
         test_case.login_required = data.login_required
-    if data.account is not None:
+    if 'account' in data.model_fields_set:
         test_case.account = data.account
-    if data.steps is not None:
+    if 'steps' in data.model_fields_set and data.steps is not None:
         test_case.steps = _convert_steps_to_dict(data.steps)
-    if data.version is not None:
+    if 'version' in data.model_fields_set:
         test_case.version = data.version
-    if data.snapshot is not None:
+    if 'snapshot' in data.model_fields_set:
         test_case.snapshot = data.snapshot
-    if data.use_snapshot is not None:
+    if 'use_snapshot' in data.model_fields_set:
         test_case.use_snapshot = data.use_snapshot
-    if data.status is not None:
+    if 'status' in data.model_fields_set and data.status is not None:
         test_case.status = data.status
-    if data.sort_order is not None:
+    if 'sort_order' in data.model_fields_set and data.sort_order is not None:
         test_case.sort_order = data.sort_order
 
     await db.commit()

@@ -359,7 +359,7 @@ export function CaseEditorPage() {
           name: dataToSave.name,
           description: dataToSave.description,
           login_required: dataToSave.login_required,
-          account: dataToSave.account,
+          account: dataToSave.account ?? null,
           version: dataToSave.version,
           snapshot: dataToSave.snapshot,
           use_snapshot: dataToSave.use_snapshot,
@@ -550,6 +550,7 @@ export function CaseEditorPage() {
           [effectiveCaseId]: {
             login_required: dataToUse.login_required ?? false,
             name: dataToUse.name,
+            account: dataToUse.account || undefined,
             steps,
             snapshot: dataToUse.snapshot || undefined,
             use_snapshot: dataToUse.use_snapshot || undefined,
