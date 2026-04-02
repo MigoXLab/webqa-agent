@@ -45,7 +45,7 @@ build-backend:
     #     - webqa_agent/**/*
     #   when: on_success
     # 支持手动触发
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH =~ /^dev_.*$/'
+    - if: '$CI_COMMIT_BRANCH =~ /^release.*$/'
       when: manual
       allow_failure: true
 
@@ -73,7 +73,7 @@ build-frontend:
     #     - frontend/**/*
     #   when: on_success
     # 支持手动触发
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH =~ /^dev_.*$/'
+    - if: '$CI_COMMIT_BRANCH =~ /^release.*$/'
       when: manual
       allow_failure: true
 
@@ -97,7 +97,7 @@ build-agent:
     - docker rmi $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:$CI_COMMIT_SHORT_SHA $harbor_url_prod_vpc/$PROJECT/$SERVICE_NAME_AGENT:latest
   rules:
     # 支持手动触发
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev" || $CI_COMMIT_BRANCH =~ /^dev_.*$/'
+    - if: '$CI_COMMIT_BRANCH =~ /^release.*$/'
       when: manual
       allow_failure: true
 
@@ -174,7 +174,11 @@ deploy-be-prod:
     # 重启 Backend Pod 以加载最新 ConfigMap (如果有变化)
     # - kubectl --kubeconfig "$kubeconfig_prod_public_webqa" rollout restart deployment/webqa-be -n cloud-staging
     - echo "Backend successfully deployed."
-  when: manual
+  rules:
+    # 支持手动触发
+    - if: '$CI_COMMIT_BRANCH =~ /^release.*$/'
+      when: manual
+      allow_failure: true
 
 deploy-fe-prod:
   stage: deploy
@@ -192,7 +196,11 @@ deploy-fe-prod:
     # - cd ../network
     # - kubectl --kubeconfig "$kubeconfig_prod_public_webqa" apply -f ingress.yaml
     - echo "Frontend successfully deployed."
-  when: manual
+  rules:
+    # 支持手动触发
+    - if: '$CI_COMMIT_BRANCH =~ /^release.*$/'
+      when: manual
+      allow_failure: true
 
 # --- PR Agent Stage ---
 
