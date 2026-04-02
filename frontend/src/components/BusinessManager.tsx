@@ -56,8 +56,16 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
   const [editingBusiness, setEditingBusiness] = useState<Business | null>(
     initialEditId ? businesses.find(b => b.id === initialEditId) || null : null
   );
-  // Track which env sections are collapsed (default: all expanded)
-  const [collapsedEnvSections, setCollapsedEnvSections] = useState<Record<string, Record<string, boolean>>>({});
+  // Track which env sections are collapsed; auto-expand auth when already configured
+  const [collapsedEnvSections, setCollapsedEnvSections] = useState<Record<string, Record<string, boolean>>>(() => {
+    const initial: Record<string, Record<string, boolean>> = {};
+    for (const env of editingBusiness?.environments ?? []) {
+      if (env.auth_type && env.auth_type !== 'none') {
+        initial[env.id] = { auth: false };
+      }
+    }
+    return initial;
+  });
   // Cache accounts per env per auth_type so switching doesn't lose data
   const accountsCacheRef = React.useRef<Record<string, { sso?: AccountEntry[]; cookies?: AccountEntry[] }>>({});
   const [saving, setSaving] = useState(false);
@@ -137,45 +145,57 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
     setSaving(true);
 
     try {
+      const envPayload = (env: Environment) => ({
+        id: env.id,
+        name: env.name,
+        url: env.url,
+        auth_type: env.auth_type || 'none',
+        sso_username: env.sso_username,
+        sso_password: env.sso_password,
+        sso_env: env.sso_env || 'prod',
+        cookies: env.cookies,
+        accounts: env.accounts?.map(({ name, role, is_default, sso_username, sso_password, sso_env, cookies }) => ({
+          name, role, is_default, sso_username, sso_password, sso_env, cookies,
+        })),
+        browser_config: env.browser_config,
+        ignore_rules: env.ignore_rules,
+      });
+
+      let savedBusiness: any;
       if (editingBusiness) {
-        // Update existing business
-        await apiClient.updateBusiness(editingBusiness.id, {
+        savedBusiness = await apiClient.updateBusiness(editingBusiness.id, {
           name: formData.name,
-          environments: formData.environments.map(env => ({
-            id: env.id,
-            name: env.name,
-            url: env.url,
-            auth_type: env.auth_type || 'none',
-            sso_username: env.sso_username,
-            sso_password: env.sso_password,
-            sso_env: env.sso_env || 'prod',
-            cookies: env.cookies,
-            accounts: env.accounts?.map(({ name, role, is_default, sso_username, sso_password, sso_env, cookies }) => ({
-              name, role, is_default, sso_username, sso_password, sso_env, cookies,
-            })),
-            browser_config: env.browser_config,
-            ignore_rules: env.ignore_rules,
-          })),
+          environments: formData.environments.map(envPayload),
         });
       } else {
-        // Create new business
-        await apiClient.createBusiness({
+        savedBusiness = await apiClient.createBusiness({
           name: formData.name,
-          environments: formData.environments.map(env => ({
-            name: env.name,
-            url: env.url,
-            auth_type: env.auth_type || 'none',
-            sso_username: env.sso_username,
-            sso_password: env.sso_password,
-            sso_env: env.sso_env || 'prod',
-            cookies: env.cookies,
-            accounts: env.accounts?.map(({ name, role, is_default, sso_username, sso_password, sso_env, cookies }) => ({
-              name, role, is_default, sso_username, sso_password, sso_env, cookies,
-            })),
-            browser_config: env.browser_config,
-            ignore_rules: env.ignore_rules,
-          })),
+          environments: formData.environments.map(env => ({ ...envPayload(env), id: undefined })),
         });
+      }
+
+      // Sync formData accounts from server response (has_password etc.)
+      if (savedBusiness?.environments) {
+        setFormData(prev => ({
+          ...prev,
+          environments: prev.environments.map(prevEnv => {
+            const serverEnv = (savedBusiness.environments as any[]).find((e: any) => e.id === prevEnv.id);
+            if (!serverEnv?.accounts?.length) return prevEnv;
+            return {
+              ...prevEnv,
+              accounts: serverEnv.accounts.map((acc: any) => ({
+                id: crypto.randomUUID(),
+                name: acc.name || '',
+                role: acc.role ?? undefined,
+                is_default: acc.is_default ?? false,
+                sso_username: acc.sso_username,
+                sso_env: acc.sso_env,
+                has_password: acc.has_password ?? false,
+                cookies: acc.cookies || [],
+              })),
+            };
+          }),
+        }));
       }
 
       // Trigger parent to reload
