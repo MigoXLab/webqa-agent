@@ -155,7 +155,10 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
         sso_env: env.sso_env || 'prod',
         cookies: env.cookies,
         accounts: env.accounts?.map(({ name, role, is_default, sso_username, sso_password, sso_env, cookies }) => ({
-          name, role, is_default, sso_username, sso_password, sso_env, cookies,
+          name, role, is_default,
+          ...(env.auth_type === 'sso'
+            ? { sso_username, sso_password, sso_env }
+            : { cookies }),
         })),
         browser_config: env.browser_config,
         ignore_rules: env.ignore_rules,

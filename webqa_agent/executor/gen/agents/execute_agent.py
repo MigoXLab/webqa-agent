@@ -799,6 +799,9 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         # The agent's history includes all prior messages
         current_messages = messages + [step_message]
 
+        logging.debug(
+            f'Step message-{i} : {step_message}\n===============\n\n===============\n\nstep-content: {step_content}\n\n===============\n\ncurrent_messages: {current_messages}')
+
         # --- History Pruning for Token Optimization ---
         # Keep the full text history but only the most recent image to save tokens.
         pruned_messages = []
