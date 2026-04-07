@@ -2,7 +2,7 @@
 
 import logging
 import os
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -60,6 +60,11 @@ class GenConfig(BaseModel):
     )
 
     # Test configuration (flattened from FunctionTestConfig)
+    planning_mode: Literal['explore', 'focused'] = Field(
+        default='explore',
+        description='Planning mode: "explore" for broad coverage (default), '
+                    '"focused" for deep end-to-end scenario testing',
+    )
     business_objectives: str = Field(
         default='', description='Business objectives for test generation (optional)'
     )

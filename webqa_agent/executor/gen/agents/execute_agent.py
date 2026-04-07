@@ -152,6 +152,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     original_planned_steps = copy.deepcopy(case.get('steps', []))
 
     language = state.get('language', 'zh-CN')
+    planning_mode = state.get('planning_mode', 'explore')
     case_objective = case.get('objective', case_name)
     system_prompt_string = get_execute_system_prompt(
         case,
@@ -1206,6 +1207,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 current_case=case,
                                 screenshot=recovery_screenshot,
                                 report_dir=report_dir,
+                                planning_mode=planning_mode,
                             )
 
                             strategy = recovery_result.get('strategy')
@@ -1353,6 +1355,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                     current_case=case,  # Include current_case for context
                                     screenshot=screenshot_b64,
                                     report_dir=report_dir,
+                                    planning_mode=planning_mode,
                                 )
 
                                 # Process recovery strategy
@@ -1582,6 +1585,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 tool_output=tool_output,
                                 step_success=step_success,
                                 report_dir=report_dir,
+                                planning_mode=planning_mode,
+                                original_planned_steps=original_planned_steps,
                             )
 
                             # Handle dynamic steps based on LLM strategy decision

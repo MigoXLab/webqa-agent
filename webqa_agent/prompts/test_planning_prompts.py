@@ -2009,6 +2009,40 @@ Skip generation when new elements are:
 - Background UI updates not affecting current flow
 - System-level changes outside test scope
 
+## Interaction Continuity Principle
+
+**CRITICAL**: When the previous action DIRECTLY TRIGGERED the appearance of new
+UI elements (opened a context menu, displayed a modal, expanded a dropdown,
+revealed a panel), follow these rules:
+
+### Rule 1: Triggered Elements Have Priority
+New elements that appeared AS A RESULT of the previous action are NOT
+side effects — they are the PURPOSE of that action. Your generated steps
+should interact with these elements FIRST.
+
+- ✅ Previous action opened a context menu → Generate steps to click menu options
+- ✅ Previous action triggered a modal → Generate steps to fill and submit the form
+- ✅ Previous action expanded a dropdown → Generate steps to select options
+- ❌ Previous action opened a context menu → Skip menu and navigate to another page
+- ❌ Previous action triggered a modal → Ignore modal and click buttons behind it
+
+### Rule 2: Overlay Context Lock
+While ephemeral overlays (context menus, dropdown lists, modal dialogs,
+popover panels) are VISIBLE and ACTIVE, do NOT generate steps that:
+- Navigate to a different page or section
+- Click elements on the underlying page (behind the overlay)
+- Perform operations unrelated to the overlay content
+
+First COMPLETE or DISMISS the overlay, then proceed with other operations.
+
+### Rule 3: Action-Intent Alignment
+Infer WHY the previous action was performed based on the test objective
+and remaining steps. Generate steps that fulfill that intent:
+- If test objective mentions "rename" and a context menu appeared with "Edit" →
+  the intent was to access the edit function
+- If test objective mentions "filter" and a dropdown appeared →
+  the intent was to select filter options
+
 ## State-Aware Step Generation Guidelines
 
 ### For Ephemeral Elements (Dropdowns, Modals, Tooltips)
@@ -2418,6 +2452,47 @@ Skip generation when new elements are:
   ]
 }
 ```
+
+### Example 12: Context Menu — Interaction Continuity (DO vs DON'T)
+**Test Objective**: "Test folder rename functionality"
+**Previous Action**: "Clicked more-options button (ellipsis) for folder 'Documents'"
+**New Elements**: Context menu with "Edit" and "Delete" options
+
+✅ **CORRECT** — Interact with the triggered context menu first:
+```json
+{
+  "state_analysis": {
+    "element_persistence": "ephemeral",
+    "access_requirements": "Context menu closes on click outside or after selection",
+    "state_dependencies": "Menu options trigger edit/delete workflows"
+  },
+  "analysis": {
+    "q1_can_complete_alone": false,
+    "q2_different_aspects": true,
+    "q3_remaining_redundant": false,
+    "q4_abstraction_gap": true
+  },
+  "strategy": "insert",
+  "reason": "QAG: Q4=Yes (context menu reveals concrete edit/delete options for the abstract rename step). Interaction Continuity: The context menu appeared because the user clicked the more-options button — the intent was to access the Edit function for renaming. Must interact with the menu first.",
+  "steps": [
+    {"action": "Click the 'Edit' option in the context menu to open the rename dialog"},
+    {"verify": "Verify the rename/edit dialog appears with the current folder name"}
+  ]
+}
+```
+
+❌ **WRONG** — Violates Interaction Continuity by skipping the triggered menu:
+```json
+{
+  "reason": "Context menu appeared as side effect, verify and move on",
+  "steps": [
+    {"verify": "Verify context menu is visible with Edit and Delete options"},
+    {"action": "Navigate to the Member Management page"}
+  ]
+}
+```
+This is wrong because it treats the triggered context menu as a side effect
+and jumps to an unrelated page while the menu is still open.
 
 ## Generation Guidelines
 

@@ -1,5 +1,5 @@
 import operator
-from typing import Annotated, Any, List, Optional
+from typing import Annotated, Any, List, Literal, Optional
 
 from typing_extensions import TypedDict
 
@@ -21,6 +21,8 @@ class MainGraphState(TypedDict):
     # Control flags
     generate_only: bool
     skip_reflection: bool
+    planning_mode: Optional[Literal['explore', 'focused']]
+    max_replan_count: Optional[int]
     dynamic_step_generation: dict
     enabled_custom_tools: Optional[List[str]]  # List of enabled custom tool step_types
 

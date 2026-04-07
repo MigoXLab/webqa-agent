@@ -228,6 +228,7 @@ async def run_tests(cfg, execution_mode, config_path: str = None, workers: int =
         print('🎯 Mode: Gen Mode (AI-driven test generation)')
         await execute_gen_mode(cfg, config_path=config_path, workers=workers)
 
+
 async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1):
     """Execute Gen mode tests using GenConfig and GenExecutor."""
     # Get config sections
@@ -307,6 +308,7 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
     )
 
     # Build test configuration
+    planning_mode = tconf.get('planning_mode', 'explore')
     business_objectives = tconf.get('business_objectives', '')
 
     dynamic_step_cfg = tconf.get('dynamic_step_generation', {})
@@ -334,6 +336,7 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
         browser_config=browser_config,
         report_config=report_config,
         log_config=log_config,
+        planning_mode=planning_mode,
         business_objectives=business_objectives,
         dynamic_step_generation=dynamic_step_config,
         custom_tools=custom_tools_config,

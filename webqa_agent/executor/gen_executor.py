@@ -305,6 +305,8 @@ class GenExecutor:
             # Control flags
             'generate_only': False,
             'skip_reflection': self.config.skip_reflection,
+            'planning_mode': self.config.planning_mode,
+            'max_replan_count': 1 if self.config.planning_mode == 'focused' else 3,
 
             # Feature configuration
             'dynamic_step_generation': self.config.dynamic_step_generation.model_dump(),
