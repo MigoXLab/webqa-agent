@@ -21,6 +21,8 @@ from webqa_agent.browser import AccountPool, BrowserSession, BrowserSessionPool
 from webqa_agent.data import (CaseStep, StepContext, SubTestResult,
                               SubTestScreenshot, SubTestStep,
                               TestConfiguration, TestStatus)
+from webqa_agent.executor.gen.utils.error_classifier import \
+    _SYSTEM_ERROR_PATTERNS
 from webqa_agent.llm.llm_api import (get_llm_duration_stats, get_llm_io_log,
                                      reset_llm_duration_stats,
                                      reset_llm_io_log)
@@ -1097,14 +1099,15 @@ class CaseRunner:
         case_status: TestStatus,
         monitoring_data: Dict[str, Any],
         error_messages: List[str],
-        ignore_rules: Optional[Dict[str, Any]] = None
+        ignore_rules: Optional[Dict[str, Any]] = None,
+        executed_steps: Optional[List[SubTestStep]] = None,
     ) -> Tuple[TestStatus, List[str], Dict[str, Any], Dict[str, int]]:
-        """Check console and network errors from monitoring data.
+        """Check console, network, and system-level errors from monitoring data.
 
         Logic:
-        - Case status is primarily based on step execution
+        - System-level step failures (LLM API, screenshot, etc.) are downgraded to WARNING
         - Console/network errors downgrade PASSED to WARNING
-        - FAILED from steps is not overridden
+        - Product-defect FAILED from steps is not overridden
 
         Args:
             case_name: Name of the case (for logging)
@@ -1112,6 +1115,7 @@ class CaseRunner:
             monitoring_data: Monitoring data from tester
             error_messages: List of error messages to append to
             ignore_rules: Optional case-specific ignore rules
+            executed_steps: Optional list of executed steps for system error reclassification
 
         Returns:
             Tuple of (updated_case_status, updated_error_messages, messages_data, error_counts)
@@ -1145,7 +1149,25 @@ class CaseRunner:
             'failed_request_count': failed_request_count,
         }
 
-        # Do not override step failures; still record counts for reporting
+        # ========== 0. Reclassify system-level step failures as WARNING ==========
+        # System errors (LLM API timeout/rate-limit, screenshot failures, etc.) are infrastructure issues, not product defects.
+        if case_status == TestStatus.FAILED and executed_steps:
+            all_failed_are_system = True
+            for step in executed_steps:
+                if step.status == TestStatus.FAILED:
+                    error_text = (step.errors or '').lower()
+                    if not any(p in error_text for p in _SYSTEM_ERROR_PATTERNS):
+                        all_failed_are_system = False
+                        break
+            if all_failed_are_system:
+                for step in executed_steps:
+                    if step.status == TestStatus.FAILED:
+                        step.status = TestStatus.WARNING
+                        error_messages.append(f'Step {step.id} system error downgraded to warning: {step.errors}')
+                        logging.warning(f'{case_name} step {step.id} system error downgraded to WARNING: {step.errors}')
+                case_status = TestStatus.WARNING
+
+        # Do not override product-defect step failures; still record counts for reporting
         if case_status == TestStatus.FAILED:
             return case_status, error_messages, messages_data, error_counts
 
@@ -1231,7 +1253,8 @@ class CaseRunner:
             case_status=case_status,
             monitoring_data=monitoring_data,
             error_messages=error_messages,
-            ignore_rules=ignore_rules
+            ignore_rules=ignore_rules,
+            executed_steps=executed_steps,
         )
 
         if error_messages:
