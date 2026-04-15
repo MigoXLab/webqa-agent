@@ -18,8 +18,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from webqa_agent.actions.action_handler import screenshot_prefix_var
 from webqa_agent.browser import AccountPool, BrowserSession, BrowserSessionPool
-from webqa_agent.data import (CaseStep, StepContext, SubTestResult,
-                              SubTestScreenshot, SubTestStep,
+from webqa_agent.data import (CaseStep, StepContext, SubTestReport,
+                              SubTestResult, SubTestScreenshot, SubTestStep,
                               TestConfiguration, TestStatus)
 from webqa_agent.executor.gen.utils.error_classifier import \
     _SYSTEM_ERROR_PATTERNS
@@ -178,40 +178,42 @@ class CaseRunner:
 
             except asyncio.TimeoutError:
                 logging.error(f"Fixture case '{case_name}' timed out after {case_timeout}s")
+                case_result = SubTestResult(
+                    sub_test_id=case_id,
+                    name=case_name,
+                    status=TestStatus.WARNING,
+                    metrics={'total_steps': 0, 'passed_steps': 0, 'failed_steps': 0},
+                    steps=[],
+                    messages={},
+                    start_time=datetime.now().isoformat(),
+                    end_time=datetime.now().isoformat(),
+                    final_summary=f'Case timed out after {case_timeout} seconds',
+                    report=self._make_error_report('timeout_title', 'timeout_issues', timeout=case_timeout),
+                )
                 async with results_lock:
                     completed_count += 1
-                    results.append(SubTestResult(
-                        sub_test_id=case_id,
-                        name=case_name,
-                        status=TestStatus.FAILED,
-                        metrics={'total_steps': 0, 'passed_steps': 0, 'failed_steps': 0},
-                        steps=[],
-                        messages={},
-                        start_time=datetime.now().isoformat(),
-                        end_time=datetime.now().isoformat(),
-                        final_summary=f'Case timed out after {case_timeout} seconds',
-                        report=[],
-                    ))
+                    results.append(case_result)
                 if session:
                     await session_pool.release(session, failed=True)
                     session = None
 
             except Exception as e:
                 logging.error(f"Exception in fixture case '{case_name}': {e}", exc_info=True)
+                case_result = SubTestResult(
+                    sub_test_id=case_id,
+                    name=case_name,
+                    status=TestStatus.WARNING,
+                    metrics={'total_steps': 0, 'passed_steps': 0, 'failed_steps': 0},
+                    steps=[],
+                    messages={},
+                    start_time=datetime.now().isoformat(),
+                    end_time=datetime.now().isoformat(),
+                    final_summary=f'Exception: {str(e)}',
+                    report=self._make_error_report('exception_title', 'exception_issues', error=str(e)),
+                )
                 async with results_lock:
                     completed_count += 1
-                    results.append(SubTestResult(
-                        sub_test_id=case_id,
-                        name=case_name,
-                        status=TestStatus.FAILED,
-                        metrics={'total_steps': 0, 'passed_steps': 0, 'failed_steps': 0},
-                        steps=[],
-                        messages={},
-                        start_time=datetime.now().isoformat(),
-                        end_time=datetime.now().isoformat(),
-                        final_summary=f'Exception: {str(e)}',
-                        report=[],
-                    ))
+                    results.append(case_result)
 
             finally:
                 # Reset test_id context
@@ -307,21 +309,21 @@ class CaseRunner:
 
                 except asyncio.TimeoutError:
                     logging.error(f"Worker {worker_id}: Case '{case_name}' timed out after {case_timeout}s")
+                    case_result = SubTestResult(
+                        sub_test_id=case_id,
+                        name=case_name,
+                        status=TestStatus.WARNING,
+                        metrics={'total_steps': 0, 'passed_steps': 0, 'failed_steps': 0},
+                        steps=[],
+                        messages={},
+                        start_time=datetime.now().isoformat(),
+                        end_time=datetime.now().isoformat(),
+                        final_summary=f'Case timed out after {case_timeout} seconds',
+                        report=self._make_error_report('timeout_title', 'timeout_issues', timeout=case_timeout),
+                    )
                     async with results_lock:
                         completed_count += 1
-                        results.append(SubTestResult(
-                            sub_test_id=case_id,
-                            name=case_name,
-                            status=TestStatus.FAILED,
-                            metrics={'total_steps': 0, 'passed_steps': 0, 'failed_steps': 0},
-                            steps=[],
-                            messages={},
-                            start_time=datetime.now().isoformat(),
-                            end_time=datetime.now().isoformat(),
-                            final_summary=f'Case timed out after {case_timeout} seconds',
-                            report=[],
-                        ))
-                    case_result = None
+                        results.append(case_result)
                     raw_monitoring_data = None
                     if session:
                         await session_pool.release(session, failed=True, keep_alive=False)
@@ -330,21 +332,21 @@ class CaseRunner:
 
                 except Exception as e:
                     logging.error(f"Worker {worker_id}: Exception in '{case_name}': {e}", exc_info=True)
+                    case_result = SubTestResult(
+                        sub_test_id=case_id,
+                        name=case_name,
+                        status=TestStatus.WARNING,
+                        metrics={'total_steps': 0, 'passed_steps': 0, 'failed_steps': 0},
+                        steps=[],
+                        messages={},
+                        start_time=datetime.now().isoformat(),
+                        end_time=datetime.now().isoformat(),
+                        final_summary=f'Exception: {str(e)}',
+                        report=self._make_error_report('exception_title', 'exception_issues', error=str(e)),
+                    )
                     async with results_lock:
                         completed_count += 1
-                        results.append(SubTestResult(
-                            sub_test_id=case_id,
-                            name=case_name,
-                            status=TestStatus.FAILED,
-                            metrics={'total_steps': 0, 'passed_steps': 0, 'failed_steps': 0},
-                            steps=[],
-                            messages={},
-                            start_time=datetime.now().isoformat(),
-                            end_time=datetime.now().isoformat(),
-                            final_summary=f'Exception: {str(e)}',
-                            report=[],
-                        ))
-                    case_result = None
+                        results.append(case_result)
                     raw_monitoring_data = None
                     if session:
                         await session_pool.release(session, failed=True, keep_alive=False)
@@ -538,6 +540,13 @@ class CaseRunner:
     # ========================================================================
     # Private Methods - Tester Lifecycle
     # ========================================================================
+
+    def _make_error_report(self, title_key: str, issues_key: str, **kwargs) -> List[SubTestReport]:
+        lang = self.report_config.get('language', 'zh-CN') if self.report_config else 'zh-CN'
+        title = i18n.t(lang, f'tools.run_mode.{title_key}', title_key)
+        issues_tpl = i18n.t(lang, f'tools.run_mode.{issues_key}', issues_key)
+        issues = issues_tpl.format(**kwargs)
+        return [SubTestReport(title=title, issues=issues)]
 
     def _get_snapshot_dir(self) -> str:
         """Get snapshot base directory within report directory.

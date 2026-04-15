@@ -112,7 +112,11 @@
     },
     "run_mode": {
       "display_text": "Run Mode",
-      "test_name": "Run Mode"
+      "test_name": "Run Mode",
+      "timeout_title": "Execution Timeout",
+      "timeout_issues": "Case execution exceeded {timeout}s limit and was forcibly terminated",
+      "exception_title": "Execution Error",
+      "exception_issues": "{error}"
     }
   },
   "common": {

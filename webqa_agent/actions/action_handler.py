@@ -237,7 +237,7 @@ class ActionHandler:
         try:
             # networkidle is often blocked by long-polling or analytics in clusters.
             # We use a short timeout so we don't stall the tests unnecessarily.
-            await self.page.wait_for_load_state('networkidle', timeout=3000)
+            await self.page.wait_for_load_state('networkidle', timeout=5000)
         except Exception as e:
             logging.warning(f'Wait for networkidle timed out: {e}. Proceeding since domcontentloaded is complete.')
 
