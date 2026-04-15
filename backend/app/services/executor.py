@@ -32,6 +32,36 @@ def _is_default_account(account: Dict[str, Any]) -> bool:
     return bool(account.get('default', account.get('is_default', False)))
 
 
+def _resolve_planning_mode(gen_config_dict: Dict[str, Any], log_prefix: str) -> None:
+    """Auto-resolve planning_mode based on user's original business objective
+    input.
+
+    Uses `_display_objectives` (the raw user input preserved by the frontend)
+    rather than `business_objectives` (which may contain auto-injected instructions
+    from the test items panel) to determine the user's actual intent:
+    - User provided an explicit objective -> focused mode
+    - User left it blank -> explore mode
+
+    An explicit `planning_mode` in gen_config_dict always takes priority and is
+    preserved as-is. The `_display_objectives` marker field is removed after use.
+
+    Args:
+        gen_config_dict: Gen mode config dictionary, modified in-place.
+        log_prefix: Log prefix for tracing (e.g., '[Gen]', '[Gen K8s]').
+    """
+    if gen_config_dict.get('planning_mode'):
+        gen_config_dict.pop('_display_objectives', None)
+        return
+
+    display_obj = (gen_config_dict.get('_display_objectives') or '').strip()
+    gen_config_dict['planning_mode'] = 'focused' if display_obj else 'explore'
+    gen_config_dict.pop('_display_objectives', None)
+    logger.info(
+        f"{log_prefix} Auto-resolved planning_mode='{gen_config_dict['planning_mode']}' "
+        f'(user_objective_provided={bool(display_obj)})'
+    )
+
+
 def _resolve_sso_accounts(
     accounts: List[Dict[str, Any]],
     log_prefix: str,
@@ -360,6 +390,9 @@ async def _start_gen_executor(execution_id: str, gen_config_dict: Optional[Dict[
                     gen_config_dict['test_files_dir'] = _files_dir
                     logger.info(f'[Gen] Injected test_files_dir: {_files_dir}')
 
+            # Auto-resolve planning_mode from user's objective input
+            _resolve_planning_mode(gen_config_dict, '[Gen]')
+
             api_key = llm_cfg.get('api_key', '')
             base_url = llm_cfg.get('base_url', '')
 
@@ -511,6 +544,9 @@ async def _start_gen_k8s(execution_id: str, gen_config_dict: Optional[Dict[str, 
                 if os.path.isdir(_files_dir) and os.listdir(_files_dir):
                     gen_config_dict['test_files_dir'] = f'/shared/files/{execution.business_id}'
                     logger.info(f'[Gen K8s] Injected test_files_dir for business {execution.business_id}')
+
+            # Auto-resolve planning_mode from user's objective input
+            _resolve_planning_mode(gen_config_dict, '[Gen K8s]')
 
             api_key = llm_cfg.get('api_key', '')
             base_url = llm_cfg.get('base_url', '')
@@ -1372,6 +1408,9 @@ async def _start_gen_docker(execution_id: str, gen_config_dict: Optional[Dict[st
                     gen_config_dict['test_files_dir'] = f'/shared/files/{execution.business_id}'
                     logger.info(f'[Gen Docker] Injected test_files_dir for business {execution.business_id}')
 
+            # Auto-resolve planning_mode from user's objective input
+            _resolve_planning_mode(gen_config_dict, '[Gen Docker]')
+
             api_key = llm_cfg.get('api_key', '')
             base_url = llm_cfg.get('base_url', '')
 
@@ -1471,7 +1510,7 @@ def _build_case_dict(
     default_account: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build the configuration dict for a single case."""
-    case_name = f"{case.name} [{suffix}]" if suffix else case.name
+    case_name = f'{case.name} [{suffix}]' if suffix else case.name
     case_dict = {
         'name': case_name,
         'case_id': str(case.id),
@@ -1625,7 +1664,7 @@ def _build_agent_configs(
             current_browser_config['viewport'] = vp['viewport']
         elif 'width' in vp and 'height' in vp:
             current_browser_config['viewport'] = {'width': vp['width'], 'height': vp['height']}
-        
+
         suffix = vp['suffix']
 
         # Build config for login-required cases (with cookies or accounts)
