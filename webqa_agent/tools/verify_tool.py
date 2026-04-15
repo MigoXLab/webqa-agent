@@ -15,10 +15,11 @@ from pydantic import BaseModel, Field
 
 from webqa_agent.executor.gen.utils.case_recorder import CentralCaseRecorder
 from webqa_agent.tools.core.ui_driver import UITester
+from webqa_agent.utils.schema_utils import LLMCompatibleSchema
 from webqa_agent.utils.timing_breakdown import record_tool_timing
 
 
-class UIAssertionSchema(BaseModel):
+class UIAssertionSchema(LLMCompatibleSchema):
     """Schema for UI assertion tool arguments."""
 
     assertion: str = Field(
@@ -63,6 +64,17 @@ class UIAssertTool(BaseTool):
     args_schema: Type[BaseModel] = UIAssertionSchema
     ui_tester_instance: UITester = Field(...)
     case_recorder: Any | None = Field(default=None, description='Optional CentralCaseRecorder to record verify steps')
+
+    @property
+    def tool_call_schema(self) -> dict[str, Any]:
+        """Return LLM-proxy-compatible schema dict.
+
+        Overrides LangChain's default, which re-wraps args_schema via
+        _create_subset_model() into a plain BaseModel — losing the Optional[T]
+        → {type, nullable} fixes applied by LLMCompatibleSchema. Returning the
+        cleaned dict directly ensures the proxy never sees anyOf.
+        """
+        return self.args_schema.model_json_schema()
 
     def _run(self, assertion: str) -> str:
         raise NotImplementedError('Use arun for asynchronous execution.')
