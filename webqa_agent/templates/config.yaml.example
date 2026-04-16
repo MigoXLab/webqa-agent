@@ -10,6 +10,7 @@ target:
 
 test_config: # Test configuration for Gen mode (AI-driven test generation)
   business_objectives: Generate 5 test cases, exclude login cases   # Optional. If empty, AI will automatically explore and generate test cases. If specified, AI will focus on testing the specified business objectives.
+  use_cc_mini: False  # Optional. If True, run webqa-cc-mini with url=target.url and task=business_objectives.
 
   # Custom tools configuration (optional, advanced features)
   custom_tools:

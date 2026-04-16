@@ -3,6 +3,7 @@
 
 import argparse
 import asyncio
+import importlib.util
 import os
 import sys
 import traceback
@@ -127,6 +128,142 @@ def validate_and_build_llm_config(cfg):
     return llm_config
 
 
+def _load_cc_mini_runner():
+    """Load ``run_cc_mini`` from the sibling webqa-cc-mini tree on demand."""
+    cc_mini_root = Path(__file__).resolve().parent.parent / 'webqa-cc-mini'
+    runner_path = cc_mini_root / 'runner.py'
+
+    if not runner_path.exists():
+        raise FileNotFoundError(f'webqa-cc-mini runner not found: {runner_path}')
+
+    module_name = 'webqa_cc_mini_runner'
+    cached_module = sys.modules.get(module_name)
+    if cached_module is not None:
+        run_cc_mini = getattr(cached_module, 'run_cc_mini', None)
+        if callable(run_cc_mini):
+            return run_cc_mini
+
+    original_sys_path = list(sys.path)
+    try:
+        if str(cc_mini_root) not in sys.path:
+            sys.path.insert(0, str(cc_mini_root))
+
+        spec = importlib.util.spec_from_file_location(module_name, runner_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f'Failed to create import spec for {runner_path}')
+
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+    finally:
+        sys.path[:] = original_sys_path
+
+    run_cc_mini = getattr(module, 'run_cc_mini', None)
+    if not callable(run_cc_mini):
+        raise AttributeError(f'run_cc_mini not found in {runner_path}')
+    return run_cc_mini
+
+
+async def _execute_cc_mini_mode(
+    *,
+    url: str,
+    task: str,
+    provider: str,
+    model: str,
+    api_key: str,
+    base_url: str | None = None,
+    effort: str | None = None,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    max_tokens: int | None = None,
+    timeout: float | None = None,
+    log_level: str = 'info',
+    on_event=None,
+):
+    """Execute one cc-mini run without blocking the main event loop.
+
+    Initialises the shared logger so cc-mini's ``cc_mini.runner`` /
+    ``cc_mini.mcp`` loggers inherit file + stream handlers. Without this
+    call the cc-mini path bypasses ``GenExecutor`` (which normally wires
+    logging) and every ``log.info`` in cc-mini is silently dropped by
+    Python's ``lastResort`` handler.
+    """
+    from webqa_agent.utils.get_log import GetLog
+    GetLog.get_log(log_level=log_level)
+
+    run_cc_mini = _load_cc_mini_runner()
+    return await asyncio.to_thread(
+        run_cc_mini,
+        url,
+        task,
+        provider=provider,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        effort=effort,
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_tokens,
+        timeout=timeout,
+        on_event=on_event,
+    )
+
+
+def _make_cc_mini_stream_handler():
+    """Return an ``on_event`` callback that streams runner progress to stdout.
+
+    Without this handler the user sees only the final ``result.final_text``
+    after the entire run completes, which makes a multi-step web agent feel
+    unresponsive. The handler forwards every engine event the moment it
+    arrives:
+
+    * ``text`` chunks — printed inline, flushed per chunk
+    * ``tool_call`` — one line with the MCP activity description
+    * ``tool_result`` — only errors are surfaced (success is implicit)
+    * ``usage`` — per-call token counts so long runs have visible heartbeat
+    * ``error`` — non-fatal API errors forwarded verbatim
+
+    The handler tracks whether the last printed character was a newline so
+    tool-call markers don't glue onto a half-streamed sentence.
+    """
+    # Mutable flag captured by closure; list form avoids ``nonlocal`` noise.
+    text_open = [False]
+
+    def _close_text() -> None:
+        if text_open[0]:
+            print('', flush=True)
+            text_open[0] = False
+
+    def handle(evt) -> None:
+        kind = evt[0]
+        if kind == 'text':
+            chunk = evt[1]
+            print(chunk, end='', flush=True)
+            text_open[0] = not chunk.endswith('\n')
+        elif kind == 'waiting':
+            _close_text()
+        elif kind == 'tool_call':
+            _close_text()
+            _, name, _tool_input, activity = evt
+            print(f'🔧 {activity or name}', flush=True)
+        elif kind == 'tool_result':
+            _, name, _input, result = evt
+            if result.is_error:
+                content = result.content if isinstance(result.content, str) else str(result.content)
+                snippet = content[:200].replace('\n', ' ')
+                print(f'   ❌ [{name}] {snippet}', flush=True)
+        elif kind == 'usage':
+            u = evt[1]
+            inp = getattr(u, 'input_tokens', 0) or 0
+            out = getattr(u, 'output_tokens', 0) or 0
+            print(f'   📊 {inp}↑ {out}↓', flush=True)
+        elif kind == 'error':
+            _close_text()
+            print(f'⚠️  {evt[1]}', flush=True)
+
+    return handle
+
+
 # ============================================================================
 # Command: init
 # ============================================================================
@@ -241,6 +378,90 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
 
     print(f'🎯 Target URL: {target_url}')
 
+    planning_mode = tconf.get('planning_mode', 'explore')
+    business_objectives = tconf.get('business_objectives', '')
+    use_cc_mini = bool(tconf.get('use_cc_mini', False))
+
+    # Validate and build LLM config
+    try:
+        llm_config_dict = validate_and_build_llm_config(cfg)
+        llm_config = LLMConfig(
+            model=llm_config_dict['model'],
+            api_key=llm_config_dict['api_key'],
+            base_url=llm_config_dict.get('base_url'),
+            filter_model=llm_config_dict.get('filter_model'),
+            temperature=llm_config_dict.get('temperature'),
+            top_p=llm_config_dict.get('top_p'),
+            max_tokens=llm_config_dict.get('max_tokens'),
+            reasoning=llm_config_dict.get('reasoning'),
+            timeout=llm_config_dict.get('timeout'),
+        )
+    except ValueError as e:
+        print(f'\n{e}', file=sys.stderr)
+        sys.exit(1)
+
+    if use_cc_mini:
+        task = business_objectives.strip()
+        if not task:
+            print('❌ test_config.business_objectives is required when test_config.use_cc_mini=true', file=sys.stderr)
+            sys.exit(1)
+
+        provider = llm_config.get_provider()
+        if provider == 'gemini':
+            print('ℹ️ cc-mini will use OpenAI-compatible mode for Gemini-style endpoints')
+            provider = 'openai'
+        elif provider not in {'anthropic', 'openai'}:
+            print(f'❌ Unsupported provider for cc-mini: {provider}', file=sys.stderr)
+            sys.exit(1)
+
+        effort = llm_config.reasoning.get('effort') if llm_config.reasoning else None
+
+        # Anthropic users without an explicit base_url must not inherit the
+        # OpenAI default injected by validate_and_build_llm_config() — passing
+        # https://api.openai.com/v1 to the Anthropic SDK breaks every request.
+        cc_mini_base_url = llm_config.base_url
+        if provider == 'anthropic' and cc_mini_base_url == 'https://api.openai.com/v1':
+            cc_mini_base_url = None
+
+        print('📋 Tests enabled: Gen Mode (cc-mini backend)')
+        print(f'⚙️ cc-mini URL: {target_url}')
+        print(f'📝 cc-mini Task: {task}')
+        print(f'🤖 cc-mini Provider: {provider}')
+        print('-' * 60, flush=True)
+
+        log_level = cfg.get('log', {}).get('level', 'info')
+
+        try:
+            result = await _execute_cc_mini_mode(
+                url=target_url,
+                task=task,
+                provider=provider,
+                model=llm_config.model,
+                api_key=llm_config.api_key,
+                base_url=cc_mini_base_url,
+                effort=effort,
+                temperature=llm_config.temperature,
+                top_p=llm_config.top_p,
+                max_tokens=llm_config.max_tokens,
+                timeout=llm_config.timeout,
+                log_level=log_level,
+                on_event=_make_cc_mini_stream_handler(),
+            )
+        except Exception:
+            print('\n❌ cc-mini execution failed:', file=sys.stderr)
+            traceback.print_exc()
+            sys.exit(1)
+
+        # The final assistant text was already streamed via on_event; only
+        # print a summary bar so the user sees totals at a glance.
+        print('\n' + '-' * 60)
+        print(
+            f"✅ Done  |  Steps: {len(result.steps)}  |  "
+            f"Tokens: {result.input_tokens}↑ {result.output_tokens}↓  |  "
+            f"Aborted: {result.aborted}"
+        )
+        return
+
     # Check Playwright browsers
     ok = await check_playwright_browsers_async()
     if not ok:
@@ -258,23 +479,6 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
         if not check_nuclei_installation():
             print('\n💡 Install Nuclei: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest or download from https://github.com/projectdiscovery/nuclei/releases', file=sys.stderr)
             sys.exit(1)
-
-    # Validate and build LLM config
-    try:
-        llm_config_dict = validate_and_build_llm_config(cfg)
-        llm_config = LLMConfig(
-            model=llm_config_dict['model'],
-            api_key=llm_config_dict['api_key'],
-            base_url=llm_config_dict.get('base_url'),
-            filter_model=llm_config_dict.get('filter_model'),
-            temperature=llm_config_dict.get('temperature'),
-            top_p=llm_config_dict.get('top_p'),
-            max_tokens=llm_config_dict.get('max_tokens'),
-            reasoning=llm_config_dict.get('reasoning'),
-        )
-    except ValueError as e:
-        print(f'\n{e}', file=sys.stderr)
-        sys.exit(1)
 
     # Build browser config
     browser_cfg_raw = cfg.get('browser_config', {})
@@ -308,9 +512,6 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
     )
 
     # Build test configuration
-    planning_mode = tconf.get('planning_mode', 'explore')
-    business_objectives = tconf.get('business_objectives', '')
-
     dynamic_step_cfg = tconf.get('dynamic_step_generation', {})
     dynamic_step_config = DynamicStepConfig(
         enabled=dynamic_step_cfg.get('enabled', True),
