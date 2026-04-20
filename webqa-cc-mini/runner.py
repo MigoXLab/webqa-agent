@@ -29,15 +29,18 @@ import shutil
 import tempfile
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from core.config import DEFAULT_MODEL, DEFAULT_PROVIDER, MCPServerConfig
 from core.context import build_web_agent_system_prompt
-from core.engine import Engine, AbortedError
+from core.engine import AbortedError, Engine
+from core.load_skill_tool import LoadSkillTool
 from core.mcp_client import MCPManager
 from core.permissions import PermissionChecker
+from core.skill_registry import SkillRegistry
 from features.compact import CompactService, should_compact
 
-log = logging.getLogger("cc_mini.runner")
+log = logging.getLogger('cc_mini.runner')
 
 
 @dataclass
@@ -72,6 +75,7 @@ def run_cc_mini(
     max_tokens: int | None = None,
     timeout: float | None = None,
     mcp_servers: list[MCPServerConfig] | None = None,
+    skills_dir: str | Path | None = None,
     max_iterations: int = 50,
     on_event=None,
 ) -> RunResult:
@@ -109,6 +113,12 @@ def run_cc_mini(
     mcp_servers:
         List of ``MCPServerConfig`` instances. Defaults to a chrome-devtools-mcp
         instance with an isolated profile and port derived from *worker_id*.
+    skills_dir:
+        Optional directory containing skill subdirectories (each with a
+        ``SKILL.md`` frontmatter file). When provided, skills are discovered,
+        their names + descriptions are injected into the system prompt, and a
+        ``load_skill`` tool is added so the LLM can fetch the full body on
+        demand (Progressive Disclosure).
     max_iterations:
         Hard limit on the number of tool steps before aborting.
     on_event:
@@ -121,7 +131,7 @@ def run_cc_mini(
     provider = provider or DEFAULT_PROVIDER
     model = model or DEFAULT_MODEL
 
-    profile = tempfile.mkdtemp(prefix=f"cc-mini-w{worker_id}-")
+    profile = tempfile.mkdtemp(prefix=f'cc-mini-w{worker_id}-')
     if mcp_servers is None:
         mcp_servers = _default_browser_mcp(profile, worker_id)
 
@@ -130,7 +140,7 @@ def run_cc_mini(
     engine: Engine | None = None
     steps: list[Step] = []
     # Cumulative totals — reported back in RunResult.
-    total_tokens = {"input": 0, "output": 0}
+    total_tokens = {'input': 0, 'output': 0}
     # Last API call's input_tokens — drives compact decisions.
     # Must track the *latest* call (replace semantics), NOT a running sum;
     # should_compact() compares this to _auto_compact_threshold(model) and
@@ -144,7 +154,21 @@ def run_cc_mini(
     try:
         tools = mcp.start_and_collect_tools()
 
-        system = build_web_agent_system_prompt(target_url=url, task=user_input)
+        # Optional skill discovery. Kept out of the MCP tool path: skills are
+        # pure markdown instructions, not browser capabilities. Only the
+        # load_skill surface is exposed to the LLM.
+        skill_registry: SkillRegistry | None = None
+        if skills_dir is not None:
+            skill_registry = SkillRegistry(Path(skills_dir))
+            skill_registry.discover()
+            if skill_registry.list_metadata():
+                tools = list(tools) + [LoadSkillTool(skill_registry)]
+
+        system = build_web_agent_system_prompt(
+            target_url=url,
+            task=user_input,
+            skills=skill_registry.list_metadata() if skill_registry else None,
+        )
         engine = Engine(
             tools=tools,
             system_prompt=system,
@@ -166,9 +190,12 @@ def run_cc_mini(
         )
 
         def _maybe_compact(last_input: int | None) -> None:
-            """Check & run compaction. Safe to call from any event handler:
+            """Check & run compaction.
+
+            Safe to call from any event handler:
             engine.submit() is yielded at this point, so set_messages() will
-            be visible to the generator when it resumes."""
+            be visible to the generator when it resumes.
+            """
             nonlocal last_input_tokens
             messages = engine.get_messages()
             if should_compact(messages, engine.get_model(), last_input):
@@ -184,9 +211,9 @@ def run_cc_mini(
         pending: deque[dict] = deque()
 
         seed = (
-            f"Target URL: {url}\n\n"
-            f"Task: {user_input}\n\n"
-            "Begin by navigating to the URL."
+            f'Target URL: {url}\n\n'
+            f'Task: {user_input}\n\n'
+            'Begin by navigating to the URL.'
         )
 
         for evt in engine.submit(seed):
@@ -195,21 +222,21 @@ def run_cc_mini(
                 try:
                     on_event(evt)
                 except Exception as cb_exc:
-                    log.warning("on_event callback raised: %s", cb_exc)
+                    log.warning('on_event callback raised: %s', cb_exc)
 
             kind = evt[0]
 
-            if kind == "tool_call":
+            if kind == 'tool_call':
                 # evt = ("tool_call", name, input_dict, activity)
-                pending.append({"tool": evt[1], "input": evt[2]})
+                pending.append({'tool': evt[1], 'input': evt[2]})
 
-            elif kind == "tool_result":
+            elif kind == 'tool_result':
                 # evt = ("tool_result", name, input_dict, ToolResult)
                 if pending:
                     p = pending.popleft()
                     steps.append(Step(
-                        tool=p["tool"],
-                        input=p["input"],
+                        tool=p['tool'],
+                        input=p['input'],
                         result=evt[3].content,
                         is_error=evt[3].is_error,
                     ))
@@ -221,7 +248,7 @@ def run_cc_mini(
                 if not seen_usage:
                     _maybe_compact(None)
 
-            elif kind == "usage":
+            elif kind == 'usage':
                 u = evt[1]
                 seen_usage = True
                 # last_input_tokens = this call only (replace semantics, used
@@ -229,9 +256,9 @@ def run_cc_mini(
                 # total_tokens["input"]  = sum of per-call input_tokens. Each
                 # call re-sends the full history, so this matches what the
                 # provider actually billed across the run.
-                last_input_tokens = getattr(u, "input_tokens", 0) or 0
-                total_tokens["input"] += last_input_tokens
-                total_tokens["output"] += getattr(u, "output_tokens", 0) or 0
+                last_input_tokens = getattr(u, 'input_tokens', 0) or 0
+                total_tokens['input'] += last_input_tokens
+                total_tokens['output'] += getattr(u, 'output_tokens', 0) or 0
 
                 # Primary compact trigger: fires exactly once per API call,
                 # right after we get the authoritative input_tokens back from
@@ -249,25 +276,25 @@ def run_cc_mini(
             final_text=engine.last_assistant_text(),
             steps=steps,
             aborted=aborted,
-            input_tokens=total_tokens["input"],
-            output_tokens=total_tokens["output"],
+            input_tokens=total_tokens['input'],
+            output_tokens=total_tokens['output'],
         )
 
     except AbortedError:
         aborted = True
         return RunResult(
-            final_text=engine.last_assistant_text() if engine is not None else "",
+            final_text=engine.last_assistant_text() if engine is not None else '',
             steps=steps,
             aborted=True,
-            input_tokens=total_tokens["input"],
-            output_tokens=total_tokens["output"],
+            input_tokens=total_tokens['input'],
+            output_tokens=total_tokens['output'],
         )
 
     finally:
         try:
             mcp.shutdown_all()
         except Exception as exc:
-            log.warning("MCP shutdown error: %s", exc)
+            log.warning('MCP shutdown error: %s', exc)
         try:
             shutil.rmtree(profile, ignore_errors=True)
         except Exception:
@@ -278,13 +305,13 @@ def _default_browser_mcp(profile: str, worker_id: int) -> list[MCPServerConfig]:
     """Default MCP config: chrome-devtools-mcp with isolated profile and port."""
     return [
         MCPServerConfig(
-            name="browser",
-            command="npx",
+            name='browser',
+            command='npx',
             args=(
-                "-y",
-                "chrome-devtools-mcp@latest",
-                f"--user-data-dir={profile}",
-                f"--remote-debugging-port={9222 + worker_id}",
+                '-y',
+                'chrome-devtools-mcp@latest',
+                f'--user-data-dir={profile}',
+                f'--remote-debugging-port={9222 + worker_id}',
             ),
         )
     ]

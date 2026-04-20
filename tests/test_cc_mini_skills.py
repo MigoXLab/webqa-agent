@@ -1,0 +1,270 @@
+"""Tests for the cc-mini skills infrastructure.
+
+Covers:
+* :class:`SkillRegistry` — frontmatter parsing, discovery, lazy loading
+* :class:`LoadSkillTool` — tool contract, error cases, caching
+* :func:`build_web_agent_system_prompt` — skill-metadata injection
+
+The cc-mini tree uses bare imports, so sys.path is adjusted at module load.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+_CC_MINI_ROOT = Path(__file__).resolve().parent.parent / 'webqa-cc-mini'
+if str(_CC_MINI_ROOT) not in sys.path:
+    sys.path.insert(0, str(_CC_MINI_ROOT))
+
+from core.context import build_web_agent_system_prompt  # noqa: E402
+from core.load_skill_tool import LoadSkillTool  # noqa: E402
+from core.skill_registry import SkillMetadata, SkillRegistry  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+def _write_skill(root: Path, name: str, *, description: str = 'Test skill.',
+                 body: str = '# Body\n', extra_fm: str = '') -> Path:
+    skill_dir = root / name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    fm = f'name: {name}\ndescription: {description}\n'
+    if extra_fm:
+        fm += extra_fm
+    (skill_dir / 'SKILL.md').write_text(f'---\n{fm}---\n\n{body}', encoding='utf-8')
+    return skill_dir
+
+
+# ---------------------------------------------------------------------------
+# SkillRegistry.discover
+# ---------------------------------------------------------------------------
+
+class TestSkillRegistryDiscover:
+    def test_missing_directory_is_silent_no_op(self, tmp_path):
+        reg = SkillRegistry(tmp_path / 'does-not-exist')
+        reg.discover()
+        assert reg.list_metadata() == []
+
+    def test_empty_directory_yields_no_skills(self, tmp_path):
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        assert reg.list_metadata() == []
+
+    def test_single_skill_discovered(self, tmp_path):
+        _write_skill(tmp_path, 'plan', description='Plan tests.')
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        metas = reg.list_metadata()
+        assert len(metas) == 1
+        assert metas[0].name == 'plan'
+        assert metas[0].description == 'Plan tests.'
+
+    def test_multiple_skills_sorted_alphabetically(self, tmp_path):
+        _write_skill(tmp_path, 'zzz', description='Z.')
+        _write_skill(tmp_path, 'aaa', description='A.')
+        _write_skill(tmp_path, 'mmm', description='M.')
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        names = [m.name for m in reg.list_metadata()]
+        assert names == ['aaa', 'mmm', 'zzz']
+
+    def test_subdirectory_without_skill_md_is_skipped(self, tmp_path):
+        _write_skill(tmp_path, 'valid')
+        (tmp_path / 'no-skill-file').mkdir()
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        names = [m.name for m in reg.list_metadata()]
+        assert names == ['valid']
+
+    def test_malformed_frontmatter_skipped(self, tmp_path):
+        _write_skill(tmp_path, 'good')
+        bad = tmp_path / 'bad'
+        bad.mkdir()
+        (bad / 'SKILL.md').write_text('no frontmatter here', encoding='utf-8')
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        names = [m.name for m in reg.list_metadata()]
+        assert names == ['good']  # bad silently skipped
+
+    def test_missing_required_fields_skipped(self, tmp_path):
+        # Missing 'description'
+        partial = tmp_path / 'partial'
+        partial.mkdir()
+        (partial / 'SKILL.md').write_text(
+            '---\nname: partial\n---\n\nbody', encoding='utf-8'
+        )
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        assert reg.list_metadata() == []
+
+    def test_quoted_values_unquoted(self, tmp_path):
+        _write_skill(
+            tmp_path, 'quoted',
+            extra_fm='author: "John Doe"\nversion: \'1.0\'\n'
+        )
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        meta = reg.list_metadata()[0]
+        assert meta.extra['author'] == 'John Doe'
+        assert meta.extra['version'] == '1.0'
+
+    def test_rediscovery_replaces_cached_metadata(self, tmp_path):
+        _write_skill(tmp_path, 's', description='original')
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        assert reg.list_metadata()[0].description == 'original'
+
+        _write_skill(tmp_path, 's', description='updated')
+        reg.discover()
+        assert reg.list_metadata()[0].description == 'updated'
+
+
+# ---------------------------------------------------------------------------
+# SkillRegistry lazy loading
+# ---------------------------------------------------------------------------
+
+class TestSkillRegistryLazyLoad:
+    def test_load_full_content_returns_body(self, tmp_path):
+        _write_skill(tmp_path, 'demo', body='# Demo\n\nFull instructions here.')
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        body = reg.load_full_content('demo')
+        assert '# Demo' in body
+        assert 'Full instructions here' in body
+
+    def test_load_unknown_skill_raises_keyerror(self, tmp_path):
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        with pytest.raises(KeyError):
+            reg.load_full_content('nonexistent')
+
+    def test_content_cached_after_first_load(self, tmp_path):
+        skill_dir = _write_skill(tmp_path, 'cached')
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        first = reg.load_full_content('cached')
+
+        # Delete the file — cached load should still work
+        (skill_dir / 'SKILL.md').unlink()
+        second = reg.load_full_content('cached')
+        assert first == second
+
+    def test_get_skill_dir_returns_correct_path(self, tmp_path):
+        _write_skill(tmp_path, 'x')
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        assert reg.get_skill_dir('x') == tmp_path / 'x'
+
+    def test_has_skill(self, tmp_path):
+        _write_skill(tmp_path, 'known')
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        assert reg.has_skill('known')
+        assert not reg.has_skill('unknown')
+
+
+# ---------------------------------------------------------------------------
+# LoadSkillTool
+# ---------------------------------------------------------------------------
+
+class TestLoadSkillTool:
+    def test_tool_metadata_matches_contract(self, tmp_path):
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        tool = LoadSkillTool(reg)
+        assert tool.name == 'load_skill'
+        assert isinstance(tool.description, str) and tool.description
+        assert tool.is_read_only() is True
+        schema = tool.input_schema
+        assert schema['type'] == 'object'
+        assert 'skill_name' in schema['properties']
+        assert schema['required'] == ['skill_name']
+
+    def test_execute_returns_skill_body(self, tmp_path):
+        _write_skill(tmp_path, 's', body='full body xyz')
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        tool = LoadSkillTool(reg)
+        result = tool.execute(skill_name='s')
+        assert not result.is_error
+        assert 'full body xyz' in result.content
+
+    def test_execute_unknown_skill_lists_available(self, tmp_path):
+        _write_skill(tmp_path, 'alpha')
+        _write_skill(tmp_path, 'beta')
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        result = LoadSkillTool(reg).execute(skill_name='missing')
+        assert result.is_error
+        assert 'missing' in result.content
+        assert 'alpha' in result.content and 'beta' in result.content
+
+    def test_execute_missing_argument_is_error(self, tmp_path):
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        result = LoadSkillTool(reg).execute()
+        assert result.is_error
+        assert 'missing skill_name' in result.content
+
+    def test_execute_empty_argument_is_error(self, tmp_path):
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        result = LoadSkillTool(reg).execute(skill_name='   ')
+        assert result.is_error
+
+    def test_activity_description_mentions_skill_name(self, tmp_path):
+        reg = SkillRegistry(tmp_path)
+        tool = LoadSkillTool(reg)
+        desc = tool.get_activity_description(skill_name='my-skill')
+        assert desc is not None
+        assert 'my-skill' in desc
+
+    def test_api_schema_shape(self, tmp_path):
+        reg = SkillRegistry(tmp_path)
+        tool = LoadSkillTool(reg)
+        schema = tool.to_api_schema()
+        assert schema['name'] == 'load_skill'
+        assert 'description' in schema
+        assert 'input_schema' in schema
+
+
+# ---------------------------------------------------------------------------
+# System prompt injection
+# ---------------------------------------------------------------------------
+
+class TestSystemPromptSkillInjection:
+    def test_no_skills_omits_section(self):
+        prompt = build_web_agent_system_prompt('https://x', 'do things')
+        assert '## Available skills' not in prompt
+        assert 'load_skill' not in prompt
+
+    def test_empty_skills_list_omits_section(self):
+        prompt = build_web_agent_system_prompt('https://x', 'do things', skills=[])
+        assert '## Available skills' not in prompt
+
+    def test_skill_metadata_injected(self, tmp_path):
+        metas = [
+            SkillMetadata(name='plan', description='Plan things.', skill_dir=tmp_path),
+            SkillMetadata(name='report', description='Render reports.', skill_dir=tmp_path),
+        ]
+        prompt = build_web_agent_system_prompt('https://x', 'task', skills=metas)
+        assert '## Available skills' in prompt
+        assert '**plan**' in prompt and 'Plan things.' in prompt
+        assert '**report**' in prompt and 'Render reports.' in prompt
+        assert 'load_skill' in prompt
+
+    def test_multiline_description_flattened(self, tmp_path):
+        metas = [SkillMetadata(
+            name='multi',
+            description='Line one.\nLine two.\n\nLine three.',
+            skill_dir=tmp_path,
+        )]
+        prompt = build_web_agent_system_prompt('u', 't', skills=metas)
+        # The rendered line for this skill must be on one logical line
+        skill_lines = [line for line in prompt.splitlines() if '**multi**' in line]
+        assert len(skill_lines) == 1
+        assert '\n' not in skill_lines[0]
+        assert 'Line one. Line two. Line three.' in skill_lines[0]
