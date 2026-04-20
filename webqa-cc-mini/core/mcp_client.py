@@ -30,11 +30,27 @@ from typing import Any, Iterable
 
 from .tool import Tool, ToolResult
 
-_log = logging.getLogger("cc_mini.mcp")
+_log = logging.getLogger('cc_mini.mcp')
 
-PROTOCOL_VERSION = "2025-06-18"
-CLIENT_NAME = "cc-mini"
-CLIENT_VERSION = "0.1"
+# Known-benign stderr patterns from upstream MCP servers. Each pattern matches
+# harmless diagnostic output that would otherwise flood the DEBUG log
+# (hundreds of lines per run) without informing the user of anything
+# actionable. The pipe is still drained — only the log emit is suppressed.
+_BENIGN_STDERR_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # chrome-devtools-mcp: emitted whenever the DevTools protocol surfaces an
+    # issue code the MCP server has no handler for (e.g. PerformanceIssue,
+    # LowTextContrastIssue). Purely informational.
+    re.compile(r'No handler registered for issue code '),
+)
+
+
+def _is_benign_stderr(line: str) -> bool:
+    return any(p.search(line) for p in _BENIGN_STDERR_PATTERNS)
+
+
+PROTOCOL_VERSION = '2025-06-18'
+CLIENT_NAME = 'cc-mini'
+CLIENT_VERSION = '0.1'
 _TOOL_NAME_MAX = 64
 _DEFAULT_CALL_TIMEOUT = 60.0
 _DEFAULT_STARTUP_TIMEOUT = 20.0
@@ -47,22 +63,22 @@ _SHUTDOWN_TERM_GRACE = 1.0
 # whitespace, camelCase) so tokens like "list" don't accidentally match write
 # operations such as "blacklist" / "whitelist" / "allowlist".
 _READONLY_NAME_TOKENS: frozenset[str] = frozenset({
-    "snapshot",
-    "screenshot",
-    "inspect",
-    "list",
-    "get",
-    "describe",
-    "info",
-    "status",
-    "dump",
-    "read",
-    "fetch",
-    "accessibility",
+    'snapshot',
+    'screenshot',
+    'inspect',
+    'list',
+    'get',
+    'describe',
+    'info',
+    'status',
+    'dump',
+    'read',
+    'fetch',
+    'accessibility',
 })
 
 # Splits on underscores, dashes, whitespace, and camelCase boundaries.
-_NAME_TOKEN_SPLIT_RE = re.compile(r"[_\-\s]+|(?<=[a-z])(?=[A-Z])")
+_NAME_TOKEN_SPLIT_RE = re.compile(r'[_\-\s]+|(?<=[a-z])(?=[A-Z])')
 
 
 def _is_likely_readonly_by_name(raw_tool_name: str) -> bool:
@@ -115,7 +131,8 @@ class MCPServer:
     # ------------------------------------------------------------------ lifecycle
 
     def start(self, startup_timeout_s: float = _DEFAULT_STARTUP_TIMEOUT) -> None:
-        """Spawn the subprocess, start reader threads, run initialize+tools/list.
+        """Spawn the subprocess, start reader threads, run
+        initialize+tools/list.
 
         Raises MCPError if anything fails within startup_timeout_s.
         """
@@ -123,7 +140,7 @@ class MCPServer:
         # Resolve command via PATH explicitly for a clearer error message than
         # Popen's generic FileNotFoundError.
         if shutil.which(self._command) is None and not os.path.isabs(self._command):
-            raise MCPError(f"{self.name}: command not found on PATH: {self._command!r}")
+            raise MCPError(f'{self.name}: command not found on PATH: {self._command!r}')
 
         merged_env = None
         if self._env:
@@ -141,15 +158,15 @@ class MCPServer:
                 bufsize=0,
             )
         except (OSError, ValueError) as exc:
-            raise MCPError(f"{self.name}: failed to spawn: {exc}") from exc
+            raise MCPError(f'{self.name}: failed to spawn: {exc}') from exc
 
         self._alive = True
         self._reader_thread = threading.Thread(
-            target=self._read_stdout, name=f"mcp-{self.name}-reader", daemon=True
+            target=self._read_stdout, name=f'mcp-{self.name}-reader', daemon=True
         )
         self._reader_thread.start()
         self._stderr_thread = threading.Thread(
-            target=self._drain_stderr, name=f"mcp-{self.name}-stderr", daemon=True
+            target=self._drain_stderr, name=f'mcp-{self.name}-stderr', daemon=True
         )
         self._stderr_thread.start()
 
@@ -162,7 +179,10 @@ class MCPServer:
             raise
 
     def shutdown(self) -> None:
-        """Best-effort termination. Safe to call multiple times."""
+        """Best-effort termination.
+
+        Safe to call multiple times.
+        """
         if self._proc is None:
             return
 
@@ -172,7 +192,7 @@ class MCPServer:
             waiters = list(self._waiters.values())
             self._waiters.clear()
         for w in waiters:
-            w.result = MCPError(f"{self.name}: server shutting down")
+            w.result = MCPError(f'{self.name}: server shutting down')
             w.event.set()
 
         proc = self._proc
@@ -203,51 +223,59 @@ class MCPServer:
         assert self._proc and self._proc.stdout
         stdout = self._proc.stdout
         try:
-            for raw in iter(stdout.readline, b""):
+            for raw in iter(stdout.readline, b''):
                 if not raw:
                     break
                 line = raw.strip()
                 if not line:
                     continue
                 try:
-                    msg = json.loads(line.decode("utf-8"))
+                    msg = json.loads(line.decode('utf-8'))
                 except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                    _log.warning("%s: bad JSON from server: %s", self.name, exc)
+                    _log.warning('%s: bad JSON from server: %s', self.name, exc)
                     continue
                 self._dispatch_message(msg)
         except Exception as exc:  # reader must never die silently
-            _log.warning("%s: reader thread error: %s", self.name, exc)
+            _log.warning('%s: reader thread error: %s', self.name, exc)
         finally:
             # EOF: wake all remaining waiters
             with self._waiters_lock:
                 waiters = list(self._waiters.values())
                 self._waiters.clear()
             for w in waiters:
-                w.result = MCPError(f"{self.name}: server closed connection")
+                w.result = MCPError(f'{self.name}: server closed connection')
                 w.event.set()
 
     def _drain_stderr(self) -> None:
         assert self._proc and self._proc.stderr
         stderr = self._proc.stderr
         try:
-            for raw in iter(stderr.readline, b""):
+            for raw in iter(stderr.readline, b''):
                 if not raw:
                     break
-                # Keep the pipe empty. Log at DEBUG so it's silent by default.
-                _log.debug("%s[stderr]: %s", self.name, raw.rstrip().decode("utf-8", "replace"))
+                # Keep the pipe empty so the child process never blocks on a
+                # full stderr buffer. Filter known-benign noise before
+                # emitting — otherwise chrome-devtools-mcp fills the DEBUG
+                # log with hundreds of "No handler registered for issue code"
+                # messages per run (harmless DevTools-protocol warnings that
+                # do not affect agent correctness).
+                decoded = raw.rstrip().decode('utf-8', 'replace')
+                if _is_benign_stderr(decoded):
+                    continue
+                _log.debug('%s[stderr]: %s', self.name, decoded)
         except Exception:
             pass
 
     def _dispatch_message(self, msg: dict) -> None:
-        msg_id = msg.get("id")
-        method = msg.get("method")
+        msg_id = msg.get('id')
+        method = msg.get('method')
 
         if method is not None and msg_id is not None:
             # Server-initiated request — we don't support any, reject politely.
             self._send_raw({
-                "jsonrpc": "2.0",
-                "id": msg_id,
-                "error": {"code": -32601, "message": f"Method not found: {method}"},
+                'jsonrpc': '2.0',
+                'id': msg_id,
+                'error': {'code': -32601, 'message': f'Method not found: {method}'},
             })
             return
 
@@ -256,7 +284,7 @@ class MCPServer:
             return
 
         if msg_id is None:
-            _log.warning("%s: message without id or method: %s", self.name, msg)
+            _log.warning('%s: message without id or method: %s', self.name, msg)
             return
 
         with self._waiters_lock:
@@ -270,28 +298,34 @@ class MCPServer:
     # ------------------------------------------------------------------ rpc
 
     def _send_raw(self, payload: dict) -> None:
-        """Write one JSON-RPC message. Serialized by stdin_lock."""
+        """Write one JSON-RPC message.
+
+        Serialized by stdin_lock.
+        """
         if self._proc is None or self._proc.stdin is None:
-            raise MCPError(f"{self.name}: not started")
-        data = (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+            raise MCPError(f'{self.name}: not started')
+        data = (json.dumps(payload, ensure_ascii=False) + '\n').encode('utf-8')
         with self._stdin_lock:
             try:
                 self._proc.stdin.write(data)
                 self._proc.stdin.flush()
             except (OSError, BrokenPipeError) as exc:
-                raise MCPError(f"{self.name}: stdin write failed: {exc}") from exc
+                raise MCPError(f'{self.name}: stdin write failed: {exc}') from exc
 
     def _request(self, method: str, params: dict | None, timeout_s: float) -> dict:
-        """Send a request and wait for its response. Raises MCPError on failure."""
+        """Send a request and wait for its response.
+
+        Raises MCPError on failure.
+        """
         msg_id = next(self._id_counter)
         waiter = _Waiter(event=threading.Event())
         # Register waiter BEFORE writing to stdin so a fast response can't miss us.
         with self._waiters_lock:
             self._waiters[msg_id] = waiter
 
-        payload: dict = {"jsonrpc": "2.0", "id": msg_id, "method": method}
+        payload: dict = {'jsonrpc': '2.0', 'id': msg_id, 'method': method}
         if params is not None:
-            payload["params"] = params
+            payload['params'] = params
 
         try:
             self._send_raw(payload)
@@ -303,50 +337,50 @@ class MCPServer:
         if not waiter.event.wait(timeout=timeout_s):
             with self._waiters_lock:
                 self._waiters.pop(msg_id, None)
-            raise MCPError(f"{self.name}: {method} timed out after {timeout_s}s")
+            raise MCPError(f'{self.name}: {method} timed out after {timeout_s}s')
 
         result = waiter.result
         if isinstance(result, MCPError):
             raise result
         if not isinstance(result, dict):
-            raise MCPError(f"{self.name}: unexpected response type: {type(result)!r}")
-        if "error" in result:
-            err = result["error"] or {}
+            raise MCPError(f'{self.name}: unexpected response type: {type(result)!r}')
+        if 'error' in result:
+            err = result['error'] or {}
             raise MCPError(
                 f"{self.name}: {method} error {err.get('code')}: {err.get('message')}"
             )
-        return result.get("result") or {}
+        return result.get('result') or {}
 
     def _send_notification(self, method: str, params: dict | None = None) -> None:
-        payload: dict = {"jsonrpc": "2.0", "method": method}
+        payload: dict = {'jsonrpc': '2.0', 'method': method}
         if params is not None:
-            payload["params"] = params
+            payload['params'] = params
         self._send_raw(payload)
 
     # ------------------------------------------------------------------ protocol
 
     def _initialize(self, timeout_s: float) -> None:
         result = self._request(
-            "initialize",
+            'initialize',
             {
-                "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {},
-                "clientInfo": {"name": CLIENT_NAME, "version": CLIENT_VERSION},
+                'protocolVersion': PROTOCOL_VERSION,
+                'capabilities': {},
+                'clientInfo': {'name': CLIENT_NAME, 'version': CLIENT_VERSION},
             },
             timeout_s=timeout_s,
         )
-        self.negotiated_protocol_version = result.get("protocolVersion") or PROTOCOL_VERSION
-        self._send_notification("notifications/initialized")
+        self.negotiated_protocol_version = result.get('protocolVersion') or PROTOCOL_VERSION
+        self._send_notification('notifications/initialized')
 
     def _list_tools(self, timeout_s: float) -> list[dict]:
         # Handle pagination via optional cursor field.
         tools: list[dict] = []
         cursor: str | None = None
         while True:
-            params = {"cursor": cursor} if cursor else None
-            result = self._request("tools/list", params, timeout_s=timeout_s)
-            tools.extend(result.get("tools", []) or [])
-            cursor = result.get("nextCursor")
+            params = {'cursor': cursor} if cursor else None
+            result = self._request('tools/list', params, timeout_s=timeout_s)
+            tools.extend(result.get('tools', []) or [])
+            cursor = result.get('nextCursor')
             if not cursor:
                 break
         return tools
@@ -359,16 +393,16 @@ class MCPServer:
     ) -> ToolResult:
         try:
             result = self._request(
-                "tools/call",
-                {"name": tool_name, "arguments": arguments or {}},
+                'tools/call',
+                {'name': tool_name, 'arguments': arguments or {}},
                 timeout_s=timeout_s,
             )
         except MCPError as exc:
             return ToolResult(content=str(exc), is_error=True)
 
-        content = result.get("content") or []
+        content = result.get('content') or []
         text = _render_content_blocks(content)
-        is_error = bool(result.get("isError"))
+        is_error = bool(result.get('isError'))
         return ToolResult(content=text, is_error=is_error)
 
 
@@ -376,49 +410,52 @@ class MCPServer:
 
 
 def _render_content_blocks(blocks: Iterable[dict]) -> str:
-    """Join MCP content blocks into a string. Non-text blocks become markers
-    so chrome-devtools screenshots etc. aren't silently dropped."""
+    """Join MCP content blocks into a string.
+
+    Non-text blocks become markers so chrome-devtools screenshots etc. aren't
+    silently dropped.
+    """
     parts: list[str] = []
     for blk in blocks:
-        btype = blk.get("type")
-        if btype == "text":
-            parts.append(str(blk.get("text", "")))
-        elif btype == "image":
-            mime = blk.get("mimeType") or "?"
-            data = blk.get("data") or ""
-            parts.append(f"[image: {mime}, {len(data)} base64 chars — not inlined]")
-        elif btype == "audio":
-            mime = blk.get("mimeType") or "?"
-            parts.append(f"[audio: {mime} — not inlined]")
-        elif btype == "resource":
-            res = blk.get("resource") or {}
-            uri = res.get("uri") or "?"
-            parts.append(f"[resource: {uri}]")
-        elif btype == "resource_link":
-            uri = blk.get("uri") or "?"
-            parts.append(f"[resource_link: {uri}]")
+        btype = blk.get('type')
+        if btype == 'text':
+            parts.append(str(blk.get('text', '')))
+        elif btype == 'image':
+            mime = blk.get('mimeType') or '?'
+            data = blk.get('data') or ''
+            parts.append(f'[image: {mime}, {len(data)} base64 chars — not inlined]')
+        elif btype == 'audio':
+            mime = blk.get('mimeType') or '?'
+            parts.append(f'[audio: {mime} — not inlined]')
+        elif btype == 'resource':
+            res = blk.get('resource') or {}
+            uri = res.get('uri') or '?'
+            parts.append(f'[resource: {uri}]')
+        elif btype == 'resource_link':
+            uri = blk.get('uri') or '?'
+            parts.append(f'[resource_link: {uri}]')
         else:
             parts.append(f"[{btype or 'unknown'} block]")
-    return "\n".join(p for p in parts if p)
+    return '\n'.join(p for p in parts if p)
 
 
 # ---------------------------------------------------------------------- tool adapter
 
 
 def _make_tool_name(server_name: str, tool_name: str) -> str:
-    full = f"mcp__{server_name}__{tool_name}"
+    full = f'mcp__{server_name}__{tool_name}'
     if len(full) <= _TOOL_NAME_MAX:
         return full
     # Budget: mcp__{server}__{hash8}_{truncated-tail}
-    digest = hashlib.sha256(tool_name.encode("utf-8")).hexdigest()[:8]
-    prefix = f"mcp__{server_name}__{digest}_"
+    digest = hashlib.sha256(tool_name.encode('utf-8')).hexdigest()[:8]
+    prefix = f'mcp__{server_name}__{digest}_'
     remaining = _TOOL_NAME_MAX - len(prefix)
     if remaining <= 0:
         # Even the prefix is too long — degrade server segment too.
-        srv_digest = hashlib.sha256(server_name.encode("utf-8")).hexdigest()[:8]
-        prefix = f"mcp__{srv_digest}__{digest}_"
+        srv_digest = hashlib.sha256(server_name.encode('utf-8')).hexdigest()[:8]
+        prefix = f'mcp__{srv_digest}__{digest}_'
         remaining = _TOOL_NAME_MAX - len(prefix)
-    tail = tool_name[-max(remaining, 1):] if remaining > 0 else ""
+    tail = tool_name[-max(remaining, 1):] if remaining > 0 else ''
     return (prefix + tail)[:_TOOL_NAME_MAX]
 
 
@@ -426,14 +463,14 @@ class MCPTool(Tool):
     def __init__(self, server: MCPServer, spec: dict) -> None:
         self._server = server
         self._spec = spec
-        self._original_name = spec.get("name", "")
+        self._original_name = spec.get('name', '')
         self._name = _make_tool_name(server.name, self._original_name)
-        self._description = (spec.get("description") or "").strip() or (
-            f"MCP tool {self._original_name} from server {server.name}"
+        self._description = (spec.get('description') or '').strip() or (
+            f'MCP tool {self._original_name} from server {server.name}'
         )
-        self._input_schema = spec.get("inputSchema") or {"type": "object", "properties": {}}
-        annotations = spec.get("annotations") or {}
-        self._read_only = bool(annotations.get("readOnlyHint", False))
+        self._input_schema = spec.get('inputSchema') or {'type': 'object', 'properties': {}}
+        annotations = spec.get('annotations') or {}
+        self._read_only = bool(annotations.get('readOnlyHint', False))
 
         # Heuristic: when the server omits readOnlyHint, infer from tool name.
         # chrome-devtools-mcp and playwright-mcp rarely set this annotation,
@@ -458,7 +495,7 @@ class MCPTool(Tool):
         return self._read_only
 
     def get_activity_description(self, **kwargs) -> str | None:
-        return f"MCP {self._server.name}: {self._original_name}"
+        return f'MCP {self._server.name}: {self._original_name}'
 
     def execute(self, **kwargs) -> ToolResult:
         return self._server.call_tool(self._original_name, kwargs)
@@ -507,16 +544,16 @@ class MCPManager:
         while not results.empty():
             name, server, err = results.get()
             if err is not None or server is None:
-                _log.warning("MCP server %r failed to start: %s", name, err)
+                _log.warning('MCP server %r failed to start: %s', name, err)
                 continue
             self._servers[name] = server
             tool_count = len(server.tools)
-            _log.info("MCP server %r started, %d tools loaded", name, tool_count)
+            _log.info('MCP server %r started, %d tools loaded', name, tool_count)
             for spec in server.tools:
                 try:
                     tools.append(MCPTool(server, spec))
                 except Exception as exc:
-                    _log.warning("%s: skipping malformed tool spec %s: %s", name, spec, exc)
+                    _log.warning('%s: skipping malformed tool spec %s: %s', name, spec, exc)
         return tools
 
     def shutdown_all(self) -> None:
@@ -524,5 +561,5 @@ class MCPManager:
             try:
                 server.shutdown()
             except Exception as exc:
-                _log.warning("shutdown of %s failed: %s", name, exc)
+                _log.warning('shutdown of %s failed: %s', name, exc)
         self._servers.clear()

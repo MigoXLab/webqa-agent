@@ -220,14 +220,59 @@ def _render_cc_mini_report(
 ) -> str | None:
     """Render an HTML report for a cc-mini RunResult.
 
-    Mirrors GenExecutor's report generation so CLI users get the same
-    deliverable regardless of which backend executed the run. Returns
-    the absolute report path on success, ``None`` on failure (warnings
-    are printed to stderr — report generation must never block the run).
+    Preferred path reuses the gen-mode React frontend by mapping the
+    RunResult into a ``ParallelTestSession`` (via
+    :mod:`webqa_agent.executor.cc_mini_report_adapter`) and handing it to
+    :class:`ResultAggregator`. This way CLI users see the same UI
+    regardless of which backend executed the run.
+
+    The standalone ``webqa-cc-mini/features/report.py`` utility is kept
+    as a fallback so that:
+        1. Library users (no webqa_agent installed) still get an HTML
+           artifact without pulling in the gen-mode stack.
+        2. A broken gen-mode static bundle does not prevent CLI users
+           from getting *some* report.
+
+    Returns the absolute report path on success, ``None`` on failure.
+    Report generation must never block the run — all exceptions are
+    caught and surfaced as warnings.
     """
     import datetime as _dt
     from pathlib import Path as _Path
 
+    report_dir = (cfg.get('report') or {}).get('report_dir') or \
+        f"reports/cc_mini_{_dt.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    out_path = _Path(report_dir) / 'report.html'
+    language = (cfg.get('report') or {}).get('language', 'zh-CN')
+
+    # Preferred: gen-mode frontend via adapter + ResultAggregator.
+    try:
+        from webqa_agent.executor.cc_mini_report_adapter import \
+            run_result_to_session
+        from webqa_agent.executor.result_aggregator import ResultAggregator
+
+        session = run_result_to_session(
+            result, url=url, task=task,
+            report_dir=str(out_path.parent), language=language,
+        )
+        aggregator = ResultAggregator(report_config={
+            'language': language, 'report_dir': str(out_path.parent),
+        })
+        # ResultAggregator writes ``test_report.html`` (gen-mode convention)
+        # and returns its absolute path on success, empty string on failure.
+        generated_path = aggregator.generate_html_report_fully_inlined(
+            session, report_dir=str(out_path.parent),
+        )
+        if generated_path and _Path(generated_path).exists():
+            return generated_path
+    except Exception as exc:
+        print(
+            f'⚠️  Gen-mode report rendering failed, falling back to '
+            f'standalone renderer: {exc}',
+            file=sys.stderr,
+        )
+
+    # Fallback: standalone cc-mini utility (self-contained, no gen deps).
     try:
         cc_mini_root = _Path(__file__).resolve().parent.parent / 'webqa-cc-mini'
         if str(cc_mini_root) not in sys.path:
@@ -236,10 +281,6 @@ def _render_cc_mini_report(
     except ImportError as exc:
         print(f'⚠️  Could not import render_html_report: {exc}', file=sys.stderr)
         return None
-
-    report_dir = (cfg.get('report') or {}).get('report_dir') or \
-        f"reports/cc_mini_{_dt.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    out_path = _Path(report_dir) / 'report.html'
 
     try:
         html_path = render_html_report(

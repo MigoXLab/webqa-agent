@@ -249,8 +249,13 @@ def test_execute_gen_mode_forwards_skills_dir_to_cc_mini(monkeypatch, tmp_path):
 def test_execute_gen_mode_cc_mini_generates_html_report(
     monkeypatch, tmp_path, capsys,
 ):
-    """Cc-mini mode must write an HTML report under the configured
-    report_dir."""
+    """Cc-mini mode must write an HTML report under the configured report_dir.
+
+    Uses the gen-mode renderer by default (``test_report.html``), falling
+    back to the standalone utility (``report.html``) only if the gen-mode
+    path raises. Accept either filename to keep the test focused on the
+    user-visible contract: "there is an HTML report and the CLI printed it".
+    """
     cli = _load_cli_module(monkeypatch)
 
     async def fake_execute_cc_mini_mode(**kwargs):
@@ -274,13 +279,55 @@ def test_execute_gen_mode_cc_mini_generates_html_report(
 
     asyncio.run(cli.execute_gen_mode(cfg))
 
-    report_file = report_dir / 'report.html'
-    assert report_file.exists(), 'report.html was not written'
+    candidates = [report_dir / 'test_report.html', report_dir / 'report.html']
+    report_file = next((p for p in candidates if p.exists()), None)
+    assert report_file is not None, 'no HTML report was written'
     content = report_file.read_text(encoding='utf-8')
     assert 'All good.' in content
     assert 'navigate' in content
     stdout = capsys.readouterr().out
     assert '📄 Report:' in stdout
+
+
+def test_cc_mini_report_uses_gen_mode_frontend(monkeypatch, tmp_path):
+    """End-to-end: cc-mini report must reuse the gen-mode React frontend.
+
+    Confirms the adapter + ResultAggregator path is taken by default. Guards
+    against silent regressions back to the standalone ``features/report.py``
+    template (which has its own distinct look).
+    """
+    cli = _load_cli_module(monkeypatch)
+
+    async def fake_execute_cc_mini_mode(**kwargs):
+        return _FakeRunResult(
+            final_text='done',
+            steps=[_FakeStep(tool='navigate_page', result='ok')],
+        )
+
+    monkeypatch.setattr(cli, '_execute_cc_mini_mode', fake_execute_cc_mini_mode)
+
+    report_dir = tmp_path / 'out'
+    cfg = {
+        'target': {'url': 'https://example.com'},
+        'test_config': {'use_cc_mini': True, 'business_objectives': 'smoke'},
+        'llm_config': {
+            'model': 'gpt-4o', 'api_key': 'k',
+            'base_url': 'https://api.openai.com/v1',
+        },
+        'report': {'report_dir': str(report_dir)},
+    }
+
+    asyncio.run(cli.execute_gen_mode(cfg))
+
+    gen_report = report_dir / 'test_report.html'
+    assert gen_report.exists(), (
+        'expected gen-mode report at test_report.html; fell back to the '
+        'standalone renderer instead.'
+    )
+    content = gen_report.read_text(encoding='utf-8')
+    # Gen-mode template signatures (React shell + inlined data).
+    assert '<div id="root"></div>' in content
+    assert 'window.testResultData' in content
 
 
 def test_cc_mini_stream_handler_formats_events(monkeypatch, capsys):
