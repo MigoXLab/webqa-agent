@@ -31,20 +31,33 @@ def _load_cli_module(monkeypatch: pytest.MonkeyPatch):
 
 
 @dataclass
+class _FakeStep:
+    tool: str = 'navigate'
+    input: dict | None = None
+    result: str = 'ok'
+    is_error: bool = False
+
+    def __post_init__(self) -> None:
+        if self.input is None:
+            self.input = {}
+
+
+@dataclass
 class _FakeRunResult:
     final_text: str = 'done'
-    steps: list[str] | None = None
+    steps: list | None = None
     aborted: bool = False
     input_tokens: int = 11
     output_tokens: int = 7
 
     def __post_init__(self) -> None:
         if self.steps is None:
-            self.steps = ['step-1']
+            self.steps = [_FakeStep()]
 
 
 def test_execute_gen_mode_routes_to_cc_mini(monkeypatch, capsys):
-    """Gen mode should route to cc-mini when test_config.use_cc_mini is enabled."""
+    """Gen mode should route to cc-mini when test_config.use_cc_mini is
+    enabled."""
     cli = _load_cli_module(monkeypatch)
     captured: dict[str, str | None] = {}
 
@@ -87,6 +100,8 @@ def test_execute_gen_mode_routes_to_cc_mini(monkeypatch, capsys):
         'top_p': None,
         'max_tokens': None,
         'timeout': None,
+        # Skills discovery is opt-in; cc_mini_skills_dir unset -> None.
+        'skills_dir': None,
         # log_level inherits from cfg.log.level (default 'info').
         'log_level': 'info',
     }
@@ -96,7 +111,8 @@ def test_execute_gen_mode_routes_to_cc_mini(monkeypatch, capsys):
 
 
 def test_execute_gen_mode_forwards_llm_tuning_params_to_cc_mini(monkeypatch):
-    """temperature / top_p / max_tokens / timeout must reach the cc-mini bridge.
+    """Temperature / top_p / max_tokens / timeout must reach the cc-mini
+    bridge.
 
     Guards against falsy-truthiness regressions: ``temperature=0`` is a
     perfectly valid setting (deterministic sampling) but ``if temperature:``
@@ -138,7 +154,7 @@ def test_execute_gen_mode_forwards_llm_tuning_params_to_cc_mini(monkeypatch):
 
 
 def test_execute_gen_mode_requires_business_objectives_for_cc_mini(monkeypatch):
-    """cc-mini mode should fail fast when the mapped task is empty."""
+    """Cc-mini mode should fail fast when the mapped task is empty."""
     cli = _load_cli_module(monkeypatch)
 
     cfg = {
@@ -197,6 +213,74 @@ def test_execute_gen_mode_anthropic_drops_openai_default_base_url(monkeypatch):
     assert captured['provider'] == 'anthropic'
     assert captured['base_url'] is None
     assert callable(captured.get('on_event'))
+
+
+def test_execute_gen_mode_forwards_skills_dir_to_cc_mini(monkeypatch, tmp_path):
+    """cc_mini_skills_dir in test_config must reach _execute_cc_mini_mode."""
+    cli = _load_cli_module(monkeypatch)
+    captured: dict[str, object] = {}
+
+    async def fake_execute_cc_mini_mode(**kwargs):
+        captured.update(kwargs)
+        return _FakeRunResult()
+
+    monkeypatch.setattr(cli, '_execute_cc_mini_mode', fake_execute_cc_mini_mode)
+
+    skills_path = tmp_path / 'my-skills'
+    skills_path.mkdir()
+
+    cfg = {
+        'target': {'url': 'https://example.com'},
+        'test_config': {
+            'use_cc_mini': True,
+            'business_objectives': 'task',
+            'cc_mini_skills_dir': str(skills_path),
+        },
+        'llm_config': {
+            'model': 'gpt-4o', 'api_key': 'k',
+            'base_url': 'https://api.openai.com/v1',
+        },
+    }
+
+    asyncio.run(cli.execute_gen_mode(cfg))
+    assert captured['skills_dir'] == str(skills_path)
+
+
+def test_execute_gen_mode_cc_mini_generates_html_report(
+    monkeypatch, tmp_path, capsys,
+):
+    """Cc-mini mode must write an HTML report under the configured
+    report_dir."""
+    cli = _load_cli_module(monkeypatch)
+
+    async def fake_execute_cc_mini_mode(**kwargs):
+        return _FakeRunResult(
+            final_text='All good.',
+            steps=[_FakeStep(tool='navigate', result='done')],
+        )
+
+    monkeypatch.setattr(cli, '_execute_cc_mini_mode', fake_execute_cc_mini_mode)
+
+    report_dir = tmp_path / 'report-out'
+    cfg = {
+        'target': {'url': 'https://example.com'},
+        'test_config': {'use_cc_mini': True, 'business_objectives': 'smoke'},
+        'llm_config': {
+            'model': 'gpt-4o', 'api_key': 'k',
+            'base_url': 'https://api.openai.com/v1',
+        },
+        'report': {'report_dir': str(report_dir)},
+    }
+
+    asyncio.run(cli.execute_gen_mode(cfg))
+
+    report_file = report_dir / 'report.html'
+    assert report_file.exists(), 'report.html was not written'
+    content = report_file.read_text(encoding='utf-8')
+    assert 'All good.' in content
+    assert 'navigate' in content
+    stdout = capsys.readouterr().out
+    assert '📄 Report:' in stdout
 
 
 def test_cc_mini_stream_handler_formats_events(monkeypatch, capsys):

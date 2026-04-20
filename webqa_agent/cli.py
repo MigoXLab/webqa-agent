@@ -177,6 +177,7 @@ async def _execute_cc_mini_mode(
     top_p: float | None = None,
     max_tokens: int | None = None,
     timeout: float | None = None,
+    skills_dir: str | None = None,
     log_level: str = 'info',
     on_event=None,
 ):
@@ -187,6 +188,10 @@ async def _execute_cc_mini_mode(
     call the cc-mini path bypasses ``GenExecutor`` (which normally wires
     logging) and every ``log.info`` in cc-mini is silently dropped by
     Python's ``lastResort`` handler.
+
+    ``skills_dir`` is forwarded to ``run_cc_mini``. When provided, the
+    cc-mini engine discovers skills under that directory and exposes
+    them via Progressive Disclosure (see webqa-cc-mini/skills/README.md).
     """
     from webqa_agent.utils.get_log import GetLog
     GetLog.get_log(log_level=log_level)
@@ -205,8 +210,46 @@ async def _execute_cc_mini_mode(
         top_p=top_p,
         max_tokens=max_tokens,
         timeout=timeout,
+        skills_dir=skills_dir,
         on_event=on_event,
     )
+
+
+def _render_cc_mini_report(
+    result, *, cfg: dict, url: str, task: str,
+) -> str | None:
+    """Render an HTML report for a cc-mini RunResult.
+
+    Mirrors GenExecutor's report generation so CLI users get the same
+    deliverable regardless of which backend executed the run. Returns
+    the absolute report path on success, ``None`` on failure (warnings
+    are printed to stderr — report generation must never block the run).
+    """
+    import datetime as _dt
+    from pathlib import Path as _Path
+
+    try:
+        cc_mini_root = _Path(__file__).resolve().parent.parent / 'webqa-cc-mini'
+        if str(cc_mini_root) not in sys.path:
+            sys.path.insert(0, str(cc_mini_root))
+        from features.report import render_html_report
+    except ImportError as exc:
+        print(f'⚠️  Could not import render_html_report: {exc}', file=sys.stderr)
+        return None
+
+    report_dir = (cfg.get('report') or {}).get('report_dir') or \
+        f"reports/cc_mini_{_dt.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    out_path = _Path(report_dir) / 'report.html'
+
+    try:
+        html_path = render_html_report(
+            result, out_path, title=f'WebQA cc-mini — {url}',
+            url=url, task=task,
+        )
+        return str(html_path)
+    except Exception as exc:
+        print(f'⚠️  Report generation failed: {exc}', file=sys.stderr)
+        return None
 
 
 def _make_cc_mini_stream_handler():
@@ -444,6 +487,7 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
                 top_p=llm_config.top_p,
                 max_tokens=llm_config.max_tokens,
                 timeout=llm_config.timeout,
+                skills_dir=tconf.get('cc_mini_skills_dir'),
                 log_level=log_level,
                 on_event=_make_cc_mini_stream_handler(),
             )
@@ -456,10 +500,18 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
         # print a summary bar so the user sees totals at a glance.
         print('\n' + '-' * 60)
         print(
-            f"✅ Done  |  Steps: {len(result.steps)}  |  "
-            f"Tokens: {result.input_tokens}↑ {result.output_tokens}↓  |  "
-            f"Aborted: {result.aborted}"
+            f'✅ Done  |  Steps: {len(result.steps)}  |  '
+            f'Tokens: {result.input_tokens}↑ {result.output_tokens}↓  |  '
+            f'Aborted: {result.aborted}'
         )
+
+        # Generate HTML report — mirrors the gen-mode GenExecutor flow so
+        # both backends produce the same deliverable for CLI users.
+        report_path = _render_cc_mini_report(
+            result, cfg=cfg, url=target_url, task=task,
+        )
+        if report_path:
+            print(f'📄 Report: {report_path}')
         return
 
     # Check Playwright browsers

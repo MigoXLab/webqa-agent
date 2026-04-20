@@ -100,6 +100,39 @@ class TestSkillRegistryDiscover:
         reg.discover()
         assert reg.list_metadata() == []
 
+    def test_multiline_block_scalar_is_rejected(self, tmp_path):
+        """description: | must be rejected (parser doesn't support blocks)."""
+        bad = tmp_path / 'multi'
+        bad.mkdir()
+        (bad / 'SKILL.md').write_text(
+            '---\nname: multi\ndescription: |\n  line one\n  line two\n---\n',
+            encoding='utf-8',
+        )
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        assert reg.list_metadata() == []
+
+    def test_malformed_frontmatter_emits_warning(self, tmp_path, caplog):
+        bad = tmp_path / 'broken'
+        bad.mkdir()
+        (bad / 'SKILL.md').write_text('---\nname: broken\n---\n', encoding='utf-8')
+        reg = SkillRegistry(tmp_path)
+        with caplog.at_level('WARNING'):
+            reg.discover()
+        assert any('Skipping skill' in rec.message for rec in caplog.records)
+
+    def test_when_to_use_is_recognized(self, tmp_path):
+        _write_skill(
+            tmp_path, 'planner',
+            extra_fm='when_to_use: Use when user requests structured plans.\n',
+        )
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        meta = reg.list_metadata()[0]
+        assert meta.when_to_use == 'Use when user requests structured plans.'
+        # when_to_use is NOT bucketed into extra.
+        assert 'when_to_use' not in meta.extra
+
     def test_quoted_values_unquoted(self, tmp_path):
         _write_skill(
             tmp_path, 'quoted',
@@ -215,6 +248,21 @@ class TestLoadSkillTool:
         result = LoadSkillTool(reg).execute(skill_name='   ')
         assert result.is_error
 
+    @pytest.mark.parametrize('bad_name', [
+        '../etc/passwd',
+        'a/b',
+        'name with space',
+        '!malicious',
+        '-leading-dash',
+        'x' * 100,  # too long
+    ])
+    def test_execute_rejects_invalid_skill_names(self, tmp_path, bad_name):
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        result = LoadSkillTool(reg).execute(skill_name=bad_name)
+        assert result.is_error
+        assert 'invalid skill_name' in result.content
+
     def test_activity_description_mentions_skill_name(self, tmp_path):
         reg = SkillRegistry(tmp_path)
         tool = LoadSkillTool(reg)
@@ -268,3 +316,27 @@ class TestSystemPromptSkillInjection:
         assert len(skill_lines) == 1
         assert '\n' not in skill_lines[0]
         assert 'Line one. Line two. Line three.' in skill_lines[0]
+
+    def test_when_to_use_appended_when_present(self, tmp_path):
+        metas = [SkillMetadata(
+            name='plan',
+            description='Generate test cases.',
+            skill_dir=tmp_path,
+            when_to_use='when user asks for a structured plan',
+        )]
+        prompt = build_web_agent_system_prompt('u', 't', skills=metas)
+        bullet = next(line for line in prompt.splitlines() if '**plan**' in line)
+        assert 'Generate test cases.' in bullet
+        assert '(when user asks for a structured plan)' in bullet
+
+    def test_when_to_use_omitted_when_blank(self, tmp_path):
+        metas = [SkillMetadata(
+            name='plan',
+            description='Generate test cases.',
+            skill_dir=tmp_path,
+            when_to_use='',
+        )]
+        prompt = build_web_agent_system_prompt('u', 't', skills=metas)
+        bullet = next(line for line in prompt.splitlines() if '**plan**' in line)
+        # No trailing parenthetical when when_to_use is empty
+        assert bullet.rstrip().endswith('Generate test cases.')

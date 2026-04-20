@@ -32,10 +32,8 @@ client, MCP manager), put it in `core/`.
 ```markdown
 ---
 name: my-skill
-description: |
-  One-sentence description of what this skill does and when to use it.
-  This line goes into every system prompt, so keep it short and
-  action-oriented.
+description: One-sentence summary of what this skill does and when to use it.
+when_to_use: Optional — extra trigger guidance injected alongside description.
 ---
 
 # My Skill
@@ -53,9 +51,34 @@ Step-by-step procedure, including any scripts/ to invoke.
 Concrete input → output examples the LLM can pattern-match against.
 ```
 
-Only `name` and `description` are required in the frontmatter. Additional
-key-value lines are preserved as `extra` metadata but are not
-auto-parsed.
+### Parser constraints
+
+The frontmatter parser is intentionally minimal (zero dependencies). It
+only supports **single-line, scalar key-value pairs** like the example
+above. The following are **not** supported and will either be ignored or
+cause the skill to be skipped with a warning:
+
+- Multi-line scalars (`description: |` blocks, `>` folded blocks)
+- Lists (`triggers: [a, b]` / block sequences)
+- Nested mappings
+- Anchors / aliases
+
+If you need richer structure, put it in the SKILL.md **body**, not in
+the frontmatter.
+
+### Recognized frontmatter fields
+
+| Field         | Required | Purpose                                                  |
+| ------------- | -------- | -------------------------------------------------------- |
+| `name`        | yes      | Used as the skill's public identifier.                   |
+| `description` | yes      | One-line summary injected into the system prompt.        |
+| `when_to_use` | no       | Additional trigger guidance, appended after description. |
+
+All other key-value lines are stored in `SkillMetadata.extra` for
+future use, but are **not** currently read by the engine. In particular,
+Claude Code–specific fields such as `allowed-tools`,
+`disable-model-invocation`, `model`, `effort`, `context`, and
+`hooks` have **no effect** in cc-mini; do not rely on them.
 
 ## Runtime behaviour
 

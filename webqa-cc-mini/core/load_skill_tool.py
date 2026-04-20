@@ -15,8 +15,16 @@ Why this design:
 """
 from __future__ import annotations
 
+import re
+
 from .skill_registry import SkillRegistry
 from .tool import Tool, ToolResult
+
+# Defensive regex for skill_name values coming from the LLM. Discovered
+# skill names are filesystem directory names — restricting to this
+# character class also prevents path-traversal attempts like '../..' even
+# though the registry is a dict lookup today.
+_VALID_SKILL_NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$')
 
 
 class LoadSkillTool(Tool):
@@ -66,6 +74,14 @@ class LoadSkillTool(Tool):
         if not skill_name:
             return ToolResult(
                 content='[FAILURE: missing skill_name argument]',
+                is_error=True,
+            )
+        if not _VALID_SKILL_NAME.match(skill_name):
+            return ToolResult(
+                content=(
+                    f'[FAILURE: invalid skill_name {skill_name!r}] '
+                    f'Skill names must match [A-Za-z0-9][A-Za-z0-9_-]{{0,63}}'
+                ),
                 is_error=True,
             )
         try:

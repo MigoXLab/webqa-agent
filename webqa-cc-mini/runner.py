@@ -10,6 +10,12 @@ Usage::
     )
     print(result.final_text)
 
+    # Render an HTML report for the run (optional, standalone utility):
+    from features.report import render_html_report
+    render_html_report(result, "run_report.html",
+                       title="Smoke test", url="https://example.com",
+                       task="Find the H1 heading")
+
 Supports Anthropic (default) and OpenAI-compatible providers::
 
     # OpenAI GPT-4o
@@ -21,6 +27,15 @@ Supports Anthropic (default) and OpenAI-compatible providers::
                          provider="openai", model="llama3.1:70b",
                          base_url="http://localhost:11434/v1",
                          api_key="ollama")
+
+Skills (optional Progressive Disclosure)::
+
+    result = run_cc_mini(url, task, skills_dir="./skills")
+
+    # Discovers skills/<name>/SKILL.md subdirs at startup, injects each
+    # name + description into the system prompt (~100 tokens/skill), and
+    # adds a load_skill tool so the LLM can fetch full instructions on
+    # demand. See webqa-cc-mini/skills/README.md for the SKILL.md format.
 """
 from __future__ import annotations
 
@@ -157,17 +172,18 @@ def run_cc_mini(
         # Optional skill discovery. Kept out of the MCP tool path: skills are
         # pure markdown instructions, not browser capabilities. Only the
         # load_skill surface is exposed to the LLM.
-        skill_registry: SkillRegistry | None = None
+        skill_metadata = []
         if skills_dir is not None:
             skill_registry = SkillRegistry(Path(skills_dir))
             skill_registry.discover()
-            if skill_registry.list_metadata():
+            skill_metadata = skill_registry.list_metadata()
+            if skill_metadata:
                 tools = list(tools) + [LoadSkillTool(skill_registry)]
 
         system = build_web_agent_system_prompt(
             target_url=url,
             task=user_input,
-            skills=skill_registry.list_metadata() if skill_registry else None,
+            skills=skill_metadata or None,
         )
         engine = Engine(
             tools=tools,

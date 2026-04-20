@@ -20,8 +20,11 @@ a skill needs richer metadata, put it in the body, not the frontmatter.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -34,6 +37,7 @@ class SkillMetadata:
     name: str
     description: str
     skill_dir: Path
+    when_to_use: str = ''
     extra: dict[str, str] = field(default_factory=dict)
 
 
@@ -73,9 +77,15 @@ class SkillRegistry:
                 continue
             try:
                 metadata = self._parse_frontmatter(skill_md)
-            except ValueError:
+            except ValueError as exc:
                 # Skill has malformed frontmatter — skip rather than break
-                # the whole engine start. Surfaces via absence from list_metadata().
+                # the whole engine start. Log the reason so authors can
+                # diagnose "why does my skill not appear" without hunting.
+                logger.warning(
+                    'Skipping skill %s (invalid frontmatter): %s',
+                    child.name,
+                    exc,
+                )
                 continue
             self._metadata[metadata.name] = metadata
 
@@ -116,12 +126,12 @@ class SkillRegistry:
         lines = text.splitlines()
         if not lines or lines[0].strip() != '---':
             raise ValueError(f'{skill_md}: frontmatter must start with --- on line 1')
-        try:
-            end_idx = next(
-                i for i, line in enumerate(lines[1:], start=1)
-                if line.strip() == '---'
-            )
-        except StopIteration:
+        end_idx = next(
+            (i for i, line in enumerate(lines[1:], start=1)
+             if line.strip() == '---'),
+            None,
+        )
+        if end_idx is None:
             raise ValueError(f'{skill_md}: unterminated frontmatter')
 
         fields: dict[str, str] = {}
@@ -137,15 +147,25 @@ class SkillRegistry:
             # Strip surrounding quotes if present.
             if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
                 value = value[1:-1]
+            # Reject obvious multi-line block indicators. The parser does not
+            # support them, and accepting them silently would store the raw
+            # '|' / '>' character as the field value.
+            if value in ('|', '>', '|-', '>-', '|+', '>+'):
+                raise ValueError(
+                    f'{skill_md}: key {key!r} uses unsupported multi-line block '
+                    f'syntax ({value!r}); use a single-line value instead'
+                )
             fields[key] = value
 
         name = fields.pop('name', None)
         description = fields.pop('description', None)
         if not name or not description:
             raise ValueError(f'{skill_md}: frontmatter requires name + description')
+        when_to_use = fields.pop('when_to_use', '')
         return SkillMetadata(
             name=name,
             description=description,
             skill_dir=skill_md.parent,
+            when_to_use=when_to_use,
             extra=fields,
         )

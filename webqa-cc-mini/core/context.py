@@ -52,7 +52,11 @@ def _format_skills_section(skills: Sequence[SkillMetadata]) -> str:
         '',
     ]
     for sm in skills:
-        flat = ' '.join(sm.description.split())
-        lines.append(f'- **{sm.name}** — {flat}')
+        # Normalize whitespace so newlines in frontmatter never break the
+        # bullet layout the LLM sees.
+        desc = ' '.join(sm.description.split())
+        when = ' '.join(sm.when_to_use.split()) if sm.when_to_use else ''
+        suffix = f' ({when})' if when else ''
+        lines.append(f'- **{sm.name}** — {desc}{suffix}')
     lines.append('')
     return '\n'.join(lines)

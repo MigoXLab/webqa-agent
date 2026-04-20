@@ -145,9 +145,10 @@ def render_html_report(
     out_path = Path(output_path).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    steps = _as_list(getattr(run_result, 'steps', ()))
+    raw_steps = getattr(run_result, 'steps', ()) or ()
+    steps = raw_steps if isinstance(raw_steps, list) else list(raw_steps)
     aborted = bool(getattr(run_result, 'aborted', False))
-    error_steps = sum(1 for s in steps if _bool_attr(s, 'is_error'))
+    error_steps = sum(1 for s in steps if bool(getattr(s, 'is_error', False)))
 
     context_parts: list[str] = []
     if url:
@@ -225,13 +226,16 @@ def _render_steps(steps: Iterable[Any]) -> str:
     parts: list[str] = []
     for i, step in enumerate(steps, start=1):
         tool = _text_attr(step, 'tool') or 'unknown'
-        is_error = _bool_attr(step, 'is_error')
+        is_error = bool(getattr(step, 'is_error', False))
         panel_cls = 'panel error' if is_error else 'panel'
         tag_cls = 'tag err' if is_error else 'tag ok'
         tag_text = 'error' if is_error else 'ok'
         input_block = _render_json_block(getattr(step, 'input', {}), 'Input')
         result_text = _text_attr(step, 'result')
-        result_block = _render_text_block(result_text, 'Result') if result_text else ''
+        result_block = (
+            _render_block(result_text, 'Result', open_=True)
+            if result_text else ''
+        )
         parts.append(
             f'<div class="{panel_cls}">'
             f'<div class="panel-head"><span>Step {i} · {html.escape(tool)}</span>'
@@ -242,6 +246,14 @@ def _render_steps(steps: Iterable[Any]) -> str:
     return '\n'.join(parts)
 
 
+def _render_block(content: str, label: str, *, open_: bool = False) -> str:
+    tag = '<details open>' if open_ else '<details>'
+    return (
+        f'{tag}<summary>{html.escape(label)}</summary>'
+        f'<pre>{html.escape(content)}</pre></details>'
+    )
+
+
 def _render_json_block(data: Any, label: str) -> str:
     try:
         if is_dataclass(data) and not isinstance(data, type):
@@ -249,28 +261,7 @@ def _render_json_block(data: Any, label: str) -> str:
         text = json.dumps(data, ensure_ascii=False, indent=2, default=str)
     except (TypeError, ValueError):
         text = repr(data)
-    return (
-        f'<details><summary>{html.escape(label)}</summary>'
-        f'<pre>{html.escape(text)}</pre></details>'
-    )
-
-
-def _render_text_block(text: str, label: str) -> str:
-    return (
-        f'<details open><summary>{html.escape(label)}</summary>'
-        f'<pre>{html.escape(text)}</pre></details>'
-    )
-
-
-def _as_list(value: Any) -> list:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return value
-    try:
-        return list(value)
-    except TypeError:
-        return []
+    return _render_block(text, label)
 
 
 def _text_attr(obj: Any, name: str) -> str:
@@ -278,9 +269,7 @@ def _text_attr(obj: Any, name: str) -> str:
     return val if isinstance(val, str) else str(val or '')
 
 
-def _bool_attr(obj: Any, name: str) -> bool:
-    return bool(getattr(obj, name, False))
-
-
 def _fmt_int(n: int) -> str:
-    return f'{n:,}' if n >= 1000 else str(n)
+    # Python's comma grouping format is a no-op for |n| < 1000, so a
+    # single branch is enough.
+    return f'{n:,}'
