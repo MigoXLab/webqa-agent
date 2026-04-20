@@ -10,7 +10,8 @@ from dataclasses import dataclass, field
 
 from webqa_agent.data.gen_structures import (ParallelTestSession, TestCategory,
                                              TestStatus)
-from webqa_agent.executor.cc_mini_report_adapter import run_result_to_session
+from webqa_agent.executor.cc_mini_report_adapter import (
+    run_result_to_aggregated_data, run_result_to_session)
 
 
 @dataclass
@@ -235,3 +236,123 @@ class TestMetricsAndSummary:
         items = d['test_results']['function_test_results']['items']
         assert len(items) == 1
         assert len(items[0]['sub_tests'][0]['steps']) == 1
+
+
+# ---------------------------------------------------------------------------
+# Aggregated-data mapping — the shape the React frontend actually reads
+# ---------------------------------------------------------------------------
+
+class TestAggregatedDataShape:
+    """The frontend reads ``window.testResultData`` expecting the gen-mode
+    aggregated dict (``{"gen": {"case_1_<safe>": ..., "index": ...}}``).
+
+    Passing ``ParallelTestSession.to_dict()`` alone renders empty — that
+    regression is why this module exists. These tests pin the contract.
+    """
+
+    def test_top_level_has_gen_key(self):
+        agg = run_result_to_aggregated_data(_RunResult(), url='u', task='t')
+        assert set(agg.keys()) == {'gen'}
+
+    def test_has_index_and_single_case(self):
+        agg = run_result_to_aggregated_data(_RunResult(), url='u', task='t')
+        keys = set(agg['gen'].keys())
+        assert 'index' in keys
+        case_keys = keys - {'index'}
+        assert len(case_keys) == 1
+
+    def test_case_key_uses_case_1_prefix_and_sanitized_name(self):
+        agg = run_result_to_aggregated_data(
+            _RunResult(), url='u', task='verify search flow',
+        )
+        case_keys = [k for k in agg['gen'] if k != 'index']
+        # sanitize_case_name collapses whitespace/punct to underscores
+        assert case_keys == ['case_1_verify_search_flow']
+
+    def test_empty_task_gets_fallback_safe_name(self):
+        agg = run_result_to_aggregated_data(_RunResult(), url='u', task='')
+        case_keys = [k for k in agg['gen'] if k != 'index']
+        # sanitize_case_name preserves '-' so the fallback keeps the dash.
+        assert case_keys == ['case_1_cc-mini_run']
+
+    def test_case_entry_has_required_fields(self):
+        agg = run_result_to_aggregated_data(
+            _RunResult(steps=[_Step()]), url='u', task='t',
+        )
+        case = next(v for k, v in agg['gen'].items() if k != 'index')
+        for field_name in (
+            'name', 'display_name', 'safe_name', 'case_id', 'sub_test_id',
+            'start_time', 'end_time', 'status', 'steps', 'case_info',
+        ):
+            assert field_name in case, f'missing {field_name}'
+
+    def test_index_has_session_info_and_gen_result(self):
+        agg = run_result_to_aggregated_data(
+            _RunResult(), url='https://x.test', task='t',
+        )
+        idx = agg['gen']['index']
+        assert idx['session_info']['target_url'] == 'https://x.test'
+        assert idx['aggregated_results']['gen_result']
+        assert idx['aggregated_results']['gen_result'][0]['sub_test_id'] == 'case_1'
+
+    def test_passed_run_produces_passed_count(self):
+        agg = run_result_to_aggregated_data(
+            _RunResult(steps=[_Step(is_error=False)]), url='u', task='t',
+        )
+        count = agg['gen']['index']['aggregated_results']['count']
+        assert count == {'total': 1, 'passed': 1, 'failed': 0, 'warning': 0}
+
+    def test_failed_run_produces_failed_count(self):
+        agg = run_result_to_aggregated_data(
+            _RunResult(steps=[_Step(is_error=True)]), url='u', task='t',
+        )
+        count = agg['gen']['index']['aggregated_results']['count']
+        assert count['failed'] == 1 and count['passed'] == 0
+
+    def test_aborted_run_reported_as_failed(self):
+        agg = run_result_to_aggregated_data(
+            _RunResult(aborted=True), url='u', task='t',
+        )
+        case = next(v for k, v in agg['gen'].items() if k != 'index')
+        assert case['status'] == 'failed'
+
+    def test_steps_have_frontend_fields(self):
+        rr = _RunResult(steps=[_Step(tool='navigate_page', input={'url': 'https://x'})])
+        agg = run_result_to_aggregated_data(rr, url='u', task='t')
+        case = next(v for k, v in agg['gen'].items() if k != 'index')
+        step = case['steps'][0]
+        # Fields the React step renderer looks up
+        for key in ('id', 'number', 'type', 'description', 'screenshots',
+                    'modelIO', 'actions', 'status', 'timestamp'):
+            assert key in step, f'missing step field {key}'
+        assert step['type'] == 'action'
+        assert step['description'] == 'Navigate to https://x'
+        assert step['actions'] and step['actions'][0]['success'] is True
+
+    def test_failed_step_actions_marked_unsuccessful(self):
+        rr = _RunResult(steps=[_Step(is_error=True, result='element missing')])
+        agg = run_result_to_aggregated_data(rr, url='u', task='t')
+        case = next(v for k, v in agg['gen'].items() if k != 'index')
+        step = case['steps'][0]
+        assert step['status'] == 'failed'
+        assert step['actions'][0]['success'] is False
+        assert step['errors'] == 'element missing'
+
+    def test_summary_becomes_report_section(self):
+        agg = run_result_to_aggregated_data(
+            _RunResult(final_text='All good.'), url='u', task='t',
+        )
+        case = next(v for k, v in agg['gen'].items() if k != 'index')
+        assert case['report'][0]['issues'] == 'All good.'
+
+    def test_language_swaps_test_item_labels(self):
+        agg_en = run_result_to_aggregated_data(
+            _RunResult(steps=[_Step()]), url='u', task='t', language='en-US',
+        )
+        agg_zh = run_result_to_aggregated_data(
+            _RunResult(steps=[_Step()]), url='u', task='t', language='zh-CN',
+        )
+        items_en = agg_en['gen']['index']['aggregated_results']['test_items']
+        items_zh = agg_zh['gen']['index']['aggregated_results']['test_items']
+        assert items_en[0]['name'] == 'Functional'
+        assert items_zh[0]['name'] == '功能测试'

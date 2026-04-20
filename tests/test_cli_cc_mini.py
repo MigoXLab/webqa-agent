@@ -328,6 +328,14 @@ def test_cc_mini_report_uses_gen_mode_frontend(monkeypatch, tmp_path):
     # Gen-mode template signatures (React shell + inlined data).
     assert '<div id="root"></div>' in content
     assert 'window.testResultData' in content
+    # The React frontend keys off the gen-mode aggregated shape
+    # ({"gen": {"case_X_<safe>": {...}, "index": {...}}}). If this payload
+    # reverts to the ParallelTestSession.to_dict() shape the UI renders
+    # empty even though the HTML file is large — the regression we fixed
+    # after cc_mini_20260420_202734. Pin the contract here.
+    assert '"gen":' in content
+    assert '"case_1_smoke"' in content
+    assert '"index":' in content
 
 
 def test_cc_mini_stream_handler_formats_events(monkeypatch, capsys):

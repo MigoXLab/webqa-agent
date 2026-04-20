@@ -246,14 +246,22 @@ def _render_cc_mini_report(
     language = (cfg.get('report') or {}).get('language', 'zh-CN')
 
     # Preferred: gen-mode frontend via adapter + ResultAggregator.
+    # The React shell reads ``window.testResultData`` expecting the
+    # gen-mode aggregated shape (``{"gen": {"case_1_<safe>": {...},
+    # "index": {...}}}``). ``ParallelTestSession.to_dict()`` produces a
+    # different schema, so always pass the synthesized aggregated dict
+    # via ``aggregated_data=`` — the session only carries metadata.
     try:
-        from webqa_agent.executor.cc_mini_report_adapter import \
-            run_result_to_session
+        from webqa_agent.executor.cc_mini_report_adapter import (
+            run_result_to_aggregated_data, run_result_to_session)
         from webqa_agent.executor.result_aggregator import ResultAggregator
 
         session = run_result_to_session(
             result, url=url, task=task,
             report_dir=str(out_path.parent), language=language,
+        )
+        aggregated_data = run_result_to_aggregated_data(
+            result, url=url, task=task, language=language,
         )
         aggregator = ResultAggregator(report_config={
             'language': language, 'report_dir': str(out_path.parent),
@@ -261,7 +269,9 @@ def _render_cc_mini_report(
         # ResultAggregator writes ``test_report.html`` (gen-mode convention)
         # and returns its absolute path on success, empty string on failure.
         generated_path = aggregator.generate_html_report_fully_inlined(
-            session, report_dir=str(out_path.parent),
+            session,
+            report_dir=str(out_path.parent),
+            aggregated_data=aggregated_data,
         )
         if generated_path and _Path(generated_path).exists():
             return generated_path

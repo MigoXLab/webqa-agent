@@ -1,27 +1,29 @@
-"""Adapter: cc-mini RunResult → gen-mode ParallelTestSession.
+"""Adapter: cc-mini RunResult → gen-mode report payload.
 
 Keeps the cc-mini library (``webqa-cc-mini/``) free of any dependency on
 ``webqa_agent``. This mapping layer lives here so the CLI can render
 cc-mini runs using the existing gen-mode React frontend (the same
 ``static/index.html`` template inlined by :class:`ResultAggregator`).
 
-Why a separate module:
-    The user can run cc-mini as a standalone library and get a light
-    HTML artifact via ``webqa_cc_mini.features.report.render_html_report``.
-    When running under the webqa_agent CLI (``use_cc_mini: true``),
-    however, the expected deliverable is the *same* UI that gen mode
-    produces. This module bridges the two without polluting cc-mini.
+Two mapping targets:
+
+* :func:`run_result_to_aggregated_data` returns the
+  ``{"gen": {"case_1_<safe>": {...}, "index": {...}}}`` dict that the
+  React frontend ACTUALLY consumes. ``ResultAggregator`` normally builds
+  this by scanning per-case JSON files written during a gen-mode run;
+  cc-mini has no such files, so we synthesize the dict in memory.
+* :func:`run_result_to_session` returns a lightweight
+  :class:`ParallelTestSession` carrying session-level metadata
+  (``report_path``, config). Its ``to_dict`` shape is NOT what the
+  frontend reads — passing it alone yields an empty report. Always
+  combine it with ``run_result_to_aggregated_data`` when rendering.
 
 Mapping:
-    * One cc-mini run → one :class:`ParallelTestSession`
-    * The run itself → one :class:`TestResult` (category=FUNCTION)
-    * All tool steps → one :class:`SubTestResult` (sequential steps)
-    * Each cc-mini ``Step`` → one :class:`SubTestStep` with ``modelIO``
-      holding the tool input + result as JSON. cc-mini does not separate
-      screenshot attachments — they live inside the MCP tool output — so
-      ``screenshots`` is left empty for now. (Extracting screenshots from
-      MCP results is a future enhancement; the UI handles an empty list
-      gracefully.)
+    * One cc-mini run → one "case" entry (``case_1_<safe_name>``)
+    * Each cc-mini ``Step`` → one step dict with ``modelIO`` holding the
+      tool input + result as JSON. Screenshots are left empty for now —
+      cc-mini stores them inside MCP tool output, not as separate paths.
+      (Extracting them is a future enhancement; the UI tolerates ``[]``.)
 """
 from __future__ import annotations
 
@@ -34,6 +36,7 @@ from webqa_agent.data.gen_structures import (ParallelTestSession,
                                              SubTestReport, SubTestResult,
                                              SubTestStep, TestCategory,
                                              TestResult, TestStatus)
+from webqa_agent.utils.reporting_utils import sanitize_case_name
 
 # Soft cap on how much of each tool result we embed in the report.
 # cc-mini tool outputs are sometimes multi-KB (accessibility snapshots,
@@ -218,3 +221,186 @@ def _truncate_with_flag(text: str, limit: int) -> tuple[str, bool]:
     if len(text) <= limit:
         return text, False
     return text[: max(0, limit - 3)] + '...', True
+
+
+def run_result_to_aggregated_data(
+    run_result: Any,
+    *,
+    url: str,
+    task: str,
+    language: str = 'zh-CN',
+) -> dict:
+    """Build the gen-mode aggregated dict the React frontend consumes.
+
+    The React shell keyed off ``window.testResultData`` expects a shape
+    that :meth:`ResultAggregator.aggregate_report_json` normally produces
+    by scanning per-case JSON files. cc-mini has no such files, so this
+    function synthesizes the equivalent structure in memory::
+
+        {
+            "gen": {
+                "case_1_<safe_name>": {
+                    "name", "case_id", "start_time", "end_time",
+                    "duration", "steps": [...], "status", "sub_test_id",
+                    ...
+                },
+                "index": {
+                    "session_info": {...},
+                    "aggregated_results": {
+                        "count": {...},
+                        "test_items": [...],
+                        "gen_result": [{...}],
+                    },
+                },
+            },
+        }
+
+    Pass this as the ``aggregated_data`` kwarg to
+    :meth:`ResultAggregator.generate_html_report_fully_inlined`; the
+    ``ParallelTestSession`` falls back role of carrying session metadata
+    (``report_path``) while this dict drives the UI.
+    """
+    raw_steps = list(getattr(run_result, 'steps', None) or [])
+    step_dicts: list[dict] = [
+        _map_step_dict(i, step) for i, step in enumerate(raw_steps, start=1)
+    ]
+
+    aborted = bool(getattr(run_result, 'aborted', False))
+    failed_count = sum(1 for s in step_dicts if s['status'] == 'failed')
+    overall_status = 'failed' if (aborted or failed_count) else 'passed'
+
+    final_text = (getattr(run_result, 'final_text', '') or '').strip()
+    now = datetime.now()
+    now_iso = now.isoformat(timespec='seconds')
+
+    display_name = (task or 'cc-mini run').strip()
+    safe_name = sanitize_case_name(display_name) or 'cc_mini_run'
+    case_id = 'case_1'
+    case_key = f'{case_id}_{safe_name}'
+    sub_test_id = case_id
+
+    case_entry: dict[str, Any] = {
+        'name': safe_name,
+        'display_name': display_name,
+        'safe_name': safe_name,
+        'case_id': case_id,
+        'sub_test_id': sub_test_id,
+        'start_time': now_iso,
+        'end_time': now_iso,
+        'duration': 0.0,
+        'status': overall_status,
+        'steps': step_dicts,
+        'case_info': {
+            'name': display_name,
+            'objective': display_name,
+            'test_category': 'function',
+            'steps': [],
+        },
+        'final_summary': final_text,
+        'user_summary': final_text,
+        'metrics': {
+            'total_steps': len(step_dicts),
+            'passed_steps': len(step_dicts) - failed_count,
+            'failed_steps': failed_count,
+            'input_tokens': int(getattr(run_result, 'input_tokens', 0) or 0),
+            'output_tokens': int(getattr(run_result, 'output_tokens', 0) or 0),
+            'aborted': aborted,
+        },
+    }
+    if final_text:
+        case_entry['report'] = [{'title': 'Summary', 'issues': final_text}]
+
+    gen_result_entry = {
+        'name': safe_name,
+        'display_name': display_name,
+        'safe_name': safe_name,
+        'status': overall_status,
+        'sub_test_id': sub_test_id,
+    }
+    count = {
+        'total': 1,
+        'passed': 1 if overall_status == 'passed' else 0,
+        'failed': 1 if overall_status == 'failed' else 0,
+        'warning': 0,
+    }
+    test_items = [{
+        'name': '功能测试' if language != 'en-US' else 'Functional',
+        'item': (
+            f'执行了 {len(step_dicts)} 个步骤' if language != 'en-US'
+            else f'Executed {len(step_dicts)} steps'
+        ),
+    }]
+
+    index_entry = {
+        'session_info': {
+            'session_id': f'cc-mini-{uuid.uuid4().hex[:8]}',
+            'target_url': url,
+            'start_time': now_iso,
+            'end_time': now_iso,
+        },
+        'aggregated_results': {
+            'title': 'Overview',
+            'mode': 'gen',
+            'count': count,
+            'test_items': test_items,
+            'summary': final_text,
+            'gen_result': [gen_result_entry],
+        },
+        'count': count,
+    }
+
+    return {'gen': {case_key: case_entry, 'index': index_entry}}
+
+
+def _map_step_dict(index: int, step: Any) -> dict:
+    """Map a cc-mini ``Step`` into the step-dict shape the React UI renders."""
+    tool = str(getattr(step, 'tool', '') or 'unknown')
+    is_error = bool(getattr(step, 'is_error', False))
+    input_dict = getattr(step, 'input', {}) or {}
+    result_text = str(getattr(step, 'result', '') or '')
+
+    try:
+        truncated_result, truncated = _truncate_with_flag(
+            result_text, _RESULT_TEXT_LIMIT,
+        )
+        model_io_obj: dict[str, Any] = {
+            'tool': tool,
+            'input': input_dict,
+            'result': truncated_result,
+        }
+        if truncated:
+            model_io_obj['result_truncated'] = True
+            model_io_obj['full_result_length'] = len(result_text)
+        model_io = json.dumps(
+            model_io_obj, ensure_ascii=False, indent=2, default=str,
+        )
+    except (TypeError, ValueError):
+        model_io = repr({'tool': tool, 'input': input_dict, 'result': result_text})
+
+    description = _describe_step(tool, input_dict)
+    status = 'failed' if is_error else 'passed'
+    now_iso = datetime.now().isoformat(timespec='seconds')
+
+    # The frontend renders ``actions`` as a log stream next to each step.
+    # cc-mini has a single tool call per step; surface the result text there
+    # so the reader sees what actually happened without expanding modelIO.
+    action_message = result_text if result_text else description
+    actions = [{
+        'description': action_message,
+        'success': not is_error,
+        'message': action_message,
+        'index': index,
+    }]
+
+    return {
+        'id': index,
+        'number': index,
+        'type': 'action',
+        'description': description,
+        'screenshots': [],
+        'modelIO': model_io,
+        'actions': actions,
+        'status': status,
+        'timestamp': now_iso,
+        'errors': result_text if is_error else '',
+    }
