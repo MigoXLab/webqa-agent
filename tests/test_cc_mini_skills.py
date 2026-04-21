@@ -438,6 +438,47 @@ class TestLoadSkillToolReference:
 # System prompt injection
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Real skills in webqa-cc-mini/skills/ — integration smoke tests
+# ---------------------------------------------------------------------------
+
+_REAL_SKILLS_DIR = Path(__file__).resolve().parent.parent / 'webqa-cc-mini' / 'skills'
+
+
+class TestPlanSkillIntegration:
+    @pytest.fixture()
+    def reg(self):
+        if not _REAL_SKILLS_DIR.is_dir():
+            pytest.skip('webqa-cc-mini/skills/ not found')
+        r = SkillRegistry(_REAL_SKILLS_DIR)
+        r.discover()
+        return r
+
+    def test_plan_skill_discovered(self, reg):
+        names = [m.name for m in reg.list_metadata()]
+        assert 'plan' in names
+
+    def test_plan_skill_references(self, reg):
+        refs = reg.list_references('plan')
+        assert 'error-taxonomy' in refs
+        assert 'verification-patterns' in refs
+
+    def test_plan_skill_body_contains_key_sections(self, reg):
+        body = reg.load_full_content('plan')
+        for section in (
+            'Planning Phases',
+            'Observation Batching',
+            'Verification Strategy',
+            'Completion',
+            'Error Handling',
+        ):
+            assert section in body, f'missing section: {section}'
+
+
+# ---------------------------------------------------------------------------
+# System prompt injection
+# ---------------------------------------------------------------------------
+
 class TestSystemPromptSkillInjection:
     def test_no_skills_omits_section(self):
         prompt = build_web_agent_system_prompt('https://x', 'do things')
