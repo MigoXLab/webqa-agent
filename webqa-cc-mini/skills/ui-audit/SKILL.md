@@ -114,3 +114,8 @@ Call: `load_skill(skill_name="ui-audit", reference="<name>")`
 - `29-patterns-onboarding` — Tours, contextual tips, tutorials, checklists
 - `30-patterns-information` — Breadcrumbs, sitemaps, tagging, faceted search
 - `31-patterns-navigation` — Priority nav, off-canvas, sticky, bottom nav
+
+### Defect Detection
+
+- `40-defects-text-quality` — Spelling, grammar, tone, language consistency
+- `41-defects-layout-missing` — Layout bugs, overflow, missing elements, broken images
