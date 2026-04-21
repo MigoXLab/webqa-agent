@@ -19,6 +19,17 @@ class _UnexpectedExecutor:
 
 def _load_cli_module(monkeypatch: pytest.MonkeyPatch):
     """Import cli with a lightweight executor stub scoped to one test."""
+    # Pre-import real sub-modules that _render_cc_mini_report uses lazily,
+    # BEFORE overwriting the executor package with a stub.
+    _real_submodules = {}
+    for mod_name in (
+        'webqa_agent.executor.cc_mini_report_adapter',
+        'webqa_agent.executor.result_aggregator',
+    ):
+        if mod_name not in sys.modules:
+            importlib.import_module(mod_name)
+        _real_submodules[mod_name] = sys.modules[mod_name]
+
     executor_pkg = types.ModuleType('webqa_agent.executor')
     executor_pkg.__path__ = []
     gen_executor_module = types.ModuleType('webqa_agent.executor.gen_executor')
@@ -26,6 +37,8 @@ def _load_cli_module(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setitem(sys.modules, 'webqa_agent.executor', executor_pkg)
     monkeypatch.setitem(sys.modules, 'webqa_agent.executor.gen_executor', gen_executor_module)
+    for mod_name, mod in _real_submodules.items():
+        monkeypatch.setitem(sys.modules, mod_name, mod)
     monkeypatch.delitem(sys.modules, 'webqa_agent.cli', raising=False)
     return importlib.import_module('webqa_agent.cli')
 

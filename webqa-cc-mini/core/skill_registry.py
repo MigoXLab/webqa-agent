@@ -12,6 +12,12 @@ cc-mini engine:
   :meth:`SkillRegistry.load_full_content`, typically invoked by the LLM
   through the ``load_skill`` tool. This is the Progressive Disclosure
   principle — skills scale without inflating every startup.
+* **Reference files** (``references/*.md``) extend skills with
+  supplementary material. Claude Code loads these via the Read/Bash
+  tools; cc-mini lacks general filesystem access, so
+  :meth:`SkillRegistry.load_reference` serves the same role, exposed
+  to the LLM through the optional ``reference`` parameter of
+  ``load_skill``.
 
 The YAML parser is a minimal hand-rolled subset (key-value lines + simple
 single-line values) to preserve the zero-dependency property of cc-mini.
@@ -21,6 +27,7 @@ a skill needs richer metadata, put it in the body, not the frontmatter.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -53,10 +60,14 @@ class SkillRegistry:
 
     SKILL_FILE = 'SKILL.md'
 
+    REFERENCES_DIR = 'references'
+    _VALID_REF_NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$')
+
     def __init__(self, skills_dir: Path):
         self.skills_dir = Path(skills_dir)
         self._metadata: dict[str, SkillMetadata] = {}
         self._content_cache: dict[str, str] = {}
+        self._ref_cache: dict[tuple[str, str], str] = {}
 
     def discover(self) -> None:
         """Scan ``skills_dir`` and load frontmatter for every skill.
@@ -107,6 +118,53 @@ class SkillRegistry:
             md_path = self._metadata[name].skill_dir / self.SKILL_FILE
             self._content_cache[name] = md_path.read_text(encoding='utf-8')
         return self._content_cache[name]
+
+    def list_references(self, skill_name: str) -> list[str]:
+        """Return sorted reference names (without ``.md``) for *skill_name*.
+
+        Returns an empty list when the skill has no ``references/``
+        subdirectory. Raises :exc:`KeyError` for unknown skills.
+        """
+        if skill_name not in self._metadata:
+            raise KeyError(f'unknown skill: {skill_name}')
+        ref_dir = self._metadata[skill_name].skill_dir / self.REFERENCES_DIR
+        if not ref_dir.is_dir():
+            return []
+        return sorted(
+            p.stem for p in ref_dir.iterdir()
+            if p.is_file() and p.suffix == '.md'
+        )
+
+    def load_reference(self, skill_name: str, ref_name: str) -> str:
+        """Load a single reference file from *skill_name*'s references dir.
+
+        Raises:
+            KeyError: if *skill_name* is not a discovered skill.
+            ValueError: if *ref_name* fails validation.
+            FileNotFoundError: if the reference file does not exist.
+        """
+        if skill_name not in self._metadata:
+            raise KeyError(f'unknown skill: {skill_name}')
+        if not self._VALID_REF_NAME.match(ref_name):
+            raise ValueError(
+                f'invalid reference name: {ref_name!r} '
+                f'(must match [A-Za-z0-9][A-Za-z0-9_-]{{0,127}})'
+            )
+
+        cache_key = (skill_name, ref_name)
+        if cache_key in self._ref_cache:
+            return self._ref_cache[cache_key]
+
+        ref_path = (
+            self._metadata[skill_name].skill_dir
+            / self.REFERENCES_DIR
+            / f'{ref_name}.md'
+        )
+        if not ref_path.is_file():
+            raise FileNotFoundError(f'reference not found: {ref_name}')
+        content = ref_path.read_text(encoding='utf-8')
+        self._ref_cache[cache_key] = content
+        return content
 
     def get_skill_dir(self, name: str) -> Path:
         if name not in self._metadata:

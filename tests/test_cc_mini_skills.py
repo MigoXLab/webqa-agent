@@ -280,6 +280,161 @@ class TestLoadSkillTool:
 
 
 # ---------------------------------------------------------------------------
+# SkillRegistry reference files
+# ---------------------------------------------------------------------------
+
+
+def _write_skill_with_refs(
+    root: Path, name: str, refs: dict[str, str], *,
+    description: str = 'Test skill.', body: str = '# Body\n',
+) -> Path:
+    skill_dir = _write_skill(root, name, description=description, body=body)
+    ref_dir = skill_dir / 'references'
+    ref_dir.mkdir(exist_ok=True)
+    for ref_name, content in refs.items():
+        (ref_dir / f'{ref_name}.md').write_text(content, encoding='utf-8')
+    return skill_dir
+
+
+class TestSkillRegistryReferences:
+    def test_list_references_returns_sorted_names(self, tmp_path):
+        _write_skill_with_refs(tmp_path, 's', {
+            'zzz-nav': 'nav content',
+            'aaa-access': 'access content',
+            'mmm-style': 'style content',
+        })
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        assert reg.list_references('s') == ['aaa-access', 'mmm-style', 'zzz-nav']
+
+    def test_list_references_empty_when_no_dir(self, tmp_path):
+        _write_skill(tmp_path, 's')
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        assert reg.list_references('s') == []
+
+    def test_list_references_unknown_skill_raises(self, tmp_path):
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        with pytest.raises(KeyError):
+            reg.list_references('nonexistent')
+
+    def test_list_references_ignores_non_md_files(self, tmp_path):
+        skill_dir = _write_skill_with_refs(tmp_path, 's', {'valid': 'ok'})
+        (skill_dir / 'references' / 'readme.txt').write_text('skip me')
+        (skill_dir / 'references' / 'data.json').write_text('{}')
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        assert reg.list_references('s') == ['valid']
+
+    def test_load_reference_returns_content(self, tmp_path):
+        _write_skill_with_refs(tmp_path, 's', {
+            '27-patterns-accessibility': '# Accessibility\nKeyboard nav...',
+        })
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        content = reg.load_reference('s', '27-patterns-accessibility')
+        assert '# Accessibility' in content
+        assert 'Keyboard nav' in content
+
+    def test_load_reference_cached(self, tmp_path):
+        skill_dir = _write_skill_with_refs(tmp_path, 's', {'cached-ref': 'data'})
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        first = reg.load_reference('s', 'cached-ref')
+        (skill_dir / 'references' / 'cached-ref.md').unlink()
+        second = reg.load_reference('s', 'cached-ref')
+        assert first == second
+
+    def test_load_reference_unknown_skill_raises(self, tmp_path):
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        with pytest.raises(KeyError):
+            reg.load_reference('ghost', 'any')
+
+    def test_load_reference_missing_file_raises(self, tmp_path):
+        _write_skill_with_refs(tmp_path, 's', {'exists': 'ok'})
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        with pytest.raises(FileNotFoundError):
+            reg.load_reference('s', 'does-not-exist')
+
+    @pytest.mark.parametrize('bad_name', [
+        '../etc/passwd',
+        'a/b',
+        'name with space',
+        '!malicious',
+        '-leading-dash',
+    ])
+    def test_load_reference_rejects_path_traversal(self, tmp_path, bad_name):
+        _write_skill_with_refs(tmp_path, 's', {'ok': 'fine'})
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        with pytest.raises(ValueError, match='invalid reference name'):
+            reg.load_reference('s', bad_name)
+
+
+# ---------------------------------------------------------------------------
+# LoadSkillTool — reference parameter
+# ---------------------------------------------------------------------------
+
+class TestLoadSkillToolReference:
+    def test_schema_has_optional_reference(self, tmp_path):
+        reg = SkillRegistry(tmp_path)
+        tool = LoadSkillTool(reg)
+        schema = tool.input_schema
+        assert 'reference' in schema['properties']
+        assert 'reference' not in schema.get('required', [])
+
+    def test_execute_with_reference_returns_content(self, tmp_path):
+        _write_skill_with_refs(tmp_path, 's', {'my-ref': '# Reference\nContent.'})
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        result = LoadSkillTool(reg).execute(skill_name='s', reference='my-ref')
+        assert not result.is_error
+        assert '# Reference' in result.content
+
+    def test_execute_without_reference_returns_body(self, tmp_path):
+        _write_skill_with_refs(tmp_path, 's', {'ref': 'ref content'},
+                               body='# Body content')
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        result = LoadSkillTool(reg).execute(skill_name='s')
+        assert not result.is_error
+        assert '# Body content' in result.content
+        assert 'ref content' not in result.content
+
+    def test_execute_missing_reference_lists_available(self, tmp_path):
+        _write_skill_with_refs(tmp_path, 's', {
+            'alpha-ref': 'a', 'beta-ref': 'b',
+        })
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        result = LoadSkillTool(reg).execute(skill_name='s', reference='missing')
+        assert result.is_error
+        assert 'alpha-ref' in result.content
+        assert 'beta-ref' in result.content
+
+    def test_execute_invalid_reference_name_rejects(self, tmp_path):
+        _write_skill_with_refs(tmp_path, 's', {'ok': 'fine'})
+        reg = SkillRegistry(tmp_path)
+        reg.discover()
+        result = LoadSkillTool(reg).execute(
+            skill_name='s', reference='../evil',
+        )
+        assert result.is_error
+        assert 'invalid reference name' in result.content
+
+    def test_activity_description_includes_reference(self, tmp_path):
+        reg = SkillRegistry(tmp_path)
+        tool = LoadSkillTool(reg)
+        desc = tool.get_activity_description(
+            skill_name='ui-audit', reference='27-patterns-accessibility',
+        )
+        assert 'ui-audit/27-patterns-accessibility' in desc
+
+
+# ---------------------------------------------------------------------------
 # System prompt injection
 # ---------------------------------------------------------------------------
 
