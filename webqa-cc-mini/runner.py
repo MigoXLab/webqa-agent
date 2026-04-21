@@ -322,6 +322,10 @@ def run_cc_mini(
             skill_metadata = skill_registry.list_metadata()
             if skill_metadata:
                 tools = list(tools) + [LoadSkillTool(skill_registry)]
+                names = ', '.join(m.name for m in skill_metadata)
+                log.info('Skills discovered (%d): %s', len(skill_metadata), names)
+            else:
+                log.info('Skills dir %s exists but no valid skills found', skills_dir)
 
         system = build_web_agent_system_prompt(
             target_url=url,
@@ -401,9 +405,11 @@ def run_cc_mini(
             if kind == 'tool_call':
                 # evt = ("tool_call", name, input_dict, activity)
                 pending.append({'tool': evt[1], 'input': evt[2], 'ts': time.time()})
+                log.debug('tool_call: %s', evt[1])
 
             elif kind == 'tool_result':
                 # evt = ("tool_result", name, input_dict, ToolResult)
+                tool_result = evt[3]
                 if pending:
                     p = pending.popleft()
                     step_index = len(steps) + 1
@@ -415,11 +421,14 @@ def run_cc_mini(
                     steps.append(Step(
                         tool=p['tool'],
                         input=p['input'],
-                        result=evt[3].content,
-                        is_error=evt[3].is_error,
+                        result=tool_result.content,
+                        is_error=tool_result.is_error,
                         screenshots=screenshots,
                         timestamp=p.get('ts', time.time()),
                     ))
+                if tool_result.is_error:
+                    snippet = (tool_result.content or '')[:200]
+                    log.warning('tool_error [%s]: %s', evt[1], snippet)
 
                 # Fallback compact trigger: only runs when the provider never
                 # emits "usage" (e.g. OpenAI-compatible backends that ignore
@@ -427,6 +436,9 @@ def run_cc_mini(
                 # should_compact's fallback path (last_input=None).
                 if not seen_usage:
                     _maybe_compact(None)
+
+            elif kind == 'error':
+                log.error('engine error: %s', evt[1] if len(evt) > 1 else '?')
 
             elif kind == 'usage':
                 u = evt[1]
@@ -452,6 +464,13 @@ def run_cc_mini(
                 aborted = True
                 break
 
+        failed = sum(1 for s in steps if s.is_error)
+        log.info(
+            'Run complete: %d steps (%d failed), %d↑ %d↓ tokens, aborted=%s',
+            len(steps), failed,
+            total_tokens['input'], total_tokens['output'],
+            aborted,
+        )
         return RunResult(
             final_text=engine.last_assistant_text(),
             steps=steps,
