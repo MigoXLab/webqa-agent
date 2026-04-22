@@ -36,7 +36,8 @@ def build_web_agent_system_prompt(
         '- **Navigation**: navigate_page, new_page, list_pages, '
         'select_page, close_page\n'
         '- **Interaction**: click, fill, hover, press_key, drag, '
-        'upload_file, fill_form\n'
+        'upload_file (file input *or* element that opens the file chooser), '
+        'fill_form\n'
         '- **Observation**: take_snapshot (accessibility tree), '
         'take_screenshot\n'
         '- **Debugging**: list_console_messages, list_network_requests, '
@@ -141,10 +142,12 @@ def _format_file_upload_section(file_catalog: str) -> str:
     catalog = file_catalog.strip()
     return (
         '\n## File upload\n'
-        'For any file-input element, call `upload_file` (exposed as '
-        '`mcp__browser__upload_file`) with `uid` from the latest snapshot '
-        'and `filePath` set to one of the absolute paths below — pick by '
-        'matching `accept` / context, do not invent paths. If none match, '
-        'skip and note it in the final outcome.\n\n'
+        'Use `mcp__browser__upload_file` with `filePath` from the list below '
+        'and `uid` from the **latest** snapshot. `uid` = file input **or** any '
+        'control that opens the file chooser (e.g. paperclip next to a search '
+        'box). If the a11y tree hides icon-only controls, use `take_screenshot` '
+        '/ verbose `take_snapshot` and try a plausible `uid` before giving up. '
+        'Do not replace `upload_file` with `evaluate_script` to pick files. One '
+        '`filePath` per call; re-snapshot if uids change after an upload.\n\n'
         f'{catalog}\n'
     )

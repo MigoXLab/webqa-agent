@@ -266,7 +266,9 @@ class TestFileLibrary:
         truncated = len(self.files) > MAX_CATALOG_FILES
 
         lines: List[str] = [
-            'Available test files for upload (use FULL path in Upload action value):',
+            'Available test files for upload (use each FULL path as the file path '
+            'for your upload API, e.g. `filePath` in MCP `upload_file` or the '
+            'Upload action `value` in UI automation):',
         ]
         for entry in selected:
             size_str = _format_size(entry.size_bytes)
@@ -277,8 +279,9 @@ class TestFileLibrary:
             lines.append(f'\n... and {remaining} more files (truncated).')
 
         lines.append(
-            '\nIMPORTANT: Use the exact full path shown above '
-            "as the Upload action's value parameter."
+            '\nIMPORTANT: Use the exact full path string above; pass it as '
+            'the file path argument (e.g. `filePath` for `upload_file` in '
+            'browser MCP, or `value` for the Upload action in UI automation).'
         )
 
         return '\n'.join(lines)
