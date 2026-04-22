@@ -152,6 +152,7 @@ async def _execute_cc_mini_mode(
     file_catalog: str | None = None,
     save_screenshots: bool = False,
     screenshot_dir: str | None = None,
+    browser_headless: bool = False,
     log_level: str = 'info',
     on_event=None,
 ):
@@ -188,6 +189,7 @@ async def _execute_cc_mini_mode(
         file_catalog=file_catalog,
         save_screenshots=save_screenshots,
         screenshot_dir=screenshot_dir,
+        browser_headless=browser_headless,
         on_event=on_event,
     )
 
@@ -466,6 +468,13 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
 
         log_level = cfg.get('log', {}).get('level', 'info')
 
+        browser_cfg_raw = cfg.get('browser_config', {})
+        is_docker = os.getenv('DOCKER_ENV') == 'true'
+        browser_headless = True if is_docker else bool(
+            browser_cfg_raw.get('headless', True),
+        )
+        print(f'🌐 cc-mini browser headless: {browser_headless}', flush=True)
+
         # Mirror GenExecutor: when the user configured a test-files directory
         # (+ optional filename whitelist) we build an LLM-readable catalog and
         # inject it into the cc-mini system prompt so the agent can autonomously
@@ -507,6 +516,7 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
                 file_catalog=cc_mini_file_catalog,
                 save_screenshots=save_screenshots,
                 screenshot_dir=screenshot_dir,
+                browser_headless=browser_headless,
                 log_level=log_level,
                 on_event=_make_cc_mini_stream_handler(),
             )

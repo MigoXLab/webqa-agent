@@ -28,9 +28,10 @@ Mapping:
 from __future__ import annotations
 
 import json
-import re
+import sys
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from webqa_agent.data.gen_structures import (ParallelTestSession,
@@ -39,14 +40,20 @@ from webqa_agent.data.gen_structures import (ParallelTestSession,
                                              TestResult, TestStatus)
 from webqa_agent.utils.reporting_utils import sanitize_case_name
 
+# Shared with webqa-cc-mini (report + progress must agree on pass/fail).
+_cc_mini_root = Path(__file__).resolve().parent.parent.parent / 'webqa-cc-mini'
+if _cc_mini_root.is_dir() and str(_cc_mini_root) not in sys.path:
+    sys.path.insert(0, str(_cc_mini_root))
+from core.outcome_status import (  # type: ignore  # noqa: E402
+    derive_status,
+    extract_final_outcome,
+    strip_final_outcome_block,
+)
+
 # Soft cap on how much of each tool result we embed in the report.
 # cc-mini tool outputs are sometimes multi-KB (accessibility snapshots,
 # full DOM dumps) and inlining them verbatim would bloat every report.
 _RESULT_TEXT_LIMIT = 4000
-_FINAL_OUTCOME_TAG_RE = re.compile(
-    r'<final_outcome>\s*(\{.*?\})\s*</final_outcome>',
-    re.DOTALL | re.IGNORECASE,
-)
 
 
 def _int_attr(obj: Any, name: str) -> int:
@@ -88,9 +95,9 @@ def run_result_to_session(
     raw_final_text = getattr(run_result, 'final_text', '') or ''
     aborted = bool(getattr(run_result, 'aborted', False))
     failed_count = sum(1 for s in sub_steps if s.status == TestStatus.FAILED)
-    outcome = _extract_final_outcome(raw_final_text)
-    final_text = _build_display_final_text(raw_final_text)
-    overall_status_name, status_source = _derive_status(
+    outcome = extract_final_outcome(raw_final_text)
+    final_text = strip_final_outcome_block(raw_final_text)
+    overall_status_name, status_source = derive_status(
         aborted=aborted, failed_count=failed_count, outcome=outcome,
     )
     overall_status = (
@@ -221,54 +228,6 @@ def _truncate_with_flag(text: str, limit: int) -> tuple[str, bool]:
     return text[: max(0, limit - 3)] + '...', True
 
 
-def _extract_final_outcome(final_text: str) -> dict[str, Any] | None:
-    """Extract structured outcome JSON from final text.
-
-    Preferred format is ``<final_outcome>{...}</final_outcome>``. Returns
-    ``None`` if not present or malformed.
-    """
-    if not final_text:
-        return None
-    matches = _FINAL_OUTCOME_TAG_RE.findall(final_text)
-    if not matches:
-        return None
-    raw_json = matches[-1]
-    try:
-        parsed = json.loads(raw_json)
-    except (TypeError, ValueError):
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    return parsed
-
-
-def _strip_final_outcome_block(final_text: str) -> str:
-    """Remove <final_outcome>...</final_outcome> from user-facing text."""
-    if not final_text:
-        return ''
-    cleaned = _FINAL_OUTCOME_TAG_RE.sub('', final_text)
-    return cleaned.strip()
-
-
-def _build_display_final_text(raw_final_text: str) -> str:
-    """Build user-facing final text without exposing machine-only blocks."""
-    return _strip_final_outcome_block(raw_final_text)
-
-
-def _derive_status(
-    *,
-    aborted: bool,
-    failed_count: int,
-    outcome: dict[str, Any] | None,
-) -> tuple[str, str]:
-    """Derive overall pass/fail and the source of that decision."""
-    if aborted:
-        return 'failed', 'aborted'
-    if isinstance(outcome, dict) and isinstance(outcome.get('objective_achieved'), bool):
-        return ('passed', 'final_outcome') if outcome['objective_achieved'] else ('failed', 'final_outcome')
-    return ('failed', 'step_fallback') if failed_count else ('passed', 'step_fallback')
-
-
 def run_result_to_aggregated_data(
     run_result: Any,
     *,
@@ -312,11 +271,11 @@ def run_result_to_aggregated_data(
     ]
 
     raw_final_text = (getattr(run_result, 'final_text', '') or '').strip()
-    outcome = _extract_final_outcome(raw_final_text)
-    final_text = _build_display_final_text(raw_final_text)
+    outcome = extract_final_outcome(raw_final_text)
+    final_text = strip_final_outcome_block(raw_final_text)
     aborted = bool(getattr(run_result, 'aborted', False))
     failed_count = sum(1 for s in step_dicts if s['status'] == 'failed')
-    overall_status, status_source = _derive_status(
+    overall_status, status_source = derive_status(
         aborted=aborted, failed_count=failed_count, outcome=outcome,
     )
     now = datetime.now()

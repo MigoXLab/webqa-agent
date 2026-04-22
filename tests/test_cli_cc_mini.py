@@ -115,6 +115,10 @@ def test_execute_gen_mode_routes_to_cc_mini(monkeypatch, capsys):
         'timeout': None,
         # Skills discovery is opt-in; cc_mini_skills_dir unset -> None.
         'skills_dir': None,
+        # No test_files_dir -> no file catalog.
+        'file_catalog': None,
+        # browser_config missing -> default headless True (aligns with GenExecutor).
+        'browser_headless': True,
         # Screenshot persistence defaults.
         'save_screenshots': False,
         'screenshot_dir': None,
@@ -126,6 +130,7 @@ def test_execute_gen_mode_routes_to_cc_mini(monkeypatch, capsys):
     stdout = capsys.readouterr().out
     assert 'Gen Mode (cc-mini backend)' in stdout
     assert 'cc-mini Task: 验证搜索功能' in stdout
+    assert 'cc-mini browser headless: True' in stdout
 
 
 def test_execute_gen_mode_forwards_llm_tuning_params_to_cc_mini(monkeypatch):

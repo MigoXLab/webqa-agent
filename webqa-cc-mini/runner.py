@@ -62,6 +62,7 @@ EventCallback = Callable[[tuple[str, ...]], None]
 
 from core.config import DEFAULT_MODEL, DEFAULT_PROVIDER, MCPServerConfig
 from core.context import build_web_agent_system_prompt
+from core.outcome_status import derive_status, extract_final_outcome
 from core.engine import AbortedError, Engine
 from core.load_skill_tool import LoadSkillTool
 from core.mcp_client import MCPManager
@@ -82,9 +83,15 @@ except Exception:
 
 
 class _DisplayProgressBridge:
-    """Bridge cc-mini event stream to webqa Display progress model.
+    """Maps engine events to logs and to ``Display`` task rows (see ``core.outcome_status`` for pass/fail)."""
 
-    """
+    @staticmethod
+    def _log_tool_result(tool_name: str, result: Any) -> None:
+        content = (str(getattr(result, 'content', '') or ''))[:300].replace('\n', ' ')
+        if getattr(result, 'is_error', False):
+            log.error('❌ %s: %s', tool_name, content)
+        else:
+            log.info('✅ %s', tool_name)
 
     def __init__(
         self,
@@ -98,7 +105,6 @@ class _DisplayProgressBridge:
         self._case_name = 'cc-mini case'
         self._case_tracker: Any | None = None
         self._case_finished = False
-        self._has_error = False
         self._started = False
         if not self.enabled:
             return
@@ -128,13 +134,7 @@ class _DisplayProgressBridge:
         elif kind == 'tool_result':
             tool_name = str(evt[1] if len(evt) > 1 else 'tool')
             result = evt[3] if len(evt) > 3 else None
-            is_error = bool(getattr(result, 'is_error', False))
-            content = str(getattr(result, 'content', '') or '')
-            if is_error:
-                self._has_error = True
-                log.error('❌ %s: %s', tool_name, content[:300].replace('\n', ' '))
-            else:
-                log.info('✅ %s', tool_name)
+            self._log_tool_result(tool_name, result)
         elif kind == 'usage':
             usage = evt[1] if len(evt) > 1 else None
             log.info(
@@ -146,12 +146,23 @@ class _DisplayProgressBridge:
             msg = str(evt[1] if len(evt) > 1 else '')
             log.error('⚠️ %s', msg)
 
-    def finish(self, *, aborted: bool = False) -> None:
+    def finish(
+        self, *, aborted: bool = False, steps: list | None = None,
+        final_text: str = '',
+    ) -> None:
         if not self.enabled or self._case_finished or self._case_tracker is None:
             return
-        self._case_tracker.result = 'failed' if (aborted or self._has_error) else 'passed'
-        if aborted or self._has_error:
-            self._case_tracker.__exit__(Exception, Exception('cc-mini execution failed'), None)
+        failed = sum(1 for s in (steps or []) if getattr(s, 'is_error', False))
+        outcome = extract_final_outcome(final_text)
+        status_name, _ = derive_status(
+            aborted=aborted, failed_count=failed, outcome=outcome,
+        )
+        case_passed = status_name == 'passed'
+        self._case_tracker.result = 'passed' if case_passed else 'failed'
+        if aborted:
+            self._case_tracker.__exit__(
+                Exception, Exception('cc-mini execution failed'), None,
+            )
         else:
             self._case_tracker.__exit__(None, None, None)
         self._case_finished = True
@@ -319,6 +330,7 @@ def run_cc_mini(
         no_terminal_ui=progress_no_terminal_ui,
         log_level=progress_log_level,
     )
+    _run_result: RunResult | None = None
 
     try:
         tools = mcp.start_and_collect_tools()
@@ -483,37 +495,50 @@ def run_cc_mini(
             total_tokens['input'], total_tokens['output'],
             aborted,
         )
-        return RunResult(
+        _run_result = RunResult(
             final_text=engine.last_assistant_text(),
             steps=steps,
             aborted=aborted,
             input_tokens=total_tokens['input'],
             output_tokens=total_tokens['output'],
         )
+        return _run_result
 
     except AbortedError:
         aborted = True
-        return RunResult(
+        _run_result = RunResult(
             final_text=engine.last_assistant_text() if engine is not None else '',
             steps=steps,
             aborted=True,
             input_tokens=total_tokens['input'],
             output_tokens=total_tokens['output'],
         )
+        return _run_result
 
     except Exception as exc:
         aborted = True
         log.error('cc-mini aborted due to exception: %s', exc, exc_info=True)
-        return RunResult(
+        _run_result = RunResult(
             final_text=f"Error: {exc}",
             steps=steps,
             aborted=True,
             input_tokens=total_tokens['input'],
             output_tokens=total_tokens['output'],
         )
+        return _run_result
 
     finally:
-        display_bridge.finish(aborted=aborted)
+        _ft = ''
+        if _run_result is not None:
+            _ft = _run_result.final_text or ''
+        elif engine is not None:
+            try:
+                _ft = engine.last_assistant_text() or ''
+            except Exception:
+                _ft = ''
+        display_bridge.finish(
+            aborted=aborted, steps=steps, final_text=_ft,
+        )
         display_bridge.close()
         try:
             mcp.shutdown_all()
