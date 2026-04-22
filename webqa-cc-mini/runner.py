@@ -211,6 +211,7 @@ def run_cc_mini(
     timeout: float | None = None,
     mcp_servers: list[MCPServerConfig] | None = None,
     skills_dir: str | Path | None = None,
+    file_catalog: str | None = None,
     max_iterations: int = 50,
     max_time_seconds: float | None = None,
     save_screenshots: bool = False,
@@ -262,6 +263,16 @@ def run_cc_mini(
         their names + descriptions are injected into the system prompt, and a
         ``load_skill`` tool is added so the LLM can fetch the full body on
         demand (Progressive Disclosure).
+    file_catalog:
+        Optional LLM-readable catalog of test files available for upload
+        testing. When provided, it is appended to the system prompt along
+        with instructions telling the agent to use the browser MCP server's
+        ``upload_file`` tool (``mcp__browser__upload_file`` with the default
+        server name) whenever it encounters a file-upload control. The
+        caller is expected to produce the catalog string (e.g. via
+        ``webqa_agent.utils.test_file_library.TestFileLibrary``) — cc-mini
+        itself does not scan the filesystem, so the absolute paths in the
+        catalog must already match what the browser can read.
     max_iterations:
         Hard limit on the number of tool steps before aborting.
     max_time_seconds:
@@ -331,6 +342,7 @@ def run_cc_mini(
             target_url=url,
             task=user_input,
             skills=skill_metadata or None,
+            file_catalog=(file_catalog.strip() if isinstance(file_catalog, str) and file_catalog.strip() else None),
         )
         engine = Engine(
             tools=tools,

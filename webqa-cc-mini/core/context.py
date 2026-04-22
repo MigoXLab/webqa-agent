@@ -10,8 +10,8 @@ def build_web_agent_system_prompt(
     target_url: str,
     task: str,
     skills: Sequence[SkillMetadata] | None = None,
+    file_catalog: str | None = None,
 ) -> str:
-    has_skills = bool(skills)
     skill_names = {m.name for m in skills} if skills else set()
 
     planning_step = (
@@ -93,9 +93,12 @@ def build_web_agent_system_prompt(
         'Set objective_achieved=true only when the task is clearly verified '
         'by observed page evidence; otherwise false.\n'
     )
-    if not has_skills:
-        return base
-    return base + _format_skills_section(skills)
+    sections: list[str] = [base]
+    if skills:
+        sections.append(_format_skills_section(skills))
+    if file_catalog:
+        sections.append(_format_file_upload_section(file_catalog))
+    return ''.join(sections)
 
 
 def _format_skills_section(skills: Sequence[SkillMetadata]) -> str:
@@ -118,3 +121,22 @@ def _format_skills_section(skills: Sequence[SkillMetadata]) -> str:
         lines.append(f'- **{sm.name}** — {desc}{suffix}')
     lines.append('')
     return '\n'.join(lines)
+
+
+def _format_file_upload_section(file_catalog: str) -> str:
+    """Render the optional file-upload guidance block.
+
+    Kept intentionally short — one paragraph of rules plus the verbatim
+    catalog. The caller (backend / CLI wrapper) is responsible for producing
+    the catalog text from the user-selected file set.
+    """
+    catalog = file_catalog.strip()
+    return (
+        '\n## File upload\n'
+        'For any file-input element, call `upload_file` (exposed as '
+        '`mcp__browser__upload_file`) with `uid` from the latest snapshot '
+        'and `filePath` set to one of the absolute paths below — pick by '
+        'matching `accept` / context, do not invent paths. If none match, '
+        'skip and note it in the final outcome.\n\n'
+        f'{catalog}\n'
+    )

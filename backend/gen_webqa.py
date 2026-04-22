@@ -72,6 +72,61 @@ def _extract_cc_mini_task(config_data: Dict) -> str:
     return task
 
 
+def _bundled_cc_mini_skills_dir() -> Path:
+    """Shipped skills next to ``webqa-cc-mini`` (plan, ui-audit, …)."""
+    return Path(__file__).resolve().parent.parent / 'webqa-cc-mini' / 'skills'
+
+
+def _resolve_cc_mini_skills_dir(config_data: Dict) -> Optional[str]:
+    """``test_config.cc_mini_skills_dir`` or bundled ``webqa-cc-mini/skills``."""
+    test_cfg = config_data.get('test_config') or {}
+    explicit = str(test_cfg.get('cc_mini_skills_dir') or '').strip()
+    if explicit:
+        return explicit
+    bundled = _bundled_cc_mini_skills_dir()
+    if bundled.is_dir():
+        return str(bundled)
+    return None
+
+
+def _build_cc_mini_file_catalog(config_data: Dict) -> Optional[str]:
+    """Build an LLM-readable upload catalog from the gen config.
+
+    Returns None when no files are available so the runner skips the whole
+    file-upload section. The path resolution mirrors the standard
+    ``GenExecutor`` path (see ``webqa_agent.executor.gen_executor``) so both
+    runners see the same set of files when the frontend selects any.
+    """
+    test_files_dir = str(config_data.get('test_files_dir') or '').strip()
+    if not test_files_dir:
+        return None
+
+    test_files = config_data.get('test_files')
+    if test_files is not None and not isinstance(test_files, list):
+        print(f'[Gen] Ignoring malformed test_files ({type(test_files).__name__}); expected list')
+        test_files = None
+
+    try:
+        from webqa_agent.utils.test_file_library import TestFileLibrary
+    except ImportError as exc:
+        print(f'[Gen] TestFileLibrary unavailable, skipping file catalog: {exc}')
+        return None
+
+    try:
+        library = TestFileLibrary(test_files_dir, file_whitelist=test_files)
+    except Exception as exc:
+        print(f'[Gen] Failed to scan test_files_dir ({test_files_dir}): {exc}')
+        return None
+
+    if not library.files:
+        print(f'[Gen] test_files_dir={test_files_dir} has no eligible files; no catalog injected')
+        return None
+
+    catalog = library.get_catalog_for_llm()
+    print(f'[Gen] cc-mini catalog prepared: {len(library.files)} file(s) from {test_files_dir}')
+    return catalog or None
+
+
 def _build_cc_mini_result_count(run_result) -> Dict[str, int]:
     """Map cc-mini RunResult to backend-compatible result_count."""
     try:
@@ -159,6 +214,7 @@ async def execute_cc_mini_webqa(config_data: Dict, report_dir_override: str | No
     )
 
     run_cc_mini = _load_cc_mini_runner()
+    file_catalog = _build_cc_mini_file_catalog(config_data)
     execution_id = str(config_data.get('execution_id') or os.getenv('EXECUTION_ID') or '').strip()
     progress_pusher: Optional[ProgressPusher] = None
     if BACKEND_CALLBACK_URL and execution_id:
@@ -179,7 +235,8 @@ async def execute_cc_mini_webqa(config_data: Dict, report_dir_override: str | No
             top_p=llm_cfg.get('top_p'),
             max_tokens=llm_cfg.get('max_tokens'),
             timeout=llm_cfg.get('timeout'),
-            skills_dir=(config_data.get('test_config') or {}).get('cc_mini_skills_dir'),
+            skills_dir=_resolve_cc_mini_skills_dir(config_data),
+            file_catalog=file_catalog,
             save_screenshots=save_screenshots,
             screenshot_dir=screenshot_dir,
             browser_headless=True,

@@ -149,6 +149,7 @@ async def _execute_cc_mini_mode(
     max_tokens: int | None = None,
     timeout: float | None = None,
     skills_dir: str | None = None,
+    file_catalog: str | None = None,
     save_screenshots: bool = False,
     screenshot_dir: str | None = None,
     log_level: str = 'info',
@@ -184,6 +185,7 @@ async def _execute_cc_mini_mode(
         max_tokens=max_tokens,
         timeout=timeout,
         skills_dir=skills_dir,
+        file_catalog=file_catalog,
         save_screenshots=save_screenshots,
         screenshot_dir=screenshot_dir,
         on_event=on_event,
@@ -464,6 +466,28 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
 
         log_level = cfg.get('log', {}).get('level', 'info')
 
+        # Mirror GenExecutor: when the user configured a test-files directory
+        # (+ optional filename whitelist) we build an LLM-readable catalog and
+        # inject it into the cc-mini system prompt so the agent can autonomously
+        # plan uploads with mcp__browser__upload_file.
+        cc_mini_file_catalog: str | None = None
+        cc_mini_test_files_dir = tconf.get('test_files_dir')
+        if cc_mini_test_files_dir:
+            try:
+                from webqa_agent.utils.test_file_library import TestFileLibrary
+                _whitelist = tconf.get('test_files')
+                if _whitelist is not None and not isinstance(_whitelist, list):
+                    print(f'⚠️ Ignoring malformed test_config.test_files (expected list, got {type(_whitelist).__name__})')
+                    _whitelist = None
+                _library = TestFileLibrary(cc_mini_test_files_dir, file_whitelist=_whitelist)
+                if _library.files:
+                    cc_mini_file_catalog = _library.get_catalog_for_llm() or None
+                    print(f'📎 cc-mini test files: {len(_library.files)} from {cc_mini_test_files_dir}')
+                else:
+                    print(f'ℹ️ cc-mini test_files_dir={cc_mini_test_files_dir} has no eligible files; catalog skipped')
+            except Exception as exc:
+                print(f'⚠️ Failed to build cc-mini file catalog: {exc}')
+
         prev_report_ts = os.environ.get('WEBQA_REPORT_TIMESTAMP')
         os.environ['WEBQA_REPORT_TIMESTAMP'] = run_timestamp
         try:
@@ -480,6 +504,7 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
                 max_tokens=llm_config.max_tokens,
                 timeout=llm_config.timeout,
                 skills_dir=tconf.get('cc_mini_skills_dir'),
+                file_catalog=cc_mini_file_catalog,
                 save_screenshots=save_screenshots,
                 screenshot_dir=screenshot_dir,
                 log_level=log_level,
