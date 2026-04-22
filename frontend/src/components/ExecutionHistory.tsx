@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Business } from '../App';
 import { apiClient, Execution } from '../api/client';
 import { FileText, ExternalLink, Loader2, Filter, CheckCircle, XCircle, Clock, AlertTriangle, Eye } from 'lucide-react';
+import { getRunnerSource } from '../utils/executionUtils';
 
 type Props = {
   businesses: Business[];
@@ -334,7 +335,14 @@ export function ExecutionHistory({ businesses }: Props) {
                   <td className="px-6 py-4">
                     {exec.trigger_type === 'gen' ? (
                       <div className="flex flex-col">
-                        <span className="text-sm font-medium text-purple-600">AI 探索</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-purple-600">AI 探索</span>
+                          {getRunnerSource(exec) === 'cc-mini' ? (
+                            <span className="text-[10px] px-1.5 py-0.5">
+                              cc-mini
+                            </span>
+                          ) : null}
+                        </div>
                         {!selectedBusinessId && exec.config?.target_url && (
                           <span className="text-xs text-gray-500 truncate max-w-[200px]" title={exec.config.target_url}>
                             {exec.config.target_url.replace(/^https?:\/\//, '').slice(0, 20)}
@@ -476,7 +484,7 @@ export function ExecutionHistory({ businesses }: Props) {
                 return Math.abs(pageNum - currentPage) <= 1;
               })
               .map((pageNum, idx, arr) => {
-                const elements = [];
+                const elements: React.ReactNode[] = [];
                 // Add ellipsis
                 if (idx > 0 && pageNum - arr[idx - 1] > 1) {
                   elements.push(

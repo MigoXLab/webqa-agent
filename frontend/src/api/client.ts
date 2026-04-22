@@ -84,6 +84,8 @@ export interface Execution {
   config?: Record<string, any>;
 }
 
+export type RunnerSource = 'standard' | 'cc-mini';
+
 // Progress types for real-time execution tracking
 export interface TaskProgress {
   name: string;
@@ -338,6 +340,71 @@ class APIClient {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+  }
+
+  async createDualGenExecutions(data: {
+    business_id?: string;
+    model?: string;
+    workers?: number;
+    base_gen_config: Record<string, any>;
+  }): Promise<{
+    batch_id: string;
+    executions: {
+      standard?: Execution;
+      cc_mini?: Execution;
+    };
+    errors: string[];
+  }> {
+    const batchId = crypto.randomUUID();
+    const ccMiniRawObjective =
+      typeof data.base_gen_config?._display_objectives === 'string'
+        ? data.base_gen_config._display_objectives.trim()
+        : '';
+    const standardPayload = {
+      business_id: data.business_id,
+      trigger_type: 'gen' as const,
+      model: data.model,
+      workers: data.workers,
+      gen_config: {
+        ...data.base_gen_config,
+        runner_source: 'standard' as RunnerSource,
+        batch_id: batchId,
+      },
+    };
+    const ccMiniPayload = {
+      business_id: data.business_id,
+      trigger_type: 'gen' as const,
+      model: data.model,
+      workers: data.workers,
+      gen_config: {
+        ...data.base_gen_config,
+        // cc-mini should only use explicit user objective, not injected defaults.
+        business_objectives: ccMiniRawObjective || undefined,
+        runner_source: 'cc-mini' as RunnerSource,
+        batch_id: batchId,
+      },
+    };
+
+    const [standardRes, ccMiniRes] = await Promise.allSettled([
+      this.createExecution(standardPayload),
+      this.createExecution(ccMiniPayload),
+    ]);
+
+    const errors: string[] = [];
+    const executions: { standard?: Execution; cc_mini?: Execution } = {};
+
+    if (standardRes.status === 'fulfilled') {
+      executions.standard = standardRes.value;
+    } else {
+      errors.push(`standard: ${standardRes.reason?.message || String(standardRes.reason)}`);
+    }
+    if (ccMiniRes.status === 'fulfilled') {
+      executions.cc_mini = ccMiniRes.value;
+    } else {
+      errors.push(`cc-mini: ${ccMiniRes.reason?.message || String(ccMiniRes.reason)}`);
+    }
+
+    return { batch_id: batchId, executions, errors };
   }
 
   async stopExecution(id: string): Promise<{ message: string }> {

@@ -11,12 +11,14 @@ Usage:
 
 import argparse
 import asyncio
+import importlib.util
 import json
 import os
 import sys
 import threading
 import time
 from typing import Dict, Optional
+from pathlib import Path
 
 import yaml
 
@@ -38,6 +40,171 @@ def load_yaml_file(yaml_path: str) -> Dict:
     """Load YAML file."""
     with open(yaml_path, 'r', encoding='utf-8') as f:
         return yaml.safe_load(f)
+
+
+def _load_cc_mini_runner():
+    """Load ``run_cc_mini`` from sibling ``webqa-cc-mini`` tree."""
+    from webqa_agent.utils.cc_mini_utils import load_cc_mini_runner
+    return load_cc_mini_runner(module_name='webqa_cc_mini_runner_for_backend')
+
+
+def _resolve_cc_mini_provider(llm_cfg: Dict) -> str:
+    """Resolve provider name for cc-mini from Gen llm_config."""
+    provider = str(llm_cfg.get('api', 'openai')).lower()
+    if provider in ('openai', 'anthropic'):
+        return provider
+    if provider == 'gemini':
+        # cc-mini currently uses OpenAI-compatible endpoint for Gemini style APIs.
+        return 'openai'
+    model_name = str(llm_cfg.get('model', '')).lower()
+    if model_name.startswith('claude'):
+        return 'anthropic'
+    return 'openai'
+
+
+def _extract_cc_mini_task(config_data: Dict) -> str:
+    """Extract task text for cc-mini execution from gen config."""
+    task = str(config_data.get('business_objectives') or '').strip()
+    if task:
+        return task
+    test_cfg = config_data.get('test_config') or {}
+    task = str(test_cfg.get('business_objectives') or '').strip()
+    return task
+
+
+def _build_cc_mini_result_count(run_result) -> Dict[str, int]:
+    """Map cc-mini RunResult to backend-compatible result_count."""
+    try:
+        from webqa_agent.executor.cc_mini_report_adapter import run_result_to_aggregated_data
+        aggregated_data = run_result_to_aggregated_data(
+            run_result,
+            url='',
+            task='',
+            language='zh-CN',
+        )
+        count = (
+            (aggregated_data.get('gen') or {})
+            .get('index', {})
+            .get('count', {})
+        )
+        total = int(count.get('total', 1) or 1)
+        passed = int(count.get('passed', 0) or 0)
+        failed = int(count.get('failed', 0) or 0)
+        warning = int(count.get('warning', 0) or 0)
+        return {
+            'total': total,
+            'passed': passed,
+            'failed': failed,
+            'warning': warning,
+        }
+    except Exception:
+        # Conservative fallback: aborted means failed, otherwise passed.
+        aborted = bool(getattr(run_result, 'aborted', False))
+        return {
+            'total': 1,
+            'passed': 0 if aborted else 1,
+            'failed': 1 if aborted else 0,
+            'warning': 0,
+        }
+
+
+def _render_cc_mini_report(
+    run_result,
+    *,
+    report_dir: str,
+    url: str,
+    task: str,
+    language: str = 'zh-CN',
+) -> Optional[str]:
+    """Render HTML report for cc-mini run, delegates to shared utility."""
+    from webqa_agent.utils.cc_mini_utils import render_cc_mini_report
+    return render_cc_mini_report(
+        run_result,
+        report_dir=report_dir,
+        url=url,
+        task=task,
+        language=language,
+    )
+
+
+async def execute_cc_mini_webqa(config_data: Dict, report_dir_override: str | None = None):
+    """Execute cc-mini runner based on gen config payload."""
+    llm_cfg = config_data.get('llm_config') or {}
+    target_url = str(config_data.get('target_url') or '').strip()
+    if not target_url:
+        raise ValueError('cc-mini requires gen_config.target_url')
+
+    task = _extract_cc_mini_task(config_data)
+    if not task:
+        raise ValueError('cc-mini requires business_objectives')
+
+    model = str(llm_cfg.get('model') or '').strip()
+    api_key = str(llm_cfg.get('api_key') or '').strip()
+    if not model:
+        raise ValueError('cc-mini requires llm_config.model')
+    if not api_key:
+        raise ValueError('cc-mini requires llm_config.api_key')
+
+    provider = _resolve_cc_mini_provider(llm_cfg)
+    base_url = llm_cfg.get('base_url')
+    if provider == 'anthropic' and base_url == 'https://api.openai.com/v1':
+        base_url = None
+
+    report_cfg = config_data.get('report_config') or {}
+    save_screenshots = bool(report_cfg.get('save_screenshots', False))
+    screenshot_dir = (
+        str(Path(report_dir_override) / 'screenshots')
+        if save_screenshots and report_dir_override
+        else None
+    )
+
+    run_cc_mini = _load_cc_mini_runner()
+    execution_id = str(config_data.get('execution_id') or os.getenv('EXECUTION_ID') or '').strip()
+    progress_pusher: Optional[ProgressPusher] = None
+    if BACKEND_CALLBACK_URL and execution_id:
+        progress_pusher = ProgressPusher(BACKEND_CALLBACK_URL, execution_id, interval=1.0)
+        progress_pusher.start()
+
+    try:
+        result = await asyncio.to_thread(
+            run_cc_mini,
+            target_url,
+            task,
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            effort=(llm_cfg.get('reasoning') or {}).get('effort') if isinstance(llm_cfg.get('reasoning'), dict) else None,
+            temperature=llm_cfg.get('temperature'),
+            top_p=llm_cfg.get('top_p'),
+            max_tokens=llm_cfg.get('max_tokens'),
+            timeout=llm_cfg.get('timeout'),
+            skills_dir=(config_data.get('test_config') or {}).get('cc_mini_skills_dir'),
+            save_screenshots=save_screenshots,
+            screenshot_dir=screenshot_dir,
+            browser_headless=True,
+            enable_display_progress=bool(progress_pusher),
+            progress_language=str(report_cfg.get('language') or 'zh-CN'),
+            progress_no_terminal_ui=True,
+            progress_log_level='info',
+        )
+    finally:
+        if progress_pusher:
+            progress_pusher.stop()
+
+    html_report_path = None
+    if report_dir_override:
+        language = str(report_cfg.get('language') or 'zh-CN')
+        html_report_path = _render_cc_mini_report(
+            result,
+            report_dir=report_dir_override,
+            url=target_url,
+            task=task,
+            language=language,
+        )
+
+    result_count = _build_cc_mini_result_count(result)
+    return [{'runner': 'cc-mini'}], report_dir_override, html_report_path, result_count
 
 
 async def execute_gen_webqa(config_path: str, report_dir_override: str = None):
@@ -62,6 +229,14 @@ async def execute_gen_webqa(config_path: str, report_dir_override: str = None):
             if 'report_config' not in config_data:
                 config_data['report_config'] = {}
             config_data['report_config']['report_dir'] = report_dir_override
+
+        runner_source = str(config_data.get('runner_source') or 'standard').lower()
+        if runner_source in ('cc-mini', 'cc_mini'):
+            print(f'[Gen] Runner source: {runner_source}')
+            return await execute_cc_mini_webqa(
+                config_data,
+                report_dir_override=report_dir_override,
+            )
 
         # Initialize GenConfig
         gen_config = GenConfig(**config_data)

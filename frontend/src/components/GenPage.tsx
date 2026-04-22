@@ -14,7 +14,7 @@ import {
   Settings2,
   Cpu,
 } from 'lucide-react';
-import { apiClient } from '../api/client';
+import { apiClient, RunnerSource } from '../api/client';
 import { FileManager } from './FileManager';
 import { BusinessFile } from '../App';
 
@@ -44,6 +44,9 @@ export function GenPage() {
     links: true,
     security: true,
   });
+
+  // Runner selection: 'standard' | 'cc-mini' | 'both'
+  const [runnerMode, setRunnerMode] = useState<'standard' | 'cc-mini' | 'both'>('both');
 
   // Execution Config (default expanded)
   const [showExecutionConfig, setShowExecutionConfig] = useState(true);
@@ -83,6 +86,10 @@ export function GenPage() {
   const handleSubmit = async () => {
     if (!targetUrl) {
       setError('请输入目标 URL');
+      return;
+    }
+    if (runnerMode !== 'standard' && !businessObjectives.trim()) {
+      setError('使用 CC-Mini 时必须填写测试目标');
       return;
     }
 
@@ -134,27 +141,51 @@ export function GenPage() {
         }
       }
 
-      const execution = await apiClient.createExecution({
-        business_id: selectedBusinessId || undefined,
-        trigger_type: 'gen',
-        model: selectedModel,
-        workers: workers,
-        gen_config: {
-          target_url: targetUrl,
-          llm_config: { model: selectedModel },
-          business_objectives: finalBusinessObjectives,
-          _display_objectives: businessObjectives || undefined,
-          custom_tools: { enabled: enabledTools },
-          browser_config: { cookies: parsedCookies },
-          report_config: { language: 'zh-CN', save_screenshots: true },
-          skip_reflection: !enableReflection,
-          dynamic_step_generation: { enabled: dynamicStepGeneration },
-          max_concurrent_tests: workers,
-          ...(selectedFiles.length > 0 ? { test_files: selectedFiles } : {}),
-        }
-      });
+      const baseGenConfig = {
+        target_url: targetUrl,
+        llm_config: { model: selectedModel },
+        business_objectives: finalBusinessObjectives,
+        _display_objectives: businessObjectives || undefined,
+        custom_tools: { enabled: enabledTools },
+        browser_config: { cookies: parsedCookies },
+        report_config: { language: 'zh-CN', save_screenshots: true },
+        skip_reflection: !enableReflection,
+        dynamic_step_generation: { enabled: dynamicStepGeneration },
+        max_concurrent_tests: workers,
+        ...(selectedFiles.length > 0 ? { test_files: selectedFiles } : {}),
+      };
 
-      navigate(`/execution/${execution.id}`);
+      if (runnerMode === 'both') {
+        const dualResult = await apiClient.createDualGenExecutions({
+          business_id: selectedBusinessId || undefined,
+          model: selectedModel,
+          workers: workers,
+          base_gen_config: baseGenConfig,
+        });
+        const startedCount = Number(Boolean(dualResult.executions.standard)) + Number(Boolean(dualResult.executions.cc_mini));
+        if (startedCount === 0) {
+          throw new Error(dualResult.errors.join('；') || '启动探索失败');
+        }
+        if (dualResult.errors.length > 0) {
+          setError(`已启动 ${startedCount}/2 个任务，失败：${dualResult.errors.join('；')}`);
+        }
+      } else {
+        const isCcMini = runnerMode === 'cc-mini';
+        const ccMiniRawObjective = (businessObjectives || '').trim();
+        await apiClient.createExecution({
+          business_id: selectedBusinessId || undefined,
+          trigger_type: 'gen',
+          model: selectedModel,
+          workers: workers,
+          gen_config: {
+            ...baseGenConfig,
+            ...(isCcMini ? { business_objectives: ccMiniRawObjective || undefined } : {}),
+            runner_source: runnerMode as RunnerSource,
+          },
+        });
+      }
+
+      navigate('/history');
     } catch (err: any) {
       console.error('Failed to start exploration:', err);
       setError(err.message || '启动探索失败');
@@ -227,7 +258,10 @@ export function GenPage() {
           <div>
             <label className="block text-sm font-medium mb-1.5 text-gray-700">
               测试目标
-              <span className="ml-1.5 text-xs text-gray-400 font-normal">【可选】留空则由 AI 自主探索</span>
+              {runnerMode !== 'standard'
+                ? <span className="text-red-500 ml-0.5">*</span>
+                : <span className="ml-1.5 text-xs text-gray-400 font-normal">【可选】留空则由 AI 自主探索</span>
+              }
             </label>
             <textarea
               rows={3}
@@ -292,6 +326,9 @@ export function GenPage() {
               {!showExecutionConfig && (
                 <div className="flex items-center gap-2 ml-2 flex-wrap">
                   <span className="px-2 py-0.5 bg-white border border-gray-200 rounded text-xs text-gray-500">
+                    {runnerMode === 'both' ? '全选' : runnerMode === 'cc-mini' ? 'CC-Mini' : 'Standard'}
+                  </span>
+                  <span className="px-2 py-0.5 bg-white border border-gray-200 rounded text-xs text-gray-500">
                     {selectedModel || '默认模型'}
                   </span>
                   <span className="px-2 py-0.5 bg-white border border-gray-200 rounded text-xs text-gray-500">
@@ -308,6 +345,31 @@ export function GenPage() {
 
             {showExecutionConfig && (
               <div className="px-4 py-4 border-t border-gray-200 space-y-4">
+                {/* Runner Selection */}
+                <div>
+                  <label className="block text-sm font-medium mb-1.5 text-gray-700">执行方式</label>
+                  <div className="flex gap-2">
+                    {([
+                      { value: 'both', label: '全选' },
+                      { value: 'standard', label: 'Standard' },
+                      { value: 'cc-mini', label: 'CC-Mini' },
+                    ] as const).map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setRunnerMode(opt.value)}
+                        className={`px-4 py-1.5 rounded-lg border text-sm font-medium transition-colors ${
+                          runnerMode === opt.value
+                            ? 'border-purple-300 bg-purple-50 text-purple-700 ring-1 ring-purple-200'
+                            : 'border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-2 gap-4">
                   {/* Model Selection */}
                   <div>

@@ -62,6 +62,53 @@ def _resolve_planning_mode(gen_config_dict: Dict[str, Any], log_prefix: str) -> 
     )
 
 
+def _prepare_gen_config(
+    gen_config_dict: Dict[str, Any],
+    execution: 'Execution',
+    log_prefix: str,
+    *,
+    container_mode: bool = False,
+) -> Tuple[str, str]:
+    """Inject secrets, file paths, and planning mode into *gen_config_dict*.
+
+    Shared by ``_start_gen_executor``, ``_start_gen_k8s``, and
+    ``_start_gen_docker`` to avoid triplicating the same logic.
+
+    Args:
+        gen_config_dict: Mutable config dict, modified in-place.
+        execution: DB Execution row (needs ``business_id``).
+        log_prefix: Logging prefix (e.g. ``'[Gen]'``).
+        container_mode: When True, test_files_dir is mapped to
+            ``/shared/files/<business_id>`` for container runtimes.
+
+    Returns:
+        ``(api_key, base_url)`` extracted after injection.
+    """
+    llm_cfg = gen_config_dict.setdefault('llm_config', {})
+    model_name = llm_cfg.get('model', '')
+    if not llm_cfg.get('api_key'):
+        llm_cfg['api_key'] = settings.get_api_key_for_model(model_name)
+    if not llm_cfg.get('base_url'):
+        llm_cfg['base_url'] = settings.get_base_url_for_model(model_name)
+    if not llm_cfg.get('max_tokens'):
+        llm_cfg['max_tokens'] = 8192
+
+    if execution.business_id:
+        _files_dir = os.path.join(
+            settings.effective_shared_storage_path, 'files', str(execution.business_id)
+        )
+        if os.path.isdir(_files_dir) and os.listdir(_files_dir):
+            if container_mode:
+                gen_config_dict['test_files_dir'] = f'/shared/files/{execution.business_id}'
+            else:
+                gen_config_dict['test_files_dir'] = _files_dir
+            logger.info(f'{log_prefix} Injected test_files_dir for business {execution.business_id}')
+
+    _resolve_planning_mode(gen_config_dict, log_prefix)
+
+    return llm_cfg.get('api_key', ''), llm_cfg.get('base_url', '')
+
+
 def _resolve_sso_accounts(
     accounts: List[Dict[str, Any]],
     log_prefix: str,
@@ -135,6 +182,22 @@ def _compute_k8s_resources(workers: int, business_id: Optional[UUID] = None) -> 
 # Store active processes/containers for cancellation
 _active_processes: Dict[str, asyncio.subprocess.Process] = {}
 _active_containers: Dict[str, str] = {}  # execution_id -> container_id (Docker mode)
+
+
+def _resolve_gen_runner_source(gen_config: Optional[Dict[str, Any]]) -> str:
+    """Resolve which gen runner should execute this task."""
+    if not isinstance(gen_config, dict):
+        return 'standard'
+
+    raw = str(gen_config.get('runner_source') or '').strip().lower()
+    if raw in {'cc-mini', 'cc_mini'}:
+        return 'cc-mini'
+
+    test_cfg = gen_config.get('test_config') or {}
+    if bool(test_cfg.get('use_cc_mini', False)):
+        return 'cc-mini'
+
+    return 'standard'
 
 
 async def stop_execution(execution_id: str) -> bool:
@@ -311,6 +374,7 @@ async def run_execution(execution_id: str, case_data: Optional[Dict[str, Any]] =
     """
     # Check execution trigger_type first
     trigger_type = None
+    persisted_gen_config: Optional[Dict[str, Any]] = None
     async with AsyncSessionLocal() as db:
         try:
             result = await db.execute(
@@ -319,6 +383,8 @@ async def run_execution(execution_id: str, case_data: Optional[Dict[str, Any]] =
             execution = result.scalar_one_or_none()
             if execution:
                 trigger_type = execution.trigger_type
+                if trigger_type == 'gen' and isinstance(execution.config, dict):
+                    persisted_gen_config = execution.config
         except Exception as e:
             logger.exception(f'[Run] Failed to check execution type: {e}')
             return
@@ -326,12 +392,22 @@ async def run_execution(execution_id: str, case_data: Optional[Dict[str, Any]] =
     mode = settings.EXECUTION_MODE.lower()
 
     if trigger_type == 'gen':
+        effective_gen_config = (
+            gen_config_dict if isinstance(gen_config_dict, dict) else persisted_gen_config
+        ) or {}
+        runner_source = _resolve_gen_runner_source(effective_gen_config)
+        effective_gen_config = dict(effective_gen_config)
+        effective_gen_config.setdefault('runner_source', runner_source)
+        logger.info(
+            f'[Run] Gen execution runner selected: execution_id={execution_id}, '
+            f'runner_source={runner_source}, mode={mode}'
+        )
         if mode == 'kubernetes':
-            await _start_gen_k8s(execution_id, gen_config_dict)
+            await _start_gen_k8s(execution_id, effective_gen_config)
         elif mode == 'docker':
-            await _start_gen_docker(execution_id, gen_config_dict)
+            await _start_gen_docker(execution_id, effective_gen_config)
         else:
-            await _start_gen_executor(execution_id, gen_config_dict)
+            await _start_gen_executor(execution_id, effective_gen_config)
     elif mode == 'kubernetes':
         await _start_agent_k8s(execution_id, case_data=case_data)
     elif mode == 'docker':
@@ -371,30 +447,9 @@ async def _start_gen_executor(execution_id: str, gen_config_dict: Optional[Dict[
                 await db.commit()
                 return
 
-            # Inject API key and base URL from backend settings
-            llm_cfg = gen_config_dict.setdefault('llm_config', {})
-            model_name = llm_cfg.get('model', '')
-            if not llm_cfg.get('api_key'):
-                llm_cfg['api_key'] = settings.get_api_key_for_model(model_name)
-            if not llm_cfg.get('base_url'):
-                llm_cfg['base_url'] = settings.get_base_url_for_model(model_name)
-            if not llm_cfg.get('max_tokens'):
-                llm_cfg['max_tokens'] = 8192
-
-            # Inject test_files_dir when business has uploaded files
-            if execution.business_id:
-                _files_dir = os.path.join(
-                    settings.effective_shared_storage_path, 'files', str(execution.business_id)
-                )
-                if os.path.isdir(_files_dir) and os.listdir(_files_dir):
-                    gen_config_dict['test_files_dir'] = _files_dir
-                    logger.info(f'[Gen] Injected test_files_dir: {_files_dir}')
-
-            # Auto-resolve planning_mode from user's objective input
-            _resolve_planning_mode(gen_config_dict, '[Gen]')
-
-            api_key = llm_cfg.get('api_key', '')
-            base_url = llm_cfg.get('base_url', '')
+            api_key, base_url = _prepare_gen_config(
+                gen_config_dict, execution, '[Gen]',
+            )
 
             # Write config to file (JSON format, compatible with GenConfig loading)
             config_dir = Path(settings.shared_reports_path) / f'exec_{execution_id}'
@@ -526,30 +581,10 @@ async def _start_gen_k8s(execution_id: str, gen_config_dict: Optional[Dict[str, 
                 await db.commit()
                 return
 
-            # Inject API key and base URL from backend settings
-            llm_cfg = gen_config_dict.setdefault('llm_config', {})
-            model_name = llm_cfg.get('model', '')
-            if not llm_cfg.get('api_key'):
-                llm_cfg['api_key'] = settings.get_api_key_for_model(model_name)
-            if not llm_cfg.get('base_url'):
-                llm_cfg['base_url'] = settings.get_base_url_for_model(model_name)
-            if not llm_cfg.get('max_tokens'):
-                llm_cfg['max_tokens'] = 8192
-
-            # Inject test_files_dir when business has uploaded files
-            if execution.business_id:
-                _files_dir = os.path.join(
-                    settings.effective_shared_storage_path, 'files', str(execution.business_id)
-                )
-                if os.path.isdir(_files_dir) and os.listdir(_files_dir):
-                    gen_config_dict['test_files_dir'] = f'/shared/files/{execution.business_id}'
-                    logger.info(f'[Gen K8s] Injected test_files_dir for business {execution.business_id}')
-
-            # Auto-resolve planning_mode from user's objective input
-            _resolve_planning_mode(gen_config_dict, '[Gen K8s]')
-
-            api_key = llm_cfg.get('api_key', '')
-            base_url = llm_cfg.get('base_url', '')
+            api_key, base_url = _prepare_gen_config(
+                gen_config_dict, execution, '[Gen K8s]',
+                container_mode=True,
+            )
 
             # Write config to shared storage so the K8s Job container can read it
             config_dir = Path(settings.shared_reports_path) / f'exec_{execution_id}'
@@ -568,6 +603,8 @@ async def _start_gen_k8s(execution_id: str, gen_config_dict: Optional[Dict[str, 
 
             logger.info(f'[Gen K8s] Creating K8s Job: {execution_id}')
 
+            runner_source = str(gen_config_dict.get('runner_source') or 'standard').lower()
+
             try:
                 job_name = await _create_gen_k8s_job(
                     execution_id=execution_id,
@@ -577,6 +614,7 @@ async def _start_gen_k8s(execution_id: str, gen_config_dict: Optional[Dict[str, 
                     api_key=api_key,
                     base_url=base_url,
                     business_id=execution.business_id,
+                    runner_source=runner_source,
                 )
                 logger.info(f'[Gen K8s] Job created: {job_name}')
             except Exception as e:
@@ -605,6 +643,7 @@ async def _create_gen_k8s_job(
     api_key: str,
     base_url: str,
     business_id: Optional[UUID] = None,
+    runner_source: str = 'standard',
 ) -> str:
     """Create a Kubernetes Job that runs gen_webqa.py inside the agent
     image."""
@@ -626,7 +665,12 @@ async def _create_gen_k8s_job(
     k8s_job_image = os.getenv('K8S_JOB_IMAGE', 'webqa-agent:latest')
     k8s_pvc_name = os.getenv('K8S_PVC_NAME', 'webqa-pvc')
     k8s_sa_name = os.getenv('K8S_JOB_SERVICE_ACCOUNT', 'webqa-agent-sa')
-    cpu_limit, memory_gi = _compute_k8s_resources(workers, business_id)
+
+    is_cc_mini = runner_source in ('cc-mini', 'cc_mini')
+    if is_cc_mini:
+        cpu_limit, memory_gi = 1, 1
+    else:
+        cpu_limit, memory_gi = _compute_k8s_resources(workers, business_id)
 
     job_name = f'webqa-gen-{execution_id[:8]}'
 
@@ -1390,29 +1434,10 @@ async def _start_gen_docker(execution_id: str, gen_config_dict: Optional[Dict[st
                 await db.commit()
                 return
 
-            llm_cfg = gen_config_dict.setdefault('llm_config', {})
-            model_name = llm_cfg.get('model', '')
-            if not llm_cfg.get('api_key'):
-                llm_cfg['api_key'] = settings.get_api_key_for_model(model_name)
-            if not llm_cfg.get('base_url'):
-                llm_cfg['base_url'] = settings.get_base_url_for_model(model_name)
-            if not llm_cfg.get('max_tokens'):
-                llm_cfg['max_tokens'] = 8192
-
-            # Inject test_files_dir when business has uploaded files
-            if execution.business_id:
-                _files_dir = os.path.join(
-                    settings.effective_shared_storage_path, 'files', str(execution.business_id)
-                )
-                if os.path.isdir(_files_dir) and os.listdir(_files_dir):
-                    gen_config_dict['test_files_dir'] = f'/shared/files/{execution.business_id}'
-                    logger.info(f'[Gen Docker] Injected test_files_dir for business {execution.business_id}')
-
-            # Auto-resolve planning_mode from user's objective input
-            _resolve_planning_mode(gen_config_dict, '[Gen Docker]')
-
-            api_key = llm_cfg.get('api_key', '')
-            base_url = llm_cfg.get('base_url', '')
+            api_key, base_url = _prepare_gen_config(
+                gen_config_dict, execution, '[Gen Docker]',
+                container_mode=True,
+            )
 
             config_dir = Path(settings.shared_reports_path) / f'exec_{execution_id}'
             config_dir.mkdir(parents=True, exist_ok=True)
@@ -1433,9 +1458,13 @@ async def _start_gen_docker(execution_id: str, gen_config_dict: Optional[Dict[st
             await db.commit()
 
             logger.info(f'[Gen Docker] Creating container: {execution_id}')
-            cpu_limit, memory_gi = _compute_k8s_resources(
-                execution.workers or 1, execution.business_id
-            )
+            runner_source = str(gen_config_dict.get('runner_source') or 'standard').lower()
+            if runner_source in ('cc-mini', 'cc_mini'):
+                cpu_limit, memory_gi = 1, 1
+            else:
+                cpu_limit, memory_gi = _compute_k8s_resources(
+                    execution.workers or 1, execution.business_id
+                )
 
             container_id = await asyncio.to_thread(
                 _create_docker_container,
