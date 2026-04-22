@@ -482,12 +482,11 @@ class TestPlanSkillIntegration:
 class TestSystemPromptSkillInjection:
     def test_no_skills_omits_section(self):
         prompt = build_web_agent_system_prompt('https://x', 'do things')
-        assert '## Available skills' not in prompt
-        assert 'load_skill' not in prompt
+        assert '## Available Skills' not in prompt
 
     def test_empty_skills_list_omits_section(self):
         prompt = build_web_agent_system_prompt('https://x', 'do things', skills=[])
-        assert '## Available skills' not in prompt
+        assert '## Available Skills' not in prompt
 
     def test_skill_metadata_injected(self, tmp_path):
         metas = [
@@ -495,10 +494,48 @@ class TestSystemPromptSkillInjection:
             SkillMetadata(name='report', description='Render reports.', skill_dir=tmp_path),
         ]
         prompt = build_web_agent_system_prompt('https://x', 'task', skills=metas)
-        assert '## Available skills' in prompt
+        assert '## Available Skills' in prompt
         assert '**plan**' in prompt and 'Plan things.' in prompt
         assert '**report**' in prompt and 'Render reports.' in prompt
         assert 'load_skill' in prompt
+
+    def test_prompt_has_identity_and_methodology(self):
+        prompt = build_web_agent_system_prompt('https://x', 'test search')
+        assert 'web testing specialist' in prompt
+        assert '## Mission' in prompt
+        assert '## Methodology' in prompt
+        assert '## Quality Standards' in prompt
+        assert '## Final Report Format' in prompt
+
+    def test_prompt_lists_capability_categories(self):
+        prompt = build_web_agent_system_prompt('https://x', 'test search')
+        for capability in (
+            'list_console_messages', 'list_network_requests',
+            'evaluate_script', 'lighthouse_audit', 'wait_for',
+        ):
+            assert capability in prompt, f'missing capability: {capability}'
+
+    def test_skill_section_encourages_loading(self, tmp_path):
+        metas = [SkillMetadata(name='s', description='d.', skill_dir=tmp_path)]
+        prompt = build_web_agent_system_prompt('u', 't', skills=metas)
+        assert 'BEFORE starting' in prompt
+        assert 'Skip' not in prompt
+
+    def test_plan_skill_referenced_in_methodology_when_available(self, tmp_path):
+        metas = [SkillMetadata(name='plan', description='Plan.', skill_dir=tmp_path)]
+        prompt = build_web_agent_system_prompt('u', 't', skills=metas)
+        assert 'load the `plan` skill' in prompt
+
+    def test_no_plan_reference_when_plan_skill_absent(self, tmp_path):
+        metas = [SkillMetadata(name='other', description='Other.', skill_dir=tmp_path)]
+        prompt = build_web_agent_system_prompt('u', 't', skills=metas)
+        assert 'load the `plan` skill' not in prompt
+        assert 'outline your approach' in prompt
+
+    def test_no_plan_reference_when_no_skills(self):
+        prompt = build_web_agent_system_prompt('u', 't')
+        assert 'load the `plan` skill' not in prompt
+        assert 'outline your approach' in prompt
 
     def test_multiline_description_flattened(self, tmp_path):
         metas = [SkillMetadata(
