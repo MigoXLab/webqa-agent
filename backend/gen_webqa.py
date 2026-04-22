@@ -243,7 +243,7 @@ async def execute_cc_mini_webqa(config_data: Dict, report_dir_override: str | No
             enable_display_progress=bool(progress_pusher),
             progress_language=str(report_cfg.get('language') or 'zh-CN'),
             progress_no_terminal_ui=True,
-            progress_log_level='debug',
+            progress_log_level='info',
         )
     finally:
         if progress_pusher:
