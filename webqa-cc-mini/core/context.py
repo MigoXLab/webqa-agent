@@ -34,6 +34,12 @@ def build_web_agent_system_prompt(
         '  for its result before issuing the next mutation, since each one\n'
         '  changes page state that subsequent observations depend on.\n'
         '- Stop when task is complete OR clearly blocked; do not loop forever.\n'
+        '- Final message MUST end with a machine-readable JSON block wrapped in\n'
+        '  <final_outcome>...</final_outcome> tags, with this schema:\n'
+        '  {"objective_achieved": <bool>, "confidence": <0..1 number>,\n'
+        '   "blocking_reason": "<string>", "evidence": ["<string>", ...]}.\n'
+        '- Set objective_achieved=true only when the requested task is clearly\n'
+        '  verified by observed page evidence; otherwise false.\n'
     )
     if not skills:
         return base

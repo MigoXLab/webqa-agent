@@ -7,6 +7,7 @@ import importlib.util
 import os
 import sys
 import traceback
+from datetime import datetime
 from pathlib import Path
 
 from webqa_agent.config_models.base_config import (BrowserConfig, LLMConfig,
@@ -130,38 +131,8 @@ def validate_and_build_llm_config(cfg):
 
 def _load_cc_mini_runner():
     """Load ``run_cc_mini`` from the sibling webqa-cc-mini tree on demand."""
-    cc_mini_root = Path(__file__).resolve().parent.parent / 'webqa-cc-mini'
-    runner_path = cc_mini_root / 'runner.py'
-
-    if not runner_path.exists():
-        raise FileNotFoundError(f'webqa-cc-mini runner not found: {runner_path}')
-
-    module_name = 'webqa_cc_mini_runner'
-    cached_module = sys.modules.get(module_name)
-    if cached_module is not None:
-        run_cc_mini = getattr(cached_module, 'run_cc_mini', None)
-        if callable(run_cc_mini):
-            return run_cc_mini
-
-    original_sys_path = list(sys.path)
-    try:
-        if str(cc_mini_root) not in sys.path:
-            sys.path.insert(0, str(cc_mini_root))
-
-        spec = importlib.util.spec_from_file_location(module_name, runner_path)
-        if spec is None or spec.loader is None:
-            raise ImportError(f'Failed to create import spec for {runner_path}')
-
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = module
-        spec.loader.exec_module(module)
-    finally:
-        sys.path[:] = original_sys_path
-
-    run_cc_mini = getattr(module, 'run_cc_mini', None)
-    if not callable(run_cc_mini):
-        raise AttributeError(f'run_cc_mini not found in {runner_path}')
-    return run_cc_mini
+    from webqa_agent.utils.cc_mini_utils import load_cc_mini_runner
+    return load_cc_mini_runner(module_name='webqa_cc_mini_runner')
 
 
 async def _execute_cc_mini_mode(
@@ -178,6 +149,8 @@ async def _execute_cc_mini_mode(
     max_tokens: int | None = None,
     timeout: float | None = None,
     skills_dir: str | None = None,
+    save_screenshots: bool = False,
+    screenshot_dir: str | None = None,
     log_level: str = 'info',
     on_event=None,
 ):
@@ -211,96 +184,30 @@ async def _execute_cc_mini_mode(
         max_tokens=max_tokens,
         timeout=timeout,
         skills_dir=skills_dir,
+        save_screenshots=save_screenshots,
+        screenshot_dir=screenshot_dir,
         on_event=on_event,
     )
 
 
 def _render_cc_mini_report(
-    result, *, cfg: dict, url: str, task: str,
+    result, *, cfg: dict, url: str, task: str, run_timestamp: str | None = None,
+    report_dir_override: str | None = None,
 ) -> str | None:
-    """Render an HTML report for a cc-mini RunResult.
-
-    Preferred path reuses the gen-mode React frontend by mapping the
-    RunResult into a ``ParallelTestSession`` (via
-    :mod:`webqa_agent.executor.cc_mini_report_adapter`) and handing it to
-    :class:`ResultAggregator`. This way CLI users see the same UI
-    regardless of which backend executed the run.
-
-    The standalone ``webqa-cc-mini/features/report.py`` utility is kept
-    as a fallback so that:
-        1. Library users (no webqa_agent installed) still get an HTML
-           artifact without pulling in the gen-mode stack.
-        2. A broken gen-mode static bundle does not prevent CLI users
-           from getting *some* report.
-
-    Returns the absolute report path on success, ``None`` on failure.
-    Report generation must never block the run — all exceptions are
-    caught and surfaced as warnings.
-    """
-    import datetime as _dt
-    from pathlib import Path as _Path
-
-    report_dir = (cfg.get('report') or {}).get('report_dir') or \
-        f"reports/cc_mini_{_dt.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    out_path = _Path(report_dir) / 'report.html'
+    """Thin wrapper that delegates to the shared ``render_cc_mini_report``."""
+    report_dir = report_dir_override or _resolve_cc_mini_report_dir(
+        cfg=cfg, run_timestamp=run_timestamp,
+    )
     language = (cfg.get('report') or {}).get('language', 'zh-CN')
 
-    # Preferred: gen-mode frontend via adapter + ResultAggregator.
-    # The React shell reads ``window.testResultData`` expecting the
-    # gen-mode aggregated shape (``{"gen": {"case_1_<safe>": {...},
-    # "index": {...}}}``). ``ParallelTestSession.to_dict()`` produces a
-    # different schema, so always pass the synthesized aggregated dict
-    # via ``aggregated_data=`` — the session only carries metadata.
-    try:
-        from webqa_agent.executor.cc_mini_report_adapter import (
-            run_result_to_aggregated_data, run_result_to_session)
-        from webqa_agent.executor.result_aggregator import ResultAggregator
-
-        session = run_result_to_session(
-            result, url=url, task=task,
-            report_dir=str(out_path.parent), language=language,
-        )
-        aggregated_data = run_result_to_aggregated_data(
-            result, url=url, task=task, language=language,
-        )
-        aggregator = ResultAggregator(report_config={
-            'language': language, 'report_dir': str(out_path.parent),
-        })
-        # ResultAggregator writes ``test_report.html`` (gen-mode convention)
-        # and returns its absolute path on success, empty string on failure.
-        generated_path = aggregator.generate_html_report_fully_inlined(
-            session,
-            report_dir=str(out_path.parent),
-            aggregated_data=aggregated_data,
-        )
-        if generated_path and _Path(generated_path).exists():
-            return generated_path
-    except Exception as exc:
-        print(
-            f'⚠️  Gen-mode report rendering failed, falling back to '
-            f'standalone renderer: {exc}',
-            file=sys.stderr,
-        )
-
-    # Fallback: standalone cc-mini utility (self-contained, no gen deps).
-    try:
-        cc_mini_root = _Path(__file__).resolve().parent.parent / 'webqa-cc-mini'
-        if str(cc_mini_root) not in sys.path:
-            sys.path.insert(0, str(cc_mini_root))
-        from features.report import render_html_report
-    except ImportError as exc:
-        print(f'⚠️  Could not import render_html_report: {exc}', file=sys.stderr)
-        return None
-
-    try:
-        html_path = render_html_report(
-            result, out_path, title=f'WebQA cc-mini — {url}',
-            url=url, task=task,
-        )
-        return str(html_path)
-    except Exception as exc:
-        print(f'⚠️  Report generation failed: {exc}', file=sys.stderr)
-        return None
+    from webqa_agent.utils.cc_mini_utils import render_cc_mini_report
+    return render_cc_mini_report(
+        result,
+        report_dir=report_dir,
+        url=url,
+        task=task,
+        language=language,
+    )
 
 
 def _make_cc_mini_stream_handler():
@@ -356,6 +263,24 @@ def _make_cc_mini_stream_handler():
             print(f'⚠️  {evt[1]}', flush=True)
 
     return handle
+
+
+def _resolve_cc_mini_report_dir(*, cfg: dict, run_timestamp: str | None) -> str:
+    from pathlib import Path as _Path
+
+    report_base_dir = (cfg.get('report') or {}).get('report_dir')
+    timestamp = (
+        run_timestamp
+        or os.getenv('WEBQA_REPORT_TIMESTAMP')
+        or os.getenv('WEBQA_TIMESTAMP')
+        or datetime.now().strftime('%Y-%m-%d_%H-%M-%S_%f')
+    )
+    if report_base_dir and str(report_base_dir).strip():
+        base_path = _Path(report_base_dir)
+        if base_path.name.startswith('test_'):
+            return str(base_path)
+        return str(base_path / f'test_{timestamp}')
+    return f'reports/test_{timestamp}'
 
 
 # ============================================================================
@@ -495,6 +420,20 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
         sys.exit(1)
 
     if use_cc_mini:
+        run_timestamp = (
+            os.getenv('WEBQA_REPORT_TIMESTAMP')
+            or os.getenv('WEBQA_TIMESTAMP')
+            or datetime.now().strftime('%Y-%m-%d_%H-%M-%S_%f')
+        )
+        resolved_report_dir = _resolve_cc_mini_report_dir(
+            cfg=cfg, run_timestamp=run_timestamp,
+        )
+        report_cfg_raw = cfg.get('report', {})
+        save_screenshots = bool(report_cfg_raw.get('save_screenshots', False))
+        screenshot_dir = (
+            str(Path(resolved_report_dir) / 'screenshots')
+            if save_screenshots else None
+        )
         task = business_objectives.strip()
         if not task:
             print('❌ test_config.business_objectives is required when test_config.use_cc_mini=true', file=sys.stderr)
@@ -525,6 +464,8 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
 
         log_level = cfg.get('log', {}).get('level', 'info')
 
+        prev_report_ts = os.environ.get('WEBQA_REPORT_TIMESTAMP')
+        os.environ['WEBQA_REPORT_TIMESTAMP'] = run_timestamp
         try:
             result = await _execute_cc_mini_mode(
                 url=target_url,
@@ -539,6 +480,8 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
                 max_tokens=llm_config.max_tokens,
                 timeout=llm_config.timeout,
                 skills_dir=tconf.get('cc_mini_skills_dir'),
+                save_screenshots=save_screenshots,
+                screenshot_dir=screenshot_dir,
                 log_level=log_level,
                 on_event=_make_cc_mini_stream_handler(),
             )
@@ -546,6 +489,11 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
             print('\n❌ cc-mini execution failed:', file=sys.stderr)
             traceback.print_exc()
             sys.exit(1)
+        finally:
+            if prev_report_ts is None:
+                os.environ.pop('WEBQA_REPORT_TIMESTAMP', None)
+            else:
+                os.environ['WEBQA_REPORT_TIMESTAMP'] = prev_report_ts
 
         # The final assistant text was already streamed via on_event; only
         # print a summary bar so the user sees totals at a glance.
@@ -559,7 +507,12 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
         # Generate HTML report — mirrors the gen-mode GenExecutor flow so
         # both backends produce the same deliverable for CLI users.
         report_path = _render_cc_mini_report(
-            result, cfg=cfg, url=target_url, task=task,
+            result,
+            cfg=cfg,
+            url=target_url,
+            task=task,
+            run_timestamp=run_timestamp,
+            report_dir_override=resolved_report_dir,
         )
         if report_path:
             print(f'📄 Report: {report_path}')

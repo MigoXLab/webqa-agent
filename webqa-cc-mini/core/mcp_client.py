@@ -25,6 +25,8 @@ import re
 import shutil
 import subprocess
 import threading
+import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -127,6 +129,7 @@ class MCPServer:
         self._alive = False
         self.negotiated_protocol_version: str | None = None
         self.tools: list[dict] = []
+        self._recent_stderr: deque[str] = deque(maxlen=30)
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -174,7 +177,13 @@ class MCPServer:
             self._initialize(startup_timeout_s)
             self.tools = self._list_tools(startup_timeout_s)
         except Exception:
-            # Cleanup on any startup failure so we don't leak the child.
+            # Give the stderr drain thread a moment to collect remaining output.
+            time.sleep(0.3)
+            if self._recent_stderr:
+                stderr_snippet = '\n'.join(self._recent_stderr)
+                _log.warning(
+                    '%s: server stderr before failure:\n%s', self.name, stderr_snippet,
+                )
             self.shutdown()
             raise
 
@@ -262,6 +271,7 @@ class MCPServer:
                 decoded = raw.rstrip().decode('utf-8', 'replace')
                 if _is_benign_stderr(decoded):
                     continue
+                self._recent_stderr.append(decoded)
                 _log.debug('%s[stderr]: %s', self.name, decoded)
         except Exception:
             pass
@@ -403,7 +413,8 @@ class MCPServer:
         content = result.get('content') or []
         text = _render_content_blocks(content)
         is_error = bool(result.get('isError'))
-        return ToolResult(content=text, is_error=is_error)
+        blocks = content if isinstance(content, list) else []
+        return ToolResult(content=text, is_error=is_error, content_blocks=blocks)
 
 
 # ---------------------------------------------------------------------- rendering
@@ -531,7 +542,7 @@ class MCPManager:
                 server.start()
                 results.put((cfg.name, server, None))
             except Exception as exc:
-                results.put((cfg.name, None, exc))
+                results.put((cfg.name, server, exc))
 
         threads = []
         for cfg in self._configs:
@@ -543,8 +554,12 @@ class MCPManager:
 
         while not results.empty():
             name, server, err = results.get()
-            if err is not None or server is None:
+            if err is not None:
                 _log.warning('MCP server %r failed to start: %s', name, err)
+                if name == 'browser':
+                    raise RuntimeError(f"Critical MCP server 'browser' failed to start: {err}")
+                continue
+            if server is None:
                 continue
             self._servers[name] = server
             tool_count = len(server.tools)
