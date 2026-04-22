@@ -6,14 +6,14 @@ from typing import Any, Iterator
 
 import anthropic
 import httpx
-from .text import sanitize_unicode
 
+from .text import sanitize_unicode
 
 _OPENAI_IMPORT_ERROR: Exception | None = None
 
 try:
-    from openai import OpenAI
     import openai
+    from openai import OpenAI
 except Exception as exc:  # pragma: no cover - exercised in tests via stubs
     OpenAI = None  # type: ignore[assignment]
     openai = None  # type: ignore[assignment]
@@ -22,26 +22,43 @@ except Exception as exc:  # pragma: no cover - exercised in tests via stubs
 
 ProviderName = str
 
-_ANTHROPIC_PROVIDER = "anthropic"
-_OPENAI_PROVIDER = "openai"
+_ANTHROPIC_PROVIDER = 'anthropic'
+_OPENAI_PROVIDER = 'openai'
 _VALID_PROVIDERS = {_ANTHROPIC_PROVIDER, _OPENAI_PROVIDER}
 
 MODEL_CONTEXT_WINDOW_DEFAULT = 200_000
 
-# Model context windows (tokens). First substring match wins.
+# Model context windows (tokens). First substring match wins — list
+# more-specific entries before less-specific ones (e.g. "gpt-5.4-mini"
+# before "gpt-5.4") since matching uses ``prefix in model_name``.
 # Single source of truth — compact.py imports get_context_window_for_model().
 _MODEL_CONTEXT_WINDOWS: tuple[tuple[str, int], ...] = (
-    ("claude-opus-4-6", 1_000_000),
-    ("claude-opus-4-5", 1_000_000),
-    ("claude-opus-4",     200_000),
-    ("claude-sonnet-4-6", 1_000_000),
-    ("claude-sonnet-4-5", 1_000_000),
-    ("claude-sonnet-4",   200_000),
-    ("claude-sonnet",     200_000),
-    ("claude-3-7-sonnet", 200_000),
-    ("claude-3-5-sonnet", 200_000),
-    ("claude-haiku-4-5",  200_000),
-    ("claude-3-5-haiku",  200_000),
+    # --- Anthropic Claude ---
+    ('claude-opus-4', 200_000),
+    ('claude-sonnet-4', 200_000),
+    ('claude-haiku-4', 200_000),
+    # --- OpenAI GPT / o-series ---
+    ('gpt-5.4-mini', 400_000),
+    ('gpt-5.4-nano', 400_000),
+    ('gpt-5.4', 272_000),
+    ('gpt-4.1-mini', 1_000_000),
+    ('gpt-4.1-nano', 1_000_000),
+    ('gpt-4.1', 1_000_000),
+    ('o4-mini', 200_000),
+    ('o3-mini', 200_000),
+    ('o3', 200_000),
+    # --- Google Gemini ---
+    ('gemini-3', 1_048_576),
+    ('gemini-2.5', 1_048_576),
+    ('gemini-2', 1_048_576),
+    # --- DeepSeek ---
+    ('deepseek-v4', 1_000_000),
+    ('deepseek-v3', 128_000),
+    ('deepseek-r1', 128_000),
+    ('deepseek', 128_000),
+    # --- Qwen ---
+    ('qwen3', 128_000),
+    ('qwen', 128_000),
 )
 
 
@@ -49,7 +66,7 @@ def get_context_window_for_model(model: str) -> int:
     """Return the context window size for a given model."""
     lowered = model.lower()
     # Explicit 1M-context marker overrides the table (e.g. "claude-opus-4-6[1m]").
-    if "[1m]" in lowered or "1m" in lowered.split("-"):
+    if '[1m]' in lowered or '1m' in lowered.split('-'):
         return 1_000_000
     for prefix, window in _MODEL_CONTEXT_WINDOWS:
         if prefix in lowered:
@@ -74,15 +91,15 @@ class LLMMessage:
 def validate_provider(provider: str | None) -> ProviderName:
     normalized = (provider or _ANTHROPIC_PROVIDER).strip().lower()
     if normalized not in _VALID_PROVIDERS:
-        raise ValueError(f"Unsupported provider: {provider}")
+        raise ValueError(f'Unsupported provider: {provider}')
     return normalized
 
 
 def default_model_for_provider(provider: str) -> str:
     provider = validate_provider(provider)
     if provider == _OPENAI_PROVIDER:
-        return "gpt-5.1-codex"
-    return "claude-sonnet-4-6"
+        return 'gpt-5.1-codex'
+    return 'claude-sonnet-4-6'
 
 
 def default_max_tokens_for_provider(provider: str) -> int:
@@ -97,7 +114,7 @@ def supports_reasoning_effort(provider: str, model: str) -> bool:
     if provider != _OPENAI_PROVIDER:
         return False
     lowered = model.lower()
-    return lowered.startswith(("gpt-5", "o1", "o3", "o4"))
+    return lowered.startswith(('gpt-5', 'o1', 'o3', 'o4'))
 
 
 class LLMClient:
@@ -113,14 +130,14 @@ class LLMClient:
         self._base_url = base_url
         if self.provider == _OPENAI_PROVIDER:
             if OpenAI is None:
-                message = "OpenAI support requires the `openai` package to be installed."
+                message = 'OpenAI support requires the `openai` package to be installed.'
                 if _OPENAI_IMPORT_ERROR is not None:
-                    message += f" Import failed: {_OPENAI_IMPORT_ERROR}"
+                    message += f' Import failed: {_OPENAI_IMPORT_ERROR}'
                 raise ValueError(message)
             self._client = OpenAI(
                 api_key=api_key,
                 base_url=base_url,
-                **({"timeout": timeout} if timeout is not None else {}),
+                **({'timeout': timeout} if timeout is not None else {}),
             )
         else:
             anthropic_timeout = (
@@ -235,7 +252,7 @@ class LLMClient:
 
     @staticmethod
     def error_message(exc: Exception) -> str:
-        return str(getattr(exc, "message", None) or exc)
+        return str(getattr(exc, 'message', None) or exc)
 
     def _anthropic_create_message(
         self,
@@ -254,17 +271,17 @@ class LLMClient:
             messages=messages,
         )
         if system:
-            kwargs["system"] = system
+            kwargs['system'] = system
         if tools:
-            kwargs["tools"] = tools
+            kwargs['tools'] = tools
         if temperature is not None:
-            kwargs["temperature"] = temperature
+            kwargs['temperature'] = temperature
         if top_p is not None:
-            kwargs["top_p"] = top_p
+            kwargs['top_p'] = top_p
         response = self._client.messages.create(**kwargs)
-        usage = _usage_from_anthropic(getattr(response, "usage", None))
+        usage = _usage_from_anthropic(getattr(response, 'usage', None))
         return LLMMessage(
-            content=_normalize_anthropic_content(getattr(response, "content", [])),
+            content=_normalize_anthropic_content(getattr(response, 'content', [])),
             usage=usage,
         )
 
@@ -293,7 +310,7 @@ class LLMClient:
         )
         response = self._client.chat.completions.create(**params)
         choice = response.choices[0].message if response.choices else None
-        usage = _usage_from_openai(getattr(response, "usage", None))
+        usage = _usage_from_openai(getattr(response, 'usage', None))
         return LLMMessage(
             content=_normalize_openai_message(choice),
             usage=usage,
@@ -313,7 +330,7 @@ class _AnthropicStream:
         temperature: float | None = None,
         top_p: float | None = None,
     ):
-        optional = {k: v for k, v in {"temperature": temperature, "top_p": top_p}.items() if v is not None}
+        optional = {k: v for k, v in {'temperature': temperature, 'top_p': top_p}.items() if v is not None}
         self._raw = client.messages.stream(
             model=model,
             max_tokens=max_tokens,
@@ -343,8 +360,8 @@ class _AnthropicStream:
     def get_final_message(self) -> LLMMessage:
         final = self._ctx.get_final_message()
         return LLMMessage(
-            content=_normalize_anthropic_content(getattr(final, "content", [])),
-            usage=_usage_from_anthropic(getattr(final, "usage", None)),
+            content=_normalize_anthropic_content(getattr(final, 'content', [])),
+            usage=_usage_from_anthropic(getattr(final, 'usage', None)),
         )
 
 
@@ -390,46 +407,46 @@ class _OpenAIStream:
         return False
 
     def close(self) -> None:
-        if self._stream is not None and hasattr(self._stream, "close"):
+        if self._stream is not None and hasattr(self._stream, 'close'):
             self._stream.close()
 
     def _iter_text(self) -> Iterator[str]:
         for chunk in self._stream:
-            usage = getattr(chunk, "usage", None)
+            usage = getattr(chunk, 'usage', None)
             if usage is not None:
                 self._usage = _usage_from_openai(usage)
-            for choice in _value(chunk, "choices", []) or []:
-                delta = _value(choice, "delta", {}) or {}
-                content = _value(delta, "content")
+            for choice in _value(chunk, 'choices', []) or []:
+                delta = _value(choice, 'delta', {}) or {}
+                content = _value(delta, 'content')
                 if content:
                     self._text_parts.append(content)
                     yield content
-                for tool_call in _value(delta, "tool_calls", []) or []:
-                    index = int(_value(tool_call, "index", 0) or 0)
+                for tool_call in _value(delta, 'tool_calls', []) or []:
+                    index = int(_value(tool_call, 'index', 0) or 0)
                     entry = self._tool_calls.setdefault(index, {
-                        "id": "",
-                        "name": "",
-                        "arguments": "",
+                        'id': '',
+                        'name': '',
+                        'arguments': '',
                     })
-                    tool_id = _value(tool_call, "id")
+                    tool_id = _value(tool_call, 'id')
                     if tool_id:
-                        entry["id"] = tool_id
-                    function = _value(tool_call, "function", {}) or {}
-                    name = _value(function, "name")
+                        entry['id'] = tool_id
+                    function = _value(tool_call, 'function', {}) or {}
+                    name = _value(function, 'name')
                     if name:
-                        entry["name"] = name
-                    arguments = _value(function, "arguments")
+                        entry['name'] = name
+                    arguments = _value(function, 'arguments')
                     if arguments:
-                        entry["arguments"] += arguments
+                        entry['arguments'] += arguments
 
     def get_final_message(self) -> LLMMessage:
         content: list[dict[str, Any]] = []
-        text = "".join(self._text_parts)
+        text = ''.join(self._text_parts)
         if text:
-            content.append({"type": "text", "text": text})
+            content.append({'type': 'text', 'text': text})
         for index in sorted(self._tool_calls):
             tool_call = self._tool_calls[index]
-            raw_args = tool_call.get("arguments", "").strip()
+            raw_args = tool_call.get('arguments', '').strip()
             parsed_args: Any = {}
             if raw_args:
                 try:
@@ -437,10 +454,10 @@ class _OpenAIStream:
                 except json.JSONDecodeError:
                     parsed_args = {}
             content.append({
-                "type": "tool_use",
-                "id": tool_call.get("id", ""),
-                "name": tool_call.get("name", ""),
-                "input": parsed_args if isinstance(parsed_args, dict) else {},
+                'type': 'tool_use',
+                'id': tool_call.get('id', ''),
+                'name': tool_call.get('name', ''),
+                'input': parsed_args if isinstance(parsed_args, dict) else {},
             })
         return LLMMessage(content=content, usage=self._usage)
 
@@ -455,34 +472,34 @@ def _normalize_anthropic_content(content: Any) -> list[dict[str, Any]]:
 
 
 def _normalize_anthropic_block(block: Any) -> dict[str, Any] | None:
-    block_type = _value(block, "type")
-    if block_type == "text":
-        return {"type": "text", "text": _value(block, "text", "")}
-    if block_type == "tool_use":
+    block_type = _value(block, 'type')
+    if block_type == 'text':
+        return {'type': 'text', 'text': _value(block, 'text', '')}
+    if block_type == 'tool_use':
         return {
-            "type": "tool_use",
-            "id": _value(block, "id", ""),
-            "name": _value(block, "name", ""),
-            "input": _value(block, "input", {}) or {},
+            'type': 'tool_use',
+            'id': _value(block, 'id', ''),
+            'name': _value(block, 'name', ''),
+            'input': _value(block, 'input', {}) or {},
         }
-    if block_type == "tool_result":
+    if block_type == 'tool_result':
         normalized = {
-            "type": "tool_result",
-            "tool_use_id": _value(block, "tool_use_id", ""),
-            "content": _value(block, "content", ""),
+            'type': 'tool_result',
+            'tool_use_id': _value(block, 'tool_use_id', ''),
+            'content': _value(block, 'content', ''),
         }
-        is_error = _value(block, "is_error")
+        is_error = _value(block, 'is_error')
         if is_error is not None:
-            normalized["is_error"] = bool(is_error)
+            normalized['is_error'] = bool(is_error)
         return normalized
-    if block_type == "image":
+    if block_type == 'image':
         return {
-            "type": "image",
-            "source": _value(block, "source", {}),
+            'type': 'image',
+            'source': _value(block, 'source', {}),
         }
     if isinstance(block, dict):
         return dict(block)
-    if hasattr(block, "model_dump"):
+    if hasattr(block, 'model_dump'):
         return block.model_dump()
     return None
 
@@ -491,11 +508,11 @@ def _normalize_openai_message(message: Any) -> list[dict[str, Any]]:
     if message is None:
         return []
     content: list[dict[str, Any]] = []
-    text = _extract_openai_text(_value(message, "content"))
+    text = _extract_openai_text(_value(message, 'content'))
     if text:
-        content.append({"type": "text", "text": text})
-    for tool_call in _value(message, "tool_calls", []) or []:
-        arguments = _value(_value(tool_call, "function", {}) or {}, "arguments", "") or ""
+        content.append({'type': 'text', 'text': text})
+    for tool_call in _value(message, 'tool_calls', []) or []:
+        arguments = _value(_value(tool_call, 'function', {}) or {}, 'arguments', '') or ''
         parsed_args: Any = {}
         if arguments:
             try:
@@ -503,39 +520,39 @@ def _normalize_openai_message(message: Any) -> list[dict[str, Any]]:
             except json.JSONDecodeError:
                 parsed_args = {}
         content.append({
-            "type": "tool_use",
-            "id": _value(tool_call, "id", ""),
-            "name": _value(_value(tool_call, "function", {}) or {}, "name", ""),
-            "input": parsed_args if isinstance(parsed_args, dict) else {},
+            'type': 'tool_use',
+            'id': _value(tool_call, 'id', ''),
+            'name': _value(_value(tool_call, 'function', {}) or {}, 'name', ''),
+            'input': parsed_args if isinstance(parsed_args, dict) else {},
         })
     return content
 
 
 def _extract_openai_text(content: Any) -> str:
     if content is None:
-        return ""
+        return ''
     if isinstance(content, str):
         return content
     parts: list[str] = []
     for item in content:
-        item_type = _value(item, "type")
-        if item_type == "text":
-            text = _value(item, "text")
+        item_type = _value(item, 'type')
+        if item_type == 'text':
+            text = _value(item, 'text')
             if isinstance(text, str):
                 parts.append(text)
             elif isinstance(text, dict):
-                parts.append(str(text.get("value", "")))
-    return "".join(parts)
+                parts.append(str(text.get('value', '')))
+    return ''.join(parts)
 
 
 def _usage_from_anthropic(usage: Any) -> LLMUsage | None:
     if usage is None:
         return None
     return LLMUsage(
-        input_tokens=int(_value(usage, "input_tokens", 0) or 0),
-        output_tokens=int(_value(usage, "output_tokens", 0) or 0),
-        cache_read_input_tokens=int(_value(usage, "cache_read_input_tokens", 0) or 0),
-        cache_creation_input_tokens=int(_value(usage, "cache_creation_input_tokens", 0) or 0),
+        input_tokens=int(_value(usage, 'input_tokens', 0) or 0),
+        output_tokens=int(_value(usage, 'output_tokens', 0) or 0),
+        cache_read_input_tokens=int(_value(usage, 'cache_read_input_tokens', 0) or 0),
+        cache_creation_input_tokens=int(_value(usage, 'cache_creation_input_tokens', 0) or 0),
     )
 
 
@@ -543,8 +560,8 @@ def _usage_from_openai(usage: Any) -> LLMUsage | None:
     if usage is None:
         return None
     return LLMUsage(
-        input_tokens=int(_value(usage, "prompt_tokens", 0) or 0),
-        output_tokens=int(_value(usage, "completion_tokens", 0) or 0),
+        input_tokens=int(_value(usage, 'prompt_tokens', 0) or 0),
+        output_tokens=int(_value(usage, 'completion_tokens', 0) or 0),
     )
 
 
@@ -561,87 +578,87 @@ def _build_openai_request(
     top_p: float | None = None,
 ) -> dict[str, Any]:
     params: dict[str, Any] = {
-        "model": model,
-        "messages": _to_openai_messages(system, messages),
-        "max_tokens": max_tokens,
-        "stream": stream,
+        'model': model,
+        'messages': _to_openai_messages(system, messages),
+        'max_tokens': max_tokens,
+        'stream': stream,
     }
     if stream:
         # Required so streamed responses include final usage stats.
         # Without this the OpenAI streaming API omits usage entirely, which
         # would leave the engine's ("usage", ...) event un-fired and break
         # auto-compact triggering for OpenAI-compatible backends.
-        params["stream_options"] = {"include_usage": True}
+        params['stream_options'] = {'include_usage': True}
     if tools:
-        params["tools"] = [_tool_schema_to_openai(tool) for tool in tools]
+        params['tools'] = [_tool_schema_to_openai(tool) for tool in tools]
     if effort and supports_reasoning_effort(_OPENAI_PROVIDER, model):
-        params["reasoning_effort"] = effort
+        params['reasoning_effort'] = effort
     if temperature is not None:
-        params["temperature"] = temperature
+        params['temperature'] = temperature
     if top_p is not None:
-        params["top_p"] = top_p
+        params['top_p'] = top_p
     return params
 
 
 def _to_openai_messages(system: str | None, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     if system:
-        out.append({"role": "system", "content": sanitize_unicode(system)})
+        out.append({'role': 'system', 'content': sanitize_unicode(system)})
 
     for message in messages:
-        role = message.get("role")
-        content = sanitize_unicode(message.get("content", ""))
+        role = message.get('role')
+        content = sanitize_unicode(message.get('content', ''))
 
-        if role == "user" and isinstance(content, list):
+        if role == 'user' and isinstance(content, list):
             tool_results = [
                 block for block in content
-                if isinstance(block, dict) and block.get("type") == "tool_result"
+                if isinstance(block, dict) and block.get('type') == 'tool_result'
             ]
             if tool_results and len(tool_results) == len(content):
                 for block in tool_results:
                     out.append({
-                        "role": "tool",
-                        "tool_call_id": block.get("tool_use_id", ""),
-                        "content": _tool_result_to_text(block.get("content", "")),
+                        'role': 'tool',
+                        'tool_call_id': block.get('tool_use_id', ''),
+                        'content': _tool_result_to_text(block.get('content', '')),
                     })
                 continue
 
             out.append({
-                "role": "user",
-                "content": _user_content_blocks_to_openai(content),
+                'role': 'user',
+                'content': _user_content_blocks_to_openai(content),
             })
             continue
 
-        if role == "assistant" and isinstance(content, list):
+        if role == 'assistant' and isinstance(content, list):
             text_parts: list[str] = []
             tool_calls: list[dict[str, Any]] = []
             for block in content:
                 if not isinstance(block, dict):
                     continue
-                block_type = block.get("type")
-                if block_type == "text":
-                    text_parts.append(block.get("text", ""))
-                elif block_type == "tool_use":
+                block_type = block.get('type')
+                if block_type == 'text':
+                    text_parts.append(block.get('text', ''))
+                elif block_type == 'tool_use':
                     tool_calls.append({
-                        "id": block.get("id", ""),
-                        "type": "function",
-                        "function": {
-                            "name": block.get("name", ""),
-                            "arguments": json.dumps(block.get("input", {}), ensure_ascii=False),
+                        'id': block.get('id', ''),
+                        'type': 'function',
+                        'function': {
+                            'name': block.get('name', ''),
+                            'arguments': json.dumps(block.get('input', {}), ensure_ascii=False),
                         },
                     })
             assistant_message: dict[str, Any] = {
-                "role": "assistant",
-                "content": "".join(text_parts) or None,
+                'role': 'assistant',
+                'content': ''.join(text_parts) or None,
             }
             if tool_calls:
-                assistant_message["tool_calls"] = tool_calls
+                assistant_message['tool_calls'] = tool_calls
             out.append(assistant_message)
             continue
 
         out.append({
-            "role": role,
-            "content": content,
+            'role': role,
+            'content': content,
         })
 
     return out
@@ -652,39 +669,39 @@ def _user_content_blocks_to_openai(content: list[Any]) -> list[dict[str, Any]]:
     for block in content:
         if not isinstance(block, dict):
             continue
-        block_type = block.get("type")
-        if block_type == "text":
-            parts.append({"type": "text", "text": block.get("text", "")})
-        elif block_type == "image":
-            source = block.get("source", {})
-            media_type = source.get("media_type", "image/png")
-            data = source.get("data", "")
+        block_type = block.get('type')
+        if block_type == 'text':
+            parts.append({'type': 'text', 'text': block.get('text', '')})
+        elif block_type == 'image':
+            source = block.get('source', {})
+            media_type = source.get('media_type', 'image/png')
+            data = source.get('data', '')
             parts.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:{media_type};base64,{data}"},
+                'type': 'image_url',
+                'image_url': {'url': f'data:{media_type};base64,{data}'},
             })
-        elif block_type == "tool_result":
+        elif block_type == 'tool_result':
             # Mixed content (tool_result blocks alongside text/image) isn't a
             # path the engine currently emits, but if it ever does, represent
             # the tool output as text so it isn't silently dropped.
-            tool_id = block.get("tool_use_id", "")
-            body = _tool_result_to_text(block.get("content", ""))
+            tool_id = block.get('tool_use_id', '')
+            body = _tool_result_to_text(block.get('content', ''))
             parts.append({
-                "type": "text",
-                "text": f"[tool_result {tool_id}]\n{body}" if tool_id else body,
+                'type': 'text',
+                'text': f'[tool_result {tool_id}]\n{body}' if tool_id else body,
             })
     if not parts:
-        return [{"type": "text", "text": ""}]
+        return [{'type': 'text', 'text': ''}]
     return parts
 
 
 def _tool_schema_to_openai(tool: dict[str, Any]) -> dict[str, Any]:
     return {
-        "type": "function",
-        "function": {
-            "name": tool.get("name", ""),
-            "description": tool.get("description", ""),
-            "parameters": tool.get("input_schema", {}),
+        'type': 'function',
+        'function': {
+            'name': tool.get('name', ''),
+            'description': tool.get('description', ''),
+            'parameters': tool.get('input_schema', {}),
         },
     }
 
@@ -693,7 +710,7 @@ def _tool_result_to_text(content: Any) -> str:
     if isinstance(content, str):
         return content
     if content is None:
-        return ""
+        return ''
     return json.dumps(content, ensure_ascii=False)
 
 

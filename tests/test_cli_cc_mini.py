@@ -118,6 +118,8 @@ def test_execute_gen_mode_routes_to_cc_mini(monkeypatch, capsys):
         # Screenshot persistence defaults.
         'save_screenshots': False,
         'screenshot_dir': None,
+        # File upload catalog (no files configured).
+        'file_catalog': None,
         # log_level inherits from cfg.log.level (default 'info').
         'log_level': 'info',
     }
