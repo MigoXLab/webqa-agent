@@ -28,7 +28,6 @@ Mapping:
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from datetime import datetime
 from typing import Any
@@ -43,15 +42,6 @@ from webqa_agent.utils.reporting_utils import sanitize_case_name
 # cc-mini tool outputs are sometimes multi-KB (accessibility snapshots,
 # full DOM dumps) and inlining them verbatim would bloat every report.
 _RESULT_TEXT_LIMIT = 4000
-_FINAL_OUTCOME_TAG_RE = re.compile(
-    r'<final_outcome>\s*(\{.*?\})\s*</final_outcome>',
-    re.DOTALL | re.IGNORECASE,
-)
-
-
-def _int_attr(obj: Any, name: str) -> int:
-    """Read integer-like attribute with a safe zero fallback."""
-    return int(getattr(obj, name, 0) or 0)
 
 
 def run_result_to_session(
@@ -85,17 +75,13 @@ def run_result_to_session(
         _map_step(i, step) for i, step in enumerate(raw_steps, start=1)
     ]
 
-    raw_final_text = getattr(run_result, 'final_text', '') or ''
     aborted = bool(getattr(run_result, 'aborted', False))
     failed_count = sum(1 for s in sub_steps if s.status == TestStatus.FAILED)
-    outcome = _extract_final_outcome(raw_final_text)
-    final_text = _build_display_final_text(raw_final_text)
-    overall_status_name, status_source = _derive_status(
-        aborted=aborted, failed_count=failed_count, outcome=outcome,
-    )
     overall_status = (
-        TestStatus.PASSED if overall_status_name == 'passed' else TestStatus.FAILED
+        TestStatus.FAILED if (aborted or failed_count) else TestStatus.PASSED
     )
+
+    final_text = getattr(run_result, 'final_text', '') or ''
     report_sections: list[SubTestReport] = []
     if final_text.strip():
         report_sections.append(SubTestReport(title='Summary', issues=final_text))
@@ -110,10 +96,9 @@ def run_result_to_session(
             'total_steps': len(sub_steps),
             'passed_steps': len(sub_steps) - failed_count,
             'failed_steps': failed_count,
-            'input_tokens': _int_attr(run_result, 'input_tokens'),
-            'output_tokens': _int_attr(run_result, 'output_tokens'),
+            'input_tokens': int(getattr(run_result, 'input_tokens', 0) or 0),
+            'output_tokens': int(getattr(run_result, 'output_tokens', 0) or 0),
             'aborted': aborted,
-            'status_source': status_source,
         },
         steps=sub_steps,
         start_time=now.isoformat(timespec='seconds'),
@@ -137,19 +122,14 @@ def run_result_to_session(
             'passed_test_cases': 0 if overall_status == TestStatus.FAILED else 1,
             'failed_test_cases': 1 if overall_status == TestStatus.FAILED else 0,
             'total_steps': len(sub_steps),
-            'input_tokens': _int_attr(run_result, 'input_tokens'),
-            'output_tokens': _int_attr(run_result, 'output_tokens'),
-            'status_source': status_source,
+            'input_tokens': int(getattr(run_result, 'input_tokens', 0) or 0),
+            'output_tokens': int(getattr(run_result, 'output_tokens', 0) or 0),
         },
     )
     if overall_status == TestStatus.FAILED:
         test.error_message = (
             'cc-mini run aborted' if aborted
-            else (
-                'final outcome marked objective_achieved=false'
-                if status_source == 'final_outcome'
-                else f'{failed_count} step(s) failed'
-            )
+            else f'{failed_count} step(s) failed'
         )
 
     from webqa_agent.data.gen_structures import TestConfiguration
@@ -172,34 +152,67 @@ def run_result_to_session(
     return session
 
 
-def _map_step(index: int, step: Any) -> SubTestStep:
-    tool, is_error, input_dict, result_text, screenshots = _extract_step_fields(step)
-    model_io = _build_model_io(tool=tool, input_dict=input_dict, result_text=result_text)
+def _extract_step_fields(step: Any) -> tuple[str, bool, dict, str]:
+    """Extract common fields from a cc-mini Step (duck-typed)."""
+    tool = str(getattr(step, 'tool', '') or 'unknown')
+    is_error = bool(getattr(step, 'is_error', False))
+    input_dict = getattr(step, 'input', {}) or {}
+    result_text = str(getattr(step, 'result', '') or '')
+    return tool, is_error, input_dict, result_text
 
+
+def _build_model_io(tool: str, input_dict: dict, result_text: str) -> str:
+    """Build the modelIO JSON string with truncation."""
+    try:
+        truncated_result, truncated = _truncate_with_flag(
+            result_text, _RESULT_TEXT_LIMIT,
+        )
+        model_io_obj: dict[str, Any] = {
+            'tool': tool,
+            'input': input_dict,
+            'result': truncated_result,
+        }
+        if truncated:
+            model_io_obj['result_truncated'] = True
+            model_io_obj['full_result_length'] = len(result_text)
+        return json.dumps(
+            model_io_obj, ensure_ascii=False, indent=2, default=str,
+        )
+    except (TypeError, ValueError):
+        return repr({'tool': tool, 'input': input_dict, 'result': result_text})
+
+
+def _map_step(index: int, step: Any) -> SubTestStep:
+    tool, is_error, input_dict, result_text = _extract_step_fields(step)
     return SubTestStep(
         id=index,
         description=_describe_step(tool, input_dict),
-        screenshots=screenshots,
-        modelIO=model_io,
+        modelIO=_build_model_io(tool, input_dict, result_text),
         actions=[],
         status=TestStatus.FAILED if is_error else TestStatus.PASSED,
         errors=result_text if is_error else '',
     )
 
 
+def _first_non_none(*values: Any) -> Any:
+    """Return the first value that is not None."""
+    return next((v for v in values if v is not None), None)
+
+
 def _describe_step(tool: str, input_dict: dict) -> str:
     """Build a one-line human summary of a tool invocation."""
-    # Well-known browser actions get a friendlier description so readers
-    # don't have to expand the payload to see intent. Unknown tools fall
-    # back to their raw name.
     if tool in ('navigate_page', 'navigate', 'goto') and 'url' in input_dict:
         return f"Navigate to {input_dict['url']}"
     if tool in ('click', 'click_element'):
-        target = input_dict.get('selector') or input_dict.get('uid') or input_dict.get('text')
+        target = _first_non_none(
+            input_dict.get('selector'), input_dict.get('uid'), input_dict.get('text'),
+        )
         if target:
             return f'Click {target}'
     if tool in ('fill', 'type', 'input'):
-        target = input_dict.get('selector') or input_dict.get('uid') or input_dict.get('label')
+        target = _first_non_none(
+            input_dict.get('selector'), input_dict.get('uid'), input_dict.get('label'),
+        )
         if target:
             return f'Fill {target}'
     if tool.startswith(('take_screenshot', 'screenshot')):
@@ -219,54 +232,6 @@ def _truncate_with_flag(text: str, limit: int) -> tuple[str, bool]:
     if len(text) <= limit:
         return text, False
     return text[: max(0, limit - 3)] + '...', True
-
-
-def _extract_final_outcome(final_text: str) -> dict[str, Any] | None:
-    """Extract structured outcome JSON from final text.
-
-    Preferred format is ``<final_outcome>{...}</final_outcome>``. Returns
-    ``None`` if not present or malformed.
-    """
-    if not final_text:
-        return None
-    matches = _FINAL_OUTCOME_TAG_RE.findall(final_text)
-    if not matches:
-        return None
-    raw_json = matches[-1]
-    try:
-        parsed = json.loads(raw_json)
-    except (TypeError, ValueError):
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    return parsed
-
-
-def _strip_final_outcome_block(final_text: str) -> str:
-    """Remove <final_outcome>...</final_outcome> from user-facing text."""
-    if not final_text:
-        return ''
-    cleaned = _FINAL_OUTCOME_TAG_RE.sub('', final_text)
-    return cleaned.strip()
-
-
-def _build_display_final_text(raw_final_text: str) -> str:
-    """Build user-facing final text without exposing machine-only blocks."""
-    return _strip_final_outcome_block(raw_final_text)
-
-
-def _derive_status(
-    *,
-    aborted: bool,
-    failed_count: int,
-    outcome: dict[str, Any] | None,
-) -> tuple[str, str]:
-    """Derive overall pass/fail and the source of that decision."""
-    if aborted:
-        return 'failed', 'aborted'
-    if isinstance(outcome, dict) and isinstance(outcome.get('objective_achieved'), bool):
-        return ('passed', 'final_outcome') if outcome['objective_achieved'] else ('failed', 'final_outcome')
-    return ('failed', 'step_fallback') if failed_count else ('passed', 'step_fallback')
 
 
 def run_result_to_aggregated_data(
@@ -306,21 +271,19 @@ def run_result_to_aggregated_data(
     ``ParallelTestSession`` falls back role of carrying session metadata
     (``report_path``) while this dict drives the UI.
     """
-    raw_steps = list(getattr(run_result, 'steps', None) or [])
-    step_dicts: list[dict] = [
-        _map_step_dict(i, step) for i, step in enumerate(raw_steps, start=1)
-    ]
-
-    raw_final_text = (getattr(run_result, 'final_text', '') or '').strip()
-    outcome = _extract_final_outcome(raw_final_text)
-    final_text = _build_display_final_text(raw_final_text)
-    aborted = bool(getattr(run_result, 'aborted', False))
-    failed_count = sum(1 for s in step_dicts if s['status'] == 'failed')
-    overall_status, status_source = _derive_status(
-        aborted=aborted, failed_count=failed_count, outcome=outcome,
-    )
     now = datetime.now()
     now_iso = now.isoformat(timespec='seconds')
+    final_text = (getattr(run_result, 'final_text', '') or '').strip()
+
+    raw_steps = list(getattr(run_result, 'steps', None) or [])
+    step_dicts: list[dict] = [
+        _map_step_dict(i, step, now_iso)
+        for i, step in enumerate(raw_steps, start=1)
+    ]
+
+    aborted = bool(getattr(run_result, 'aborted', False))
+    failed_count = sum(1 for s in step_dicts if s['status'] == 'failed')
+    overall_status = 'failed' if (aborted or failed_count) else 'passed'
 
     display_name = (task or 'cc-mini run').strip()
     safe_name = sanitize_case_name(display_name) or 'cc_mini_run'
@@ -351,14 +314,11 @@ def run_result_to_aggregated_data(
             'total_steps': len(step_dicts),
             'passed_steps': len(step_dicts) - failed_count,
             'failed_steps': failed_count,
-            'input_tokens': _int_attr(run_result, 'input_tokens'),
-            'output_tokens': _int_attr(run_result, 'output_tokens'),
+            'input_tokens': int(getattr(run_result, 'input_tokens', 0) or 0),
+            'output_tokens': int(getattr(run_result, 'output_tokens', 0) or 0),
             'aborted': aborted,
-            'status_source': status_source,
         },
     }
-    if outcome is not None:
-        case_entry['final_outcome'] = outcome
     if final_text:
         case_entry['report'] = [{'title': 'Summary', 'issues': final_text}]
 
@@ -404,72 +364,26 @@ def run_result_to_aggregated_data(
     return {'gen': {case_key: case_entry, 'index': index_entry}}
 
 
-def _map_step_dict(index: int, step: Any) -> dict:
+def _map_step_dict(index: int, step: Any, timestamp: str) -> dict:
     """Map a cc-mini ``Step`` into the step-dict shape the React UI renders."""
-    tool, is_error, input_dict, result_text, screenshots = _extract_step_fields(step)
-    model_io = _build_model_io(tool=tool, input_dict=input_dict, result_text=result_text)
-
+    tool, is_error, input_dict, result_text = _extract_step_fields(step)
     description = _describe_step(tool, input_dict)
-    status = 'failed' if is_error else 'passed'
-    step_ts = getattr(step, 'timestamp', None)
-    now_iso = (
-        datetime.fromtimestamp(step_ts).isoformat(timespec='seconds')
-        if step_ts
-        else datetime.now().isoformat(timespec='seconds')
-    )
-
-    # The frontend renders ``actions`` as a log stream next to each step.
-    # cc-mini has a single tool call per step; surface the result text there
-    # so the reader sees what actually happened without expanding modelIO.
     action_message = result_text if result_text else description
-    actions = [{
-        'description': action_message,
-        'success': not is_error,
-        'message': action_message,
-        'index': index,
-    }]
 
     return {
         'id': index,
         'number': index,
         'type': 'action',
         'description': description,
-        'screenshots': screenshots,
-        'modelIO': model_io,
-        'actions': actions,
-        'status': status,
-        'timestamp': now_iso,
+        'screenshots': [],
+        'modelIO': _build_model_io(tool, input_dict, result_text),
+        'actions': [{
+            'description': action_message,
+            'success': not is_error,
+            'message': action_message,
+            'index': index,
+        }],
+        'status': 'failed' if is_error else 'passed',
+        'timestamp': timestamp,
         'errors': result_text if is_error else '',
     }
-
-
-def _extract_step_fields(step: Any) -> tuple[str, bool, dict[str, Any], str, list[dict[str, str]]]:
-    """Extract normalized step attributes from a duck-typed cc-mini step."""
-    tool = str(getattr(step, 'tool', '') or 'unknown')
-    is_error = bool(getattr(step, 'is_error', False))
-    input_dict = getattr(step, 'input', {}) or {}
-    result_text = str(getattr(step, 'result', '') or '')
-    raw_screenshots = getattr(step, 'screenshots', []) or []
-    screenshots = raw_screenshots if isinstance(raw_screenshots, list) else []
-    return tool, is_error, input_dict, result_text, screenshots
-
-
-def _build_model_io(*, tool: str, input_dict: dict[str, Any], result_text: str) -> str:
-    """Build compact modelIO JSON payload used by both output shapes."""
-    try:
-        truncated_result, truncated = _truncate_with_flag(
-            result_text, _RESULT_TEXT_LIMIT,
-        )
-        model_io_obj: dict[str, Any] = {
-            'tool': tool,
-            'input': input_dict,
-            'result': truncated_result,
-        }
-        if truncated:
-            model_io_obj['result_truncated'] = True
-            model_io_obj['full_result_length'] = len(result_text)
-        return json.dumps(
-            model_io_obj, ensure_ascii=False, indent=2, default=str,
-        )
-    except (TypeError, ValueError):
-        return repr({'tool': tool, 'input': input_dict, 'result': result_text})

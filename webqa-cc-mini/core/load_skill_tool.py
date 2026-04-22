@@ -113,20 +113,23 @@ class LoadSkillTool(Tool):
             return self._load_reference(skill_name, ref_name)
         return self._load_body(skill_name)
 
+    def _unknown_skill_error(self, skill_name: str) -> ToolResult:
+        available = ', '.join(
+            m.name for m in self._registry.list_metadata()
+        ) or '(none)'
+        return ToolResult(
+            content=(
+                f'[FAILURE: unknown skill {skill_name!r}]\n'
+                f'Available skills: {available}'
+            ),
+            is_error=True,
+        )
+
     def _load_body(self, skill_name: str) -> ToolResult:
         try:
             body = self._registry.load_full_content(skill_name)
         except KeyError:
-            available = ', '.join(
-                m.name for m in self._registry.list_metadata()
-            ) or '(none)'
-            return ToolResult(
-                content=(
-                    f'[FAILURE: unknown skill {skill_name!r}]\n'
-                    f'Available skills: {available}'
-                ),
-                is_error=True,
-            )
+            return self._unknown_skill_error(skill_name)
         except OSError as exc:
             return ToolResult(
                 content=f'[FAILURE: could not read skill file] {exc}',
@@ -146,16 +149,7 @@ class LoadSkillTool(Tool):
         try:
             content = self._registry.load_reference(skill_name, ref_name)
         except KeyError:
-            available = ', '.join(
-                m.name for m in self._registry.list_metadata()
-            ) or '(none)'
-            return ToolResult(
-                content=(
-                    f'[FAILURE: unknown skill {skill_name!r}]\n'
-                    f'Available skills: {available}'
-                ),
-                is_error=True,
-            )
+            return self._unknown_skill_error(skill_name)
         except ValueError as exc:
             return ToolResult(content=f'[FAILURE] {exc}', is_error=True)
         except FileNotFoundError:

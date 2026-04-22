@@ -115,6 +115,9 @@ def test_execute_gen_mode_routes_to_cc_mini(monkeypatch, capsys):
         'timeout': None,
         # Skills discovery is opt-in; cc_mini_skills_dir unset -> None.
         'skills_dir': None,
+        # Screenshot persistence defaults.
+        'save_screenshots': False,
+        'screenshot_dir': None,
         # log_level inherits from cfg.log.level (default 'info').
         'log_level': 'info',
     }
@@ -292,10 +295,11 @@ def test_execute_gen_mode_cc_mini_generates_html_report(
 
     asyncio.run(cli.execute_gen_mode(cfg))
 
-    candidates = [report_dir / 'test_report.html', report_dir / 'report.html']
-    report_file = next((p for p in candidates if p.exists()), None)
-    assert report_file is not None, 'no HTML report was written'
-    content = report_file.read_text(encoding='utf-8')
+    # The report may land in a timestamp subdirectory (platform convention)
+    # or directly under report_dir. Search both levels.
+    found = list(report_dir.rglob('test_report.html')) + list(report_dir.rglob('report.html'))
+    assert found, 'no HTML report was written'
+    content = found[0].read_text(encoding='utf-8')
     assert 'All good.' in content
     assert 'navigate' in content
     stdout = capsys.readouterr().out
@@ -332,20 +336,14 @@ def test_cc_mini_report_uses_gen_mode_frontend(monkeypatch, tmp_path):
 
     asyncio.run(cli.execute_gen_mode(cfg))
 
-    gen_report = report_dir / 'test_report.html'
-    assert gen_report.exists(), (
+    found = list(report_dir.rglob('test_report.html'))
+    assert found, (
         'expected gen-mode report at test_report.html; fell back to the '
         'standalone renderer instead.'
     )
-    content = gen_report.read_text(encoding='utf-8')
-    # Gen-mode template signatures (React shell + inlined data).
+    content = found[0].read_text(encoding='utf-8')
     assert '<div id="root"></div>' in content
     assert 'window.testResultData' in content
-    # The React frontend keys off the gen-mode aggregated shape
-    # ({"gen": {"case_X_<safe>": {...}, "index": {...}}}). If this payload
-    # reverts to the ParallelTestSession.to_dict() shape the UI renders
-    # empty even though the HTML file is large — the regression we fixed
-    # after cc_mini_20260420_202734. Pin the contract here.
     assert '"gen":' in content
     assert '"case_1_smoke"' in content
     assert '"index":' in content
