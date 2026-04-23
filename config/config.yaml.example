@@ -108,7 +108,33 @@ browser_config:
   viewport: {"width": 1280, "height": 720}
   headless: False  # Docker environment will automatically override to True
   language: zh-CN
+  # Cookie injection:
+  #   * Run mode (default) — `cookies` here is the per-run identity.
+  #   * cc-mini mode (test_config.use_cc_mini=true) — prefer top-level
+  #     `accounts:` (see below). `browser_config.cookies` still works as a
+  #     deprecated single-account fallback, but you'll get a warning at
+  #     startup. To inject HttpOnly cookies (JWT session tokens) the
+  #     accounts: path is required — `browser_config.cookies` cannot
+  #     express `httpOnly: true`.
   cookies: []
+
+# accounts: top-level multi-account user pool (cc-mini mode).
+#   * Each entry needs `name` and either `cookies:` (inline list) or
+#     `cookies_file:` (relative paths resolve against this YAML's dir).
+#   * Mark one account `default: true` to inject its cookies at startup.
+#     If none is marked, the first account is auto-promoted (logged warning).
+#   * Each cookie dict must have `name`, `value`, and either `domain` or
+#     `url` — otherwise the run aborts before the agent starts.
+#   * The agent can mid-run call `switch_account(account=..., navigate_url=...)`
+#     to swap identity — the role text below is shown to the LLM.
+# accounts:
+#   - name: admin
+#     role: Full administrator
+#     default: true
+#     cookies_file: ./admin-cookies.json
+#   - name: viewer
+#     role: Read-only user
+#     cookies_file: ./viewer-cookies.json
 
 report:
   language: en-US # zh-CN, en-US

@@ -11,6 +11,8 @@ def build_web_agent_system_prompt(
     task: str,
     skills: Sequence[SkillMetadata] | None = None,
     file_catalog: str | None = None,
+    *,
+    extra_section: str | None = None,
 ) -> str:
     skill_names = {m.name for m in skills} if skills else set()
 
@@ -107,6 +109,8 @@ def build_web_agent_system_prompt(
         sections.append(_format_skills_section(skills))
     if file_catalog:
         sections.append(_format_file_upload_section(file_catalog))
+    if extra_section:
+        sections.append('\n' + extra_section.rstrip() + '\n')
     return ''.join(sections)
 
 

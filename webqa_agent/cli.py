@@ -9,6 +9,7 @@ import sys
 import traceback
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from webqa_agent.config_models.base_config import (BrowserConfig, LLMConfig,
                                                    LogConfig, ReportConfig)
@@ -155,6 +156,8 @@ async def _execute_cc_mini_mode(
     browser_headless: bool = False,
     log_level: str = 'info',
     on_event=None,
+    worker_id: int = 0,
+    extensions: Any = None,
 ):
     """Execute one cc-mini run without blocking the main event loop.
 
@@ -167,9 +170,23 @@ async def _execute_cc_mini_mode(
     ``skills_dir`` is forwarded to ``run_cc_mini``. When provided, the
     cc-mini engine discovers skills under that directory and exposes
     them via Progressive Disclosure (see webqa-cc-mini/skills/README.md).
+
+    ``worker_id`` is threaded through so concurrent CLI invocations get
+    distinct Chromium profiles + CDP ports (each worker uses port
+    ``9222 + worker_id``). Defaults to 0 for the single-case CLI flow.
+
+    ``extensions`` accepts a ``features.cookies.Extensions`` instance (or
+    duck-typed equivalent exposing ``as_kwargs()``). When set, its
+    ``pre_engine_hook`` / ``extra_tools`` / ``extra_section`` are spread
+    into ``run_cc_mini``. Use a single param so adding new feature bundles
+    in the future doesn't require expanding this signature each time.
     """
     from webqa_agent.utils.get_log import GetLog
     GetLog.get_log(log_level=log_level)
+
+    extension_kwargs: dict = {}
+    if extensions is not None and hasattr(extensions, 'as_kwargs'):
+        extension_kwargs = extensions.as_kwargs()
 
     run_cc_mini = _load_cc_mini_runner()
     return await asyncio.to_thread(
@@ -190,7 +207,9 @@ async def _execute_cc_mini_mode(
         save_screenshots=save_screenshots,
         screenshot_dir=screenshot_dir,
         browser_headless=browser_headless,
+        worker_id=worker_id,
         on_event=on_event,
+        **extension_kwargs,
     )
 
 
@@ -497,6 +516,39 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
             except Exception as exc:
                 print(f'⚠️ Failed to build cc-mini file catalog: {exc}')
 
+        # Build cookie-injection extensions from the top-level `accounts:`
+        # config (and the legacy `browser_config.cookies` fallback). This
+        # is the only path that turns config-file accounts into cc-mini
+        # cookie state — see CUSTOM_TOOL_DEVELOPMENT.md / cc-mini README.
+        cc_mini_extensions: Any = None
+        try:
+            from webqa_agent.utils.cc_mini_utils import (
+                build_cookie_extensions_from_config,
+            )
+            cc_mini_extensions = build_cookie_extensions_from_config(
+                cfg, source_file=cfg.get('_source_file'),
+            )
+            if cc_mini_extensions is not None:
+                acc_count = len(cc_mini_extensions.extra_tools or [])
+                if acc_count:
+                    print(f'🔐 cc-mini accounts: {acc_count} switch_account tool(s) registered')
+                else:
+                    print('🔐 cc-mini cookies: startup-injection extension active')
+        except ValueError as exc:
+            # Friendly error wrapping for config mistakes — the underlying
+            # validator messages are user-readable; surface them without
+            # a stacktrace and exit cleanly.
+            print(f'\n❌ cc-mini cookie configuration error: {exc}',
+                  file=sys.stderr)
+            sys.exit(1)
+        except Exception as exc:
+            # Unexpected — print the trace because this is a bug, not a
+            # config issue.
+            print(f'\n❌ Failed to build cc-mini cookie extensions: {exc}',
+                  file=sys.stderr)
+            traceback.print_exc()
+            sys.exit(1)
+
         prev_report_ts = os.environ.get('WEBQA_REPORT_TIMESTAMP')
         os.environ['WEBQA_REPORT_TIMESTAMP'] = run_timestamp
         try:
@@ -519,6 +571,8 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
                 browser_headless=browser_headless,
                 log_level=log_level,
                 on_event=_make_cc_mini_stream_handler(),
+                worker_id=0,
+                extensions=cc_mini_extensions,
             )
         except Exception:
             print('\n❌ cc-mini execution failed:', file=sys.stderr)
@@ -538,6 +592,15 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
             f'Tokens: {result.input_tokens}↑ {result.output_tokens}↓  |  '
             f'Aborted: {result.aborted}'
         )
+
+        # Surface any extension-loading failures (e.g. CDP couldn't be
+        # reached for cookie injection). These are silent in RunResult; the
+        # CLI is the only place the user sees them.
+        ext_failed = list(getattr(result, 'extensions_failed', None) or [])
+        if ext_failed:
+            print('⚠️  cc-mini extensions reported failures:', file=sys.stderr)
+            for line in ext_failed:
+                print(f'   - {line}', file=sys.stderr)
 
         # Generate HTML report — mirrors the gen-mode GenExecutor flow so
         # both backends produce the same deliverable for CLI users.

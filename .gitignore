@@ -135,6 +135,16 @@ celerybeat.pid
 # SageMath parsed files
 *.sage.py
 
+# Credentials — never commit
+config/config.yaml
+config/config*.yaml
+!config/config.yaml.example
+!config/config_run.yaml.example
+*-cookies.json
+*_cookies.json
+*-cookies.yaml
+*_cookies.yaml
+
 # Environments
 .env
 .envrc

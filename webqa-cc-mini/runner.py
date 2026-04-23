@@ -50,14 +50,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-# Event callback type for on_event parameter.
-# Events are tuples where the first element is the event kind:
-#   ("text", chunk_str)
-#   ("waiting",)
-#   ("tool_call", name, input_dict, activity_description)
-#   ("tool_result", name, input_dict, ToolResult)
-#   ("usage", usage_object)  — usage_object has input_tokens/output_tokens attrs
-#   ("error", message_str)
 EventCallback = Callable[[tuple[str, ...]], None]
 
 from core.config import DEFAULT_MODEL, DEFAULT_PROVIDER, MCPServerConfig
@@ -68,6 +60,7 @@ from core.load_skill_tool import LoadSkillTool
 from core.mcp_client import MCPManager
 from core.permissions import PermissionChecker
 from core.skill_registry import SkillRegistry
+from core.tool import Tool
 from features.compact import CompactService, should_compact
 
 log = logging.getLogger('cc_mini.runner')
@@ -83,7 +76,7 @@ except Exception:
 
 
 class _DisplayProgressBridge:
-    """Maps engine events to logs and to ``Display`` task rows (see ``core.outcome_status`` for pass/fail)."""
+    """Maps engine events to logs and Display task rows."""
 
     @staticmethod
     def _log_tool_result(tool_name: str, result: Any) -> None:
@@ -204,6 +197,7 @@ class RunResult:
     aborted: bool = False
     input_tokens: int = 0
     output_tokens: int = 0
+    extensions_failed: list[str] = field(default_factory=list)
 
 
 def run_cc_mini(
@@ -233,6 +227,9 @@ def run_cc_mini(
     progress_no_terminal_ui: bool = True,
     progress_log_level: str = 'info',
     on_event: EventCallback | None = None,
+    extra_tools: list[Tool] | None = None,
+    pre_engine_hook: Callable[['MCPManager', int], None] | None = None,
+    extra_section: str | None = None,
 ) -> RunResult:
     """Run the web agent on *url* with *user_input* and return a RunResult.
 
@@ -292,10 +289,42 @@ def run_cc_mini(
     on_event:
         Optional callback ``fn(event_tuple)`` called for every engine event.
         Exceptions in the callback are caught and logged; they never propagate.
-    """
-    aborted = False  # initialised before try so it's always defined
+    extra_tools:
+        Additional native ``Tool`` instances appended to the engine's tool
+        list. Generic extension point — caller owns the Tool implementation.
+        Tools may optionally implement ``bind_mcp(server, port)`` to receive
+        the MCP server reference and CDP port after the MCP subprocess is up
+        but before the engine loop starts. See ``features.cookies`` for a
+        concrete example (``SwitchAccountTool``).
+    pre_engine_hook:
+        Optional callback ``fn(mcp_manager, cdp_port)`` invoked after the MCP
+        server is up and a ``new_page`` call has forced Chromium to start,
+        but before the engine loop begins. Generic extension point — caller
+        owns the hook implementation. Exceptions are caught and recorded in
+        ``RunResult.extensions_failed``; the run continues without the
+        hook's effects.
+    extra_section:
+        Optional string appended verbatim to the end of the system prompt
+        (after skills / file-upload sections). Generic extension point for
+        caller-provided prompt augmentation.
 
-    # Resolve provider/model: explicit arg > built-in default.
+    Known failure modes
+    -------------------
+    * Port collision (port ``9222 + worker_id`` already bound by another
+      Chromium instance) → MCP server fails to start with ``Critical MCP
+      server 'browser' failed to start``. Check ``lsof -iTCP:9222`` or
+      increment ``worker_id``.
+    * ``worker_id`` outside ``[0, 56313]`` raises ``ValueError`` immediately —
+      the sum ``9222 + worker_id`` must stay within the 1024–65535 port range.
+    """
+    if not (0 <= worker_id <= 56313):
+        raise ValueError(
+            f'worker_id={worker_id} produces port outside 1024-65535 valid range '
+            '(must be in [0, 56313])'
+        )
+
+    aborted = False
+
     provider = provider or DEFAULT_PROVIDER
     model = model or DEFAULT_MODEL
 
@@ -313,16 +342,10 @@ def run_cc_mini(
 
     engine: Engine | None = None
     steps: list[Step] = []
-    # Cumulative totals — reported back in RunResult.
     total_tokens = {'input': 0, 'output': 0}
-    # Last API call's input_tokens — drives compact decisions.
-    # Must track the *latest* call (replace semantics), NOT a running sum;
-    # should_compact() compares this to _auto_compact_threshold(model) and
-    # accumulation would incorrectly re-trigger compaction every turn.
+    # Replace semantics: should_compact() needs this call's input_tokens only.
     last_input_tokens = 0
-    # Flag: did we ever receive a "usage" event? If not (e.g. an OpenAI-compatible
-    # backend that ignores stream_options={"include_usage": True}), we fall back
-    # to estimate_tokens on "tool_result" events so compact still fires.
+    # Falls back to estimate_tokens when a provider never emits "usage" events.
     seen_usage = False
     display_bridge = _DisplayProgressBridge(
         enabled=enable_display_progress,
@@ -331,13 +354,12 @@ def run_cc_mini(
         log_level=progress_log_level,
     )
     _run_result: RunResult | None = None
+    cdp_port = _resolve_cdp_port(mcp_servers, worker_id)
+    extensions_failed: list[str] = []
 
     try:
         tools = mcp.start_and_collect_tools()
 
-        # Optional skill discovery. Kept out of the MCP tool path: skills are
-        # pure markdown instructions, not browser capabilities. Only the
-        # load_skill surface is exposed to the LLM.
         skill_metadata = []
         if skills_dir is not None:
             skill_registry = SkillRegistry(Path(skills_dir))
@@ -350,11 +372,59 @@ def run_cc_mini(
             else:
                 log.info('Skills dir %s exists but no valid skills found', skills_dir)
 
+        # chrome-devtools-mcp launches Chromium lazily; list_pages (read-only)
+        # forces the browser up so the CDP port binds before the hook runs.
+        # new_page would leave an extra blank tab; list_pages has no side-effects.
+        if pre_engine_hook is not None:
+            if cdp_port is None:
+                msg = (
+                    'pre_engine_hook: CDP port could not be resolved from '
+                    'mcp_servers. Pass --browser-url, --ws-endpoint, or '
+                    '--chrome-arg=--remote-debugging-port=N in your custom '
+                    'MCP config to enable cookie-style extensions.'
+                )
+                log.warning(msg)
+                extensions_failed.append(msg)
+            else:
+                server = mcp._servers.get('browser')
+                try:
+                    if server is not None:
+                        server.call_tool('list_pages', {})
+                    pre_engine_hook(mcp, cdp_port)
+                except Exception as exc:
+                    log.warning('pre_engine_hook failed: %s', exc)
+                    extensions_failed.append(f'pre_engine_hook: {exc}')
+
+        if extra_tools:
+            server = mcp._servers.get('browser')
+            for t in extra_tools:
+                if server is not None and hasattr(t, 'bind_mcp'):
+                    if cdp_port is None:
+                        tool_name = getattr(t, 'name', type(t).__name__)
+                        msg = (
+                            f'bind_mcp {tool_name}: CDP port unresolved; '
+                            'tool will refuse CDP-dependent calls. '
+                            'Provide --browser-url / --ws-endpoint / '
+                            '--chrome-arg=--remote-debugging-port=N.'
+                        )
+                        log.warning(msg)
+                        extensions_failed.append(msg)
+                        continue
+                    try:
+                        t.bind_mcp(server, cdp_port)
+                    except Exception as exc:
+                        tool_name = getattr(t, 'name', type(t).__name__)
+                        log.warning('bind_mcp %s failed: %s', tool_name, exc)
+                        extensions_failed.append(
+                            f'bind_mcp {tool_name}: {exc}')
+            tools = list(tools) + list(extra_tools)
+
         system = build_web_agent_system_prompt(
             target_url=url,
             task=user_input,
             skills=skill_metadata or None,
             file_catalog=(file_catalog.strip() if isinstance(file_catalog, str) and file_catalog.strip() else None),
+            extra_section=extra_section,
         )
         engine = Engine(
             tools=tools,
@@ -377,24 +447,14 @@ def run_cc_mini(
         )
 
         def _maybe_compact(last_input: int | None) -> None:
-            """Check & run compaction.
-
-            Safe to call from any event handler:
-            engine.submit() is yielded at this point, so set_messages() will
-            be visible to the generator when it resumes.
-            """
             nonlocal last_input_tokens
             messages = engine.get_messages()
             if should_compact(messages, engine.get_model(), last_input):
                 new_msgs, _ = compact.compact(messages, engine.system_prompt)
                 engine.set_messages(new_msgs)
-                # Reset after compaction so we don't re-fire until the next
-                # real API call reports a fresh input_tokens count.
-                last_input_tokens = 0
+                last_input_tokens = 0  # reset so compaction doesn't re-fire
 
-        # FIFO queue for pairing parallel tool_call → tool_result events.
-        # engine.py Phase 3 emits tool_result tuples in the same order as the
-        # original batch, so a strict FIFO deque is always correct.
+        # engine.py emits tool_results in the same order as the batched calls.
         pending: deque[dict] = deque()
 
         seed = (
@@ -427,12 +487,10 @@ def run_cc_mini(
             kind = evt[0]
 
             if kind == 'tool_call':
-                # evt = ("tool_call", name, input_dict, activity)
                 pending.append({'tool': evt[1], 'input': evt[2], 'ts': time.time()})
                 log.debug('tool_call: %s', evt[1])
 
             elif kind == 'tool_result':
-                # evt = ("tool_result", name, input_dict, ToolResult)
                 tool_result = evt[3]
                 if pending:
                     p = pending.popleft()
@@ -454,10 +512,7 @@ def run_cc_mini(
                     snippet = (tool_result.content or '')[:200]
                     log.warning('tool_error [%s]: %s', evt[1], snippet)
 
-                # Fallback compact trigger: only runs when the provider never
-                # emits "usage" (e.g. OpenAI-compatible backends that ignore
-                # stream_options). Uses estimate_tokens (char-based) via
-                # should_compact's fallback path (last_input=None).
+                # Fallback compact trigger for providers that never emit "usage".
                 if not seen_usage:
                     _maybe_compact(None)
 
@@ -467,20 +522,9 @@ def run_cc_mini(
             elif kind == 'usage':
                 u = evt[1]
                 seen_usage = True
-                # last_input_tokens = this call only (replace semantics, used
-                # to decide whether to compact — see comment where it's declared).
-                # total_tokens["input"]  = sum of per-call input_tokens. Each
-                # call re-sends the full history, so this matches what the
-                # provider actually billed across the run.
                 last_input_tokens = getattr(u, 'input_tokens', 0) or 0
                 total_tokens['input'] += last_input_tokens
                 total_tokens['output'] += getattr(u, 'output_tokens', 0) or 0
-
-                # Primary compact trigger: fires exactly once per API call,
-                # right after we get the authoritative input_tokens back from
-                # the server. The engine is paused here between the response
-                # and the assistant-message append, so set_messages() lands on
-                # a stable boundary.
                 _maybe_compact(last_input_tokens)
 
             if len(steps) >= max_iterations:
@@ -501,6 +545,7 @@ def run_cc_mini(
             aborted=aborted,
             input_tokens=total_tokens['input'],
             output_tokens=total_tokens['output'],
+            extensions_failed=extensions_failed,
         )
         return _run_result
 
@@ -512,6 +557,7 @@ def run_cc_mini(
             aborted=True,
             input_tokens=total_tokens['input'],
             output_tokens=total_tokens['output'],
+            extensions_failed=extensions_failed,
         )
         return _run_result
 
@@ -524,6 +570,7 @@ def run_cc_mini(
             aborted=True,
             input_tokens=total_tokens['input'],
             output_tokens=total_tokens['output'],
+            extensions_failed=extensions_failed,
         )
         return _run_result
 
@@ -550,6 +597,87 @@ def run_cc_mini(
             pass
 
 
+def _resolve_cdp_port(
+    mcp_servers: list[MCPServerConfig],
+    worker_id: int,
+) -> int | None:
+    """Best-effort derivation of the CDP port from MCP server config.
+
+    Extension points that need the CDP port (e.g. the cookies feature)
+    connect to it directly; the port must match whatever Chromium is
+    actually listening on. When the caller provides a custom ``mcp_servers``
+    we can't assume ``9222 + worker_id`` — we parse the args instead.
+
+    Priority (first match wins):
+
+    1. ``--browser-url=ws://HOST:PORT/...`` or ``--browserUrl=…`` — explicit
+       CDP WebSocket endpoint.
+    2. ``--ws-endpoint=ws://HOST:PORT/...`` or ``--wsEndpoint=…`` — alternate
+       spelling accepted by chrome-devtools-mcp.
+    3. ``--chrome-arg=--remote-debugging-port=N`` — the wrapped form that
+       actually reaches Chromium (unwrapped ``--remote-debugging-port`` is
+       silently dropped by yargs; see ``_default_browser_mcp`` note).
+    4. Default ``9222 + worker_id`` — returned only when the only MCP
+       server is our own default (name == 'browser').
+
+    Returns ``None`` when no port can be derived and the config is custom;
+    callers should record this in ``extensions_failed`` rather than guess.
+    """
+    browser_cfg = next(
+        (s for s in mcp_servers if getattr(s, 'name', None) == 'browser'),
+        None,
+    )
+    if browser_cfg is None:
+        return None
+    args = tuple(browser_cfg.args or ())
+
+    def _port_from_url(raw: str) -> int | None:
+        # Accepts ws://host:port/path or http://host:port/... — only the
+        # authority is parsed, we don't care about scheme or path here.
+        rest = raw.split('://', 1)[-1]
+        authority = rest.split('/', 1)[0]
+        _, _, port_part = authority.partition(':')
+        try:
+            return int(port_part) if port_part else None
+        except ValueError:
+            return None
+
+    def _flag_value(flag_names: tuple[str, ...]) -> str | None:
+        for arg in args:
+            for name in flag_names:
+                if arg.startswith(f'{name}='):
+                    return arg.split('=', 1)[1]
+                if arg == name:
+                    # `--flag value` form not supported by MCPServerConfig.args
+                    # (which is a flat tuple without pairing), but leave the
+                    # branch explicit so future schema changes don't silently
+                    # skip it.
+                    return None
+        return None
+
+    url = _flag_value(('--browser-url', '--browserUrl'))
+    if url:
+        p = _port_from_url(url)
+        if p is not None:
+            return p
+
+    ws = _flag_value(('--ws-endpoint', '--wsEndpoint'))
+    if ws:
+        p = _port_from_url(ws)
+        if p is not None:
+            return p
+
+    for arg in args:
+        if arg.startswith('--chrome-arg=--remote-debugging-port='):
+            try:
+                return int(arg.rsplit('=', 1)[1])
+            except ValueError:
+                continue
+
+    # Custom callers must pass an explicit endpoint or forgo the cookies feature.
+    return None
+
+
 def _default_browser_mcp(
     profile: str, worker_id: int, *, headless: bool = False,
 ) -> list[MCPServerConfig]:
@@ -559,12 +687,28 @@ def _default_browser_mcp(
     Docker images built with ``npm install -g chrome-devtools-mcp``).  Falls
     back to ``npx chrome-devtools-mcp`` (without ``@latest``) to avoid forcing
     a network fetch in constrained environments.
+
+    Security hardening:
+      * ``--chrome-arg=--remote-debugging-address=127.0.0.1`` keeps the CDP
+        port bound to loopback. CDP has no authentication — exposing the port
+        externally lets any network peer read cookies and run arbitrary JS.
+      * ``--no-usage-statistics`` disables chrome-devtools-mcp telemetry to
+        Google Clearcut (on by default).
+
+    Note on ``--remote-debugging-port``: chrome-devtools-mcp does NOT recognize
+    this as a top-level CLI option — yargs silently drops unknown flags. The
+    port must be wrapped as ``--chrome-arg=--remote-debugging-port=N`` so it
+    reaches Chromium via the ``chromeArgs`` array (chrome-devtools-mcp uses
+    Puppeteer ``pipe: true`` by default, so without this wrapper Chromium
+    never exposes a TCP CDP port for the cookie injection client to connect).
     """
     mcp_args = [
         f'--user-data-dir={profile}',
-        f'--remote-debugging-port={9222 + worker_id}',
         "--chrome-arg=--no-sandbox",
         "--chrome-arg=--disable-dev-shm-usage",
+        "--chrome-arg=--remote-debugging-address=127.0.0.1",
+        f'--chrome-arg=--remote-debugging-port={9222 + worker_id}',
+        "--no-usage-statistics",
     ]
     exe_path = os.getenv('PUPPETEER_EXECUTABLE_PATH')
     if exe_path:
