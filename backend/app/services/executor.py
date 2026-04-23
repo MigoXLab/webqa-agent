@@ -6,6 +6,7 @@ All modes execute by starting an independent Agent process, which callbacks Back
 - kubernetes: Create K8s Job to run
 """
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -120,15 +121,21 @@ def _resolve_sso_accounts(
     for acc in accounts:
         acc_env = acc.get('sso_env', 'prod') or 'prod'
         acc_name = acc.get('name', '?')
-        acc_user = acc.get('sso_username', '?')
+        acc_user = str(acc.get('sso_username') or '').strip()
+        acc_password = str(acc.get('sso_password') or '')
         has_pwd = bool(acc.get('sso_password'))
+        if not acc_user or not acc_password:
+            raise ValueError(
+                f"账户 '{acc_name}' 缺少 SSO 凭据："
+                f"username_present={bool(acc_user)}, password_present={bool(acc_password)}, sso_env={acc_env}"
+            )
         logger.info(
             f"[{log_prefix}] Generating cookies: account='{acc_name}', "
             f"username='{acc_user}', env='{acc_env}', has_password={has_pwd}"
         )
         try:
             _, acc_cookies = generate_sso_cookies(
-                acc['sso_username'], acc['sso_password'], acc_env,
+                acc_user, acc_password, acc_env,
             )
         except Exception as e:
             raise RuntimeError(
@@ -180,6 +187,7 @@ def _resolve_gen_auth_config(gen_config_dict: Dict[str, Any], runner_source: str
     """Resolve gen auth config into runner-compatible cookies/accounts."""
     accounts = _normalize_gen_accounts(gen_config_dict.get('accounts'))
     if not accounts:
+        gen_config_dict.pop('auth_type', None)
         return
 
     auth_type = str(gen_config_dict.get('auth_type') or '').strip().lower()
@@ -194,6 +202,7 @@ def _resolve_gen_auth_config(gen_config_dict: Dict[str, Any], runner_source: str
 
     resolved_accounts: List[Dict[str, Any]]
     if auth_type == 'sso':
+        logger.info(f'{log_prefix} GenAuth resolving SSO accounts: count={len(accounts)}')
         resolved_accounts = _resolve_sso_accounts(accounts, f'{log_prefix} GenAuth')
         for acc in resolved_accounts:
             is_default = bool(acc.get('default', acc.get('is_default', False)))
@@ -207,7 +216,7 @@ def _resolve_gen_auth_config(gen_config_dict: Dict[str, Any], runner_source: str
                 'role': acc.get('role') or '',
                 'default': bool(acc.get('default', False)),
                 'is_default': bool(acc.get('default', False)),
-                'cookies': acc.get('cookies') or [],
+                'cookies': acc.get('cookies') if isinstance(acc.get('cookies'), list) else [],
             })
 
     default_account = next(
@@ -226,6 +235,13 @@ def _resolve_gen_auth_config(gen_config_dict: Dict[str, Any], runner_source: str
 
     # Avoid leaking raw auth config to the runtime config file.
     gen_config_dict.pop('auth_type', None)
+
+
+def _clone_gen_config_for_runtime(gen_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Clone gen config for runtime mutations to avoid side effects."""
+    if not isinstance(gen_config, dict):
+        return {}
+    return copy.deepcopy(gen_config)
 
 
 def _compute_k8s_resources(workers: int, business_id: Optional[UUID] = None) -> tuple[int, int]:
@@ -478,11 +494,11 @@ async def run_execution(execution_id: str, case_data: Optional[Dict[str, Any]] =
     mode = settings.EXECUTION_MODE.lower()
 
     if trigger_type == 'gen':
-        effective_gen_config = (
+        source_gen_config = (
             gen_config_dict if isinstance(gen_config_dict, dict) else persisted_gen_config
-        ) or {}
+        )
+        effective_gen_config = _clone_gen_config_for_runtime(source_gen_config)
         runner_source = _resolve_gen_runner_source(effective_gen_config)
-        effective_gen_config = dict(effective_gen_config)
         effective_gen_config.setdefault('runner_source', runner_source)
         logger.info(
             f'[Run] Gen execution runner selected: execution_id={execution_id}, '
