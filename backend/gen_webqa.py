@@ -182,7 +182,12 @@ def _render_cc_mini_report(
     )
 
 
-async def execute_cc_mini_webqa(config_data: Dict, report_dir_override: str | None = None):
+async def execute_cc_mini_webqa(
+    config_data: Dict,
+    report_dir_override: str | None = None,
+    *,
+    source_file: str | None = None,
+):
     """Execute cc-mini runner based on gen config payload."""
     llm_cfg = config_data.get('llm_config') or {}
     target_url = str(config_data.get('target_url') or '').strip()
@@ -214,10 +219,23 @@ async def execute_cc_mini_webqa(config_data: Dict, report_dir_override: str | No
     )
 
     run_cc_mini = _load_cc_mini_runner()
+    extension_kwargs: Dict[str, object] = {}
+    try:
+        from webqa_agent.utils.cc_mini_utils import build_cookie_extensions_from_config
+        extensions = build_cookie_extensions_from_config(
+            config_data,
+            source_file=source_file,
+        )
+    except ValueError as exc:
+        raise ValueError(f'cc-mini cookie configuration error: {exc}') from exc
+    if extensions is not None and hasattr(extensions, 'as_kwargs'):
+        extension_kwargs = extensions.as_kwargs()
+
     file_catalog = _build_cc_mini_file_catalog(config_data)
     execution_id = str(config_data.get('execution_id') or os.getenv('EXECUTION_ID') or '').strip()
     progress_pusher: Optional[ProgressPusher] = None
-    if BACKEND_CALLBACK_URL and execution_id:
+    stdout_mode = os.getenv('WEBQA_STDOUT', '').lower() == 'true'
+    if BACKEND_CALLBACK_URL and execution_id and not stdout_mode:
         progress_pusher = ProgressPusher(BACKEND_CALLBACK_URL, execution_id, interval=1.0)
         progress_pusher.start()
 
@@ -240,10 +258,13 @@ async def execute_cc_mini_webqa(config_data: Dict, report_dir_override: str | No
             save_screenshots=save_screenshots,
             screenshot_dir=screenshot_dir,
             browser_headless=True,
-            enable_display_progress=bool(progress_pusher),
+            # In stdout mode, external pusher may already run in main().
+            # Keep display progress enabled so logs/task rows are still produced.
+            enable_display_progress=bool(progress_pusher) or stdout_mode,
             progress_language=str(report_cfg.get('language') or 'zh-CN'),
             progress_no_terminal_ui=True,
             progress_log_level='info',
+            **extension_kwargs,
         )
     finally:
         if progress_pusher:
@@ -293,6 +314,7 @@ async def execute_gen_webqa(config_path: str, report_dir_override: str = None):
             return await execute_cc_mini_webqa(
                 config_data,
                 report_dir_override=report_dir_override,
+                source_file=config_path,
             )
 
         # Initialize GenConfig

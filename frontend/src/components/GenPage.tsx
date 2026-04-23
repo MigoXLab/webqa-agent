@@ -13,8 +13,9 @@ import {
   Shield,
   Settings2,
   Cpu,
+  Trash2,
 } from 'lucide-react';
-import { apiClient, RunnerSource } from '../api/client';
+import { apiClient, GenAccountPayload, RunnerSource } from '../api/client';
 import { FileManager } from './FileManager';
 import { BusinessFile } from '../App';
 
@@ -25,6 +26,54 @@ const TEST_ITEMS = [
   { key: 'links' as const, label: '网站内容', icon: Link },
   { key: 'security' as const, label: '安全扫描', icon: Shield },
 ];
+
+type AuthType = 'none' | 'sso' | 'cookies';
+
+type GenAuthAccount = {
+  id: string;
+  name: string;
+  is_default: boolean;
+  sso_username?: string;
+  sso_password?: string;
+  sso_env?: 'prod' | 'staging' | 'dev';
+  cookies_text?: string;
+  cookies?: Array<Record<string, any>>;
+};
+
+function normalizeAccounts(accounts: GenAuthAccount[]): GenAuthAccount[] {
+  if (!accounts.length) return [];
+  const defaultIndex = accounts.findIndex((acc) => acc.is_default);
+  const keepIndex = defaultIndex >= 0 ? defaultIndex : 0;
+  return accounts.map((acc, idx) => ({ ...acc, is_default: idx === keepIndex }));
+}
+
+function buildAccountsPayload(authType: AuthType, accounts: GenAuthAccount[]): GenAccountPayload[] {
+  const normalized = normalizeAccounts(accounts);
+  if (authType === 'sso') {
+    return normalized.map((acc) => ({
+      name: acc.name.trim(),
+      is_default: acc.is_default,
+      default: acc.is_default,
+      sso_username: (acc.sso_username || '').trim(),
+      sso_password: acc.sso_password || '',
+      sso_env: acc.sso_env || 'prod',
+    }));
+  }
+  if (authType === 'cookies') {
+    return normalized.map((acc) => ({
+      name: acc.name.trim(),
+      is_default: acc.is_default,
+      default: acc.is_default,
+      cookies: acc.cookies || [],
+    }));
+  }
+  return [];
+}
+
+function getDefaultAccount(accounts: GenAccountPayload[]): GenAccountPayload | undefined {
+  if (!accounts.length) return undefined;
+  return accounts.find((acc) => acc.default || acc.is_default) || accounts[0];
+}
 
 export function GenPage() {
   const navigate = useNavigate();
@@ -56,7 +105,8 @@ export function GenPage() {
   const [showAdvanced, setShowAdvanced] = useState(true);
   const [enableReflection, setEnableReflection] = useState(false);
   const [dynamicStepGeneration, setDynamicStepGeneration] = useState(false);
-  const [cookies, setCookies] = useState('');
+  const [authType, setAuthType] = useState<AuthType>('none');
+  const [accounts, setAccounts] = useState<GenAuthAccount[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   // File upload
@@ -127,19 +177,72 @@ export function GenPage() {
           : noFunctionalInstruction;
       }
 
-      let parsedCookies = undefined;
-      if (cookies.trim()) {
-        try {
-          parsedCookies = JSON.parse(cookies);
-          if (!Array.isArray(parsedCookies)) {
-            throw new Error('Cookies must be a JSON array');
+      let normalizedAccounts: GenAuthAccount[] = [];
+      if (authType !== 'none') {
+        if (!accounts.length) {
+          setError('请至少配置一个账号');
+          setLoading(false);
+          return;
+        }
+        normalizedAccounts = normalizeAccounts(accounts).map((acc) => ({
+          ...acc,
+          name: acc.name.trim(),
+        }));
+        const duplicateName = normalizedAccounts.find(
+          (acc, idx) =>
+            normalizedAccounts.findIndex((other) => other.name === acc.name) !== idx
+        );
+        if (duplicateName?.name) {
+          setError(`存在重复账号名称：${duplicateName.name}`);
+          setLoading(false);
+          return;
+        }
+        if (normalizedAccounts.some((acc) => !acc.name)) {
+          setError('账号名称不能为空');
+          setLoading(false);
+          return;
+        }
+        if (authType === 'sso') {
+          const invalidAccount = normalizedAccounts.find(
+            (acc) => !(acc.sso_username || '').trim() || !(acc.sso_password || '').trim()
+          );
+          if (invalidAccount) {
+            setError(`SSO 账号「${invalidAccount.name || '未命名'}」缺少用户名或密码`);
+            setLoading(false);
+            return;
           }
-        } catch (e) {
-          setError('Cookies 必须是有效的 JSON 数组格式 (例如: [{"name": "session", "value": "123", "domain": "example.com", "path": "/"}])');
+        }
+        if (authType === 'cookies') {
+          for (const account of normalizedAccounts) {
+            const rawCookies = (account.cookies_text || '').trim();
+            if (!rawCookies) {
+              setError(`Cookies 账号「${account.name || '未命名'}」缺少 cookies`);
+              setLoading(false);
+              return;
+            }
+            try {
+              const parsed = JSON.parse(rawCookies);
+              if (!Array.isArray(parsed) || parsed.length === 0) {
+                throw new Error('cookies must be non-empty array');
+              }
+              account.cookies = parsed;
+            } catch {
+              setError(`Cookies 账号「${account.name || '未命名'}」JSON 格式无效`);
+              setLoading(false);
+              return;
+            }
+          }
+        }
+        if (runnerMode === 'standard' && normalizedAccounts.length > 1) {
+          setError('Standard 模式仅支持单账号，请切换到 CC-Mini 或全选');
           setLoading(false);
           return;
         }
       }
+
+      const allAccountsPayload = buildAccountsPayload(authType, normalizedAccounts);
+      const defaultAccount = getDefaultAccount(allAccountsPayload);
+      const defaultCookies = defaultAccount?.cookies;
 
       const baseGenConfig = {
         target_url: targetUrl,
@@ -147,7 +250,9 @@ export function GenPage() {
         business_objectives: finalBusinessObjectives,
         _display_objectives: businessObjectives || undefined,
         custom_tools: { enabled: enabledTools },
-        browser_config: { cookies: parsedCookies },
+        browser_config: { cookies: defaultCookies },
+        auth_type: authType,
+        ...(allAccountsPayload.length > 0 ? { accounts: allAccountsPayload } : {}),
         report_config: { language: 'zh-CN', save_screenshots: true },
         skip_reflection: !enableReflection,
         dynamic_step_generation: { enabled: dynamicStepGeneration },
@@ -156,11 +261,28 @@ export function GenPage() {
       };
 
       if (runnerMode === 'both') {
+        const standardGenConfig = {
+          ...baseGenConfig,
+          runner_source: 'standard' as RunnerSource,
+          browser_config: { cookies: defaultCookies },
+          ...(authType === 'sso'
+            ? {
+                auth_type: 'sso' as const,
+                accounts: defaultAccount ? [defaultAccount] : [],
+              }
+            : { auth_type: undefined, accounts: undefined }),
+        };
+        const ccMiniGenConfig = {
+          ...baseGenConfig,
+          runner_source: 'cc-mini' as RunnerSource,
+        };
         const dualResult = await apiClient.createDualGenExecutions({
           business_id: selectedBusinessId || undefined,
           model: selectedModel,
           workers: workers,
           base_gen_config: baseGenConfig,
+          standard_gen_config: standardGenConfig,
+          cc_mini_gen_config: ccMiniGenConfig,
         });
         const startedCount = Number(Boolean(dualResult.executions.standard)) + Number(Boolean(dualResult.executions.cc_mini));
         if (startedCount === 0) {
@@ -179,6 +301,14 @@ export function GenPage() {
           workers: workers,
           gen_config: {
             ...baseGenConfig,
+            ...(runnerMode === 'standard'
+              ? {
+                  browser_config: { cookies: defaultCookies },
+                  ...(authType === 'sso'
+                    ? { auth_type: 'sso' as const, accounts: defaultAccount ? [defaultAccount] : [] }
+                    : { auth_type: undefined, accounts: undefined }),
+                }
+              : {}),
             ...(isCcMini ? { business_objectives: ccMiniRawObjective || undefined } : {}),
             runner_source: runnerMode as RunnerSource,
           },
@@ -334,9 +464,9 @@ export function GenPage() {
                   <span className="px-2 py-0.5 bg-white border border-gray-200 rounded text-xs text-gray-500">
                     并发 {workers}
                   </span>
-                  {cookies.trim() && (
+                  {authType !== 'none' && accounts.length > 0 && (
                     <span className="px-2 py-0.5 bg-purple-50 border border-purple-200 rounded text-xs text-purple-600">
-                      Cookies
+                      {authType.toUpperCase()} 账号 {accounts.length}
                     </span>
                   )}
                 </div>
@@ -398,24 +528,258 @@ export function GenPage() {
                     </select>
                   </div>
                 </div>
-                {/* Cookies */}
-                <div>
-                  <label className="block text-sm font-medium mb-1.5 text-gray-700">
-                    <div className="flex items-center gap-1.5">
+                {/* Auth Accounts */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-sm font-medium text-gray-700">登录配置</label>
+                    {runnerMode === 'standard' && authType !== 'none' && (
+                      <span className="text-xs text-amber-600">Standard 仅支持单账号</span>
+                    )}
+                  </div>
+                  <div className="flex gap-4">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="radio"
+                        name="gen-auth-type"
+                        checked={authType === 'none'}
+                        onChange={() => {
+                          setAuthType('none');
+                          setAccounts([]);
+                        }}
+                      />
+                      无
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="radio"
+                        name="gen-auth-type"
+                        checked={authType === 'sso'}
+                        onChange={() => {
+                          setAuthType('sso');
+                          setAccounts([
+                            {
+                              id: crypto.randomUUID(),
+                              name: '',
+                              is_default: true,
+                              sso_username: '',
+                              sso_password: '',
+                              sso_env: 'prod',
+                            },
+                          ]);
+                        }}
+                      />
+                      SSO
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="radio"
+                        name="gen-auth-type"
+                        checked={authType === 'cookies'}
+                        onChange={() => {
+                          setAuthType('cookies');
+                          setAccounts([
+                            {
+                              id: crypto.randomUUID(),
+                              name: '',
+                              is_default: true,
+                              cookies_text: '[]',
+                            },
+                          ]);
+                        }}
+                      />
                       Cookies
-                      <span className="text-xs text-gray-400 font-normal">【可选】用于需要登录态的网站</span>
+                    </label>
+                  </div>
+
+                  {authType === 'sso' && (
+                    <div className="space-y-2">
+                      {accounts.map((account, accountIdx) => (
+                        <div key={account.id} className="bg-blue-50 border border-blue-100 rounded-lg p-3 space-y-2">
+                          <div className="flex items-center gap-2 text-xs text-gray-500">
+                            <div className="w-8 text-center flex-shrink-0">默认</div>
+                            <div className="flex-1 min-w-0">账户名称</div>
+                            <div className="flex-1 min-w-0">SSO 用户名</div>
+                            <div className="flex-1 min-w-0">SSO 密码</div>
+                            <div className="w-7 flex-shrink-0" />
+                          </div>
+                          <div className="flex items-start gap-2">
+                            <div className="w-8 flex justify-center pt-2 flex-shrink-0">
+                              <input
+                                type="radio"
+                                name="gen-default-account"
+                                checked={account.is_default}
+                                onChange={() => {
+                                  setAccounts((prev) => prev.map((acc, idx) => ({ ...acc, is_default: idx === accountIdx })));
+                                }}
+                              />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <input
+                                type="text"
+                                value={account.name}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  setAccounts((prev) => prev.map((acc, idx) => idx === accountIdx ? { ...acc, name: value } : acc));
+                                }}
+                                className="w-full px-2 py-1.5 border rounded text-sm bg-white"
+                                placeholder="账号名称"
+                              />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <input
+                                type="text"
+                                value={account.sso_username || ''}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  setAccounts((prev) => prev.map((acc, idx) => idx === accountIdx ? { ...acc, sso_username: value } : acc));
+                                }}
+                                className="w-full px-2 py-1.5 border rounded text-sm bg-white"
+                                placeholder="SSO 用户名"
+                              />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <input
+                                type="password"
+                                value={account.sso_password || ''}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  setAccounts((prev) => prev.map((acc, idx) => idx === accountIdx ? { ...acc, sso_password: value } : acc));
+                                }}
+                                className="w-full px-2 py-1.5 border rounded text-sm bg-white"
+                                placeholder="SSO 密码"
+                              />
+                            </div>
+                            {(accounts.length > 1) && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAccounts((prev) => normalizeAccounts(prev.filter((_, idx) => idx !== accountIdx)));
+                                }}
+                                className="p-1.5 mb-0.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0 mt-[2px]"
+                                title="删除账户"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                          <div className="flex gap-4 text-sm">
+                            {(['prod', 'staging', 'dev'] as const).map((envVal) => (
+                              <label key={envVal} className="flex items-center gap-2">
+                                <input
+                                  type="radio"
+                                  name={`gen-sso-env-${account.id}`}
+                                  checked={(account.sso_env || 'prod') === envVal}
+                                  onChange={() => {
+                                    setAccounts((prev) => prev.map((acc, idx) => idx === accountIdx ? { ...acc, sso_env: envVal } : acc));
+                                  }}
+                                />
+                                {envVal}
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAccounts((prev) => normalizeAccounts([
+                            ...prev,
+                            {
+                              id: crypto.randomUUID(),
+                              name: '',
+                              is_default: prev.length === 0,
+                              sso_username: '',
+                              sso_password: '',
+                              sso_env: 'prod',
+                            },
+                          ]));
+                        }}
+                        className="text-xs text-blue-600 hover:text-blue-700"
+                      >
+                        + 添加 SSO 账号
+                      </button>
                     </div>
-                  </label>
-                  <textarea
-                    rows={2}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-xs font-mono placeholder-gray-400 resize-none"
-                    placeholder='[{"name": "session_id", "value": "abc123", "domain": ".example.com", "path": "/"}]'
-                    value={cookies}
-                    onChange={(e) => setCookies(e.target.value)}
-                  />
-                  <p className="mt-1 text-xs text-gray-400">
-                    JSON 数组格式，每个对象需包含 name、value、domain、path 字段。可从浏览器 DevTools &gt; Application &gt; Cookies 中导出。
-                  </p>
+                  )}
+
+                  {authType === 'cookies' && (
+                    <div className="space-y-2">
+                      {accounts.map((account, accountIdx) => (
+                        <div key={account.id} className="bg-blue-50 border border-blue-100 rounded-lg p-3 space-y-2">
+                          <div className="flex items-center gap-2 text-xs text-gray-500">
+                            <div className="w-8 text-center flex-shrink-0">默认</div>
+                            <div className="flex-1 min-w-0">账户名称</div>
+                            <div className="flex-1 min-w-0">Cookies (JSON 格式)</div>
+                            <div className="w-7 flex-shrink-0" />
+                          </div>
+                          <div className="flex items-start gap-2">
+                            <div className="w-8 flex justify-center pt-2 flex-shrink-0">
+                              <input
+                                type="radio"
+                                name="gen-default-account"
+                                checked={account.is_default}
+                                onChange={() => {
+                                  setAccounts((prev) => prev.map((acc, idx) => ({ ...acc, is_default: idx === accountIdx })));
+                                }}
+                              />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <input
+                                type="text"
+                                value={account.name}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  setAccounts((prev) => prev.map((acc, idx) => idx === accountIdx ? { ...acc, name: value } : acc));
+                                }}
+                                className="w-full px-2 py-1.5 border rounded text-sm bg-white"
+                                placeholder="账号名称"
+                              />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <textarea
+                                rows={1}
+                                value={account.cookies_text || ''}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  setAccounts((prev) => prev.map((acc, idx) => idx === accountIdx ? { ...acc, cookies_text: value } : acc));
+                                }}
+                                className="w-full px-2 py-1.5 border rounded text-xs font-mono bg-white resize-none"
+                                placeholder='[{"name":"session","value":"...","domain":".example.com","path":"/"}]'
+                              />
+                            </div>
+                            {(accounts.length > 1) && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAccounts((prev) => normalizeAccounts(prev.filter((_, idx) => idx !== accountIdx)));
+                                }}
+                                className="p-1.5 mb-0.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0 mt-[2px]"
+                                title="删除账户"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAccounts((prev) => normalizeAccounts([
+                            ...prev,
+                            {
+                              id: crypto.randomUUID(),
+                              name: '',
+                              is_default: prev.length === 0,
+                              cookies_text: '[]',
+                            },
+                          ]));
+                        }}
+                        className="text-xs text-blue-600 hover:text-blue-700"
+                      >
+                        + 添加 Cookies 账号
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

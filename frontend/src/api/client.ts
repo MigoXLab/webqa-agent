@@ -86,6 +86,17 @@ export interface Execution {
 
 export type RunnerSource = 'standard' | 'cc-mini';
 
+export type GenAccountPayload = {
+  name: string;
+  role?: string;
+  default?: boolean;
+  is_default?: boolean;
+  sso_username?: string;
+  sso_password?: string;
+  sso_env?: 'prod' | 'staging' | 'dev';
+  cookies?: Array<Record<string, any>>;
+};
+
 // Progress types for real-time execution tracking
 export interface TaskProgress {
   name: string;
@@ -328,6 +339,8 @@ class APIClient {
         cookies?: Array<Record<string, any>>;
         [key: string]: any;
       };
+      auth_type?: 'none' | 'sso' | 'cookies';
+      accounts?: GenAccountPayload[];
       [key: string]: any;
     };
   }): Promise<Execution> {
@@ -347,6 +360,8 @@ class APIClient {
     model?: string;
     workers?: number;
     base_gen_config: Record<string, any>;
+    standard_gen_config?: Record<string, any>;
+    cc_mini_gen_config?: Record<string, any>;
   }): Promise<{
     batch_id: string;
     executions: {
@@ -356,20 +371,33 @@ class APIClient {
     errors: string[];
   }> {
     const batchId = crypto.randomUUID();
+    const baseGenConfig = data.base_gen_config || {};
+    const standardGenConfig = {
+      ...(data.standard_gen_config || {
+        ...baseGenConfig,
+        runner_source: 'standard' as RunnerSource,
+      }),
+      runner_source: 'standard' as RunnerSource,
+      batch_id: batchId,
+    };
+    const ccMiniGenConfig = {
+      ...(data.cc_mini_gen_config || {
+        ...baseGenConfig,
+        runner_source: 'cc-mini' as RunnerSource,
+      }),
+      runner_source: 'cc-mini' as RunnerSource,
+      batch_id: batchId,
+    };
     const ccMiniRawObjective =
-      typeof data.base_gen_config?._display_objectives === 'string'
-        ? data.base_gen_config._display_objectives.trim()
+      typeof ccMiniGenConfig?._display_objectives === 'string'
+        ? ccMiniGenConfig._display_objectives.trim()
         : '';
     const standardPayload = {
       business_id: data.business_id,
       trigger_type: 'gen' as const,
       model: data.model,
       workers: data.workers,
-      gen_config: {
-        ...data.base_gen_config,
-        runner_source: 'standard' as RunnerSource,
-        batch_id: batchId,
-      },
+      gen_config: standardGenConfig,
     };
     const ccMiniPayload = {
       business_id: data.business_id,
@@ -377,11 +405,9 @@ class APIClient {
       model: data.model,
       workers: data.workers,
       gen_config: {
-        ...data.base_gen_config,
+        ...ccMiniGenConfig,
         // cc-mini should only use explicit user objective, not injected defaults.
         business_objectives: ccMiniRawObjective || undefined,
-        runner_source: 'cc-mini' as RunnerSource,
-        batch_id: batchId,
       },
     };
 

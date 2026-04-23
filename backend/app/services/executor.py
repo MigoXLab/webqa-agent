@@ -104,6 +104,8 @@ def _prepare_gen_config(
                 gen_config_dict['test_files_dir'] = _files_dir
             logger.info(f'{log_prefix} Injected test_files_dir for business {execution.business_id}')
 
+    runner_source = _resolve_gen_runner_source(gen_config_dict)
+    _resolve_gen_auth_config(gen_config_dict, runner_source, log_prefix)
     _resolve_planning_mode(gen_config_dict, log_prefix)
 
     return llm_cfg.get('api_key', ''), llm_cfg.get('base_url', '')
@@ -140,6 +142,90 @@ def _resolve_sso_accounts(
         })
 
     return resolved_accounts
+
+
+def _normalize_gen_accounts(accounts: Any) -> List[Dict[str, Any]]:
+    """Normalize gen accounts and enforce deterministic default selection."""
+    if not isinstance(accounts, list):
+        return []
+
+    normalized: List[Dict[str, Any]] = []
+    for raw in accounts:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get('name') or '').strip()
+        if not name:
+            continue
+        is_default = bool(raw.get('default', raw.get('is_default', False)))
+        normalized.append({
+            **raw,
+            'name': name,
+            'default': is_default,
+            'is_default': is_default,
+        })
+
+    if not normalized:
+        return []
+
+    default_indices = [idx for idx, acc in enumerate(normalized) if bool(acc.get('default'))]
+    keep_idx = default_indices[0] if default_indices else 0
+    for idx, acc in enumerate(normalized):
+        is_default = idx == keep_idx
+        acc['default'] = is_default
+        acc['is_default'] = is_default
+    return normalized
+
+
+def _resolve_gen_auth_config(gen_config_dict: Dict[str, Any], runner_source: str, log_prefix: str) -> None:
+    """Resolve gen auth config into runner-compatible cookies/accounts."""
+    accounts = _normalize_gen_accounts(gen_config_dict.get('accounts'))
+    if not accounts:
+        return
+
+    auth_type = str(gen_config_dict.get('auth_type') or '').strip().lower()
+    if not auth_type:
+        has_sso_fields = any(
+            isinstance(acc, dict) and (
+                'sso_username' in acc or 'sso_password' in acc or 'sso_env' in acc
+            )
+            for acc in accounts
+        )
+        auth_type = 'sso' if has_sso_fields else 'cookies'
+
+    resolved_accounts: List[Dict[str, Any]]
+    if auth_type == 'sso':
+        resolved_accounts = _resolve_sso_accounts(accounts, f'{log_prefix} GenAuth')
+        for acc in resolved_accounts:
+            is_default = bool(acc.get('default', acc.get('is_default', False)))
+            acc['default'] = is_default
+            acc['is_default'] = is_default
+    else:
+        resolved_accounts = []
+        for acc in accounts:
+            resolved_accounts.append({
+                'name': acc.get('name') or '',
+                'role': acc.get('role') or '',
+                'default': bool(acc.get('default', False)),
+                'is_default': bool(acc.get('default', False)),
+                'cookies': acc.get('cookies') or [],
+            })
+
+    default_account = next(
+        (acc for acc in resolved_accounts if bool(acc.get('default', acc.get('is_default', False)))),
+        resolved_accounts[0] if resolved_accounts else None,
+    )
+    if default_account and default_account.get('cookies') is not None:
+        browser_cfg = gen_config_dict.setdefault('browser_config', {})
+        browser_cfg['cookies'] = default_account.get('cookies')
+
+    if runner_source in {'cc-mini', 'cc_mini'}:
+        gen_config_dict['accounts'] = resolved_accounts
+    else:
+        # Standard runner only consumes browser_config.cookies.
+        gen_config_dict.pop('accounts', None)
+
+    # Avoid leaking raw auth config to the runtime config file.
+    gen_config_dict.pop('auth_type', None)
 
 
 def _compute_k8s_resources(workers: int, business_id: Optional[UUID] = None) -> tuple[int, int]:
