@@ -99,7 +99,7 @@ export function GenPage() {
 
   // Execution Config (default expanded)
   const [showExecutionConfig, setShowExecutionConfig] = useState(true);
-  const [workers, setWorkers] = useState(4);
+  const [workers, setWorkers] = useState(1);
 
   // Advanced Options
   const [showAdvanced, setShowAdvanced] = useState(true);
