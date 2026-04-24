@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Sparkles,
   AlertCircle,
@@ -77,6 +77,7 @@ function getDefaultAccount(accounts: GenAccountPayload[]): GenAccountPayload | u
 
 export function GenPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [loading, setLoading] = useState(false);
 
   // Form State
@@ -123,8 +124,52 @@ export function GenPage() {
           apiClient.getBusinesses(),
         ]);
         setAvailableModels(models.models);
-        setSelectedModel(models.default);
         setBusinesses(bizResp.items.map((b) => ({ id: b.id, name: b.name })));
+
+        const fromExecution = (location.state as any)?.fromExecution;
+        if (fromExecution?.config) {
+          const cfg = fromExecution.config;
+          if (cfg.target_url) setTargetUrl(cfg.target_url);
+          if (cfg._display_objectives) setBusinessObjectives(cfg._display_objectives);
+          else if (cfg.business_objectives) setBusinessObjectives(cfg.business_objectives);
+          const model = cfg.llm_config?.model;
+          if (model && models.models.includes(model)) setSelectedModel(model);
+          else setSelectedModel(models.default);
+          if (typeof fromExecution.workers === 'number') setWorkers(fromExecution.workers);
+          const enabled: string[] = cfg.custom_tools?.enabled ?? [];
+          setTestItems({
+            functional: true,
+            performance: enabled.includes('lighthouse'),
+            traverse: enabled.includes('traverse_clickable_elements'),
+            links: enabled.includes('detect_dynamic_links'),
+            security: enabled.includes('nuclei'),
+          });
+          const rs = cfg.runner_source;
+          if (rs === 'standard' || rs === 'cc-mini' || rs === 'both') setRunnerMode(rs);
+          if (fromExecution.business_id) setSelectedBusinessId(fromExecution.business_id);
+          // auth
+          const authTypeVal = cfg.auth_type as AuthType;
+          if (authTypeVal === 'sso' || authTypeVal === 'cookies') {
+            setAuthType(authTypeVal);
+            const rawAccounts: GenAuthAccount[] = (cfg.accounts || []).map((acc: any, idx: number) => ({
+              id: acc.id || String(idx),
+              name: acc.name || `账号${idx + 1}`,
+              is_default: Boolean(acc.default || acc.is_default),
+              sso_username: acc.sso_username,
+              sso_password: acc.sso_password,
+              sso_env: acc.sso_env,
+              cookies_text: acc.cookies ? JSON.stringify(acc.cookies, null, 2) : undefined,
+              cookies: acc.cookies,
+            }));
+            if (rawAccounts.length) setAccounts(rawAccounts);
+          }
+          // files
+          if (Array.isArray(cfg.test_files) && cfg.test_files.length) {
+            setSelectedFiles(cfg.test_files);
+          }
+        } else {
+          setSelectedModel(models.default);
+        }
       } catch (err) {
         console.error('Failed to load init data:', err);
         setError('加载初始化数据失败');

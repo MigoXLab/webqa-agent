@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Business } from '../App';
 import { apiClient, Execution } from '../api/client';
-import { FileText, ExternalLink, Loader2, Filter, CheckCircle, XCircle, Clock, AlertTriangle, Eye } from 'lucide-react';
+import { FileText, ExternalLink, Loader2, Filter, CheckCircle, XCircle, Clock, AlertTriangle, Eye, RotateCcw } from 'lucide-react';
 import { getRunnerSource } from '../utils/executionUtils';
 
 type Props = {
@@ -126,6 +126,15 @@ export function ExecutionHistory({ businesses }: Props) {
 
   // Render action column based on status
   const renderAction = (exec: Execution) => {
+    const rerun = exec.trigger_type === 'gen' && exec.config?.target_url ? (
+      <button
+        onClick={() => navigate('/gen', { state: { fromExecution: exec } })}
+        className="inline-flex items-center px-3 py-1.5 bg-purple-50 text-purple-600 hover:bg-purple-100 rounded-lg transition-colors text-sm font-medium"
+        title="将此次配置填入探索表单"
+      >
+        回填参数
+      </button>
+    ) : null;
     switch (exec.status) {
       case 'completed':
       case 'passed':
@@ -144,8 +153,9 @@ export function ExecutionHistory({ businesses }: Props) {
               onClick={() => navigate(`/execution/${exec.id}`)}
               className="inline-flex items-center px-3 py-1.5 bg-gray-50 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors text-sm font-medium"
             >
-              执行日志
+              查看执行日志
             </button>
+            {rerun}
           </div>
         );
       case 'failed':
@@ -159,8 +169,9 @@ export function ExecutionHistory({ businesses }: Props) {
               onClick={() => navigate(`/execution/${exec.id}`)}
               className="inline-flex items-center px-3 py-1.5 bg-gray-50 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors text-sm font-medium"
             >
-              执行日志
+              查看执行日志
             </button>
+            {rerun}
           </div>
         );
       case 'timeout':
@@ -174,8 +185,9 @@ export function ExecutionHistory({ businesses }: Props) {
               onClick={() => navigate(`/execution/${exec.id}`)}
               className="inline-flex items-center px-3 py-1.5 bg-gray-50 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors text-sm font-medium"
             >
-              执行日志
+              查看执行日志
             </button>
+            {rerun}
           </div>
         );
       case 'warning':
@@ -189,8 +201,9 @@ export function ExecutionHistory({ businesses }: Props) {
               onClick={() => navigate(`/execution/${exec.id}`)}
               className="inline-flex items-center px-3 py-1.5 bg-gray-50 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors text-sm font-medium"
             >
-              执行日志
+              查看执行日志
             </button>
+            {rerun}
           </div>
         );
       case 'running':
@@ -208,13 +221,16 @@ export function ExecutionHistory({ businesses }: Props) {
         );
       case 'pending':
         return (
-          <button
-            onClick={() => navigate(`/execution/${exec.id}`)}
-            className="flex items-center gap-2 text-gray-500 bg-gray-50 hover:bg-gray-100 px-3 py-1.5 rounded-lg transition-colors"
-          >
-            <Clock className="w-4 h-4" />
-            <span className="text-sm font-medium">排队中</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate(`/execution/${exec.id}`)}
+              className="flex items-center gap-2 text-gray-500 bg-gray-50 hover:bg-gray-100 px-3 py-1.5 rounded-lg transition-colors"
+            >
+              <Clock className="w-4 h-4" />
+              <span className="text-sm font-medium">排队中</span>
+            </button>
+            {rerun}
+          </div>
         );
       default:
         return <span className="text-sm text-gray-400">-</span>;
@@ -316,7 +332,7 @@ export function ExecutionHistory({ businesses }: Props) {
                     </span>
                   </button>
                 </th>
-                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-fit whitespace-nowrap">
                   操作 / 状态
                 </th>
               </tr>
@@ -440,7 +456,7 @@ export function ExecutionHistory({ businesses }: Props) {
                   </td>
 
                   {/* Actions / Status */}
-                  <td className="px-6 py-4">
+                  <td className="px-6 py-4 w-px whitespace-nowrap">
                     {renderAction(exec)}
                   </td>
                 </tr>
