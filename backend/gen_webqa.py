@@ -258,6 +258,7 @@ async def execute_cc_mini_webqa(
             save_screenshots=save_screenshots,
             screenshot_dir=screenshot_dir,
             browser_headless=True,
+            browser_viewport=(1280, 720),
             # In stdout mode, external pusher may already run in main().
             # Keep display progress enabled so logs/task rows are still produced.
             enable_display_progress=bool(progress_pusher) or stdout_mode,

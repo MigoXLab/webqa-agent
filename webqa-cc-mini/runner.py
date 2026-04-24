@@ -181,13 +181,36 @@ class _DisplayProgressBridge:
 
 
 @dataclass
-class Step:
+class ToolCall:
     tool: str
     input: dict
     result: str
     is_error: bool
+
+
+@dataclass
+class Step:
+    description: str                                   # agent's natural-language narration
+    tool_calls: list[ToolCall] = field(default_factory=list)
     screenshots: list[dict[str, str]] = field(default_factory=list)
     timestamp: float = field(default_factory=time.time)
+
+    # Convenience properties so adapter / report code can still read these
+    @property
+    def tool(self) -> str:
+        return self.tool_calls[0].tool if self.tool_calls else ''
+
+    @property
+    def input(self) -> dict:
+        return self.tool_calls[0].input if self.tool_calls else {}
+
+    @property
+    def result(self) -> str:
+        return self.tool_calls[0].result if self.tool_calls else ''
+
+    @property
+    def is_error(self) -> bool:
+        return any(tc.is_error for tc in self.tool_calls)
 
 
 @dataclass
@@ -222,6 +245,7 @@ def run_cc_mini(
     save_screenshots: bool = False,
     screenshot_dir: str | Path | None = None,
     browser_headless: bool = False,
+    browser_viewport: tuple[int, int] | None = None,
     enable_display_progress: bool = False,
     progress_language: str = 'zh-CN',
     progress_no_terminal_ui: bool = True,
@@ -332,6 +356,7 @@ def run_cc_mini(
     if mcp_servers is None:
         mcp_servers = _default_browser_mcp(
             profile, worker_id, headless=browser_headless,
+            viewport=browser_viewport,
         )
 
     mcp = MCPManager(mcp_servers)
@@ -456,6 +481,8 @@ def run_cc_mini(
 
         # engine.py emits tool_results in the same order as the batched calls.
         pending: deque[dict] = deque()
+        _agent_text_buf: list[str] = []
+        _cur_step: Step | None = None  # step being built for the current agent turn
 
         seed = (
             f'Target URL: {url}\n\n'
@@ -488,7 +515,7 @@ def run_cc_mini(
 
             if kind == 'tool_call':
                 pending.append({'tool': evt[1], 'input': evt[2], 'ts': time.time()})
-                log.debug('tool_call: %s', evt[1])
+                log.info('tool_call: %s', evt[1])
 
             elif kind == 'tool_result':
                 tool_result = evt[3]
@@ -500,17 +527,23 @@ def run_cc_mini(
                         step_index=step_index,
                         screenshot_root=screenshot_root,
                     )
-                    steps.append(Step(
+                    tc = ToolCall(
                         tool=p['tool'],
                         input=p['input'],
                         result=tool_result.content,
                         is_error=tool_result.is_error,
-                        screenshots=screenshots,
-                        timestamp=p.get('ts', time.time()),
-                    ))
+                    )
+                    if _cur_step is None:
+                        _cur_step = Step(description='', timestamp=p.get('ts', time.time()))
+                    _cur_step.tool_calls.append(tc)
+                    _cur_step.screenshots.extend(screenshots)
+
                 if tool_result.is_error:
                     snippet = (tool_result.content or '')[:200]
                     log.warning('tool_error [%s]: %s', evt[1], snippet)
+                else:
+                    snippet = (tool_result.content or '')[:300].replace('\n', ' ')
+                    log.info('tool_result [%s]: %s', evt[1], snippet)
 
                 # Fallback compact trigger for providers that never emit "usage".
                 if not seen_usage:
@@ -518,6 +551,25 @@ def run_cc_mini(
 
             elif kind == 'error':
                 log.error('engine error: %s', evt[1] if len(evt) > 1 else '?')
+
+            elif kind == 'text':
+                chunk = str(evt[1] if len(evt) > 1 else '')
+                if chunk:
+                    _agent_text_buf.append(chunk)
+
+            elif kind == 'waiting':
+                # text stream ended — flush current step and start a new one
+                description = ''.join(_agent_text_buf).strip()
+                _agent_text_buf.clear()
+                if description:
+                    log.info('agent: %s', description)
+                if _cur_step is not None:
+                    # attach description to the step that just finished
+                    _cur_step.description = _cur_step.description or description
+                    steps.append(_cur_step)
+                    _cur_step = None
+                # open a fresh step for the upcoming tool_calls
+                _cur_step = Step(description=description)
 
             elif kind == 'usage':
                 u = evt[1]
@@ -531,6 +583,11 @@ def run_cc_mini(
                 engine.abort()
                 aborted = True
                 break
+
+        # flush any step still in progress when the loop ends
+        if _cur_step is not None and _cur_step.tool_calls:
+            steps.append(_cur_step)
+            _cur_step = None
 
         failed = sum(1 for s in steps if s.is_error)
         log.info(
@@ -680,6 +737,7 @@ def _resolve_cdp_port(
 
 def _default_browser_mcp(
     profile: str, worker_id: int, *, headless: bool = False,
+    viewport: tuple[int, int] | None = None,
 ) -> list[MCPServerConfig]:
     """Default MCP config: chrome-devtools-mcp with isolated profile and port.
 
@@ -715,6 +773,8 @@ def _default_browser_mcp(
         mcp_args.append(f'--executablePath={exe_path}')
     if headless:
         mcp_args.append('--headless')
+    if viewport is not None:
+        mcp_args.append(f'--viewport={viewport[0]}x{viewport[1]}')
 
     if shutil.which('chrome-devtools-mcp'):
         command = 'chrome-devtools-mcp'

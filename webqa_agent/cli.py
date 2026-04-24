@@ -154,6 +154,7 @@ async def _execute_cc_mini_mode(
     save_screenshots: bool = False,
     screenshot_dir: str | None = None,
     browser_headless: bool = False,
+    browser_viewport: tuple[int, int] | None = None,
     log_level: str = 'info',
     on_event=None,
     worker_id: int = 0,
@@ -207,6 +208,7 @@ async def _execute_cc_mini_mode(
         save_screenshots=save_screenshots,
         screenshot_dir=screenshot_dir,
         browser_headless=browser_headless,
+        browser_viewport=browser_viewport,
         worker_id=worker_id,
         on_event=on_event,
         **extension_kwargs,
@@ -493,6 +495,10 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
             browser_cfg_raw.get('headless', True),
         )
         print(f'🌐 cc-mini browser headless: {browser_headless}', flush=True)
+        _vp = browser_cfg_raw.get('viewport')
+        browser_viewport: tuple[int, int] | None = (
+            (int(_vp['width']), int(_vp['height'])) if isinstance(_vp, dict) else None
+        )
 
         # Mirror GenExecutor: when the user configured a test-files directory
         # (+ optional filename whitelist) we build an LLM-readable catalog and
@@ -569,6 +575,7 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
                 save_screenshots=save_screenshots,
                 screenshot_dir=screenshot_dir,
                 browser_headless=browser_headless,
+                browser_viewport=browser_viewport,
                 log_level=log_level,
                 on_event=_make_cc_mini_stream_handler(),
                 worker_id=0,

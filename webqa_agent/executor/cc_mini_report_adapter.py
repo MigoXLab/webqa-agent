@@ -180,17 +180,35 @@ def run_result_to_session(
 
 
 def _map_step(index: int, step: Any) -> SubTestStep:
-    tool, is_error, input_dict, result_text, screenshots = _extract_step_fields(step)
-    model_io = _build_model_io(tool=tool, input_dict=input_dict, result_text=result_text)
+    description = getattr(step, 'description', '') or ''
+    is_error = bool(getattr(step, 'is_error', False))
+    screenshots = list(getattr(step, 'screenshots', []) or [])
+    tool_calls = getattr(step, 'tool_calls', None)
+    if tool_calls:
+        try:
+            model_io = json.dumps(
+                [{'tool': tc.tool, 'input': tc.input,
+                  'result': _truncate(tc.result or '', _RESULT_TEXT_LIMIT)}
+                 for tc in tool_calls],
+                ensure_ascii=False, indent=2,
+            )
+        except Exception:
+            model_io = ''
+        error_text = '\n'.join(tc.result for tc in tool_calls if tc.is_error)
+    else:
+        tool, is_error, input_dict, result_text, screenshots = _extract_step_fields(step)
+        model_io = _build_model_io(tool=tool, input_dict=input_dict, result_text=result_text)
+        error_text = result_text if is_error else ''
+        description = description or _describe_step(tool, input_dict)
 
     return SubTestStep(
         id=index,
-        description=_describe_step(tool, input_dict),
+        description=description,
         screenshots=screenshots,
         modelIO=model_io,
         actions=[],
         status=TestStatus.FAILED if is_error else TestStatus.PASSED,
-        errors=result_text if is_error else '',
+        errors=error_text,
     )
 
 
@@ -365,28 +383,48 @@ def run_result_to_aggregated_data(
 
 def _map_step_dict(index: int, step: Any) -> dict:
     """Map a cc-mini ``Step`` into the step-dict shape the React UI renders."""
-    tool, is_error, input_dict, result_text, screenshots = _extract_step_fields(step)
-    model_io = _build_model_io(tool=tool, input_dict=input_dict, result_text=result_text)
-
-    description = _describe_step(tool, input_dict)
-    status = 'failed' if is_error else 'passed'
+    description = getattr(step, 'description', '') or ''
+    is_error = bool(getattr(step, 'is_error', False))
+    screenshots = list(getattr(step, 'screenshots', []) or [])
     step_ts = getattr(step, 'timestamp', None)
     now_iso = (
         datetime.fromtimestamp(step_ts).isoformat(timespec='seconds')
         if step_ts
         else datetime.now().isoformat(timespec='seconds')
     )
+    status = 'failed' if is_error else 'passed'
 
-    # The frontend renders ``actions`` as a log stream next to each step.
-    # cc-mini has a single tool call per step; surface the result text there
-    # so the reader sees what actually happened without expanding modelIO.
-    action_message = result_text if result_text else description
-    actions = [{
-        'description': action_message,
-        'success': not is_error,
-        'message': action_message,
-        'index': index,
-    }]
+    # Build actions from all tool_calls in this step
+    tool_calls = getattr(step, 'tool_calls', None)
+    if tool_calls:
+        actions = [
+            {
+                'description': tc.tool.split('__')[-1] if '__' in tc.tool else tc.tool,
+                'success': not tc.is_error,
+                'message': tc.tool.split('__')[-1] if '__' in tc.tool else tc.tool,
+                'index': i,
+            }
+            for i, tc in enumerate(tool_calls, start=1)
+        ]
+        # modelIO: show all tool calls
+        try:
+            model_io = json.dumps(
+                [{'tool': tc.tool, 'input': tc.input,
+                  'result': _truncate(tc.result or '', _RESULT_TEXT_LIMIT)}
+                 for tc in tool_calls],
+                ensure_ascii=False, indent=2,
+            )
+        except Exception:
+            model_io = ''
+        error_text = '\n'.join(tc.result for tc in tool_calls if tc.is_error)
+    else:
+        # fallback for old-style Step
+        tool, is_error, input_dict, result_text, screenshots = _extract_step_fields(step)
+        bare = tool.split('__')[-1] if '__' in tool else tool
+        actions = [{'description': bare, 'success': not is_error, 'message': bare, 'index': 1}]
+        model_io = _build_model_io(tool=tool, input_dict=input_dict, result_text=result_text)
+        error_text = result_text if is_error else ''
+        description = description or _describe_step(tool, input_dict)
 
     return {
         'id': index,
@@ -398,7 +436,7 @@ def _map_step_dict(index: int, step: Any) -> dict:
         'actions': actions,
         'status': status,
         'timestamp': now_iso,
-        'errors': result_text if is_error else '',
+        'errors': error_text,
     }
 
 
