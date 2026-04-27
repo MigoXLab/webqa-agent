@@ -747,40 +747,6 @@ def _tool_result_to_text(content: Any) -> str:
     return json.dumps(content, ensure_ascii=False)
 
 
-def _tool_result_content_to_openai(content: Any) -> str | list[dict[str, Any]]:
-    """Convert tool_result content to OpenAI tool message format.
-
-    When content is a multimodal list (text + image blocks from
-    _build_tool_result_block), convert images to OpenAI's image_url format so
-    the model can see screenshots. Falls back to plain text for simple string
-    content.
-    """
-    if isinstance(content, str):
-        return content
-    if content is None:
-        return ''
-    if not isinstance(content, list):
-        return json.dumps(content, ensure_ascii=False)
-
-    parts: list[dict[str, Any]] = []
-    for block in content:
-        if not isinstance(block, dict):
-            continue
-        block_type = block.get('type')
-        if block_type == 'text':
-            parts.append({'type': 'text', 'text': block.get('text', '')})
-        elif block_type == 'image':
-            source = block.get('source', {})
-            media_type = source.get('media_type', 'image/png')
-            data = source.get('data', '')
-            parts.append({
-                'type': 'image_url',
-                'image_url': {'url': f'data:{media_type};base64,{data}'},
-            })
-
-    return parts if parts else ''
-
-
 def _value(obj: Any, key: str, default: Any = None) -> Any:
     if obj is None:
         return default

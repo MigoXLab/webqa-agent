@@ -139,7 +139,7 @@ def run_result_to_session(
         sub_tests=[sub],
         metrics={
             'test_case_count': 1,
-            'passed_test_cases': 1 if overall_status in (TestStatus.PASSED, 'warning') else 0,
+            'passed_test_cases': 1 if overall_status in (TestStatus.PASSED, TestStatus.WARNING) else 0,
             'failed_test_cases': 1 if overall_status == TestStatus.FAILED else 0,
             'total_steps': len(sub_steps),
             'input_tokens': _int_attr(run_result, 'input_tokens'),
