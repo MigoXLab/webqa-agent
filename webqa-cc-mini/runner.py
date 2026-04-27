@@ -40,6 +40,7 @@ Skills (optional Progressive Disclosure)::
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
 import shutil
@@ -54,10 +55,11 @@ EventCallback = Callable[[tuple[str, ...]], None]
 
 from core.config import DEFAULT_MODEL, DEFAULT_PROVIDER, MCPServerConfig
 from core.context import build_web_agent_system_prompt
-from core.outcome_status import derive_status, extract_final_outcome
+from core.download_tool import DownloadCheckTool
 from core.engine import AbortedError, Engine
 from core.load_skill_tool import LoadSkillTool
 from core.mcp_client import MCPManager
+from core.outcome_status import derive_status, extract_final_outcome
 from core.permissions import PermissionChecker
 from core.skill_registry import SkillRegistry
 from core.tool import Tool
@@ -150,8 +152,7 @@ class _DisplayProgressBridge:
         status_name, _ = derive_status(
             aborted=aborted, failed_count=failed, outcome=outcome,
         )
-        case_passed = status_name == 'passed'
-        self._case_tracker.result = 'passed' if case_passed else 'failed'
+        self._case_tracker.result = status_name if status_name in ('passed', 'warning', 'failed') else 'failed'
         if aborted:
             self._case_tracker.__exit__(
                 Exception, Exception('cc-mini execution failed'), None,
@@ -353,6 +354,12 @@ def run_cc_mini(
     model = model or DEFAULT_MODEL
 
     profile = tempfile.mkdtemp(prefix=f'cc-mini-w{worker_id}-')
+    download_dir = os.path.join(profile, 'downloads')
+    os.makedirs(download_dir, exist_ok=True)
+    # Set Chrome download directory via Preferences file.
+    # The --download-default-directory CLI flag is unreliable with CDP;
+    # Chrome reads download.default_directory from the profile prefs.
+    _write_chrome_download_prefs(profile, download_dir)
     if mcp_servers is None:
         mcp_servers = _default_browser_mcp(
             profile, worker_id, headless=browser_headless,
@@ -443,6 +450,9 @@ def run_cc_mini(
                         extensions_failed.append(
                             f'bind_mcp {tool_name}: {exc}')
             tools = list(tools) + list(extra_tools)
+
+        # Always add download verification tool
+        tools = list(tools) + [DownloadCheckTool(download_dir)]
 
         system = build_web_agent_system_prompt(
             target_url=url,
@@ -622,7 +632,7 @@ def run_cc_mini(
         aborted = True
         log.error('cc-mini aborted due to exception: %s', exc, exc_info=True)
         _run_result = RunResult(
-            final_text=f"Error: {exc}",
+            final_text=f'Error: {exc}',
             steps=steps,
             aborted=True,
             input_tokens=total_tokens['input'],
@@ -762,11 +772,12 @@ def _default_browser_mcp(
     """
     mcp_args = [
         f'--user-data-dir={profile}',
-        "--chrome-arg=--no-sandbox",
-        "--chrome-arg=--disable-dev-shm-usage",
-        "--chrome-arg=--remote-debugging-address=127.0.0.1",
+        '--chrome-arg=--no-sandbox',
+        '--chrome-arg=--disable-dev-shm-usage',
+        '--chrome-arg=--remote-debugging-address=127.0.0.1',
         f'--chrome-arg=--remote-debugging-port={9222 + worker_id}',
-        "--no-usage-statistics",
+        '--no-usage-statistics',
+        '--experimentalVision',
     ]
     exe_path = os.getenv('PUPPETEER_EXECUTABLE_PATH')
     if exe_path:
@@ -849,3 +860,31 @@ def _image_extension_from_mime(mime: str) -> str:
     if 'gif' in m:
         return 'gif'
     return 'png'
+
+
+def _write_chrome_download_prefs(profile_dir: str, download_dir: str) -> None:
+    """Write Chrome Preferences to set the default download directory.
+
+    Chrome reads ``download.default_directory`` from the profile's
+    ``Default/Preferences`` JSON file. This is more reliable than the
+    ``--download-default-directory`` CLI flag, which CDP-based tools
+    (like chrome-devtools-mcp) may not respect.
+    """
+    default_dir = os.path.join(profile_dir, 'Default')
+    os.makedirs(default_dir, exist_ok=True)
+    prefs_path = os.path.join(default_dir, 'Preferences')
+
+    prefs: dict = {}
+    if os.path.exists(prefs_path):
+        try:
+            with open(prefs_path, 'r') as f:
+                prefs = json.loads(f.read())
+        except (json.JSONDecodeError, OSError):
+            prefs = {}
+
+    prefs.setdefault('download', {})
+    prefs['download']['default_directory'] = download_dir
+    prefs['download']['prompt_for_download'] = False
+
+    with open(prefs_path, 'w') as f:
+        f.write(json.dumps(prefs, indent=2))

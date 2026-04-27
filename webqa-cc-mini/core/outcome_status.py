@@ -1,4 +1,5 @@
-"""Parse ``<final_outcome>`` and derive pass/fail (HTML report + Display progress)."""
+"""Parse ``<final_outcome>`` and derive pass/fail (HTML report + Display
+progress)."""
 from __future__ import annotations
 
 import json
@@ -40,12 +41,19 @@ def derive_status(
     failed_count: int,
     outcome: dict[str, Any] | None,
 ) -> tuple[str, str]:
-    """Return (``'passed'``|``'failed'``, source tag for metrics/debug)."""
+    """Return (``'passed'``|``'failed'``|``'warning'``, source tag for
+    metrics/debug)."""
     if aborted:
         return 'failed', 'aborted'
-    if isinstance(outcome, dict) and isinstance(outcome.get('objective_achieved'), bool):
-        oa = bool(outcome['objective_achieved'])
-        return (('passed', 'final_outcome') if oa else ('failed', 'final_outcome'))
+    if isinstance(outcome, dict):
+        # Prefer explicit status field if present and valid
+        explicit = outcome.get('status')
+        if explicit in ('passed', 'failed', 'warning'):
+            return explicit, 'final_outcome'
+        # Fallback: derive from objective_achieved bool
+        if isinstance(outcome.get('objective_achieved'), bool):
+            oa = bool(outcome['objective_achieved'])
+            return (('passed', 'final_outcome') if oa else ('failed', 'final_outcome'))
     if failed_count:
         return 'failed', 'step_fallback'
     return 'passed', 'step_fallback'

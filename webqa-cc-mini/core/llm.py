@@ -615,11 +615,44 @@ def _to_openai_messages(system: str | None, messages: list[dict[str, Any]]) -> l
                 if isinstance(block, dict) and block.get('type') == 'tool_result'
             ]
             if tool_results and len(tool_results) == len(content):
+                # OpenAI tool role only accepts string content.
+                # Extract images and append them as a follow-up user message.
+                pending_images: list[dict[str, Any]] = []
                 for block in tool_results:
+                    raw = block.get('content', '')
+                    if isinstance(raw, list):
+                        # Multimodal: split text vs images
+                        text_parts = [
+                            p.get('text', '') for p in raw
+                            if isinstance(p, dict) and p.get('type') == 'text'
+                        ]
+                        for p in raw:
+                            if isinstance(p, dict) and p.get('type') == 'image':
+                                source = p.get('source', {})
+                                mt = source.get('media_type', 'image/png')
+                                d = source.get('data', '')
+                                pending_images.append({
+                                    'type': 'image_url',
+                                    'image_url': {'url': f'data:{mt};base64,{d}'},
+                                })
+                        out.append({
+                            'role': 'tool',
+                            'tool_call_id': block.get('tool_use_id', ''),
+                            'content': '\n'.join(text_parts) or '',
+                        })
+                    else:
+                        out.append({
+                            'role': 'tool',
+                            'tool_call_id': block.get('tool_use_id', ''),
+                            'content': _tool_result_to_text(raw),
+                        })
+                # Attach images as a user message so the model can see them.
+                if pending_images:
                     out.append({
-                        'role': 'tool',
-                        'tool_call_id': block.get('tool_use_id', ''),
-                        'content': _tool_result_to_text(block.get('content', '')),
+                        'role': 'user',
+                        'content': [
+                            {'type': 'text', 'text': 'Here is the screenshot from the previous action.'},
+                        ] + pending_images,
                     })
                 continue
 
@@ -712,6 +745,40 @@ def _tool_result_to_text(content: Any) -> str:
     if content is None:
         return ''
     return json.dumps(content, ensure_ascii=False)
+
+
+def _tool_result_content_to_openai(content: Any) -> str | list[dict[str, Any]]:
+    """Convert tool_result content to OpenAI tool message format.
+
+    When content is a multimodal list (text + image blocks from
+    _build_tool_result_block), convert images to OpenAI's image_url format so
+    the model can see screenshots. Falls back to plain text for simple string
+    content.
+    """
+    if isinstance(content, str):
+        return content
+    if content is None:
+        return ''
+    if not isinstance(content, list):
+        return json.dumps(content, ensure_ascii=False)
+
+    parts: list[dict[str, Any]] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        block_type = block.get('type')
+        if block_type == 'text':
+            parts.append({'type': 'text', 'text': block.get('text', '')})
+        elif block_type == 'image':
+            source = block.get('source', {})
+            media_type = source.get('media_type', 'image/png')
+            data = source.get('data', '')
+            parts.append({
+                'type': 'image_url',
+                'image_url': {'url': f'data:{media_type};base64,{data}'},
+            })
+
+    return parts if parts else ''
 
 
 def _value(obj: Any, key: str, default: Any = None) -> Any:

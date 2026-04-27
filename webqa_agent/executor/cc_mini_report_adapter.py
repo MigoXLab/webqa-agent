@@ -44,11 +44,9 @@ from webqa_agent.utils.reporting_utils import sanitize_case_name
 _cc_mini_root = Path(__file__).resolve().parent.parent.parent / 'webqa-cc-mini'
 if _cc_mini_root.is_dir() and str(_cc_mini_root) not in sys.path:
     sys.path.insert(0, str(_cc_mini_root))
-from core.outcome_status import (  # type: ignore  # noqa: E402
-    derive_status,
-    extract_final_outcome,
-    strip_final_outcome_block,
-)
+from core.outcome_status import derive_status  # type: ignore  # noqa: E402
+from core.outcome_status import (extract_final_outcome,
+                                 strip_final_outcome_block)
 
 # Soft cap on how much of each tool result we embed in the report.
 # cc-mini tool outputs are sometimes multi-KB (accessibility snapshots,
@@ -101,7 +99,7 @@ def run_result_to_session(
         aborted=aborted, failed_count=failed_count, outcome=outcome,
     )
     overall_status = (
-        TestStatus.PASSED if overall_status_name == 'passed' else TestStatus.FAILED
+        TestStatus.PASSED if overall_status_name in ('passed', 'warning') else TestStatus.FAILED
     )
     report_sections: list[SubTestReport] = []
     if final_text.strip():
@@ -141,7 +139,7 @@ def run_result_to_session(
         sub_tests=[sub],
         metrics={
             'test_case_count': 1,
-            'passed_test_cases': 0 if overall_status == TestStatus.FAILED else 1,
+            'passed_test_cases': 1 if overall_status in (TestStatus.PASSED, 'warning') else 0,
             'failed_test_cases': 1 if overall_status == TestStatus.FAILED else 0,
             'total_steps': len(sub_steps),
             'input_tokens': _int_attr(run_result, 'input_tokens'),
@@ -350,7 +348,7 @@ def run_result_to_aggregated_data(
         'total': 1,
         'passed': 1 if overall_status == 'passed' else 0,
         'failed': 1 if overall_status == 'failed' else 0,
-        'warning': 0,
+        'warning': 1 if overall_status == 'warning' else 0,
     }
     test_items = [{
         'name': '功能测试' if language != 'en-US' else 'Functional',
