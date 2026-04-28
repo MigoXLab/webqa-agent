@@ -511,15 +511,32 @@ class TestSystemPromptSkillInjection:
         prompt = build_web_agent_system_prompt('https://x', 'test search')
         for capability in (
             'list_console_messages', 'list_network_requests',
-            'evaluate_script', 'lighthouse_audit', 'wait_for',
+            'evaluate_script', 'lighthouse_audit', 'wait_for', 'verify',
         ):
             assert capability in prompt, f'missing capability: {capability}'
+
+    def test_prompt_describes_risk_based_verification_strategy(self):
+        prompt = build_web_agent_system_prompt('https://x', 'test search')
+        assert 'Deterministic checks first' in prompt
+        assert 'Use `verify(assertion="...")` when the conclusion is ambiguous' in prompt
+        assert 'If you want to report **passed** after any timeout' in prompt
+        assert 'call `verify` once for the primary success assertion or downgrade to warning' in prompt
+
+    def test_prompt_omits_verify_when_has_verify_tool_false(self):
+        prompt = build_web_agent_system_prompt(
+            'https://x', 'test search', has_verify_tool=False,
+        )
+        assert 'Independent verification' not in prompt
+        assert 'verify(assertion=' not in prompt
+        assert 'call `verify`' not in prompt
+        assert 'Risk-based final assessment' in prompt
 
     def test_skill_section_encourages_loading(self, tmp_path):
         metas = [SkillMetadata(name='s', description='d.', skill_dir=tmp_path)]
         prompt = build_web_agent_system_prompt('u', 't', skills=metas)
-        assert 'BEFORE starting' in prompt
-        assert 'Skip' not in prompt
+        skill_section = prompt.split('## Available Skills', 1)[1]
+        assert 'BEFORE starting' in skill_section
+        assert 'Skip' not in skill_section
 
     def test_plan_skill_referenced_in_methodology_when_available(self, tmp_path):
         metas = [SkillMetadata(name='plan', description='Plan.', skill_dir=tmp_path)]

@@ -40,10 +40,13 @@ Skills (optional Progressive Disclosure)::
 from __future__ import annotations
 
 import base64
+import errno
+import http.client
 import json
 import logging
 import os
 import shutil
+import socket
 import tempfile
 import time
 from collections import deque
@@ -58,12 +61,14 @@ from core.config import DEFAULT_MODEL, DEFAULT_PROVIDER, MCPServerConfig
 from core.context import build_web_agent_system_prompt
 from core.download_tool import DownloadCheckTool
 from core.engine import AbortedError, Engine
+from core.llm import LLMClient, infer_provider_from_model
 from core.load_skill_tool import LoadSkillTool
 from core.mcp_client import MCPManager
 from core.outcome_status import derive_status, extract_final_outcome
 from core.permissions import PermissionChecker
 from core.skill_registry import SkillRegistry
 from core.tool import Tool
+from core.verify_tool import VerifyTool
 from features.compact import CompactService, should_compact
 
 log = logging.getLogger('cc_mini.runner')
@@ -114,7 +119,7 @@ class _DisplayProgressBridge:
                 self._started = True
             except RuntimeError:
                 Display.display._bind_stream_handler()
-            self._case_tracker = Display.display(self._case_name)
+            self._case_tracker = Display.display(self._case_name)  # pylint: disable=not-callable
             self._case_tracker.__enter__()
         except Exception as exc:
             log.warning('Display progress init failed, fallback to no-display mode: %s', exc)
@@ -263,6 +268,7 @@ def run_cc_mini(
     extra_tools: list[Tool] | None = None,
     pre_engine_hook: Callable[['MCPManager', int], None] | None = None,
     extra_section: str | None = None,
+    filter_model: str | None = None,
 ) -> RunResult:
     """Run the web agent on *url* with *user_input* and return a RunResult.
 
@@ -340,6 +346,12 @@ def run_cc_mini(
         Optional string appended verbatim to the end of the system prompt
         (after skills / file-upload sections). Generic extension point for
         caller-provided prompt augmentation.
+    filter_model:
+        Model ID for the independent verification tool (``verify``). Uses a
+        separate, cheaper LLM call to judge assertions against page evidence,
+        countering self-verification bias. When ``None`` (default), inherits
+        the main ``model``. The provider is auto-detected from the model name
+        (``claude-*`` → Anthropic, everything else → OpenAI-compatible).
 
     Known failure modes
     -------------------
@@ -373,6 +385,10 @@ def run_cc_mini(
             profile, worker_id, headless=browser_headless,
             viewport=browser_viewport,
         )
+    cdp_required = (
+        pre_engine_hook is not None
+        or any(hasattr(t, 'bind_mcp') for t in (extra_tools or []))
+    )
 
     mcp = MCPManager(mcp_servers)
     screenshot_root = _prepare_screenshot_dir(
@@ -399,6 +415,8 @@ def run_cc_mini(
     extensions_failed: list[str] = []
 
     try:
+        _ensure_cdp_port_available_for_extensions(
+            mcp_servers, cdp_required=cdp_required)
         tools = mcp.start_and_collect_tools()
 
         skill_metadata = []
@@ -413,9 +431,25 @@ def run_cc_mini(
             else:
                 log.info('Skills dir %s exists but no valid skills found', skills_dir)
 
+        browser_server = mcp._servers.get('browser')
         # chrome-devtools-mcp launches Chromium lazily; list_pages (read-only)
-        # forces the browser up so the CDP port binds before the hook runs.
-        # new_page would leave an extra blank tab; list_pages has no side-effects.
+        # forces managed Chrome up so the CDP port binds before any extension
+        # tries to connect to it directly.
+        if cdp_required:
+            if browser_server is None:
+                raise RuntimeError(
+                    'CDP extensions require the browser MCP server, but it '
+                    'was not started.')
+            _ensure_tool_result_ok(
+                browser_server.call_tool('list_pages', {}),
+                context='browser list_pages',
+            )
+            _ensure_managed_cdp_endpoint_ready(
+                mcp_servers,
+                profile=Path(profile),
+                cdp_required=True,
+            )
+
         if pre_engine_hook is not None:
             if cdp_port is None:
                 msg = (
@@ -424,22 +458,16 @@ def run_cc_mini(
                     '--chrome-arg=--remote-debugging-port=N in your custom '
                     'MCP config to enable cookie-style extensions.'
                 )
-                log.warning(msg)
-                extensions_failed.append(msg)
+                raise RuntimeError(msg)
             else:
-                server = mcp._servers.get('browser')
                 try:
-                    if server is not None:
-                        server.call_tool('list_pages', {})
                     pre_engine_hook(mcp, cdp_port)
                 except Exception as exc:
-                    log.warning('pre_engine_hook failed: %s', exc)
-                    extensions_failed.append(f'pre_engine_hook: {exc}')
+                    raise RuntimeError(f'pre_engine_hook failed: {exc}') from exc
 
         if extra_tools:
-            server = mcp._servers.get('browser')
             for t in extra_tools:
-                if server is not None and hasattr(t, 'bind_mcp'):
+                if browser_server is not None and hasattr(t, 'bind_mcp'):
                     if cdp_port is None:
                         tool_name = getattr(t, 'name', type(t).__name__)
                         msg = (
@@ -448,20 +476,42 @@ def run_cc_mini(
                             'Provide --browser-url / --ws-endpoint / '
                             '--chrome-arg=--remote-debugging-port=N.'
                         )
-                        log.warning(msg)
-                        extensions_failed.append(msg)
-                        continue
+                        raise RuntimeError(msg)
                     try:
-                        t.bind_mcp(server, cdp_port)
+                        t.bind_mcp(browser_server, cdp_port)
                     except Exception as exc:
                         tool_name = getattr(t, 'name', type(t).__name__)
-                        log.warning('bind_mcp %s failed: %s', tool_name, exc)
-                        extensions_failed.append(
-                            f'bind_mcp {tool_name}: {exc}')
+                        raise RuntimeError(
+                            f'bind_mcp {tool_name} failed: {exc}') from exc
             tools = list(tools) + list(extra_tools)
+        else:
+            tools = list(tools)
 
         # Always add download verification tool
-        tools = list(tools) + [DownloadCheckTool(download_dir)]
+        tools.append(DownloadCheckTool(download_dir))
+
+        # Add independent verification tool (always registered)
+        if browser_server is not None:
+            _filter_model = filter_model.strip() if filter_model else model
+            _filter_provider = infer_provider_from_model(_filter_model)
+            _filter_base_url = base_url if _filter_provider == provider else None
+            filter_client = LLMClient(
+                provider=_filter_provider,
+                api_key=api_key,
+                base_url=_filter_base_url,
+                timeout=timeout,
+            )
+            tools.append(
+                VerifyTool(browser_server, filter_client, _filter_model),
+            )
+            if _filter_model == model:
+                log.warning(
+                    'Verify tool: filter_model equals main model (%s); '
+                    'set a different filter_model for better bias reduction.',
+                    model,
+                )
+            log.info('Verify tool registered with model=%s (provider=%s)',
+                     _filter_model, _filter_provider)
 
         system = build_web_agent_system_prompt(
             target_url=url,
@@ -469,6 +519,7 @@ def run_cc_mini(
             skills=skill_metadata or None,
             file_catalog=(file_catalog.strip() if isinstance(file_catalog, str) and file_catalog.strip() else None),
             extra_section=extra_section,
+            has_verify_tool=browser_server is not None,
         )
         engine = Engine(
             tools=tools,
@@ -756,26 +807,13 @@ def _resolve_cdp_port(
         except ValueError:
             return None
 
-    def _flag_value(flag_names: tuple[str, ...]) -> str | None:
-        for arg in args:
-            for name in flag_names:
-                if arg.startswith(f'{name}='):
-                    return arg.split('=', 1)[1]
-                if arg == name:
-                    # `--flag value` form not supported by MCPServerConfig.args
-                    # (which is a flat tuple without pairing), but leave the
-                    # branch explicit so future schema changes don't silently
-                    # skip it.
-                    return None
-        return None
-
-    url = _flag_value(('--browser-url', '--browserUrl'))
+    url = _flag_value(args, ('--browser-url', '--browserUrl'))
     if url:
         p = _port_from_url(url)
         if p is not None:
             return p
 
-    ws = _flag_value(('--ws-endpoint', '--wsEndpoint'))
+    ws = _flag_value(args, ('--ws-endpoint', '--wsEndpoint'))
     if ws:
         p = _port_from_url(ws)
         if p is not None:
@@ -790,6 +828,188 @@ def _resolve_cdp_port(
 
     # Custom callers must pass an explicit endpoint or forgo the cookies feature.
     return None
+
+
+def _ensure_cdp_port_available_for_extensions(
+    mcp_servers: list[MCPServerConfig],
+    *,
+    cdp_required: bool,
+) -> None:
+    """Fail fast if CDP extensions would connect to an old browser instance.
+
+    chrome-devtools-mcp can control its managed browser over its own transport
+    even when the extra TCP CDP port cannot bind. Cookie extensions, however,
+    connect directly to that TCP port. If the port is already owned by another
+    Chrome process, cookies are injected into the wrong browser.
+    """
+    if not cdp_required:
+        return
+
+    endpoint = _managed_cdp_endpoint(mcp_servers)
+    if endpoint is None:
+        return
+
+    host, port = endpoint
+    if _can_bind_tcp_port(host, port):
+        return
+
+    raise RuntimeError(
+        f'CDP port {host}:{port} is already in use before cc-mini starts '
+        'its managed Chrome. Cookie/account extensions would connect to that '
+        'existing browser instead of the test browser. Stop the existing '
+        f'process (for example: ss -ltnp | grep ":{port}") or choose a '
+        'different worker_id/custom --chrome-arg=--remote-debugging-port=N. '
+        'If you intentionally want to attach to an existing browser, configure '
+        '--browser-url or --ws-endpoint so MCP and cookie injection target the '
+        'same instance.'
+    )
+
+
+def _ensure_tool_result_ok(result: Any, *, context: str) -> None:
+    if getattr(result, 'is_error', False):
+        content = str(getattr(result, 'content', '') or '').strip()
+        detail = f': {content}' if content else ''
+        raise RuntimeError(f'{context} failed{detail}')
+
+
+def _ensure_managed_cdp_endpoint_ready(
+    mcp_servers: list[MCPServerConfig],
+    *,
+    profile: Path,
+    cdp_required: bool,
+) -> None:
+    """Verify managed Chrome exposed the expected fixed CDP endpoint."""
+    if not cdp_required:
+        return
+
+    endpoint = _managed_cdp_endpoint(mcp_servers)
+    if endpoint is None:
+        return
+
+    host, expected_port = endpoint
+    _probe_cdp_http_endpoint(host, expected_port)
+
+    active_port = _read_devtools_active_port(profile, expected_port)
+    if active_port is not None and active_port != expected_port:
+        raise RuntimeError(
+            f'DevToolsActivePort in {profile} reported port {active_port}, '
+            f'expected {expected_port}. Cookie/account extensions would not '
+            'target the same browser controlled by MCP.'
+        )
+
+
+def _read_devtools_active_port(profile: Path, expected_port: int) -> int | None:
+    port_file = profile / 'DevToolsActivePort'
+    if not port_file.exists():
+        return None
+
+    try:
+        first_line = port_file.read_text(encoding='utf-8').splitlines()[0]
+        return int(first_line.strip())
+    except (IndexError, ValueError) as exc:
+        raise RuntimeError(
+            f'DevToolsActivePort in {profile} is malformed; cannot verify '
+            'the CDP endpoint for cookie/account extensions.'
+        ) from exc
+
+
+def _probe_cdp_http_endpoint(host: str, port: int) -> None:
+    conn = http.client.HTTPConnection(host, port, timeout=3.0)
+    try:
+        conn.request('GET', '/json/version')
+        resp = conn.getresponse()
+        if resp.status != 200:
+            raise RuntimeError(
+                f'CDP endpoint {host}:{port} returned HTTP {resp.status} '
+                'for /json/version.'
+            )
+        body = resp.read()
+    except OSError as exc:
+        raise RuntimeError(
+            f'CDP endpoint {host}:{port} is not reachable after Chrome launch.'
+        ) from exc
+    finally:
+        conn.close()
+
+    try:
+        ws_url = json.loads(body).get('webSocketDebuggerUrl', '')
+    except ValueError as exc:
+        raise RuntimeError(
+            f'CDP endpoint {host}:{port} returned invalid /json/version JSON.'
+        ) from exc
+    if f':{port}/' not in ws_url:
+        raise RuntimeError(
+            f'CDP endpoint {host}:{port} returned unexpected WebSocket URL.'
+        )
+
+
+def _managed_cdp_endpoint(
+    mcp_servers: list[MCPServerConfig],
+) -> tuple[str, int] | None:
+    """Return the TCP CDP endpoint only when MCP is launching Chrome itself."""
+    browser_cfg = next(
+        (s for s in mcp_servers if getattr(s, 'name', None) == 'browser'),
+        None,
+    )
+    if browser_cfg is None:
+        return None
+
+    args = tuple(browser_cfg.args or ())
+    if _flag_value(args, ('--browser-url', '--browserUrl')):
+        return None
+    if _flag_value(args, ('--ws-endpoint', '--wsEndpoint')):
+        return None
+
+    port: int | None = None
+    for arg in args:
+        if not arg.startswith('--chrome-arg=--remote-debugging-port='):
+            continue
+        try:
+            port = int(arg.rsplit('=', 1)[1])
+        except ValueError:
+            return None
+        break
+    if port is None:
+        return None
+
+    host = '127.0.0.1'
+    address = _chrome_arg_value(args, '--remote-debugging-address')
+    if address:
+        host = address
+    return host, port
+
+
+def _flag_value(args: tuple[str, ...], flag_names: tuple[str, ...]) -> str | None:
+    for arg in args:
+        for name in flag_names:
+            if arg.startswith(f'{name}='):
+                return arg.split('=', 1)[1]
+            if arg == name:
+                return None
+    return None
+
+
+def _chrome_arg_value(args: tuple[str, ...], chrome_flag_name: str) -> str | None:
+    prefix = f'--chrome-arg={chrome_flag_name}='
+    for arg in args:
+        if arg.startswith(prefix):
+            return arg.split('=', 2)[2]
+    return None
+
+
+def _can_bind_tcp_port(host: str, port: int) -> bool:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind((host, port))
+    except OSError as exc:
+        if exc.errno == errno.EADDRINUSE:
+            return False
+        raise RuntimeError(
+            f'Failed to verify CDP port availability for {host}:{port}: {exc}'
+        ) from exc
+    finally:
+        sock.close()
+    return True
 
 
 def _default_browser_mcp(

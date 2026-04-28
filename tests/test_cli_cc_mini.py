@@ -96,10 +96,12 @@ def test_execute_gen_mode_routes_to_cc_mini(monkeypatch, capsys):
 
     asyncio.run(cli.execute_gen_mode(cfg))
 
-    # The on_event handler is an internal detail — assert it was wired but
-    # isolate it from the config-controlled kwargs check.
+    # The on_event and data_flow_sink handlers are internal details — assert
+    # they were wired but isolate them from the config-controlled kwargs check.
     on_event_fn = captured.pop('on_event', None)
     assert callable(on_event_fn)
+    data_flow_sink = captured.pop('data_flow_sink', None)
+    assert callable(data_flow_sink)
     assert captured == {
         'url': 'https://example.com',
         'task': '验证搜索功能',
@@ -115,14 +117,17 @@ def test_execute_gen_mode_routes_to_cc_mini(monkeypatch, capsys):
         'timeout': None,
         # Skills discovery is opt-in; cc_mini_skills_dir unset -> None.
         'skills_dir': None,
-        # No test_files_dir -> no file catalog.
-        'file_catalog': None,
         # browser_config missing -> default headless True (aligns with GenExecutor).
         'browser_headless': True,
+        'browser_viewport': None,
         # Screenshot persistence defaults.
         'save_screenshots': False,
         'screenshot_dir': None,
-        # File upload catalog (no files configured).
+        # cc-mini runtime plumbing defaults.
+        'worker_id': 0,
+        'extensions': None,
+        'filter_model': 'gemini-3-flash-preview',
+        # No test_files_dir -> no file catalog.
         'file_catalog': None,
         # log_level inherits from cfg.log.level (default 'info').
         'log_level': 'info',
@@ -197,6 +202,40 @@ def test_execute_gen_mode_requires_business_objectives_for_cc_mini(monkeypatch):
         asyncio.run(cli.execute_gen_mode(cfg))
 
     assert exc_info.value.code == 1
+
+
+def test_execute_gen_mode_exits_on_cc_mini_fatal_error(
+    monkeypatch, tmp_path, capsys,
+):
+    """Infrastructure failures in cc-mini should be surfaced as CLI
+    failures."""
+    cli = _load_cli_module(monkeypatch)
+
+    async def fake_execute_cc_mini_mode(**kwargs):
+        return _FakeRunResult(
+            final_text='Error: CDP port 127.0.0.1:9222 is already in use',
+            steps=[],
+            aborted=True,
+        )
+
+    monkeypatch.setattr(cli, '_execute_cc_mini_mode', fake_execute_cc_mini_mode)
+    cfg = {
+        'target': {'url': 'https://example.com'},
+        'test_config': {'use_cc_mini': True, 'business_objectives': 'smoke'},
+        'llm_config': {
+            'model': 'gpt-4o', 'api_key': 'k',
+            'base_url': 'https://api.openai.com/v1',
+        },
+        'report': {'report_dir': str(tmp_path / 'fatal-report')},
+    }
+
+    with pytest.raises(SystemExit) as exc_info:
+        asyncio.run(cli.execute_gen_mode(cfg))
+
+    assert exc_info.value.code == 1
+    stdout = capsys.readouterr().out
+    assert '❌ Failed' in stdout
+    assert 'Aborted: True' in stdout
 
 
 def test_execute_gen_mode_anthropic_drops_openai_default_base_url(monkeypatch):

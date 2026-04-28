@@ -13,6 +13,7 @@ def build_web_agent_system_prompt(
     file_catalog: str | None = None,
     *,
     extra_section: str | None = None,
+    has_verify_tool: bool = True,
 ) -> str:
     skill_names = {m.name for m in skills} if skills else set()
 
@@ -44,6 +45,12 @@ def build_web_agent_system_prompt(
         'take_screenshot\n'
         '- **Debugging**: list_console_messages, list_network_requests, '
         'evaluate_script\n'
+        + (
+            '- **Independent verification**: verify(assertion=..., '
+            'evidence_mode="snapshot"|"visual"|"full") for ambiguous or '
+            'high-risk checkpoints\n'
+            if has_verify_tool else ''
+        ) +
         '- **Performance**: lighthouse_audit, performance traces\n'
         '- **Conditions**: wait_for (wait until element/state appears)\n'
         '- **Emulation**: device/viewport emulation, color scheme\n\n'
@@ -65,22 +72,51 @@ def build_web_agent_system_prompt(
         'navigate_page, press_key, hover, drag, upload_file, select_option, '
         'wait_for) MUST include `take_screenshot` in the same response. '
         'Max 3 mutating actions per response.\n'
-        '4. **Verify** — confirm the expected effect, then continue.\n\n'
+        '4. **Verify** — confirm the expected effect with evidence before '
+        'moving on.'
+        + (
+            ' Prefer deterministic checks first; escalate to the '
+            '`verify` tool only when the conclusion is ambiguous or high impact.'
+            if has_verify_tool else ''
+        ) +
+        ' Then continue.\n\n'
         '### Verification Depth\n'
-        'At key milestones, batch these observations in one turn:\n'
+        'Deterministic checks first: at key milestones, batch these '
+        'observations in one turn:\n'
         '- DOM state: `take_snapshot` — check element presence and content.\n'
         '- Visual state: `take_screenshot` — confirm rendering.\n'
         '- Console health: `list_console_messages` — check for JS errors.\n'
         '- Network health: `list_network_requests` — check for failed '
         'requests.\n'
         'Use `evaluate_script` for assertions the snapshot cannot express '
-        '(computed styles, localStorage, counters).\n\n'
+        '(computed styles, localStorage, counters).\n'
+        + (
+            'Use `verify(assertion="...")` when the conclusion is ambiguous, '
+            'visual/UX-heavy, or central to the final outcome. Examples: '
+            'whether a complex detail page looks complete, whether an error '
+            'banner truly blocks the flow, or whether a final pass claim is '
+            'supported despite mixed evidence. Do NOT call verify after every '
+            'click; reserve it for meaningful state boundaries.\n\n'
+            if has_verify_tool else '\n'
+        ) +
         '## Quality Standards\n\n'
         '- **Test, don\'t just observe.** Search → type a query → submit '
         '→ verify results. Don\'t just confirm the search box exists.\n'
         '- **Use evidence.** Every finding must reference specific tool '
         'output (snapshot content, screenshot observation, console error, '
         'network status).\n'
+        + (
+            '- **Risk-based final verification.** If you want to report '
+            '**passed** after any timeout, tool error, ambiguous UI state, or '
+            'partially unverified requirement, call `verify` once for the primary '
+            'success assertion or downgrade to warning with the uncertainty '
+            'clearly stated.\n'
+            if has_verify_tool else
+            '- **Risk-based final assessment.** If you want to report '
+            '**passed** after any timeout, tool error, ambiguous UI state, or '
+            'partially unverified requirement, downgrade to warning with the '
+            'uncertainty clearly stated.\n'
+        ) +
         '- **Final screenshot (always).** Before your closing message, in the '
         '**same final turn**, you MUST call `take_screenshot` — whether the '
         'outcome is **passed**, **failed**, or **warning** — so the user always '

@@ -109,6 +109,18 @@ def default_max_tokens_for_provider(provider: str) -> int:
     return 32000
 
 
+def infer_provider_from_model(model: str) -> ProviderName:
+    """Best-effort provider inference from a model ID string.
+
+    Falls back to ``'openai'`` for unknown prefixes because OpenAI-compatible
+    endpoints (Gemini proxies, DeepSeek, Ollama) all speak the OpenAI protocol.
+    """
+    lowered = model.lower()
+    if lowered.startswith(('claude-', 'claude ')):
+        return _ANTHROPIC_PROVIDER
+    return _OPENAI_PROVIDER
+
+
 def supports_reasoning_effort(provider: str, model: str) -> bool:
     provider = validate_provider(provider)
     if provider != _OPENAI_PROVIDER:

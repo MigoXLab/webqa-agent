@@ -3,7 +3,6 @@
 
 import argparse
 import asyncio
-import importlib.util
 import os
 import sys
 import traceback
@@ -23,13 +22,13 @@ from webqa_agent.utils import (check_lighthouse_installation,
                                load_yaml, load_yaml_files, resolve_config_dir)
 
 
-def get_version():
+def get_version() -> str:
     """Get the package version."""
     from webqa_agent import __version__
     return __version__
 
 
-def get_template_content(mode):
+def get_template_content(mode: str) -> str | None:
     """Get configuration template content from example files.
 
     Args:
@@ -160,6 +159,7 @@ async def _execute_cc_mini_mode(
     on_event=None,
     worker_id: int = 0,
     extensions: Any = None,
+    filter_model: str | None = None,
 ):
     """Execute one cc-mini run without blocking the main event loop.
 
@@ -213,6 +213,7 @@ async def _execute_cc_mini_mode(
         browser_viewport=browser_viewport,
         worker_id=worker_id,
         on_event=on_event,
+        filter_model=filter_model,
         **extension_kwargs,
     )
 
@@ -293,8 +294,6 @@ def _make_cc_mini_stream_handler():
 
 
 def _resolve_cc_mini_report_dir(*, cfg: dict, run_timestamp: str | None) -> str:
-    from pathlib import Path as _Path
-
     report_base_dir = (cfg.get('report') or {}).get('report_dir')
     timestamp = (
         run_timestamp
@@ -303,7 +302,7 @@ def _resolve_cc_mini_report_dir(*, cfg: dict, run_timestamp: str | None) -> str:
         or datetime.now().strftime('%Y-%m-%d_%H-%M-%S_%f')
     )
     if report_base_dir and str(report_base_dir).strip():
-        base_path = _Path(report_base_dir)
+        base_path = Path(report_base_dir)
         if base_path.name.startswith('test_'):
             return str(base_path)
         return str(base_path / f'test_{timestamp}')
@@ -546,9 +545,8 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
         # cookie state — see CUSTOM_TOOL_DEVELOPMENT.md / cc-mini README.
         cc_mini_extensions: Any = None
         try:
-            from webqa_agent.utils.cc_mini_utils import (
-                build_cookie_extensions_from_config,
-            )
+            from webqa_agent.utils.cc_mini_utils import \
+                build_cookie_extensions_from_config
             cc_mini_extensions = build_cookie_extensions_from_config(
                 cfg, source_file=cfg.get('_source_file'),
             )
@@ -599,6 +597,7 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
                 on_event=_make_cc_mini_stream_handler(),
                 worker_id=0,
                 extensions=cc_mini_extensions,
+                filter_model=llm_config.filter_model,
             )
         except Exception:
             print('\n❌ cc-mini execution failed:', file=sys.stderr)
@@ -610,11 +609,16 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
             else:
                 os.environ['WEBQA_REPORT_TIMESTAMP'] = prev_report_ts
 
+        fatal_cc_mini_error = bool(
+            result.aborted and str(getattr(result, 'final_text', '')).startswith('Error:')
+        )
+
         # The final assistant text was already streamed via on_event; only
         # print a summary bar so the user sees totals at a glance.
         print('\n' + '-' * 60)
+        status_label = '❌ Failed' if fatal_cc_mini_error else '✅ Done'
         print(
-            f'✅ Done  |  Steps: {len(result.steps)}  |  '
+            f'{status_label}  |  Steps: {len(result.steps)}  |  '
             f'Tokens: {result.input_tokens}↑ {result.output_tokens}↓  |  '
             f'Aborted: {result.aborted}'
         )
@@ -652,6 +656,8 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
             except Exception as dataflow_exc:
                 print(f'⚠️ Failed to generate cc-mini data flow report: {dataflow_exc}',
                       file=sys.stderr)
+        if fatal_cc_mini_error:
+            sys.exit(1)
         return
 
     # Check Playwright browsers
