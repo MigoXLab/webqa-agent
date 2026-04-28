@@ -193,9 +193,6 @@ class Engine:
         """
         self._aborted = False
         self._turn_start_len = len(self._messages)
-        # Drop images from older messages to keep context lean.
-        # Only the most recent screenshot matters for decision-making.
-        _strip_old_images(self._messages, keep_recent=2)
         user_input = sanitize_unicode(user_input)
         self._messages.append({
             'role': 'user',
@@ -214,6 +211,8 @@ class Engine:
                 for attempt in range(_MAX_RETRIES):
                     try:
                         tools = [t.to_api_schema() for t in self._tools.values()]
+                        # Drop images from older messages right before each LLM call.
+                        _strip_old_images(self._messages, keep_recent=1)
                         stream_obj = self._client.stream_messages(
                             model=self._model,
                             max_tokens=self._max_tokens,
@@ -516,7 +515,7 @@ def _build_tool_result_block(tool_use_id: str, result: ToolResult) -> dict[str, 
     }
 
 
-def _strip_old_images(messages: list[dict], *, keep_recent: int = 2) -> None:
+def _strip_old_images(messages: list[dict], *, keep_recent: int = 1) -> None:
     """Remove image blocks from all but the most recent *keep_recent*
     tool_result messages.
 
@@ -546,8 +545,46 @@ def _strip_old_images(messages: list[dict], *, keep_recent: int = 2) -> None:
     for mi, bi in to_strip:
         block = messages[mi]['content'][bi]
         inner = block['content']
-        # Keep only text parts, drop images.
-        text_parts = [p for p in inner if isinstance(p, dict) and p.get('type') == 'text']
+        image_parts = [
+            p for p in inner
+            if isinstance(p, dict) and p.get('type') == 'image'
+        ]
+        # Keep only text parts, drop images. Add a stable marker so the
+        # conversation still records that a screenshot was consumed here.
+        text_parts = [
+            p for p in inner
+            if isinstance(p, dict) and p.get('type') == 'text'
+        ]
+        text_parts.append({
+            'type': 'text',
+            'text': _image_removal_marker(block, image_parts),
+        })
         if not text_parts:
             text_parts = [{'type': 'text', 'text': '[screenshot removed to save context]'}]
         block['content'] = text_parts
+
+
+def _image_removal_marker(
+    tool_result_block: dict[str, Any],
+    image_parts: list[dict[str, Any]],
+) -> str:
+    """Return a compact, stable marker for stripped screenshot images."""
+    result_tool_use_id = str(tool_result_block.get('tool_use_id', ''))
+    marker_parts: list[str] = [
+        'screenshot image removed after consumption',
+        f'tool_use_id={result_tool_use_id}',
+    ]
+    for image_index, image_part in enumerate(image_parts, start=1):
+        image_source = (
+            image_part.get('source')
+            if isinstance(image_part.get('source'), dict)
+            else {}
+        )
+        media_type = str(image_source.get('media_type') or 'image/png')
+        base64_data = image_source.get('data') or ''
+        base64_length = len(base64_data) if isinstance(base64_data, str) else 0
+        marker_parts.append(
+            f'image_{image_index}_media_type={media_type} '
+            f'image_{image_index}_base64_chars={base64_length}'
+        )
+    return '[' + ', '.join(marker_parts) + ']'
