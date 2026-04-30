@@ -276,7 +276,7 @@ export function ExecutionDetail() {
             </h2>
             <div className="flex items-center gap-3">
               {renderStatusBadge(execution.status)}
-              {execution.data_flow_report_url && !isCcMiniExecution && (
+              {execution.data_flow_report_url && (
                 <button
                   onClick={() => window.open(execution.data_flow_report_url, '_blank')}
                   className="inline-flex items-center gap-2 px-4 py-1.5 bg-indigo-50 text-indigo-600 border border-indigo-200 rounded-lg hover:bg-indigo-100 transition-colors text-sm font-medium"

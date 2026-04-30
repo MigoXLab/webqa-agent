@@ -11,6 +11,13 @@ from .llm import LLMClient
 from .permissions import PermissionChecker
 from .text import sanitize_unicode
 from .tool import Tool, ToolResult
+from utils.data_flow import (
+    build_llm_error_payload,
+    build_llm_ok_payload,
+    build_tool_event_payload,
+    iso_now,
+    safe_copy,
+)
 
 _MAX_RETRIES = 10
 
@@ -108,6 +115,8 @@ class Engine:
         self._aborted = False
         self._turn_start_len: int | None = None
         self._active_stream = None  # reference to current HTTP stream
+        self._turn_id = 0
+        self._data_flow_sequence = 0
 
     # -- message accessors (for compact / resume) ---------------------------
 
@@ -155,6 +164,51 @@ class Engine:
                     parts.append(block.get('text', ''))
             return ''.join(parts)
         return ''
+
+    def _next_sequence(self) -> int:
+        self._data_flow_sequence += 1
+        return self._data_flow_sequence
+
+    def _data_flow_event(
+        self,
+        *,
+        event_type: str,
+        payload: dict[str, Any],
+        timestamp: str | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        return (
+            'data_flow_event',
+            {
+                'timestamp': timestamp or iso_now(),
+                'stage': 'cc-mini',
+                'event_type': event_type,
+                'payload': {
+                    'sequence': self._next_sequence(),
+                    **payload,
+                },
+            },
+        )
+
+    def _tool_call_id(self, turn_id: int, tool_use: Any) -> str:
+        raw_id = _block_id(tool_use)
+        if raw_id:
+            return f'tool-{turn_id}-{raw_id}'
+        return f'tool-{turn_id}-{id(tool_use)}'
+
+    def _execute_tool_with_metrics(
+        self,
+        tool_use: Any,
+        *,
+        skip_permission: bool = False,
+    ) -> tuple[ToolResult, str, str, float]:
+        started_at = iso_now()
+        start_perf = time.perf_counter()
+        try:
+            result = self._execute_tool(tool_use, skip_permission=skip_permission)
+        except Exception as exc:
+            result = ToolResult(content=f'Tool execution error: {exc}', is_error=True)
+        ended_at = iso_now()
+        return result, started_at, ended_at, round(time.perf_counter() - start_perf, 4)
 
     def abort(self):
         """Abort the current turn immediately.
@@ -208,11 +262,26 @@ class Engine:
 
                 # API call with retry
                 final = None
+                self._turn_id += 1
+                turn_id = self._turn_id
                 for attempt in range(_MAX_RETRIES):
+                    call_id = f'llm-{turn_id}-{attempt + 1}'
+                    llm_start_perf = time.perf_counter()
+                    llm_start_ts = iso_now()
+                    request_payload: dict[str, Any] = {}
                     try:
                         tools = [t.to_api_schema() for t in self._tools.values()]
                         # Drop images from older messages right before each LLM call.
                         _strip_old_images(self._messages, keep_recent=1)
+                        request_payload = {
+                            'model': self._model,
+                            'provider': self._provider,
+                            'max_tokens': self._max_tokens,
+                            'system': safe_copy(self._system_prompt),
+                            'tools': safe_copy(tools),
+                            'messages': safe_copy(self._messages),
+                            'llm_kwargs': safe_copy(self._llm_kwargs),
+                        }
                         stream_obj = self._client.stream_messages(
                             model=self._model,
                             max_tokens=self._max_tokens,
@@ -242,16 +311,53 @@ class Engine:
                             for block in final.content:
                                 if _block_type(block) == 'tool_use':
                                     tool_uses.append(block)
+                            llm_end_ts = iso_now()
+                            duration_seconds = round(time.perf_counter() - llm_start_perf, 4)
+                            yield self._data_flow_event(
+                                event_type='cc_mini_llm_call',
+                                timestamp=llm_end_ts,
+                                payload=build_llm_ok_payload(
+                                    call_id=call_id,
+                                    turn_id=turn_id,
+                                    attempt=attempt + 1,
+                                    model=self._model,
+                                    provider=self._provider,
+                                    started_at=llm_start_ts,
+                                    ended_at=llm_end_ts,
+                                    duration_seconds=duration_seconds,
+                                    usage=final.usage,
+                                    request=request_payload,
+                                    assistant_content=final.content,
+                                ),
+                            )
                         break  # success, exit retry loop
                     except AbortedError:
                         raise
                     except Exception as e:
+                        err_msg = self._client.error_message(e)
+                        llm_end_ts = iso_now()
+                        duration_seconds = round(time.perf_counter() - llm_start_perf, 4)
+                        yield self._data_flow_event(
+                            event_type='cc_mini_error',
+                            timestamp=llm_end_ts,
+                            payload=build_llm_error_payload(
+                                call_id=call_id,
+                                turn_id=turn_id,
+                                attempt=attempt + 1,
+                                model=self._model,
+                                provider=self._provider,
+                                started_at=llm_start_ts,
+                                ended_at=llm_end_ts,
+                                duration_seconds=duration_seconds,
+                                error_message=err_msg,
+                                request=request_payload,
+                            ),
+                        )
                         if self._client.is_authentication_error(e):
                             self._messages.pop()
                             yield ('error', f'Authentication failed: {self._client.error_message(e)}')
                             return
                         # Context overflow: reduce max_tokens and retry
-                        err_msg = self._client.error_message(e)
                         if self._client.is_api_error(e) and _CONTEXT_OVERFLOW_RE.search(err_msg):
                             reduced = self._max_tokens // 2
                             if reduced >= 1024:
@@ -316,21 +422,41 @@ class Engine:
                         # --- parallel execution for read-only tools ---
                         # Phase 1: emit tool_call events + check permissions
                         approved: list[tuple] = []  # (tool_use, tool, activity)
-                        denied_results: dict[str, ToolResult] = {}  # by tool_use_id
+                        denied_results: dict[str, tuple[ToolResult, str, str, float]] = {}  # by tool_use_id
                         for tu in batch:
                             tn = _block_name(tu)
                             ti = _block_input(tu)
                             tool = self._tools.get(tn)
                             act = tool.get_activity_description(**ti) if tool else None
+                            tool_call_id = self._tool_call_id(turn_id, tu)
+                            call_ts = iso_now()
                             yield ('tool_call', tn, ti, act)
+                            yield self._data_flow_event(
+                                event_type='cc_mini_tool_call',
+                                timestamp=call_ts,
+                                payload=build_tool_event_payload(
+                                    tool_name=tn,
+                                    tool_input=ti,
+                                    call_id=tool_call_id,
+                                    turn_id=turn_id,
+                                    tool_use_id=_block_id(tu),
+                                    activity=act,
+                                    status='scheduled',
+                                ),
+                            )
                             if tool and self._permissions.check(tool, ti) == 'deny':
-                                denied_results[_block_id(tu)] = ToolResult(
-                                    content='Permission denied.', is_error=True)
+                                denied_at = iso_now()
+                                denied_results[_block_id(tu)] = (
+                                    ToolResult(content='Permission denied.', is_error=True),
+                                    call_ts,
+                                    denied_at,
+                                    0.0,
+                                )
                             else:
                                 approved.append((tu, tool, act))
 
                         # Phase 2: emit tool_executing for approved, then run in parallel
-                        executed_results: dict[str, ToolResult] = {}
+                        executed_results: dict[str, tuple[ToolResult, str, str, float]] = {}
                         if approved:
                             for tu, tool, act in approved:
                                 tn = _block_name(tu)
@@ -340,25 +466,49 @@ class Engine:
                             with ThreadPoolExecutor(max_workers=min(len(approved), 10)) as pool:
                                 futures = {}
                                 for tu, tool, act in approved:
-                                    f = pool.submit(self._execute_tool, tu, skip_permission=True)
+                                    f = pool.submit(
+                                        self._execute_tool_with_metrics,
+                                        tu,
+                                        skip_permission=True,
+                                    )
                                     futures[f] = tu
                                 for f in as_completed(futures):
                                     tu = futures[f]
-                                    try:
-                                        executed_results[_block_id(tu)] = f.result()
-                                    except Exception as exc:
-                                        executed_results[_block_id(tu)] = ToolResult(
-                                            content=f'Tool execution error: {exc}', is_error=True)
+                                    executed_results[_block_id(tu)] = f.result()
 
                         # Phase 3: emit results in original batch order
                         for tu in batch:
                             tid = _block_id(tu)
                             tn = _block_name(tu)
                             ti = _block_input(tu)
-                            result = denied_results.get(tid) or executed_results.get(tid)
-                            if result is None:
-                                result = ToolResult(content='No result', is_error=True)
+                            measured = denied_results.get(tid) or executed_results.get(tid)
+                            if measured is None:
+                                now = iso_now()
+                                measured = (
+                                    ToolResult(content='No result', is_error=True),
+                                    now,
+                                    now,
+                                    0.0,
+                                )
+                            result, started_at, ended_at, duration_seconds = measured
                             yield ('tool_result', tn, ti, result)
+                            yield self._data_flow_event(
+                                event_type='cc_mini_tool_result',
+                                timestamp=ended_at,
+                                payload=build_tool_event_payload(
+                                    tool_name=tn,
+                                    tool_input=ti,
+                                    call_id=self._tool_call_id(turn_id, tu),
+                                    turn_id=turn_id,
+                                    tool_use_id=tid,
+                                    activity=None,
+                                    status='done',
+                                    result=result,
+                                    started_at=started_at,
+                                    ended_at=ended_at,
+                                    duration_seconds=duration_seconds,
+                                ),
+                            )
                             tool_results.append(
                                 _build_tool_result_block(tid, result)
                             )
@@ -371,15 +521,55 @@ class Engine:
                             ti = _block_input(tu)
                             tool = self._tools.get(tn)
                             act = tool.get_activity_description(**ti) if tool else None
+                            tool_call_id = self._tool_call_id(turn_id, tu)
+                            call_ts = iso_now()
                             yield ('tool_call', tn, ti, act)
+                            yield self._data_flow_event(
+                                event_type='cc_mini_tool_call',
+                                timestamp=call_ts,
+                                payload=build_tool_event_payload(
+                                    tool_name=tn,
+                                    tool_input=ti,
+                                    call_id=tool_call_id,
+                                    turn_id=turn_id,
+                                    tool_use_id=_block_id(tu),
+                                    activity=act,
+                                    status='scheduled',
+                                ),
+                            )
 
                             if tool and self._permissions.check(tool, ti) == 'deny':
                                 result = ToolResult(content='Permission denied.', is_error=True)
+                                started_at = call_ts
+                                ended_at = iso_now()
+                                duration_seconds = 0.0
                             else:
                                 yield ('tool_executing', tn, ti, act)
-                                result = self._execute_tool(tu, skip_permission=True)
+                                result, started_at, ended_at, duration_seconds = (
+                                    self._execute_tool_with_metrics(
+                                        tu,
+                                        skip_permission=True,
+                                    )
+                                )
 
                             yield ('tool_result', tn, ti, result)
+                            yield self._data_flow_event(
+                                event_type='cc_mini_tool_result',
+                                timestamp=ended_at,
+                                payload=build_tool_event_payload(
+                                    tool_name=tn,
+                                    tool_input=ti,
+                                    call_id=tool_call_id,
+                                    turn_id=turn_id,
+                                    tool_use_id=_block_id(tu),
+                                    activity=act,
+                                    status='done',
+                                    result=result,
+                                    started_at=started_at,
+                                    ended_at=ended_at,
+                                    duration_seconds=duration_seconds,
+                                ),
+                            )
                             tool_results.append(
                                 _build_tool_result_block(_block_id(tu), result)
                             )
@@ -393,11 +583,51 @@ class Engine:
                     ss_tool = self._tools.get('mcp__browser__take_screenshot')
                     if ss_tool is not None:
                         ss_input = {'format': 'jpeg', 'quality': 55}
+                        ss_act = ss_tool.get_activity_description(**ss_input)
+                        synthetic_id = f'auto_screenshot_{time.time_ns()}'
+                        ss_call_id = f'tool-{turn_id}-{synthetic_id}'
+                        ss_call_ts = iso_now()
+                        yield ('tool_call', 'mcp__browser__take_screenshot', ss_input, ss_act)
+                        yield self._data_flow_event(
+                            event_type='cc_mini_tool_call',
+                            timestamp=ss_call_ts,
+                            payload=build_tool_event_payload(
+                                tool_name='mcp__browser__take_screenshot',
+                                tool_input=ss_input,
+                                call_id=ss_call_id,
+                                turn_id=turn_id,
+                                tool_use_id=synthetic_id,
+                                activity=ss_act,
+                                status='scheduled',
+                                synthetic=True,
+                            ),
+                        )
+                        ss_start = iso_now()
+                        ss_perf = time.perf_counter()
                         ss_result = ss_tool.execute(**ss_input)
+                        ss_end = iso_now()
+                        ss_duration = round(time.perf_counter() - ss_perf, 4)
                         yield ('tool_result', 'mcp__browser__take_screenshot',
                                ss_input, ss_result)
+                        yield self._data_flow_event(
+                            event_type='cc_mini_tool_result',
+                            timestamp=ss_end,
+                            payload=build_tool_event_payload(
+                                tool_name='mcp__browser__take_screenshot',
+                                tool_input=ss_input,
+                                call_id=ss_call_id,
+                                turn_id=turn_id,
+                                tool_use_id=synthetic_id,
+                                activity=ss_act,
+                                status='done',
+                                result=ss_result,
+                                started_at=ss_start,
+                                ended_at=ss_end,
+                                duration_seconds=ss_duration,
+                                synthetic=True,
+                            ),
+                        )
                         # Build a synthetic tool_use_id for the injected screenshot.
-                        synthetic_id = f'auto_screenshot_{id(ss_result)}'
                         # Inject a matching tool_use into the assistant message
                         # so OpenAI sees a valid tool_call ↔ tool pairing.
                         assistant_content = self._messages[-1].get('content')
@@ -515,7 +745,7 @@ def _build_tool_result_block(tool_use_id: str, result: ToolResult) -> dict[str, 
     }
 
 
-def _strip_old_images(messages: list[dict], *, keep_recent: int = 1) -> None:
+def _strip_old_images(messages: list[dict], *, keep_recent: int = 2) -> None:
     """Remove image blocks from all but the most recent *keep_recent*
     tool_result messages.
 

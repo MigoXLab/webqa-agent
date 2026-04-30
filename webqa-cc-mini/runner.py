@@ -51,7 +51,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-EventCallback = Callable[[tuple[str, ...]], None]
+EventCallback = Callable[[tuple[Any, ...]], None]
+DataFlowSink = Callable[[dict[str, Any]], None]
 
 from core.config import DEFAULT_MODEL, DEFAULT_PROVIDER, MCPServerConfig
 from core.context import build_web_agent_system_prompt
@@ -187,6 +188,8 @@ class ToolCall:
     input: dict
     result: str
     is_error: bool
+    start_ts: float = 0.0
+    end_ts: float = 0.0
 
 
 @dataclass
@@ -195,6 +198,9 @@ class Step:
     tool_calls: list[ToolCall] = field(default_factory=list)
     screenshots: list[dict[str, str]] = field(default_factory=list)
     timestamp: float = field(default_factory=time.time)
+    end_ts: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
 
     # Convenience properties so adapter / report code can still read these
     @property
@@ -222,6 +228,7 @@ class RunResult:
     input_tokens: int = 0
     output_tokens: int = 0
     extensions_failed: list[str] = field(default_factory=list)
+    data_flow_events: list[dict[str, Any]] = field(default_factory=list)
 
 
 def run_cc_mini(
@@ -252,6 +259,7 @@ def run_cc_mini(
     progress_no_terminal_ui: bool = True,
     progress_log_level: str = 'info',
     on_event: EventCallback | None = None,
+    data_flow_sink: DataFlowSink | None = None,
     extra_tools: list[Tool] | None = None,
     pre_engine_hook: Callable[['MCPManager', int], None] | None = None,
     extra_section: str | None = None,
@@ -379,6 +387,7 @@ def run_cc_mini(
     last_input_tokens = 0
     # Falls back to estimate_tokens when a provider never emits "usage" events.
     seen_usage = False
+    data_flow_events: list[dict[str, Any]] = []
     display_bridge = _DisplayProgressBridge(
         enabled=enable_display_progress,
         language=progress_language,
@@ -491,8 +500,15 @@ def run_cc_mini(
 
         # engine.py emits tool_results in the same order as the batched calls.
         pending: deque[dict] = deque()
+        pending_turn_metrics: deque[dict[str, int]] = deque()
         _agent_text_buf: list[str] = []
         _cur_step: Step | None = None  # step being built for the current agent turn
+
+        def _attach_pending_metrics(step: Step) -> None:
+            if pending_turn_metrics and step.input_tokens == 0 and step.output_tokens == 0:
+                metrics = pending_turn_metrics.popleft()
+                step.input_tokens = metrics.get('input_tokens', 0)
+                step.output_tokens = metrics.get('output_tokens', 0)
 
         seed = (
             f'Target URL: {url}\n\n'
@@ -527,10 +543,21 @@ def run_cc_mini(
                 pending.append({'tool': evt[1], 'input': evt[2], 'ts': time.time()})
                 log.info('tool_call: %s', evt[1])
 
+            elif kind == 'data_flow_event':
+                event = evt[1] if len(evt) > 1 and isinstance(evt[1], dict) else {}
+                if event:
+                    data_flow_events.append(event)
+                    if data_flow_sink is not None:
+                        try:
+                            data_flow_sink(event)
+                        except Exception as sink_exc:
+                            log.warning('data_flow_sink raised: %s', sink_exc)
+
             elif kind == 'tool_result':
                 tool_result = evt[3]
                 if pending:
                     p = pending.popleft()
+                    ended_at = time.time()
                     step_index = len(steps) + 1
                     screenshots = _persist_step_screenshots(
                         tool_result=evt[3],
@@ -542,11 +569,15 @@ def run_cc_mini(
                         input=p['input'],
                         result=tool_result.content,
                         is_error=tool_result.is_error,
+                        start_ts=p.get('ts', ended_at),
+                        end_ts=ended_at,
                     )
                     if _cur_step is None:
                         _cur_step = Step(description='', timestamp=p.get('ts', time.time()))
+                        _attach_pending_metrics(_cur_step)
                     _cur_step.tool_calls.append(tc)
                     _cur_step.screenshots.extend(screenshots)
+                    _cur_step.end_ts = max(_cur_step.end_ts, ended_at)
 
                 if tool_result.is_error:
                     snippet = (tool_result.content or '')[:200]
@@ -576,17 +607,29 @@ def run_cc_mini(
                 if _cur_step is not None:
                     # attach description to the step that just finished
                     _cur_step.description = _cur_step.description or description
+                    _cur_step.end_ts = _cur_step.end_ts or time.time()
                     steps.append(_cur_step)
                     _cur_step = None
                 # open a fresh step for the upcoming tool_calls
                 _cur_step = Step(description=description)
+                _attach_pending_metrics(_cur_step)
 
             elif kind == 'usage':
                 u = evt[1]
                 seen_usage = True
                 last_input_tokens = getattr(u, 'input_tokens', 0) or 0
+                output_tokens = getattr(u, 'output_tokens', 0) or 0
                 total_tokens['input'] += last_input_tokens
-                total_tokens['output'] += getattr(u, 'output_tokens', 0) or 0
+                total_tokens['output'] += output_tokens
+                metrics = {
+                    'input_tokens': int(last_input_tokens),
+                    'output_tokens': int(output_tokens),
+                }
+                if _cur_step is not None and _cur_step.input_tokens == 0 and _cur_step.output_tokens == 0:
+                    _cur_step.input_tokens = metrics['input_tokens']
+                    _cur_step.output_tokens = metrics['output_tokens']
+                else:
+                    pending_turn_metrics.append(metrics)
                 _maybe_compact(last_input_tokens)
 
             if len(steps) >= max_iterations:
@@ -596,6 +639,7 @@ def run_cc_mini(
 
         # flush any step still in progress when the loop ends
         if _cur_step is not None and _cur_step.tool_calls:
+            _cur_step.end_ts = _cur_step.end_ts or time.time()
             steps.append(_cur_step)
             _cur_step = None
 
@@ -613,6 +657,7 @@ def run_cc_mini(
             input_tokens=total_tokens['input'],
             output_tokens=total_tokens['output'],
             extensions_failed=extensions_failed,
+            data_flow_events=data_flow_events,
         )
         return _run_result
 
@@ -625,6 +670,7 @@ def run_cc_mini(
             input_tokens=total_tokens['input'],
             output_tokens=total_tokens['output'],
             extensions_failed=extensions_failed,
+            data_flow_events=data_flow_events,
         )
         return _run_result
 
@@ -638,6 +684,7 @@ def run_cc_mini(
             input_tokens=total_tokens['input'],
             output_tokens=total_tokens['output'],
             extensions_failed=extensions_failed,
+            data_flow_events=data_flow_events,
         )
         return _run_result
 

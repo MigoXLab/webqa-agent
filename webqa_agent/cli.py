@@ -153,6 +153,7 @@ async def _execute_cc_mini_mode(
     file_catalog: str | None = None,
     save_screenshots: bool = False,
     screenshot_dir: str | None = None,
+    data_flow_sink=None,
     browser_headless: bool = False,
     browser_viewport: tuple[int, int] | None = None,
     log_level: str = 'info',
@@ -207,6 +208,7 @@ async def _execute_cc_mini_mode(
         file_catalog=file_catalog,
         save_screenshots=save_screenshots,
         screenshot_dir=screenshot_dir,
+        data_flow_sink=data_flow_sink,
         browser_headless=browser_headless,
         browser_viewport=browser_viewport,
         worker_id=worker_id,
@@ -455,10 +457,26 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
         )
         report_cfg_raw = cfg.get('report', {})
         save_screenshots = bool(report_cfg_raw.get('save_screenshots', False))
+        save_dataflow = bool(report_cfg_raw.get('save_dataflow', True))
         screenshot_dir = (
             str(Path(resolved_report_dir) / 'screenshots')
             if save_screenshots else None
         )
+        data_flow_sink = None
+        if save_dataflow:
+            from webqa_agent.utils.data_flow_reporter import (
+                record_data_flow_event_object,
+                set_dataflow_enabled,
+            )
+            set_dataflow_enabled(True)
+
+            def _cc_mini_data_flow_sink(event: dict[str, Any]) -> None:
+                record_data_flow_event_object(event, report_dir=resolved_report_dir)
+
+            data_flow_sink = _cc_mini_data_flow_sink
+        else:
+            from webqa_agent.utils.data_flow_reporter import set_dataflow_enabled
+            set_dataflow_enabled(False)
         task = business_objectives.strip()
         if not task:
             print('❌ test_config.business_objectives is required when test_config.use_cc_mini=true', file=sys.stderr)
@@ -574,6 +592,7 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
                 file_catalog=cc_mini_file_catalog,
                 save_screenshots=save_screenshots,
                 screenshot_dir=screenshot_dir,
+                data_flow_sink=data_flow_sink,
                 browser_headless=browser_headless,
                 browser_viewport=browser_viewport,
                 log_level=log_level,
@@ -621,6 +640,18 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
         )
         if report_path:
             print(f'📄 Report: {report_path}')
+        if save_dataflow:
+            try:
+                from webqa_agent.utils.data_flow_reporter import generate_data_flow_report
+                dataflow_path = generate_data_flow_report(
+                    resolved_report_dir,
+                    group_mode='tool',
+                )
+                if dataflow_path:
+                    print(f'📊 Data flow: {dataflow_path}')
+            except Exception as dataflow_exc:
+                print(f'⚠️ Failed to generate cc-mini data flow report: {dataflow_exc}',
+                      file=sys.stderr)
         return
 
     # Check Playwright browsers

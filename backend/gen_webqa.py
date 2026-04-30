@@ -17,7 +17,7 @@ import os
 import sys
 import threading
 import time
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from pathlib import Path
 
 import yaml
@@ -218,6 +218,27 @@ async def execute_cc_mini_webqa(
         else None
     )
 
+    # Mirror cli.py cc-mini path: when save_dataflow is on, wire a sink that
+    # writes each engine event to {report_dir}/data_flow_events.jsonl. This is
+    # the only way the JSONL gets persisted, since the cc-mini runner keeps
+    # events in-memory unless a sink is supplied.
+    save_dataflow = bool(report_cfg.get('save_dataflow', True))
+    data_flow_sink = None
+    if save_dataflow and report_dir_override:
+        from webqa_agent.utils.data_flow_reporter import (
+            record_data_flow_event_object,
+            set_dataflow_enabled,
+        )
+        set_dataflow_enabled(True)
+
+        def _cc_mini_data_flow_sink(event: Dict[str, Any]) -> None:
+            record_data_flow_event_object(event, report_dir=report_dir_override)
+
+        data_flow_sink = _cc_mini_data_flow_sink
+    else:
+        from webqa_agent.utils.data_flow_reporter import set_dataflow_enabled
+        set_dataflow_enabled(False)
+
     run_cc_mini = _load_cc_mini_runner()
     extension_kwargs: Dict[str, object] = {}
     try:
@@ -265,6 +286,7 @@ async def execute_cc_mini_webqa(
             progress_language=str(report_cfg.get('language') or 'zh-CN'),
             progress_no_terminal_ui=True,
             progress_log_level='info',
+            data_flow_sink=data_flow_sink,
             **extension_kwargs,
         )
     finally:
@@ -281,6 +303,14 @@ async def execute_cc_mini_webqa(
             task=task,
             language=language,
         )
+
+    if save_dataflow and report_dir_override:
+        try:
+            from webqa_agent.utils.data_flow_reporter import generate_data_flow_report
+            generate_data_flow_report(report_dir_override, group_mode='tool')
+        except Exception as dataflow_exc:
+            print(f'[Warning] Failed to generate cc-mini data flow report: {dataflow_exc}',
+                  file=sys.stderr)
 
     result_count = _build_cc_mini_result_count(result)
     return [{'runner': 'cc-mini'}], report_dir_override, html_report_path, result_count
