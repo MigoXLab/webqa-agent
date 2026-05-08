@@ -281,6 +281,105 @@ def run_result_to_aggregated_data(
     ``ParallelTestSession`` falls back role of carrying session metadata
     (``report_path``) while this dict drives the UI.
     """
+    return run_results_to_aggregated_data(
+        [run_result], url=url, tasks=[task], language=language,
+    )
+
+
+def run_results_to_aggregated_data(
+    run_results: list[Any],
+    *,
+    url: str,
+    tasks: list[str],
+    language: str = 'zh-CN',
+) -> dict:
+    """Multi-case version of :func:`run_result_to_aggregated_data`.
+
+    Each ``RunResult`` becomes one ``case_<n>_<safe>`` entry; the index
+    block aggregates pass/fail/warning counts and lists every case under
+    ``gen_result``. ``run_results`` and ``tasks`` are zipped positionally
+    — they must have the same length.
+
+    Used by :class:`webqa_agent.executor.cc_mini_executor.CcMiniExecutor`
+    to render one HTML report containing every concurrent task.
+    """
+    if len(run_results) != len(tasks):
+        raise ValueError(
+            f'run_results ({len(run_results)}) and tasks ({len(tasks)}) '
+            'must have the same length.'
+        )
+    if not run_results:
+        raise ValueError('run_results must not be empty.')
+
+    now = datetime.now()
+    now_iso = now.isoformat(timespec='seconds')
+
+    gen_block: dict[str, Any] = {}
+    gen_results: list[dict[str, Any]] = []
+    summaries: list[str] = []
+    total_steps_all = 0
+    count = {'total': 0, 'passed': 0, 'failed': 0, 'warning': 0}
+
+    for idx, (run_result, task) in enumerate(zip(run_results, tasks), start=1):
+        case_key, case_entry, gen_entry, summary_text = _build_case_entry(
+            run_result=run_result,
+            task=task,
+            case_index=idx,
+            now_iso=now_iso,
+        )
+        gen_block[case_key] = case_entry
+        gen_results.append(gen_entry)
+        if summary_text:
+            summaries.append(f'[case-{idx}] {summary_text}')
+        total_steps_all += int(case_entry['metrics'].get('total_steps', 0) or 0)
+        status = case_entry['status']
+        count['total'] += 1
+        if status in count:
+            count[status] += 1
+        else:  # status not in canonical bucket falls back to 'failed'
+            count['failed'] += 1
+
+    test_items = [{
+        'name': '功能测试' if language != 'en-US' else 'Functional',
+        'item': (
+            f'执行了 {total_steps_all} 个步骤(共 {count["total"]} 个 case)'
+            if language != 'en-US'
+            else f'Executed {total_steps_all} steps across {count["total"]} cases'
+        ),
+    }]
+    summary_text = '\n\n'.join(summaries)
+
+    index_entry = {
+        'session_info': {
+            'session_id': f'cc-mini-{uuid.uuid4().hex[:8]}',
+            'target_url': url,
+            'start_time': now_iso,
+            'end_time': now_iso,
+        },
+        'aggregated_results': {
+            'title': 'Overview',
+            'mode': 'gen',
+            'count': count,
+            'test_items': test_items,
+            'summary': summary_text,
+            'gen_result': gen_results,
+        },
+        'count': count,
+    }
+
+    gen_block['index'] = index_entry
+    return {'gen': gen_block}
+
+
+def _build_case_entry(
+    *,
+    run_result: Any,
+    task: str,
+    case_index: int,
+    now_iso: str,
+) -> tuple[str, dict[str, Any], dict[str, Any], str]:
+    """Build (case_key, case_entry, gen_result_entry, summary_text) for one
+    run."""
     raw_steps = list(getattr(run_result, 'steps', None) or [])
     step_dicts: list[dict] = [
         _map_step_dict(i, step) for i, step in enumerate(raw_steps, start=1)
@@ -294,12 +393,10 @@ def run_result_to_aggregated_data(
     overall_status, status_source = derive_status(
         aborted=aborted, failed_count=failed_count, outcome=outcome,
     )
-    now = datetime.now()
-    now_iso = now.isoformat(timespec='seconds')
 
     display_name = (task or 'cc-mini run').strip()
     safe_name = sanitize_case_name(display_name) or 'cc_mini_run'
-    case_id = 'case_1'
+    case_id = f'case_{case_index}'
     case_key = f'{case_id}_{safe_name}'
     sub_test_id = case_id
 
@@ -344,39 +441,7 @@ def run_result_to_aggregated_data(
         'status': overall_status,
         'sub_test_id': sub_test_id,
     }
-    count = {
-        'total': 1,
-        'passed': 1 if overall_status == 'passed' else 0,
-        'failed': 1 if overall_status == 'failed' else 0,
-        'warning': 1 if overall_status == 'warning' else 0,
-    }
-    test_items = [{
-        'name': '功能测试' if language != 'en-US' else 'Functional',
-        'item': (
-            f'执行了 {len(step_dicts)} 个步骤' if language != 'en-US'
-            else f'Executed {len(step_dicts)} steps'
-        ),
-    }]
-
-    index_entry = {
-        'session_info': {
-            'session_id': f'cc-mini-{uuid.uuid4().hex[:8]}',
-            'target_url': url,
-            'start_time': now_iso,
-            'end_time': now_iso,
-        },
-        'aggregated_results': {
-            'title': 'Overview',
-            'mode': 'gen',
-            'count': count,
-            'test_items': test_items,
-            'summary': final_text,
-            'gen_result': [gen_result_entry],
-        },
-        'count': count,
-    }
-
-    return {'gen': {case_key: case_entry, 'index': index_entry}}
+    return case_key, case_entry, gen_result_entry, final_text
 
 
 def _map_step_dict(index: int, step: Any) -> dict:

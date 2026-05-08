@@ -19,19 +19,29 @@ class _UnexpectedExecutor:
 
 def _load_cli_module(monkeypatch: pytest.MonkeyPatch):
     """Import cli with a lightweight executor stub scoped to one test."""
-    # Pre-import real sub-modules that _render_cc_mini_report uses lazily,
-    # BEFORE overwriting the executor package with a stub.
+    # Pre-import real sub-modules that _render_cc_mini_report and the CLI's
+    # cc-mini batch path use lazily, BEFORE overwriting the executor package
+    # with a stub.
     _real_submodules = {}
     for mod_name in (
         'webqa_agent.executor.cc_mini_report_adapter',
+        'webqa_agent.executor.cc_mini_executor',
         'webqa_agent.executor.result_aggregator',
     ):
         if mod_name not in sys.modules:
             importlib.import_module(mod_name)
         _real_submodules[mod_name] = sys.modules[mod_name]
 
+    cc_mini_executor_module = _real_submodules[
+        'webqa_agent.executor.cc_mini_executor'
+    ]
     executor_pkg = types.ModuleType('webqa_agent.executor')
     executor_pkg.__path__ = []
+    # Re-export the real CcMiniExecutor on the stubbed package so the CLI's
+    # `from webqa_agent.executor import CcMiniExecutor` keeps working without
+    # pulling in GenExecutor (which is what the stub is trying to avoid).
+    executor_pkg.CcMiniExecutor = cc_mini_executor_module.CcMiniExecutor
+    executor_pkg.CcMiniBatchResult = cc_mini_executor_module.CcMiniBatchResult
     gen_executor_module = types.ModuleType('webqa_agent.executor.gen_executor')
     gen_executor_module.GenExecutor = _UnexpectedExecutor
 
@@ -68,7 +78,7 @@ class _FakeRunResult:
             self.steps = [_FakeStep()]
 
 
-def test_execute_gen_mode_routes_to_cc_mini(monkeypatch, capsys):
+def test_execute_gen_mode_routes_to_cc_mini(monkeypatch, tmp_path, capsys):
     """Gen mode should route to cc-mini when test_config.use_cc_mini is
     enabled."""
     cli = _load_cli_module(monkeypatch)
@@ -92,6 +102,9 @@ def test_execute_gen_mode_routes_to_cc_mini(monkeypatch, capsys):
             'base_url': 'http://localhost:8000/v1',
             'reasoning': {'effort': 'medium'},
         },
+        # Pin report_dir under tmp_path so the test does not pollute the
+        # real ./reports/ tree with a fresh test_<timestamp>/ each run.
+        'report': {'report_dir': str(tmp_path / 'cc-mini-out')},
     }
 
     asyncio.run(cli.execute_gen_mode(cfg))
@@ -134,11 +147,16 @@ def test_execute_gen_mode_routes_to_cc_mini(monkeypatch, capsys):
     }
     stdout = capsys.readouterr().out
     assert 'Gen Mode (cc-mini backend)' in stdout
-    assert 'cc-mini Task: 验证搜索功能' in stdout
+    # The CLI now prints a numbered task list instead of the singular
+    # "cc-mini Task: …" line, since business_objectives can be a batch.
+    assert 'cc-mini Tasks: 1' in stdout
+    assert '1. 验证搜索功能' in stdout
     assert 'cc-mini browser headless: True' in stdout
 
 
-def test_execute_gen_mode_forwards_llm_tuning_params_to_cc_mini(monkeypatch):
+def test_execute_gen_mode_forwards_llm_tuning_params_to_cc_mini(
+    monkeypatch, tmp_path,
+):
     """Temperature / top_p / max_tokens / timeout must reach the cc-mini
     bridge.
 
@@ -171,6 +189,7 @@ def test_execute_gen_mode_forwards_llm_tuning_params_to_cc_mini(monkeypatch):
             'max_tokens': 4096,
             'timeout': 120,
         },
+        'report': {'report_dir': str(tmp_path / 'cc-mini-out')},
     }
 
     asyncio.run(cli.execute_gen_mode(cfg))
@@ -204,11 +223,10 @@ def test_execute_gen_mode_requires_business_objectives_for_cc_mini(monkeypatch):
     assert exc_info.value.code == 1
 
 
-def test_execute_gen_mode_exits_on_cc_mini_fatal_error(
+def test_execute_gen_mode_exits_nonzero_when_case_failed(
     monkeypatch, tmp_path, capsys,
 ):
-    """Infrastructure failures in cc-mini should be surfaced as CLI
-    failures."""
+    """Failed overall batch exits with code 1 so CI can gate on webqa-agent."""
     cli = _load_cli_module(monkeypatch)
 
     async def fake_execute_cc_mini_mode(**kwargs):
@@ -231,14 +249,17 @@ def test_execute_gen_mode_exits_on_cc_mini_fatal_error(
 
     with pytest.raises(SystemExit) as exc_info:
         asyncio.run(cli.execute_gen_mode(cfg))
-
     assert exc_info.value.code == 1
+
     stdout = capsys.readouterr().out
-    assert '❌ Failed' in stdout
-    assert 'Aborted: True' in stdout
+    assert 'Some cases failed' in stdout
+    assert '0/1 passed' in stdout
+    assert 'case-1 ❌ failed' in stdout
 
 
-def test_execute_gen_mode_anthropic_drops_openai_default_base_url(monkeypatch):
+def test_execute_gen_mode_anthropic_drops_openai_default_base_url(
+    monkeypatch, tmp_path,
+):
     """Anthropic provider must not inherit the OpenAI base_url default.
 
     ``validate_and_build_llm_config`` injects ``https://api.openai.com/v1`` when
@@ -268,6 +289,7 @@ def test_execute_gen_mode_anthropic_drops_openai_default_base_url(monkeypatch):
             # base_url intentionally omitted — the default OpenAI URL would
             # normally leak through for non-explicit configurations.
         },
+        'report': {'report_dir': str(tmp_path / 'cc-mini-out')},
     }
 
     asyncio.run(cli.execute_gen_mode(cfg))
@@ -302,6 +324,7 @@ def test_execute_gen_mode_forwards_skills_dir_to_cc_mini(monkeypatch, tmp_path):
             'model': 'gpt-4o', 'api_key': 'k',
             'base_url': 'https://api.openai.com/v1',
         },
+        'report': {'report_dir': str(tmp_path / 'cc-mini-out')},
     }
 
     asyncio.run(cli.execute_gen_mode(cfg))

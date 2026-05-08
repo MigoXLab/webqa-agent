@@ -17,7 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY vendor/nuclei_3.3.7_linux_amd64.zip /tmp/nuclei.zip
 RUN unzip -o /tmp/nuclei.zip -d /usr/local/bin/ \
     && chmod +x /usr/local/bin/nuclei \
-    && rm /tmp/nuclei.zip
+    && rm /tmp/nuclei.zip \
+    && nuclei -ut -silent
 
 COPY webqa_agent/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple \

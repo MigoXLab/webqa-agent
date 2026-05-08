@@ -19,8 +19,8 @@ if str(_CC_MINI_ROOT) not in sys.path:
     sys.path.insert(0, str(_CC_MINI_ROOT))
 
 from core.context import build_web_agent_system_prompt  # noqa: E402
-from core.load_skill_tool import LoadSkillTool  # noqa: E402
 from core.skill_registry import SkillMetadata, SkillRegistry  # noqa: E402
+from tools.load_skill_tool import LoadSkillTool  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixtures

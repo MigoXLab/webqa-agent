@@ -11,14 +11,13 @@ Usage:
 
 import argparse
 import asyncio
-import importlib.util
 import json
 import os
 import sys
 import threading
 import time
-from typing import Any, Dict, Optional
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 import yaml
 
@@ -42,12 +41,6 @@ def load_yaml_file(yaml_path: str) -> Dict:
         return yaml.safe_load(f)
 
 
-def _load_cc_mini_runner():
-    """Load ``run_cc_mini`` from sibling ``webqa-cc-mini`` tree."""
-    from webqa_agent.utils.cc_mini_utils import load_cc_mini_runner
-    return load_cc_mini_runner(module_name='webqa_cc_mini_runner_for_backend')
-
-
 def _resolve_cc_mini_provider(llm_cfg: Dict) -> str:
     """Resolve provider name for cc-mini from Gen llm_config."""
     provider = str(llm_cfg.get('api', 'openai')).lower()
@@ -62,14 +55,20 @@ def _resolve_cc_mini_provider(llm_cfg: Dict) -> str:
     return 'openai'
 
 
-def _extract_cc_mini_task(config_data: Dict) -> str:
-    """Extract task text for cc-mini execution from gen config."""
-    task = str(config_data.get('business_objectives') or '').strip()
+def _extract_cc_mini_tasks(config_data: Dict) -> list:
+    """Extract task(s) for cc-mini from gen config.
+
+    Returns a list of strings.
+    """
+    objectives = config_data.get('business_objectives')
+    if isinstance(objectives, list):
+        return [t.strip() for t in objectives if isinstance(t, str) and t.strip()]
+    task = str(objectives or '').strip()
     if task:
-        return task
+        return [task]
     test_cfg = config_data.get('test_config') or {}
     task = str(test_cfg.get('business_objectives') or '').strip()
-    return task
+    return [task] if task else []
 
 
 def _bundled_cc_mini_skills_dir() -> Path:
@@ -78,7 +77,8 @@ def _bundled_cc_mini_skills_dir() -> Path:
 
 
 def _resolve_cc_mini_skills_dir(config_data: Dict) -> Optional[str]:
-    """``test_config.cc_mini_skills_dir`` or bundled ``webqa-cc-mini/skills``."""
+    """``test_config.cc_mini_skills_dir`` or bundled ``webqa-cc-
+    mini/skills``."""
     test_cfg = config_data.get('test_config') or {}
     explicit = str(test_cfg.get('cc_mini_skills_dir') or '').strip()
     if explicit:
@@ -127,75 +127,28 @@ def _build_cc_mini_file_catalog(config_data: Dict) -> Optional[str]:
     return catalog or None
 
 
-def _build_cc_mini_result_count(run_result) -> Dict[str, int]:
-    """Map cc-mini RunResult to backend-compatible result_count."""
-    try:
-        from webqa_agent.executor.cc_mini_report_adapter import run_result_to_aggregated_data
-        aggregated_data = run_result_to_aggregated_data(
-            run_result,
-            url='',
-            task='',
-            language='zh-CN',
-        )
-        count = (
-            (aggregated_data.get('gen') or {})
-            .get('index', {})
-            .get('count', {})
-        )
-        total = int(count.get('total', 1) or 1)
-        passed = int(count.get('passed', 0) or 0)
-        failed = int(count.get('failed', 0) or 0)
-        warning = int(count.get('warning', 0) or 0)
-        return {
-            'total': total,
-            'passed': passed,
-            'failed': failed,
-            'warning': warning,
-        }
-    except Exception:
-        # Conservative fallback: aborted means failed, otherwise passed.
-        aborted = bool(getattr(run_result, 'aborted', False))
-        return {
-            'total': 1,
-            'passed': 0 if aborted else 1,
-            'failed': 1 if aborted else 0,
-            'warning': 0,
-        }
-
-
-def _render_cc_mini_report(
-    run_result,
-    *,
-    report_dir: str,
-    url: str,
-    task: str,
-    language: str = 'zh-CN',
-) -> Optional[str]:
-    """Render HTML report for cc-mini run, delegates to shared utility."""
-    from webqa_agent.utils.cc_mini_utils import render_cc_mini_report
-    return render_cc_mini_report(
-        run_result,
-        report_dir=report_dir,
-        url=url,
-        task=task,
-        language=language,
-    )
-
-
 async def execute_cc_mini_webqa(
     config_data: Dict,
     report_dir_override: str | None = None,
     *,
     source_file: str | None = None,
 ):
-    """Execute cc-mini runner based on gen config payload."""
+    """Execute cc-mini runner based on gen config payload.
+
+    A single, unified path for both single-task (``business_objectives`` as
+    a string) and multi-task (``business_objectives`` as a list). Both go
+    through ``CcMiniExecutor`` with shared progress hooks; single-task
+    is just the N=1 case of the same code path. ``render_cc_mini_report``
+    itself is a thin wrapper around ``render_cc_mini_multi_report`` so the
+    HTML output is identical to the legacy single-task path.
+    """
     llm_cfg = config_data.get('llm_config') or {}
     target_url = str(config_data.get('target_url') or '').strip()
     if not target_url:
         raise ValueError('cc-mini requires gen_config.target_url')
 
-    task = _extract_cc_mini_task(config_data)
-    if not task:
+    tasks = _extract_cc_mini_tasks(config_data)
+    if not tasks:
         raise ValueError('cc-mini requires business_objectives')
 
     model = str(llm_cfg.get('model') or '').strip()
@@ -212,108 +165,98 @@ async def execute_cc_mini_webqa(
 
     report_cfg = config_data.get('report_config') or {}
     save_screenshots = bool(report_cfg.get('save_screenshots', False))
-    screenshot_dir = (
-        str(Path(report_dir_override) / 'screenshots')
-        if save_screenshots and report_dir_override
-        else None
-    )
-
-    # Mirror cli.py cc-mini path: when save_dataflow is on, wire a sink that
-    # writes each engine event to {report_dir}/data_flow_events.jsonl. This is
-    # the only way the JSONL gets persisted, since the cc-mini runner keeps
-    # events in-memory unless a sink is supplied.
     save_dataflow = bool(report_cfg.get('save_dataflow', True))
-    data_flow_sink = None
-    if save_dataflow and report_dir_override:
-        from webqa_agent.utils.data_flow_reporter import (
-            record_data_flow_event_object,
-            set_dataflow_enabled,
-        )
-        set_dataflow_enabled(True)
+    language = str(report_cfg.get('language') or 'zh-CN')
 
-        def _cc_mini_data_flow_sink(event: Dict[str, Any]) -> None:
-            record_data_flow_event_object(event, report_dir=report_dir_override)
+    # Setup data flow recording (CcMiniExecutor's per-task sinks rely on
+    # this global flag — see data_flow_reporter.record_data_flow_event_object).
+    from webqa_agent.utils.data_flow_reporter import set_dataflow_enabled
+    set_dataflow_enabled(bool(save_dataflow and report_dir_override))
 
-        data_flow_sink = _cc_mini_data_flow_sink
-    else:
-        from webqa_agent.utils.data_flow_reporter import set_dataflow_enabled
-        set_dataflow_enabled(False)
-
-    run_cc_mini = _load_cc_mini_runner()
-    extension_kwargs: Dict[str, object] = {}
+    # Build cookie extensions (passed through CcMiniExecutor's shared_kwargs
+    # → cli.execute_cc_mini_mode → run_cc_mini).
+    extensions = None
     try:
-        from webqa_agent.utils.cc_mini_utils import build_cookie_extensions_from_config
+        from webqa_agent.utils.cc_mini_utils import \
+            build_cookie_extensions_from_config
         extensions = build_cookie_extensions_from_config(
             config_data,
             source_file=source_file,
         )
     except ValueError as exc:
         raise ValueError(f'cc-mini cookie configuration error: {exc}') from exc
-    if extensions is not None and hasattr(extensions, 'as_kwargs'):
-        extension_kwargs = extensions.as_kwargs()
 
     file_catalog = _build_cc_mini_file_catalog(config_data)
-    execution_id = str(config_data.get('execution_id') or os.getenv('EXECUTION_ID') or '').strip()
-    progress_pusher: Optional[ProgressPusher] = None
-    stdout_mode = os.getenv('WEBQA_STDOUT', '').lower() == 'true'
-    if BACKEND_CALLBACK_URL and execution_id and not stdout_mode:
-        progress_pusher = ProgressPusher(BACKEND_CALLBACK_URL, execution_id, interval=1.0)
-        progress_pusher.start()
+    skills_dir = _resolve_cc_mini_skills_dir(config_data)
+    effort = (
+        (llm_cfg.get('reasoning') or {}).get('effort')
+        if isinstance(llm_cfg.get('reasoning'), dict) else None
+    )
+    max_concurrent = int(config_data.get('max_concurrent_tests') or len(tasks))
 
-    try:
-        result = await asyncio.to_thread(
-            run_cc_mini,
-            target_url,
-            task,
-            provider=provider,
-            model=model,
-            api_key=api_key,
-            base_url=base_url,
-            effort=(llm_cfg.get('reasoning') or {}).get('effort') if isinstance(llm_cfg.get('reasoning'), dict) else None,
-            temperature=llm_cfg.get('temperature'),
-            top_p=llm_cfg.get('top_p'),
-            max_tokens=llm_cfg.get('max_tokens'),
-            timeout=llm_cfg.get('timeout'),
-            skills_dir=_resolve_cc_mini_skills_dir(config_data),
-            file_catalog=file_catalog,
-            save_screenshots=save_screenshots,
-            screenshot_dir=screenshot_dir,
-            browser_headless=True,
-            browser_viewport=(1280, 720),
-            # In stdout mode, external pusher may already run in main().
-            # Keep display progress enabled so logs/task rows are still produced.
-            enable_display_progress=bool(progress_pusher) or stdout_mode,
-            progress_language=str(report_cfg.get('language') or 'zh-CN'),
-            progress_no_terminal_ui=True,
-            progress_log_level='info',
-            data_flow_sink=data_flow_sink,
-            **extension_kwargs,
-        )
-    finally:
-        if progress_pusher:
-            progress_pusher.stop()
+    from webqa_agent.cli import execute_cc_mini_mode
+    from webqa_agent.executor import CcMiniExecutor
 
-    html_report_path = None
-    if report_dir_override:
-        language = str(report_cfg.get('language') or 'zh-CN')
-        html_report_path = _render_cc_mini_report(
-            result,
-            report_dir=report_dir_override,
-            url=target_url,
-            task=task,
-            language=language,
-        )
+    filter_model_raw = llm_cfg.get('filter_model')
+    filter_model = (
+        str(filter_model_raw).strip()
+        if isinstance(filter_model_raw, str) and filter_model_raw.strip()
+        else None
+    )
+    if filter_model is None and model:
+        filter_model = model
 
-    if save_dataflow and report_dir_override:
-        try:
-            from webqa_agent.utils.data_flow_reporter import generate_data_flow_report
-            generate_data_flow_report(report_dir_override, group_mode='tool')
-        except Exception as dataflow_exc:
-            print(f'[Warning] Failed to generate cc-mini data flow report: {dataflow_exc}',
-                  file=sys.stderr)
+    shared_kwargs: Dict[str, Any] = dict(
+        url=target_url,
+        provider=provider,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        effort=effort,
+        temperature=llm_cfg.get('temperature'),
+        top_p=llm_cfg.get('top_p'),
+        max_tokens=llm_cfg.get('max_tokens'),
+        timeout=llm_cfg.get('timeout'),
+        skills_dir=skills_dir,
+        file_catalog=file_catalog,
+        save_screenshots=save_screenshots,
+        browser_headless=True,
+        browser_viewport=(1280, 720),
+        log_level='info',
+        extensions=extensions,
+        filter_model=filter_model,
+    )
 
-    result_count = _build_cc_mini_result_count(result)
-    return [{'runner': 'cc-mini'}], report_dir_override, html_report_path, result_count
+    log_sink, tracker_factory = _make_cc_mini_progress_hooks()
+
+    executor = CcMiniExecutor(
+        shared_kwargs=shared_kwargs,
+        max_concurrent=max_concurrent,
+        report_dir=report_dir_override or '.',
+        url=target_url,
+        language=language,
+        save_screenshots=save_screenshots,
+        save_dataflow=save_dataflow and bool(report_dir_override),
+        invoke_runner=execute_cc_mini_mode,
+        log_sink=log_sink,
+        tracker_factory=tracker_factory,
+    )
+
+    batch_result = await executor.execute(tasks)
+
+    statuses = batch_result.statuses
+    result_count = {
+        'total': len(statuses),
+        'passed': sum(1 for s in statuses if s == 'passed'),
+        'failed': sum(1 for s in statuses if s == 'failed'),
+        'warning': sum(1 for s in statuses if s == 'warning'),
+    }
+    return (
+        [{'runner': 'cc-mini'}],
+        report_dir_override,
+        batch_result.report_path,
+        result_count,
+    )
 
 
 async def execute_gen_webqa(config_path: str, report_dir_override: str = None):
@@ -413,6 +356,49 @@ def callback_backend(execution_id: str, status: str, result_count: Dict = None,
                 print(f'[Callback] Wrote failure marker: {marker_file}')
             except Exception as write_err:
                 print(f'[Callback] Failed to write marker: {write_err}')
+
+
+def _make_cc_mini_progress_hooks():
+    """Return ``(log_sink, tracker_factory)`` wired into ``Display.display``.
+
+    Both hooks use only the **public** Display API:
+
+    * ``Display.display.lock`` — exposed as a ``@property``
+    * ``Display.display.captured_output`` — public attribute holding the
+      log buffer that ``ProgressPusher`` reads via ``get_progress()``
+    * ``Display.display(name)`` — callable that returns a ``_Tracker``
+      context manager for per-case running/completed bookkeeping
+
+    The outer ``ProgressPusher`` in ``main()`` polls ``get_progress()`` once
+    per second and POSTs the snapshot to the backend; writing through the
+    public surface lets it pick up logs AND per-case state without us
+    duplicating any internal data structures.
+
+    Returns ``(None, None)`` when Display has not been initialised (e.g. a
+    direct CLI run without ``--stdout``).
+    """
+    try:
+        from webqa_agent.utils.task_display_util import Display
+        display_obj = Display.display
+        if display_obj is None:
+            return None, None
+        lock = display_obj.lock
+        buf = display_obj.captured_output
+
+        def log_sink(line: str) -> None:
+            stripped = line.rstrip('\n')
+            if not stripped:
+                return
+            with lock:
+                buf.write(stripped + '\n')
+
+        # ``Display.display`` itself satisfies ``Callable[[str], _Tracker]``,
+        # so the executor can use it as a tracker factory directly.
+        tracker_factory = display_obj
+
+        return log_sink, tracker_factory
+    except Exception:
+        return None, None
 
 
 class ProgressPusher:

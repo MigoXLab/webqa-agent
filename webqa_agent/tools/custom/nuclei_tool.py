@@ -371,7 +371,7 @@ class NucleiTool(WebQABaseTool):
                     'nuclei',
                     '-u', url,
                     *tag_args,
-                    '-json',
+                    '-jsonl',
                     '-silent',  # Suppress banner and progress
                     '-nc',  # No color
                 ]

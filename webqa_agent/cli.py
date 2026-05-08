@@ -135,7 +135,7 @@ def _load_cc_mini_runner():
     return load_cc_mini_runner(module_name='webqa_cc_mini_runner')
 
 
-async def _execute_cc_mini_mode(
+async def execute_cc_mini_mode(
     *,
     url: str,
     task: str,
@@ -216,6 +216,9 @@ async def _execute_cc_mini_mode(
         filter_model=filter_model,
         **extension_kwargs,
     )
+
+
+_execute_cc_mini_mode = execute_cc_mini_mode
 
 
 def _render_cc_mini_report(
@@ -446,6 +449,27 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
         sys.exit(1)
 
     if use_cc_mini:
+        # Normalize tasks: accept either a single string (legacy) or a list of
+        # strings (new — concurrent batch). Whitespace-only entries are dropped
+        # so a stray blank line in YAML doesn't waste a worker slot.
+        if isinstance(business_objectives, str):
+            tasks = [business_objectives.strip()] if business_objectives.strip() else []
+        elif isinstance(business_objectives, list):
+            tasks = [
+                str(t).strip() for t in business_objectives
+                if isinstance(t, (str,)) and str(t).strip()
+            ]
+        else:
+            print(
+                '❌ test_config.business_objectives must be a string or list of '
+                f'strings, got {type(business_objectives).__name__}',
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not tasks:
+            print('❌ test_config.business_objectives is required when test_config.use_cc_mini=true', file=sys.stderr)
+            sys.exit(1)
+
         run_timestamp = (
             os.getenv('WEBQA_REPORT_TIMESTAMP')
             or os.getenv('WEBQA_TIMESTAMP')
@@ -457,29 +481,9 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
         report_cfg_raw = cfg.get('report', {})
         save_screenshots = bool(report_cfg_raw.get('save_screenshots', False))
         save_dataflow = bool(report_cfg_raw.get('save_dataflow', True))
-        screenshot_dir = (
-            str(Path(resolved_report_dir) / 'screenshots')
-            if save_screenshots else None
-        )
-        data_flow_sink = None
-        if save_dataflow:
-            from webqa_agent.utils.data_flow_reporter import (
-                record_data_flow_event_object,
-                set_dataflow_enabled,
-            )
-            set_dataflow_enabled(True)
 
-            def _cc_mini_data_flow_sink(event: dict[str, Any]) -> None:
-                record_data_flow_event_object(event, report_dir=resolved_report_dir)
-
-            data_flow_sink = _cc_mini_data_flow_sink
-        else:
-            from webqa_agent.utils.data_flow_reporter import set_dataflow_enabled
-            set_dataflow_enabled(False)
-        task = business_objectives.strip()
-        if not task:
-            print('❌ test_config.business_objectives is required when test_config.use_cc_mini=true', file=sys.stderr)
-            sys.exit(1)
+        from webqa_agent.utils.data_flow_reporter import set_dataflow_enabled
+        set_dataflow_enabled(save_dataflow)
 
         provider = llm_config.get_provider()
         if provider == 'gemini':
@@ -498,9 +502,25 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
         if provider == 'anthropic' and cc_mini_base_url == 'https://api.openai.com/v1':
             cc_mini_base_url = None
 
+        # Resolve concurrency: CLI arg already lives in `workers`; fall back to
+        # config target.max_concurrent_tests (the same key non-cc-mini gen mode
+        # reads). Single-task runs are forced serial regardless.
+        max_concurrent_raw = (
+            workers if workers is not None
+            else cfg.get('target', {}).get('max_concurrent_tests', 1)
+        )
+        try:
+            max_concurrent = max(1, int(max_concurrent_raw))
+        except (ValueError, TypeError):
+            max_concurrent = 1
+        if len(tasks) == 1:
+            max_concurrent = 1
+
         print('📋 Tests enabled: Gen Mode (cc-mini backend)')
         print(f'⚙️ cc-mini URL: {target_url}')
-        print(f'📝 cc-mini Task: {task}')
+        print(f'📝 cc-mini Tasks: {len(tasks)} (concurrency={max_concurrent})')
+        for i, t in enumerate(tasks, start=1):
+            print(f'   {i}. {t}')
         print(f'🤖 cc-mini Provider: {provider}')
         print('-' * 60, flush=True)
 
@@ -571,12 +591,12 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
             traceback.print_exc()
             sys.exit(1)
 
-        prev_report_ts = os.environ.get('WEBQA_REPORT_TIMESTAMP')
-        os.environ['WEBQA_REPORT_TIMESTAMP'] = run_timestamp
-        try:
-            result = await _execute_cc_mini_mode(
+        # Build the executor: shared kwargs go to every task; the executor
+        # injects per-task task/worker_id/screenshot_dir/on_event/sink.
+        from webqa_agent.executor import CcMiniExecutor
+        executor = CcMiniExecutor(
+            shared_kwargs=dict(
                 url=target_url,
-                task=task,
                 provider=provider,
                 model=llm_config.model,
                 api_key=llm_config.api_key,
@@ -589,18 +609,29 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
                 skills_dir=tconf.get('cc_mini_skills_dir'),
                 file_catalog=cc_mini_file_catalog,
                 save_screenshots=save_screenshots,
-                screenshot_dir=screenshot_dir,
-                data_flow_sink=data_flow_sink,
                 browser_headless=browser_headless,
                 browser_viewport=browser_viewport,
                 log_level=log_level,
-                on_event=_make_cc_mini_stream_handler(),
-                worker_id=0,
                 extensions=cc_mini_extensions,
                 filter_model=llm_config.filter_model,
-            )
+            ),
+            max_concurrent=max_concurrent,
+            report_dir=resolved_report_dir,
+            url=target_url,
+            language=(cfg.get('report') or {}).get('language', 'zh-CN'),
+            save_screenshots=save_screenshots,
+            save_dataflow=save_dataflow,
+            invoke_runner=_execute_cc_mini_mode,
+        )
+
+        prev_report_ts = os.environ.get('WEBQA_REPORT_TIMESTAMP')
+        os.environ['WEBQA_REPORT_TIMESTAMP'] = run_timestamp
+        try:
+            batch = await executor.execute(tasks)
         except Exception:
-            print('\n❌ cc-mini execution failed:', file=sys.stderr)
+            # Only infrastructure-level failure (e.g. ResultAggregator crash)
+            # reaches here; per-task crashes are absorbed inside the executor.
+            print('\n❌ cc-mini batch execution failed:', file=sys.stderr)
             traceback.print_exc()
             sys.exit(1)
         finally:
@@ -609,54 +640,41 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
             else:
                 os.environ['WEBQA_REPORT_TIMESTAMP'] = prev_report_ts
 
-        fatal_cc_mini_error = bool(
-            result.aborted and str(getattr(result, 'final_text', '')).startswith('Error:')
-        )
-
-        # The final assistant text was already streamed via on_event; only
-        # print a summary bar so the user sees totals at a glance.
+        passed_count = sum(1 for s in batch.statuses if s == 'passed')
         print('\n' + '-' * 60)
-        status_label = '❌ Failed' if fatal_cc_mini_error else '✅ Done'
-        print(
-            f'{status_label}  |  Steps: {len(result.steps)}  |  '
-            f'Tokens: {result.input_tokens}↑ {result.output_tokens}↓  |  '
-            f'Aborted: {result.aborted}'
+        status_label = (
+            '✅ Done' if batch.overall_status == 'passed'
+            else '❌ Some cases failed'
         )
+        print(
+            f'{status_label}  |  Cases: {passed_count}/{len(tasks)} passed  |  '
+            f'Steps: {batch.total_steps}  |  '
+            f'Tokens: {batch.total_input_tokens}↑ {batch.total_output_tokens}↓'
+        )
+        for i, (task_text, status) in enumerate(zip(tasks, batch.statuses), start=1):
+            icon = {'passed': '✅', 'warning': '⚠️ ', 'failed': '❌'}.get(status, '❌')
+            preview = task_text if len(task_text) <= 60 else task_text[:57] + '...'
+            print(f'   case-{i} {icon} {status:<7}  {preview}')
 
-        # Surface any extension-loading failures (e.g. CDP couldn't be
-        # reached for cookie injection). These are silent in RunResult; the
-        # CLI is the only place the user sees them.
-        ext_failed = list(getattr(result, 'extensions_failed', None) or [])
-        if ext_failed:
+        # Surface extension-loading failures from any case. Each result keeps
+        # its own list; merge them so users see the union without duplicates.
+        ext_failed_all: list[str] = []
+        seen: set[str] = set()
+        for r in batch.run_results:
+            for line in (getattr(r, 'extensions_failed', None) or []):
+                if line not in seen:
+                    seen.add(line)
+                    ext_failed_all.append(line)
+        if ext_failed_all:
             print('⚠️  cc-mini extensions reported failures:', file=sys.stderr)
-            for line in ext_failed:
+            for line in ext_failed_all:
                 print(f'   - {line}', file=sys.stderr)
 
-        # Generate HTML report — mirrors the gen-mode GenExecutor flow so
-        # both backends produce the same deliverable for CLI users.
-        report_path = _render_cc_mini_report(
-            result,
-            cfg=cfg,
-            url=target_url,
-            task=task,
-            run_timestamp=run_timestamp,
-            report_dir_override=resolved_report_dir,
-        )
-        if report_path:
-            print(f'📄 Report: {report_path}')
-        if save_dataflow:
-            try:
-                from webqa_agent.utils.data_flow_reporter import generate_data_flow_report
-                dataflow_path = generate_data_flow_report(
-                    resolved_report_dir,
-                    group_mode='tool',
-                )
-                if dataflow_path:
-                    print(f'📊 Data flow: {dataflow_path}')
-            except Exception as dataflow_exc:
-                print(f'⚠️ Failed to generate cc-mini data flow report: {dataflow_exc}',
-                      file=sys.stderr)
-        if fatal_cc_mini_error:
+        if batch.report_path:
+            print(f'📄 Report: {batch.report_path}')
+        if batch.dataflow_path:
+            print(f'📊 Data flow: {batch.dataflow_path}')
+        if batch.overall_status != 'passed':
             sys.exit(1)
         return
 

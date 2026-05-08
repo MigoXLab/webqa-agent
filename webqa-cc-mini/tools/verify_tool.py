@@ -17,10 +17,10 @@ import logging
 import re
 from typing import Any
 
-from .llm import (LLMClient, infer_provider_from_model,
-                  supports_reasoning_effort)
-from .mcp_client import MCPServer
-from .tool import Tool, ToolResult
+from core.llm import (LLMClient, infer_provider_from_model,
+                      supports_reasoning_effort)
+from core.mcp_client import MCPServer
+from core.tool import Tool, ToolResult
 
 _log = logging.getLogger('cc_mini.verify')
 

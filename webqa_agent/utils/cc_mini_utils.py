@@ -146,7 +146,7 @@ def build_cookie_extensions_from_config(
         # tell them to migrate so this branch can be removed eventually.
         log.warning(
             'browser_config.cookies is deprecated for cc-mini mode; '
-            "migrate to accounts: [{name: ..., cookies_file: ...}] "
+            'migrate to accounts: [{name: ..., cookies_file: ...}] '
             'in your config. The legacy field will be wrapped as a '
             'fallback identity for this run.'
         )
@@ -224,35 +224,67 @@ def render_cc_mini_report(
     task: str,
     language: str = 'zh-CN',
 ) -> Optional[str]:
-    """Render an HTML report for a cc-mini ``RunResult``.
+    """Render an HTML report for a single cc-mini ``RunResult``.
 
-    Preferred path uses the gen-mode React frontend via the adapter +
-    ``ResultAggregator``.  Falls back to the standalone
-    ``webqa-cc-mini/features/report.py`` if the gen-mode path fails.
+    Thin wrapper around :func:`render_cc_mini_multi_report` for
+    backward compatibility with callers that only have one run.
+    """
+    return render_cc_mini_multi_report(
+        [run_result],
+        report_dir=report_dir,
+        url=url,
+        tasks=[task],
+        language=language,
+    )
+
+
+def render_cc_mini_multi_report(
+    run_results: list[Any],
+    *,
+    report_dir: str,
+    url: str,
+    tasks: list[str],
+    language: str = 'zh-CN',
+) -> Optional[str]:
+    """Render a single HTML report from N cc-mini ``RunResult`` objects.
+
+    Preferred path uses the gen-mode React frontend via the multi-case
+    adapter + ``ResultAggregator``.  Falls back to the standalone
+    ``webqa-cc-mini/features/report.py`` for the FIRST run only when
+    the gen-mode path fails (the fallback can't render multi-case).
 
     Returns the absolute report path on success, ``None`` on failure.
     """
+    if len(run_results) != len(tasks):
+        raise ValueError(
+            f'run_results ({len(run_results)}) and tasks ({len(tasks)}) '
+            'must have the same length.'
+        )
+    if not run_results:
+        raise ValueError('run_results must not be empty.')
+
     out_dir = Path(report_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         from webqa_agent.executor.cc_mini_report_adapter import (
-            run_result_to_aggregated_data,
-            run_result_to_session,
-        )
+            run_result_to_session, run_results_to_aggregated_data)
         from webqa_agent.executor.result_aggregator import ResultAggregator
 
+        # Session-level metadata is carried by the FIRST run; the
+        # aggregated_data dict is what the React frontend actually reads
+        # so individual case data still flows through correctly.
         session = run_result_to_session(
-            run_result,
+            run_results[0],
             url=url,
-            task=task,
+            task=tasks[0],
             report_dir=str(out_dir),
             language=language,
         )
-        aggregated_data = run_result_to_aggregated_data(
-            run_result,
+        aggregated_data = run_results_to_aggregated_data(
+            run_results,
             url=url,
-            task=task,
+            tasks=tasks,
             language=language,
         )
         aggregator = ResultAggregator(report_config={
@@ -275,12 +307,13 @@ def render_cc_mini_report(
             sys.path.insert(0, str(cc_mini_root))
         from features.report import render_html_report
 
+        # Standalone fallback only renders one run; pick the first.
         html_path = render_html_report(
-            run_result,
+            run_results[0],
             out_dir / 'report.html',
             title=f'WebQA cc-mini — {url}',
             url=url,
-            task=task,
+            task=tasks[0],
         )
         return str(html_path)
     except Exception as exc:

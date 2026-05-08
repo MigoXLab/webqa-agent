@@ -19,7 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY vendor/nuclei_3.3.7_linux_amd64.zip /tmp/nuclei.zip
 RUN unzip -o /tmp/nuclei.zip -d /usr/local/bin/ \
     && chmod +x /usr/local/bin/nuclei \
-    && rm /tmp/nuclei.zip
+    && rm /tmp/nuclei.zip \
+    && nuclei -ut -silent
 
 # 3. 安装 Python 依赖 (利用清华源提高速度)
 COPY webqa_agent/requirements.txt /app/requirements.txt

@@ -59,17 +59,15 @@ DataFlowSink = Callable[[dict[str, Any]], None]
 
 from core.config import DEFAULT_MODEL, DEFAULT_PROVIDER, MCPServerConfig
 from core.context import build_web_agent_system_prompt
-from core.download_tool import DownloadCheckTool
 from core.engine import AbortedError, Engine
 from core.llm import LLMClient, infer_provider_from_model
-from core.load_skill_tool import LoadSkillTool
 from core.mcp_client import MCPManager
 from core.outcome_status import derive_status, extract_final_outcome
 from core.permissions import PermissionChecker
 from core.skill_registry import SkillRegistry
 from core.tool import Tool
-from core.verify_tool import VerifyTool
 from features.compact import CompactService, should_compact
+from tools import DownloadCheckTool, LoadSkillTool, NucleiScanTool, VerifyTool
 
 log = logging.getLogger('cc_mini.runner')
 
@@ -489,6 +487,9 @@ def run_cc_mini(
 
         # Always add download verification tool
         tools.append(DownloadCheckTool(download_dir))
+
+        # Always add NucleiScanTool for security checks
+        tools.append(NucleiScanTool())
 
         # Add independent verification tool (always registered)
         if browser_server is not None:
@@ -1088,11 +1089,32 @@ def _persist_step_screenshots(
     step_index: int,
     screenshot_root: Path | None,
 ) -> list[dict[str, str]]:
+    """Persist images from a tool result and return step-screenshot dicts.
+
+    The URL embedded in each dict's ``data`` field is derived from
+    ``screenshot_root``:
+
+    * If ``screenshot_root`` is nested directly under a ``screenshots``
+      directory (e.g. ``<report_dir>/screenshots/case_2``), the prefix is
+      ``screenshots/<leaf>`` so multi-case batches end up with paths the
+      report frontend accepts (it requires URLs starting with
+      ``screenshots/``).
+    * Otherwise the prefix is just the leaf name (the legacy single-case
+      shape ``<report_dir>/screenshots`` → ``screenshots/<file>``).
+
+    Callers don't have to pass any extra parameters: the directory layout
+    they create on disk fully determines the URL.
+    """
     if screenshot_root is None:
         return []
     blocks = getattr(tool_result, 'content_blocks', None) or []
     if not isinstance(blocks, list):
         return []
+    leaf = screenshot_root.name or 'screenshots'
+    if screenshot_root.parent.name == 'screenshots':
+        prefix_path = Path('screenshots') / leaf
+    else:
+        prefix_path = Path(leaf)
     screenshots: list[dict[str, str]] = []
     image_idx = 0
     for block in blocks:
@@ -1112,7 +1134,7 @@ def _persist_step_screenshots(
             continue
         screenshots.append({
             'type': 'path',
-            'data': str(Path('screenshots') / file_name),
+            'data': str(prefix_path / file_name),
             'label': f'Step {step_index} screenshot {image_idx}',
         })
     return screenshots

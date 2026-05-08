@@ -327,7 +327,7 @@ class APIClient {
         api_key?: string;
         [key: string]: any;
       };
-      business_objectives?: string;
+      business_objectives?: string | string[];
       custom_tools?: {
         enabled: string[];
       };
@@ -388,10 +388,19 @@ class APIClient {
       runner_source: 'cc-mini' as RunnerSource,
       batch_id: batchId,
     };
-    const ccMiniRawObjective =
-      typeof ccMiniGenConfig?._display_objectives === 'string'
-        ? ccMiniGenConfig._display_objectives.trim()
-        : '';
+    // Resolve cc-mini objectives: preserve array (multi-task) or fall back to
+    // _display_objectives string (single-task legacy path).
+    const existingCcMiniObjectives = ccMiniGenConfig?.business_objectives;
+    const ccMiniFinalObjectives =
+      Array.isArray(existingCcMiniObjectives) && existingCcMiniObjectives.length > 0
+        ? existingCcMiniObjectives
+        : (() => {
+            const raw =
+              typeof ccMiniGenConfig?._display_objectives === 'string'
+                ? ccMiniGenConfig._display_objectives.trim()
+                : '';
+            return raw || undefined;
+          })();
     const standardPayload = {
       business_id: data.business_id,
       trigger_type: 'gen' as const,
@@ -406,8 +415,7 @@ class APIClient {
       workers: data.workers,
       gen_config: {
         ...ccMiniGenConfig,
-        // cc-mini should only use explicit user objective, not injected defaults.
-        business_objectives: ccMiniRawObjective || undefined,
+        business_objectives: ccMiniFinalObjectives,
       },
     };
 

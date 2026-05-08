@@ -27,6 +27,18 @@ const TEST_ITEMS = [
   { key: 'security' as const, label: '安全扫描', icon: Shield },
 ];
 
+// Maps TEST_ITEMS keys to the cc-mini task texts sent to the runner.
+const CC_MINI_TASK_MAP: Record<string, string> = {
+  functional: '进行页面完整的功能测试',
+  performance: '网页性能测试，输出页面性能指标（如加载时间、资源大小等）',
+  traverse: '调用 button-check skill，遍历页面所有交互元素，验证点击/输入是否报错',
+  links: '调用 ui-audit skill，对页面做 UX/可访问性审计，输出审计报告',
+  security: '执行nuclei扫描，扫描目标URL的基础安全漏洞',
+};
+
+/** Gen 页「并发数」下拉默认值（仅前端；不传 workers 时仍由后端 DEFAULT_WORKERS 兜底）。 */
+const DEFAULT_GEN_WORKERS = 2;
+
 type AuthType = 'none' | 'sso' | 'cookies';
 
 type GenAuthAccount = {
@@ -89,10 +101,10 @@ export function GenPage() {
   // Test Items (Custom Tools)
   const [testItems, setTestItems] = useState({
     functional: true,
-    performance: true,
-    traverse: true,
-    links: true,
-    security: true,
+    performance: false,
+    traverse: false,
+    links: false,
+    security: false,
   });
 
   // Runner selection: 'standard' | 'cc-mini' | 'both'
@@ -100,7 +112,7 @@ export function GenPage() {
 
   // Execution Config (default expanded)
   const [showExecutionConfig, setShowExecutionConfig] = useState(true);
-  const [workers, setWorkers] = useState(1);
+  const [workers, setWorkers] = useState(DEFAULT_GEN_WORKERS);
 
   // Advanced Options
   const [showAdvanced, setShowAdvanced] = useState(true);
@@ -131,7 +143,18 @@ export function GenPage() {
           const cfg = fromExecution.config;
           if (cfg.target_url) setTargetUrl(cfg.target_url);
           if (cfg._display_objectives) setBusinessObjectives(cfg._display_objectives);
-          else if (cfg.business_objectives) setBusinessObjectives(cfg.business_objectives);
+          else if (cfg.business_objectives && typeof cfg.business_objectives === 'string') {
+            setBusinessObjectives(cfg.business_objectives);
+          }
+          // Restore test item selection from saved cc-mini task array
+          if (Array.isArray(cfg.business_objectives) && cfg.business_objectives.length > 0) {
+            const savedTasks = cfg.business_objectives as string[];
+            const restored = { functional: false, performance: false, traverse: false, links: false, security: false };
+            for (const [key, task] of Object.entries(CC_MINI_TASK_MAP)) {
+              if (savedTasks.includes(task)) (restored as any)[key] = true;
+            }
+            setTestItems(restored);
+          }
           const model = cfg.llm_config?.model;
           if (model && models.models.includes(model)) setSelectedModel(model);
           else setSelectedModel(models.default);
@@ -183,8 +206,22 @@ export function GenPage() {
       setError('请输入目标 URL');
       return;
     }
-    if (runnerMode !== 'standard' && !businessObjectives.trim()) {
-      setError('使用 CC-Mini 时必须填写测试目标');
+
+    const objectiveTrim = businessObjectives.trim();
+    const fromCheckboxes = TEST_ITEMS.filter((item) => {
+      if (!testItems[item.key]) return false;
+      // Custom 测试目标 replaces the preset functional line for CC-Mini (not Standard).
+      if (runnerMode !== 'standard' && item.key === 'functional' && objectiveTrim) {
+        return false;
+      }
+      return true;
+    }).map((item) => CC_MINI_TASK_MAP[item.key]);
+    const ccMiniTasks =
+      runnerMode !== 'standard' && objectiveTrim
+        ? [objectiveTrim, ...fromCheckboxes]
+        : fromCheckboxes;
+    if (runnerMode !== 'standard' && ccMiniTasks.length === 0) {
+      setError('请至少选择一个测试项目');
       return;
     }
 
@@ -320,6 +357,9 @@ export function GenPage() {
         const ccMiniGenConfig = {
           ...baseGenConfig,
           runner_source: 'cc-mini' as RunnerSource,
+          business_objectives: ccMiniTasks,
+          max_concurrent_tests: workers,
+          _display_objectives: businessObjectives.trim() || undefined,
         };
         const dualResult = await apiClient.createDualGenExecutions({
           business_id: selectedBusinessId || undefined,
@@ -338,14 +378,19 @@ export function GenPage() {
         }
       } else {
         const isCcMini = runnerMode === 'cc-mini';
-        const ccMiniRawObjective = (businessObjectives || '').trim();
+        const genConfigBase = isCcMini
+          ? (() => {
+              const { business_objectives: _, ...rest } = baseGenConfig;
+              return rest;
+            })()
+          : baseGenConfig;
         await apiClient.createExecution({
           business_id: selectedBusinessId || undefined,
           trigger_type: 'gen',
           model: selectedModel,
           workers: workers,
           gen_config: {
-            ...baseGenConfig,
+            ...genConfigBase,
             ...(runnerMode === 'standard'
               ? {
                   browser_config: { cookies: defaultCookies },
@@ -353,8 +398,11 @@ export function GenPage() {
                     ? { auth_type: 'sso' as const, accounts: defaultAccount ? [defaultAccount] : [] }
                     : { auth_type: undefined, accounts: undefined }),
                 }
-              : {}),
-            ...(isCcMini ? { business_objectives: ccMiniRawObjective || undefined } : {}),
+              : {
+                  business_objectives: ccMiniTasks,
+                  max_concurrent_tests: workers,
+                  _display_objectives: businessObjectives.trim() || undefined,
+                }),
             runner_source: runnerMode as RunnerSource,
           },
         });
@@ -399,7 +447,7 @@ export function GenPage() {
             </div>
           </div>
 
-          {/* Test Items — 5 items in a row */}
+          {/* Test Items — unified for both runners */}
           <div>
             <label className="block text-sm font-medium mb-1.5 text-gray-700">
               测试项目 <span className="text-red-500">*</span>
@@ -429,14 +477,15 @@ export function GenPage() {
             </div>
           </div>
 
-          {/* Business Objectives */}
+          {/* Business Objectives — optional; for CC-Mini / 全选 also drives task list (see hint). */}
           <div>
             <label className="block text-sm font-medium mb-1.5 text-gray-700">
               测试目标
-              {runnerMode !== 'standard'
-                ? <span className="text-red-500 ml-0.5">*</span>
-                : <span className="ml-1.5 text-xs text-gray-400 font-normal">【可选】留空则由 AI 自主探索</span>
-              }
+              <span className="ml-1.5 text-xs text-gray-400 font-normal">
+                {runnerMode === 'standard'
+                  ? '【可选】留空则由 AI 自主探索'
+                  : '【可选】填写后将作为 CC-Mini 的首个任务，且不再执行预设「功能测试」并发项'}
+              </span>
             </label>
             <textarea
               rows={3}
@@ -509,6 +558,14 @@ export function GenPage() {
                   <span className="px-2 py-0.5 bg-white border border-gray-200 rounded text-xs text-gray-500">
                     并发 {workers}
                   </span>
+                  {runnerMode !== 'standard' && (() => {
+                    const count = TEST_ITEMS.filter((item) => testItems[item.key]).length;
+                    return count > 0 ? (
+                      <span className="px-2 py-0.5 bg-white border border-gray-200 rounded text-xs text-gray-500">
+                        CC-Mini × {count}
+                      </span>
+                    ) : null;
+                  })()}
                   {authType !== 'none' && accounts.length > 0 && (
                     <span className="px-2 py-0.5 bg-purple-50 border border-purple-200 rounded text-xs text-purple-600">
                       {authType.toUpperCase()} 账号 {accounts.length}
