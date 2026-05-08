@@ -127,7 +127,7 @@ def _resolve_sso_accounts(
         if not acc_user or not acc_password:
             raise ValueError(
                 f"账户 '{acc_name}' 缺少 SSO 凭据："
-                f"username_present={bool(acc_user)}, password_present={bool(acc_password)}, sso_env={acc_env}"
+                f'username_present={bool(acc_user)}, password_present={bool(acc_password)}, sso_env={acc_env}'
             )
         logger.info(
             f"[{log_prefix}] Generating cookies: account='{acc_name}', "
@@ -705,8 +705,6 @@ async def _start_gen_k8s(execution_id: str, gen_config_dict: Optional[Dict[str, 
 
             logger.info(f'[Gen K8s] Creating K8s Job: {execution_id}')
 
-            runner_source = str(gen_config_dict.get('runner_source') or 'standard').lower()
-
             try:
                 job_name = await _create_gen_k8s_job(
                     execution_id=execution_id,
@@ -716,7 +714,6 @@ async def _start_gen_k8s(execution_id: str, gen_config_dict: Optional[Dict[str, 
                     api_key=api_key,
                     base_url=base_url,
                     business_id=execution.business_id,
-                    runner_source=runner_source,
                 )
                 logger.info(f'[Gen K8s] Job created: {job_name}')
             except Exception as e:
@@ -745,7 +742,6 @@ async def _create_gen_k8s_job(
     api_key: str,
     base_url: str,
     business_id: Optional[UUID] = None,
-    runner_source: str = 'standard',
 ) -> str:
     """Create a Kubernetes Job that runs gen_webqa.py inside the agent
     image."""
@@ -768,11 +764,7 @@ async def _create_gen_k8s_job(
     k8s_pvc_name = os.getenv('K8S_PVC_NAME', 'webqa-pvc')
     k8s_sa_name = os.getenv('K8S_JOB_SERVICE_ACCOUNT', 'webqa-agent-sa')
 
-    is_cc_mini = runner_source in ('cc-mini', 'cc_mini')
-    if is_cc_mini:
-        cpu_limit, memory_gi = 1, 1
-    else:
-        cpu_limit, memory_gi = _compute_k8s_resources(workers, business_id)
+    cpu_limit, memory_gi = _compute_k8s_resources(workers, business_id)
 
     job_name = f'webqa-gen-{execution_id[:8]}'
 
@@ -1560,13 +1552,9 @@ async def _start_gen_docker(execution_id: str, gen_config_dict: Optional[Dict[st
             await db.commit()
 
             logger.info(f'[Gen Docker] Creating container: {execution_id}')
-            runner_source = str(gen_config_dict.get('runner_source') or 'standard').lower()
-            if runner_source in ('cc-mini', 'cc_mini'):
-                cpu_limit, memory_gi = 1, 1
-            else:
-                cpu_limit, memory_gi = _compute_k8s_resources(
-                    execution.workers or 1, execution.business_id
-                )
+            cpu_limit, memory_gi = _compute_k8s_resources(
+                execution.workers or 1, execution.business_id
+            )
 
             container_id = await asyncio.to_thread(
                 _create_docker_container,
