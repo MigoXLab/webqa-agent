@@ -374,6 +374,7 @@ class NucleiTool(WebQABaseTool):
                     '-jsonl',
                     '-silent',  # Suppress banner and progress
                     '-nc',  # No color
+                    '-no-interactsh',  # Disable OOB/DNS callbacks (interactsh)
                 ]
 
                 process = await asyncio.create_subprocess_exec(

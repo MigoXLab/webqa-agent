@@ -6,20 +6,21 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Iterator
 
+from utils.data_flow import (build_llm_error_payload, build_llm_ok_payload,
+                             build_tool_event_payload, iso_now, safe_copy)
+
 from .config import DEFAULT_MODEL, default_max_tokens_for_model, resolve_model
 from .llm import LLMClient
 from .permissions import PermissionChecker
 from .text import sanitize_unicode
 from .tool import Tool, ToolResult
-from utils.data_flow import (
-    build_llm_error_payload,
-    build_llm_ok_payload,
-    build_tool_event_payload,
-    iso_now,
-    safe_copy,
-)
 
 _MAX_RETRIES = 10
+
+# Tools whose text results are large and only the latest is useful.
+_LARGE_TEXT_TOOLS = frozenset({
+    'mcp__browser__take_snapshot',
+})
 
 # Browser tools that mutate page state — if any of these are called
 # without a take_screenshot in the same turn, the engine auto-injects one.
@@ -66,7 +67,8 @@ def _parse_retry_after(exc: Exception) -> float | None:
 
 
 _CONTEXT_OVERFLOW_RE = re.compile(
-    r'prompt is too long|max_tokens.*exceeds.*context|input.*too large',
+    r'prompt is too long|max_tokens.*exceeds.*context|input.*too large'
+    r'|input tokens exceed|context_length_exceeded',
     re.IGNORECASE,
 )
 
@@ -271,8 +273,9 @@ class Engine:
                     request_payload: dict[str, Any] = {}
                     try:
                         tools = [t.to_api_schema() for t in self._tools.values()]
-                        # Drop images from older messages right before each LLM call.
+                        # Drop stale large content before each LLM call.
                         _strip_old_images(self._messages, keep_recent=1)
+                        _strip_old_snapshots(self._messages, keep_recent=1)
                         request_payload = {
                             'model': self._model,
                             'provider': self._provider,
@@ -792,6 +795,55 @@ def _strip_old_images(messages: list[dict], *, keep_recent: int = 2) -> None:
         if not text_parts:
             text_parts = [{'type': 'text', 'text': '[screenshot removed to save context]'}]
         block['content'] = text_parts
+
+
+def _strip_old_snapshots(messages: list[dict], *, keep_recent: int = 1) -> None:
+    """Remove content of old large-text tool results (e.g. take_snapshot),
+    keeping only the most recent *keep_recent*.
+
+    Accessibility-tree snapshots can be 10K–100K chars each and accumulate
+    fast.  Only the latest snapshot is useful for decision-making; older ones
+    are replaced with a one-line placeholder.
+    """
+    # Build tool_use_id → tool_name from assistant messages.
+    id_to_tool: dict[str, str] = {}
+    for msg in messages:
+        if msg.get('role') != 'assistant':
+            continue
+        content = msg.get('content', '')
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get('type') == 'tool_use':
+                tid = str(block.get('id', ''))
+                tname = str(block.get('name', ''))
+                if tid:
+                    id_to_tool[tid] = tname
+
+    # Collect positions of tool_result blocks that belong to large-text tools.
+    positions: list[tuple[int, int]] = []
+    for mi, msg in enumerate(messages):
+        if msg.get('role') != 'user':
+            continue
+        content = msg.get('content')
+        if not isinstance(content, list):
+            continue
+        for bi, block in enumerate(content):
+            if not isinstance(block, dict) or block.get('type') != 'tool_result':
+                continue
+            tid = str(block.get('tool_use_id', ''))
+            if id_to_tool.get(tid) in _LARGE_TEXT_TOOLS:
+                positions.append((mi, bi))
+
+    # Strip all but the most recent keep_recent.
+    to_strip = positions[:-keep_recent] if len(positions) > keep_recent else []
+    for mi, bi in to_strip:
+        block = messages[mi]['content'][bi]
+        old = block.get('content', '')
+        old_len = len(old) if isinstance(old, str) else sum(
+            len(p.get('text', '')) for p in old if isinstance(p, dict)
+        )
+        block['content'] = f'[snapshot removed to save context, was ~{old_len} chars]'
 
 
 def _image_removal_marker(

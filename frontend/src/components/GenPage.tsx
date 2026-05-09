@@ -14,6 +14,7 @@ import {
   Settings2,
   Cpu,
   Trash2,
+  Plus,
 } from 'lucide-react';
 import { apiClient, GenAccountPayload, RunnerSource } from '../api/client';
 import { FileManager } from './FileManager';
@@ -95,6 +96,7 @@ export function GenPage() {
   // Form State
   const [targetUrl, setTargetUrl] = useState('');
   const [businessObjectives, setBusinessObjectives] = useState('');
+  const [ccMiniObjectives, setCcMiniObjectives] = useState<string[]>(['']);
   const [selectedModel, setSelectedModel] = useState('');
   const [availableModels, setAvailableModels] = useState<string[]>([]);
 
@@ -108,7 +110,7 @@ export function GenPage() {
   });
 
   // Runner selection: 'standard' | 'cc-mini' | 'both'
-  const [runnerMode, setRunnerMode] = useState<'standard' | 'cc-mini' | 'both'>('both');
+  const [runnerMode, setRunnerMode] = useState<'standard' | 'cc-mini' | 'both'>('cc-mini');
 
   // Execution Config (default expanded)
   const [showExecutionConfig, setShowExecutionConfig] = useState(true);
@@ -142,18 +144,22 @@ export function GenPage() {
         if (fromExecution?.config) {
           const cfg = fromExecution.config;
           if (cfg.target_url) setTargetUrl(cfg.target_url);
-          if (cfg._display_objectives) setBusinessObjectives(cfg._display_objectives);
-          else if (cfg.business_objectives && typeof cfg.business_objectives === 'string') {
-            setBusinessObjectives(cfg.business_objectives);
-          }
-          // Restore test item selection from saved cc-mini task array
           if (Array.isArray(cfg.business_objectives) && cfg.business_objectives.length > 0) {
             const savedTasks = cfg.business_objectives as string[];
+            const presetValues = new Set(Object.values(CC_MINI_TASK_MAP));
+            const customObjs = savedTasks.filter(t => !presetValues.has(t));
+            if (customObjs.length > 0) setCcMiniObjectives(customObjs);
             const restored = { functional: false, performance: false, traverse: false, links: false, security: false };
             for (const [key, task] of Object.entries(CC_MINI_TASK_MAP)) {
               if (savedTasks.includes(task)) (restored as any)[key] = true;
             }
             setTestItems(restored);
+          } else if (cfg._display_objectives) {
+            setBusinessObjectives(cfg._display_objectives);
+            setCcMiniObjectives([cfg._display_objectives]);
+          } else if (cfg.business_objectives && typeof cfg.business_objectives === 'string') {
+            setBusinessObjectives(cfg.business_objectives);
+            if (cfg.business_objectives.trim()) setCcMiniObjectives([cfg.business_objectives.trim()]);
           }
           const model = cfg.llm_config?.model;
           if (model && models.models.includes(model)) setSelectedModel(model);
@@ -208,17 +214,22 @@ export function GenPage() {
     }
 
     const objectiveTrim = businessObjectives.trim();
+    const customCcMiniObjectives = runnerMode !== 'standard'
+      ? ccMiniObjectives.filter(o => o.trim())
+      : [];
+    const hasCustomObjectives = customCcMiniObjectives.length > 0;
+
     const fromCheckboxes = TEST_ITEMS.filter((item) => {
       if (!testItems[item.key]) return false;
       // Custom 测试目标 replaces the preset functional line for CC-Mini (not Standard).
-      if (runnerMode !== 'standard' && item.key === 'functional' && objectiveTrim) {
+      if (runnerMode !== 'standard' && item.key === 'functional' && hasCustomObjectives) {
         return false;
       }
       return true;
     }).map((item) => CC_MINI_TASK_MAP[item.key]);
     const ccMiniTasks =
-      runnerMode !== 'standard' && objectiveTrim
-        ? [objectiveTrim, ...fromCheckboxes]
+      runnerMode !== 'standard' && hasCustomObjectives
+        ? [...customCcMiniObjectives, ...fromCheckboxes]
         : fromCheckboxes;
     if (runnerMode !== 'standard' && ccMiniTasks.length === 0) {
       setError('请至少选择一个测试项目');
@@ -235,7 +246,9 @@ export function GenPage() {
       if (testItems.links) enabledTools.push('detect_dynamic_links');
       if (testItems.security) enabledTools.push('nuclei');
 
-      let finalBusinessObjectives = businessObjectives;
+      let finalBusinessObjectives = runnerMode === 'standard'
+        ? businessObjectives
+        : (hasCustomObjectives ? customCcMiniObjectives.join('\n') : businessObjectives);
       if (testItems.functional) {
         const functionalInstruction = `
 测试要求：以真实用户视角对每个功能模块进行完整的端到端测试，必须执行完整的交互流程（如：表单需填写并提交、对话功能需发送消息并验证回复、搜索功能需输入关键词并验证结果），禁止仅点击入口而不完成完整操作流程。
@@ -330,7 +343,9 @@ export function GenPage() {
         target_url: targetUrl,
         llm_config: { model: selectedModel },
         business_objectives: finalBusinessObjectives,
-        _display_objectives: businessObjectives || undefined,
+        _display_objectives: (runnerMode !== 'standard' && hasCustomObjectives
+          ? customCcMiniObjectives.join('\n')
+          : businessObjectives) || undefined,
         custom_tools: { enabled: enabledTools },
         browser_config: { cookies: defaultCookies },
         auth_type: authType,
@@ -359,7 +374,7 @@ export function GenPage() {
           runner_source: 'cc-mini' as RunnerSource,
           business_objectives: ccMiniTasks,
           max_concurrent_tests: workers,
-          _display_objectives: businessObjectives.trim() || undefined,
+          _display_objectives: (hasCustomObjectives ? customCcMiniObjectives.join('\n') : businessObjectives.trim()) || undefined,
         };
         const dualResult = await apiClient.createDualGenExecutions({
           business_id: selectedBusinessId || undefined,
@@ -401,7 +416,7 @@ export function GenPage() {
               : {
                   business_objectives: ccMiniTasks,
                   max_concurrent_tests: workers,
-                  _display_objectives: businessObjectives.trim() || undefined,
+                  _display_objectives: (hasCustomObjectives ? customCcMiniObjectives.join('\n') : businessObjectives.trim()) || undefined,
                 }),
             runner_source: runnerMode as RunnerSource,
           },
@@ -477,23 +492,60 @@ export function GenPage() {
             </div>
           </div>
 
-          {/* Business Objectives — optional; for CC-Mini / 全选 also drives task list (see hint). */}
+          {/* Business Objectives */}
           <div>
             <label className="block text-sm font-medium mb-1.5 text-gray-700">
               测试目标
               <span className="ml-1.5 text-xs text-gray-400 font-normal">
                 {runnerMode === 'standard'
                   ? '【可选】留空则由 AI 自主探索'
-                  : '【可选】填写后将作为 CC-Mini 的首个任务，且不再执行预设「功能测试」并发项'}
+                  : '【可选】每条目标作为 CC-Mini 的独立任务；填写后不再执行预设「功能测试」'}
               </span>
             </label>
-            <textarea
-              rows={3}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm placeholder-gray-400 resize-none"
-              placeholder="例如：测试用户登录、搜索商品、加入购物车并结算的核心流程"
-              value={businessObjectives}
-              onChange={(e) => setBusinessObjectives(e.target.value)}
-            />
+            {runnerMode === 'standard' ? (
+              <textarea
+                rows={3}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm placeholder-gray-400 resize-none"
+                placeholder="例如：测试用户登录、搜索商品、加入购物车并结算的核心流程"
+                value={businessObjectives}
+                onChange={(e) => setBusinessObjectives(e.target.value)}
+              />
+            ) : (
+              <div className="space-y-2">
+                {ccMiniObjectives.map((obj, idx) => (
+                  <div key={idx} className="flex gap-2 items-start">
+                    <textarea
+                      rows={2}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm placeholder-gray-400 resize-none"
+                      placeholder="例如：测试用户登录、搜索商品、加入购物车并结算的核心流程"
+                      value={obj}
+                      onChange={(e) => {
+                        const updated = [...ccMiniObjectives];
+                        updated[idx] = e.target.value;
+                        setCcMiniObjectives(updated);
+                      }}
+                    />
+                    {ccMiniObjectives.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setCcMiniObjectives(ccMiniObjectives.filter((_, i) => i !== idx))}
+                        className="mt-1 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                        title="删除此目标"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setCcMiniObjectives([...ccMiniObjectives, ''])}
+                  className="flex items-center gap-1.5 text-sm text-purple-600 hover:text-purple-700 hover:bg-purple-50 px-2 py-1 rounded transition-colors"
+                >
+                  + 新增测试目标
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Test Files — optional business association for file upload testing */}
@@ -887,8 +939,8 @@ export function GenPage() {
             )}
           </div>
 
-          {/* Advanced Options — collapsible */}
-          <div className="border border-gray-200 rounded-lg overflow-hidden">
+          {/* Advanced Options — collapsible, hidden for cc-mini mode */}
+          {runnerMode !== 'cc-mini' && <div className="border border-gray-200 rounded-lg overflow-hidden">
             <button
               type="button"
               onClick={() => setShowAdvanced(!showAdvanced)}
@@ -950,7 +1002,7 @@ export function GenPage() {
                 </label>
               </div>
             )}
-          </div>
+          </div>}
 
           {/* Error Message */}
           {error && (

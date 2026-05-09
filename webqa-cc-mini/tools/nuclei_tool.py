@@ -132,11 +132,12 @@ class NucleiScanTool(Tool):
             '-silent',
             '-nc',
         ]
-        # SKILL.md: smoke = no OAST / shorter timeouts; deep = allow interactsh, longer per-request timeout
+        # Disable OOB/DNS callbacks (interactsh) in all modes to avoid triggering security alerts.
+        cmd.extend(['-ni'])
         if mode == 'deep':
             cmd.extend(['-timeout', '30'])
         else:
-            cmd.extend(['-ni', '-timeout', '8'])
+            cmd.extend(['-timeout', '8'])
 
         _log.info('Executing Nuclei scan: %s', shlex.join(cmd))
 
