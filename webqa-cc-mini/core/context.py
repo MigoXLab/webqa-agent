@@ -35,12 +35,11 @@ def build_web_agent_system_prompt(
         'evidence.\n\n'
         f'## Target\nURL: {target_url}\nTask: {task}\n\n'
         '## Your Capabilities\n\n'
-        'You have browser tools via MCP. Key categories:\n'
-        '- **Navigation**: navigate_page, new_page, list_pages, '
-        'select_page, close_page\n'
-        '- **Interaction**: click, fill, hover, press_key, drag, '
-        'upload_file (file input *or* element that opens the file chooser), '
-        'fill_form\n'
+        'Browser tools via MCP:\n'
+        '- **Navigation**: navigate_page, new_page, list_pages, select_page, '
+        'close_page\n'
+        '- **Interaction**: click, fill, type_text, hover, press_key, drag, '
+        'fill_form, cdp_upload_file\n'
         '- **Observation**: take_snapshot (accessibility tree), '
         'take_screenshot\n'
         '- **Debugging**: list_console_messages, list_network_requests, '
@@ -52,10 +51,22 @@ def build_web_agent_system_prompt(
             if has_verify_tool else ''
         ) +
         '- **Performance**: lighthouse_audit, performance traces\n'
-        '- **Conditions**: wait_for (wait until element/state appears)\n'
-        '- **Emulation**: device/viewport emulation, color scheme\n\n'
-        'Batch read-only tools (snapshot, screenshot, console, network) '
-        'in a single turn — the engine runs them concurrently.\n\n'
+        '- **Conditions**: wait_for\n'
+        '- **Emulation**: device/viewport, color scheme\n\n'
+        'Batch read-only tools (snapshot, screenshot, console, network) in '
+        'one turn — the engine runs them concurrently.\n\n'
+        '### Tool-selection rules\n\n'
+        '1. **Text input → choose by content, not by element type.**\n'
+        '   - `fill(uid, value)` — form fields only: name, email, '
+        'password, search keyword, short single-line values.\n'
+        '   - `type_text(text, submitKey?)` — everything else: multi-line '
+        'text, prompts, code, markdown, any content with newlines or '
+        '>50 chars, and any chat / conversation input box. Click the '
+        'target first, then call type_text.\n'
+        '   - When in doubt, prefer `type_text`.\n\n'
+        '2. **File upload → `cdp_upload_file` only.** Do NOT click any '
+        'upload trigger. Call `cdp_upload_file(file_path=<absolute path>, '
+        'selector="input[type=\\"file\\"]")` directly.\n\n'
         '## Methodology\n\n'
         '### Before Acting\n'
         '1. Navigate to the target URL.\n'
@@ -69,9 +80,9 @@ def build_web_agent_system_prompt(
         '1. **Observe** — take_snapshot to understand current state.\n'
         '2. **Narrate** — one short Chinese sentence on what you will do.\n'
         '3. **Act + Screenshot** — every mutating tool call (click, fill, '
-        'navigate_page, press_key, hover, drag, upload_file, select_option, '
-        'wait_for) MUST include `take_screenshot` in the same response. '
-        'Max 3 mutating actions per response.\n'
+        'type_text, navigate_page, press_key, hover, drag, cdp_upload_file, '
+        'select_option, wait_for) MUST include `take_screenshot` in the same '
+        'response. Max 3 mutating actions per response.\n'
         '4. **Verify** — confirm the expected effect with evidence before '
         'moving on.'
         + (
@@ -197,21 +208,32 @@ def _format_skills_section(skills: Sequence[SkillMetadata]) -> str:
 
 
 def _format_file_upload_section(file_catalog: str) -> str:
-    """Render the optional file-upload guidance block.
+    """Render the file-upload guidance block.
 
-    Kept intentionally short — one paragraph of rules plus the verbatim
-    catalog. The caller (backend / CLI wrapper) is responsible for producing
-    the catalog text from the user-selected file set.
+    Routes uploads through the custom ``cdp_upload_file`` tool exclusively.
+    The MCP ``upload_file`` is filtered out at engine startup because its
+    click-the-trigger-then-intercept-chooser path is unreliable on pages
+    with hidden inputs or icon-only paperclip triggers. The tactical rule
+    (must-use `cdp_upload_file`, no clicking the paperclip) is stated in
+    the Capabilities section's Tool-selection rules; this section just
+    supplies the catalog and selector tips.
     """
     catalog = file_catalog.strip()
     return (
         '\n## File upload\n'
-        'Use `mcp__browser__upload_file` with `filePath` from the list below '
-        'and `uid` from the **latest** snapshot. `uid` = file input **or** any '
-        'control that opens the file chooser (e.g. paperclip next to a search '
-        'box). If the a11y tree hides icon-only controls, use `take_screenshot` '
-        '/ verbose `take_snapshot` and try a plausible `uid` before giving up. '
-        'Do not replace `upload_file` with `evaluate_script` to pick files. One '
-        '`filePath` per call; re-snapshot if uids change after an upload.\n\n'
+        'Files staged for this run — upload via `cdp_upload_file` '
+        '(see Tool-selection rule 3). Call:\n\n'
+        '```\n'
+        'cdp_upload_file(file_path="<absolute path from the catalog below>",\n'
+        '                selector="input[type=\\"file\\"]")\n'
+        '```\n\n'
+        '**Selector**: default `input[type="file"]` works for most pages. '
+        'Narrow it (e.g. `form.attachment input[type="file"]`, '
+        '`[data-testid="composer"] input[type="file"]`) only if multiple '
+        'file inputs exist. On `[FAILURE: ELEMENT_NOT_FOUND]`, scroll the '
+        'upload control into view and retry; or `evaluate_script` to list '
+        '`input[type="file"]` candidates.\n\n'
+        'After upload, `take_screenshot` to confirm the file badge / '
+        'preview / progress bar / enabled send button appeared.\n\n'
         f'{catalog}\n'
     )

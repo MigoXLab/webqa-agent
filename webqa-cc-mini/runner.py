@@ -67,7 +67,8 @@ from core.permissions import PermissionChecker
 from core.skill_registry import SkillRegistry
 from core.tool import Tool
 from features.compact import CompactService, should_compact
-from tools import DownloadCheckTool, LoadSkillTool, NucleiScanTool, VerifyTool
+from tools import (CDPUploadTool, DownloadCheckTool, LoadSkillTool,
+                   NucleiScanTool, VerifyTool)
 
 log = logging.getLogger('cc_mini.runner')
 
@@ -417,6 +418,25 @@ def run_cc_mini(
             mcp_servers, cdp_required=cdp_required)
         tools = mcp.start_and_collect_tools()
 
+        # Replace chrome-devtools-mcp's upload_file with our CDPUploadTool.
+        # The MCP version routes through the native file-chooser intercept,
+        # which depends on the trigger element being click-reachable from
+        # the a11y tree — fragile on pages with hidden inputs or icon-only
+        # paperclip triggers (the agent loops trying to click and never
+        # finds the chooser). Filtering removes that failure mode entirely
+        # so the agent has only one upload path: cdp_upload_file.
+        _filtered_upload = [
+            t for t in tools if t.name == 'mcp__browser__upload_file'
+        ]
+        if _filtered_upload:
+            tools = [
+                t for t in tools if t.name != 'mcp__browser__upload_file'
+            ]
+            log.info(
+                'Filtered out MCP upload_file (%d tool); use cdp_upload_file '
+                'instead.', len(_filtered_upload),
+            )
+
         skill_metadata = []
         if skills_dir is not None:
             skill_registry = SkillRegistry(Path(skills_dir))
@@ -490,6 +510,18 @@ def run_cc_mini(
 
         # Always add NucleiScanTool for security checks
         tools.append(NucleiScanTool())
+
+        # Direct-CDP file upload fallback. Binds to the CDP port when the
+        # default browser MCP config is in use; for custom MCP configs that
+        # don't expose a TCP debug port, the tool stays registered but fails
+        # fast with a clear infrastructure error on invocation.
+        upload_tool = CDPUploadTool()
+        if browser_server is not None and cdp_port is not None:
+            try:
+                upload_tool.bind_mcp(browser_server, cdp_port)
+            except Exception as exc:
+                log.warning('cdp_upload_file: bind_mcp failed: %s', exc)
+        tools.append(upload_tool)
 
         # Add independent verification tool (always registered)
         if browser_server is not None:
