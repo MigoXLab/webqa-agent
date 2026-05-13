@@ -458,21 +458,84 @@ class TestPlanSkillIntegration:
         names = [m.name for m in reg.list_metadata()]
         assert 'plan' in names
 
-    def test_plan_skill_references(self, reg):
+    def test_plan_skill_has_no_references(self, reg):
         refs = reg.list_references('plan')
-        assert 'error-taxonomy' in refs
-        assert 'verification-patterns' in refs
+        assert refs == []
 
     def test_plan_skill_body_contains_key_sections(self, reg):
         body = reg.load_full_content('plan')
         for section in (
             'Planning Phases',
             'Observation Batching',
-            'Verification Strategy',
+            'Re-planning',
             'Completion',
             'Error Handling',
         ):
             assert section in body, f'missing section: {section}'
+
+    def test_plan_skill_has_completion_checkpoints(self, reg):
+        body = reg.load_full_content('plan')
+        assert 'Completion Checkpoints' in body or 'completion condition' in body.lower()
+
+    def test_plan_error_handling_references_recovery(self, reg):
+        body = reg.load_full_content('plan')
+        assert 'load_skill(skill_name="recovery")' in body
+
+    def test_plan_no_longer_has_error_taxonomy_reference(self, reg):
+        refs = reg.list_references('plan')
+        assert 'error-taxonomy' not in refs
+
+
+# ---------------------------------------------------------------------------
+# Real recovery skill in webqa-cc-mini/skills/ — integration smoke tests
+# ---------------------------------------------------------------------------
+
+class TestRecoverySkillIntegration:
+    @pytest.fixture()
+    def reg(self):
+        if not _REAL_SKILLS_DIR.is_dir():
+            pytest.skip('webqa-cc-mini/skills/ not found')
+        r = SkillRegistry(_REAL_SKILLS_DIR)
+        r.discover()
+        return r
+
+    def test_recovery_skill_discovered(self, reg):
+        names = [m.name for m in reg.list_metadata()]
+        assert 'recovery' in names
+
+    def test_recovery_skill_has_when_to_use(self, reg):
+        meta = next(m for m in reg.list_metadata() if m.name == 'recovery')
+        assert meta.when_to_use
+        assert 'error' in meta.when_to_use.lower()
+
+    def test_recovery_skill_references(self, reg):
+        refs = reg.list_references('recovery')
+        assert 'error-taxonomy' in refs
+        assert 'recovery-strategies' in refs
+        assert 'verification-patterns' in refs
+
+    def test_recovery_skill_body_contains_key_sections(self, reg):
+        body = reg.load_full_content('recovery')
+        for section in (
+            'When to Use',
+            'OBSERVE',
+            'DIAGNOSE',
+            'RECOVER',
+            'Loop Control',
+        ):
+            assert section in body, f'missing section: {section}'
+
+    def test_recovery_error_taxonomy_loadable(self, reg):
+        content = reg.load_reference('recovery', 'error-taxonomy')
+        assert 'ELEMENT_NOT_FOUND' in content
+        assert 'ACTION_INEFFECTIVE' in content
+        assert 'PAGE_CRASHED' in content
+
+    def test_recovery_strategies_loadable(self, reg):
+        content = reg.load_reference('recovery', 'recovery-strategies')
+        assert 'Re-observe' in content
+        assert 'evaluate_script' in content
+        assert 'Escalation' in content or 'escalat' in content.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -590,3 +653,35 @@ class TestSystemPromptSkillInjection:
         bullet = next(line for line in prompt.splitlines() if '**plan**' in line)
         # No trailing parenthetical when when_to_use is empty
         assert bullet.rstrip().endswith('Generate test cases.')
+
+
+# ---------------------------------------------------------------------------
+# System prompt verification methodology
+# ---------------------------------------------------------------------------
+
+class TestSystemPromptVerification:
+    """Verify post-action verification methodology is present in prompt."""
+
+    def test_step4_contains_outcome_comparison(self):
+        prompt = build_web_agent_system_prompt('https://x', 'test')
+        assert 'compare the actual outcome against what you expected' in prompt.lower() or \
+               'compare the actual' in prompt.lower()
+
+    def test_semantic_failure_coverage(self):
+        prompt = build_web_agent_system_prompt('https://x', 'test')
+        assert 'does not guarantee the intended effect' in prompt
+
+    def test_anomalous_check_coverage(self):
+        prompt = build_web_agent_system_prompt('https://x', 'test')
+        assert 'anomalously fast' in prompt
+
+    def test_recovery_protocol_embedded(self):
+        prompt = build_web_agent_system_prompt('https://x', 'test')
+        assert '### Recovery Protocol' in prompt
+        assert 'Re-observe' in prompt
+        assert 'Diagnose' in prompt
+        assert 'escalation ladder' in prompt.lower()
+
+    def test_recovery_protocol_references_skill(self):
+        prompt = build_web_agent_system_prompt('https://x', 'test')
+        assert 'load_skill(skill_name="recovery")' in prompt
