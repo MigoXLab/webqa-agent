@@ -185,4 +185,4 @@ Set overall status:
 - **Skip hidden elements**: If an element's uid disappears from the post-navigation snapshot, mark as skipped and move on.
 - **Don't retest**: Each element is tested once. Don't loop back on failures — record and continue.
 - **External links**: For `<a href>` pointing to external domains, verify the `href` value from the snapshot rather than navigating away.
-- **File uploads**: If you encounter a file-upload control during traversal, skip it — file upload is out of scope for this skill (use the upload skill or `mcp__browser__upload_file` directly if a separate task requires it).
+- **File uploads**: If you encounter a file-upload control during traversal, skip it — file upload is out of scope for this skill (use `cdp_upload_file` directly if a separate task requires it).
