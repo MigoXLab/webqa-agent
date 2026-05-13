@@ -23,6 +23,7 @@ import os
 import queue
 import re
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -171,6 +172,7 @@ class MCPServer:
                 cwd=self._cwd,
                 env=merged_env,
                 bufsize=0,
+                start_new_session=True,
             )
         except (OSError, ValueError) as exc:
             raise MCPError(f'{self.name}: failed to spawn: {exc}') from exc
@@ -226,17 +228,33 @@ class MCPServer:
             try:
                 proc.wait(timeout=_SHUTDOWN_STDIN_GRACE)
             except subprocess.TimeoutExpired:
-                proc.terminate()
+                self._kill_process_group(proc, signal.SIGTERM)
                 try:
                     proc.wait(timeout=_SHUTDOWN_TERM_GRACE)
                 except subprocess.TimeoutExpired:
-                    proc.kill()
+                    self._kill_process_group(proc, signal.SIGKILL)
                     try:
                         proc.wait(timeout=_SHUTDOWN_TERM_GRACE)
                     except subprocess.TimeoutExpired:
                         pass
         finally:
             self._proc = None
+
+    @staticmethod
+    def _kill_process_group(proc: subprocess.Popen[bytes], sig: int) -> None:
+        """Send *sig* to the entire process group (MCP server + Chrome
+        tree)."""
+        try:
+            pgid = os.getpgid(proc.pid)
+            os.killpg(pgid, sig)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                if sig == signal.SIGTERM:
+                    proc.terminate()
+                else:
+                    proc.kill()
+            except OSError:
+                pass
 
     # ------------------------------------------------------------------ io threads
 

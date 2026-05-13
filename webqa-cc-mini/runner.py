@@ -39,6 +39,7 @@ Skills (optional Progressive Disclosure)::
 """
 from __future__ import annotations
 
+import atexit
 import base64
 import errno
 import http.client
@@ -46,7 +47,9 @@ import json
 import logging
 import os
 import shutil
+import signal
 import socket
+import sys
 import tempfile
 import time
 from collections import deque
@@ -415,6 +418,34 @@ def run_cc_mini(
         save_screenshots=save_screenshots,
         screenshot_dir=screenshot_dir,
     )
+
+    def _emergency_cleanup() -> None:
+        try:
+            mcp.shutdown_all()
+        except Exception:
+            pass
+        try:
+            shutil.rmtree(profile, ignore_errors=True)
+        except Exception:
+            pass
+
+    atexit.register(_emergency_cleanup)
+
+    _prev_sigterm: Any = None
+    _prev_sighup: Any = None
+    _signals_installed = False
+    try:
+        _prev_sigterm = signal.getsignal(signal.SIGTERM)
+        _prev_sighup = signal.getsignal(signal.SIGHUP)
+
+        def _signal_handler(signum: int, frame: Any) -> None:
+            sys.exit(128 + signum)
+
+        signal.signal(signal.SIGTERM, _signal_handler)
+        signal.signal(signal.SIGHUP, _signal_handler)
+        _signals_installed = True
+    except ValueError:
+        pass
 
     engine: Engine | None = None
     steps: list[Step] = []
@@ -814,6 +845,10 @@ def run_cc_mini(
             shutil.rmtree(profile, ignore_errors=True)
         except Exception:
             pass
+        atexit.unregister(_emergency_cleanup)
+        if _signals_installed:
+            signal.signal(signal.SIGTERM, _prev_sigterm)
+            signal.signal(signal.SIGHUP, _prev_sighup)
 
 
 def _resolve_cdp_port(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import random
 import re
 import time
@@ -36,6 +37,7 @@ _MUTATING_TOOLS = frozenset({
     'mcp__browser__upload_file',
     'mcp__browser__select_option',
     'mcp__browser__type_text',
+    'cdp_upload_file',
 })
 
 # Bounds (ms) for mcp__browser__wait_for.  setdefault was insufficient
@@ -60,6 +62,16 @@ _JITTER_FACTOR = 0.25
 # waiter to share one 60s clock.  3 covers the common "console + network +
 # get_*" trio without inviting batch-wide synchronous timeouts.
 _MAX_CONCURRENT_TOOLS = 3
+
+
+def _screenshot_content_hash(result: ToolResult) -> str | None:
+    """MD5 of the first image block's base64 data, or None."""
+    for blk in result.content_blocks or []:
+        if isinstance(blk, dict) and blk.get('type') == 'image':
+            data = blk.get('data', '')
+            if data:
+                return hashlib.md5(data.encode('ascii')).hexdigest()
+    return None
 
 
 def _compute_retry_delay(attempt: int, retry_after: float | None = None) -> float:
@@ -138,6 +150,8 @@ class Engine:
         self._active_stream = None  # reference to current HTTP stream
         self._turn_id = 0
         self._data_flow_sequence = 0
+        self._prev_screenshot_hash: str | None = None
+        self._consecutive_failures: int = 0
 
     # -- message accessors (for compact / resume) ---------------------------
 
@@ -209,6 +223,75 @@ class Engine:
                 },
             },
         )
+
+    def _annotate_screenshot_state(
+        self, result: ToolResult, *, has_mutation: bool,
+    ) -> None:
+        if not has_mutation:
+            return
+        current_hash = _screenshot_content_hash(result)
+        if current_hash and self._prev_screenshot_hash:
+            if current_hash == self._prev_screenshot_hash:
+                result.content += (
+                    '\n[post-action observation: page visual state '
+                    'unchanged since previous screenshot]'
+                )
+            else:
+                result.content += (
+                    '\n[post-action observation: page visual state '
+                    'changed since previous screenshot]'
+                )
+        if current_hash:
+            self._prev_screenshot_hash = current_hash
+
+    _FAILURE_ESCALATION_THRESHOLD = 3
+
+    def _update_failure_counter(
+        self,
+        tool_results: list[dict[str, Any]],
+        turn_has_mutation: bool,
+    ) -> None:
+        """Track consecutive turns with failures; inject escalation signal."""
+        if not turn_has_mutation:
+            return
+
+        has_error = any(
+            isinstance(tr, dict) and tr.get('is_error')
+            for tr in tool_results
+        )
+        has_unchanged = any(
+            isinstance(tr, dict)
+            and 'unchanged since previous screenshot]' in str(
+                tr.get('content', ''),
+            )
+            for tr in tool_results
+        )
+
+        if has_error or has_unchanged:
+            self._consecutive_failures += 1
+        else:
+            self._consecutive_failures = 0
+            return
+
+        if (
+            self._consecutive_failures >= self._FAILURE_ESCALATION_THRESHOLD
+            and tool_results
+        ):
+            n = self._consecutive_failures
+            signal = (
+                f'\n[consecutive failure #{n}: the last {n} '
+                f'action turns produced errors or no visible '
+                f'effect — current approach is not working, '
+                f'try a fundamentally different strategy]'
+            )
+            last = tool_results[-1]
+            existing = last.get('content', '')
+            if isinstance(existing, str):
+                last['content'] = existing + signal
+            elif isinstance(existing, list):
+                last['content'] = list(existing) + [
+                    {'type': 'text', 'text': signal},
+                ]
 
     def _tool_call_id(self, turn_id: int, tool_use: Any) -> str:
         raw_id = _block_id(tool_use)
@@ -423,6 +506,9 @@ class Engine:
                 if not tool_uses:
                     break
 
+                turn_tool_names = {_block_name(tu) for tu in tool_uses}
+                turn_has_mutation = bool(turn_tool_names & _MUTATING_TOOLS)
+
                 tool_results = []
 
                 # Partition into batches: consecutive read-only AND
@@ -524,6 +610,10 @@ class Engine:
                                     0.0,
                                 )
                             result, started_at, ended_at, duration_seconds = measured
+                            if tn == 'mcp__browser__take_screenshot':
+                                self._annotate_screenshot_state(
+                                    result, has_mutation=turn_has_mutation,
+                                )
                             yield ('tool_result', tn, ti, result)
                             yield self._data_flow_event(
                                 event_type='cc_mini_tool_result',
@@ -585,6 +675,10 @@ class Engine:
                                     )
                                 )
 
+                            if tn == 'mcp__browser__take_screenshot':
+                                self._annotate_screenshot_state(
+                                    result, has_mutation=turn_has_mutation,
+                                )
                             yield ('tool_result', tn, ti, result)
                             yield self._data_flow_event(
                                 event_type='cc_mini_tool_result',
@@ -609,8 +703,8 @@ class Engine:
 
                 # Auto-inject screenshot if a mutating action was executed
                 # but the model didn't include take_screenshot.
-                tool_names = {_block_name(tu) for tu in tool_uses}
-                has_mutation = bool(tool_names & _MUTATING_TOOLS)
+                tool_names = turn_tool_names
+                has_mutation = turn_has_mutation
                 has_screenshot = 'mcp__browser__take_screenshot' in tool_names
                 if has_mutation and not has_screenshot:
                     ss_tool = self._tools.get('mcp__browser__take_screenshot')
@@ -640,6 +734,7 @@ class Engine:
                         ss_result = ss_tool.execute(**ss_input)
                         ss_end = iso_now()
                         ss_duration = round(time.perf_counter() - ss_perf, 4)
+                        self._annotate_screenshot_state(ss_result, has_mutation=True)
                         yield ('tool_result', 'mcp__browser__take_screenshot',
                                ss_input, ss_result)
                         yield self._data_flow_event(
@@ -674,6 +769,8 @@ class Engine:
                         tool_results.append(
                             _build_tool_result_block(synthetic_id, ss_result)
                         )
+
+                self._update_failure_counter(tool_results, turn_has_mutation)
 
                 self._messages.append({
                     'role': 'user',
