@@ -152,6 +152,7 @@ class Engine:
         self._data_flow_sequence = 0
         self._prev_screenshot_hash: str | None = None
         self._consecutive_failures: int = 0
+        self._turn_visual_state: str = 'unknown'
 
     # -- message accessors (for compact / resume) ---------------------------
 
@@ -225,24 +226,34 @@ class Engine:
         )
 
     def _annotate_screenshot_state(
-        self, result: ToolResult, *, has_mutation: bool,
+        self, result: ToolResult, *, after_mutation: bool,
     ) -> None:
-        if not has_mutation:
-            return
+        """Append a visual-signal note and update the screenshot hash.
+
+        ``after_mutation`` should be True only for screenshots captured
+        *after* a mutating tool executed in this turn.  Pre-action
+        screenshots still update ``_prev_screenshot_hash`` (so the next
+        comparison has a fresh baseline) but receive no annotation.
+        """
         current_hash = _screenshot_content_hash(result)
-        if current_hash and self._prev_screenshot_hash:
+        if not current_hash:
+            return
+        if after_mutation and self._prev_screenshot_hash:
             if current_hash == self._prev_screenshot_hash:
                 result.content += (
-                    '\n[post-action observation: page visual state '
-                    'unchanged since previous screenshot]'
+                    '\n[visual signal: page appears unchanged since '
+                    'previous screenshot — this is an observation, not '
+                    'a conclusion; verify intended effect via snapshot]'
                 )
+                self._turn_visual_state = 'unchanged'
             else:
                 result.content += (
-                    '\n[post-action observation: page visual state '
-                    'changed since previous screenshot]'
+                    '\n[visual signal: page changed since previous '
+                    'screenshot — verify that the change matches your '
+                    'intended outcome]'
                 )
-        if current_hash:
-            self._prev_screenshot_hash = current_hash
+                self._turn_visual_state = 'changed'
+        self._prev_screenshot_hash = current_hash
 
     _FAILURE_ESCALATION_THRESHOLD = 3
 
@@ -251,7 +262,7 @@ class Engine:
         tool_results: list[dict[str, Any]],
         turn_has_mutation: bool,
     ) -> None:
-        """Track consecutive turns with failures; inject escalation signal."""
+        """Track consecutive mutating turns with no visible progress."""
         if not turn_has_mutation:
             return
 
@@ -259,15 +270,11 @@ class Engine:
             isinstance(tr, dict) and tr.get('is_error')
             for tr in tool_results
         )
-        has_unchanged = any(
-            isinstance(tr, dict)
-            and 'unchanged since previous screenshot]' in str(
-                tr.get('content', ''),
-            )
-            for tr in tool_results
+        no_visible_progress = (
+            self._turn_visual_state == 'unchanged' and not has_error
         )
 
-        if has_error or has_unchanged:
+        if has_error or no_visible_progress:
             self._consecutive_failures += 1
         else:
             self._consecutive_failures = 0
@@ -508,6 +515,8 @@ class Engine:
 
                 turn_tool_names = {_block_name(tu) for tu in tool_uses}
                 turn_has_mutation = bool(turn_tool_names & _MUTATING_TOOLS)
+                self._turn_visual_state = 'unknown'
+                mutation_executed = False
 
                 tool_results = []
 
@@ -612,7 +621,7 @@ class Engine:
                             result, started_at, ended_at, duration_seconds = measured
                             if tn == 'mcp__browser__take_screenshot':
                                 self._annotate_screenshot_state(
-                                    result, has_mutation=turn_has_mutation,
+                                    result, after_mutation=mutation_executed,
                                 )
                             yield ('tool_result', tn, ti, result)
                             yield self._data_flow_event(
@@ -675,9 +684,11 @@ class Engine:
                                     )
                                 )
 
+                            if tn in _MUTATING_TOOLS:
+                                mutation_executed = True
                             if tn == 'mcp__browser__take_screenshot':
                                 self._annotate_screenshot_state(
-                                    result, has_mutation=turn_has_mutation,
+                                    result, after_mutation=mutation_executed,
                                 )
                             yield ('tool_result', tn, ti, result)
                             yield self._data_flow_event(
@@ -734,7 +745,7 @@ class Engine:
                         ss_result = ss_tool.execute(**ss_input)
                         ss_end = iso_now()
                         ss_duration = round(time.perf_counter() - ss_perf, 4)
-                        self._annotate_screenshot_state(ss_result, has_mutation=True)
+                        self._annotate_screenshot_state(ss_result, after_mutation=True)
                         yield ('tool_result', 'mcp__browser__take_screenshot',
                                ss_input, ss_result)
                         yield self._data_flow_event(

@@ -96,18 +96,6 @@ class TestFailureCounter:
             'is_error': True,
         }
 
-    def _unchanged_result(self):
-        return {
-            'type': 'tool_result',
-            'tool_use_id': 'test',
-            'content': (
-                'Took a screenshot\n'
-                '[post-action observation: page visual state '
-                'unchanged since previous screenshot]'
-            ),
-            'is_error': False,
-        }
-
     def _ok_result(self):
         return {
             'type': 'tool_result',
@@ -126,15 +114,17 @@ class TestFailureCounter:
         e._update_failure_counter(results, turn_has_mutation=True)
         assert e._consecutive_failures == 1
 
-    def test_counter_increments_on_unchanged(self):
+    def test_counter_increments_on_unchanged_visual(self):
         e = self._make_engine()
-        results = [self._unchanged_result()]
+        e._turn_visual_state = 'unchanged'
+        results = [self._ok_result()]
         e._update_failure_counter(results, turn_has_mutation=True)
         assert e._consecutive_failures == 1
 
-    def test_counter_resets_on_success(self):
+    def test_counter_resets_on_changed_visual(self):
         e = self._make_engine()
         e._consecutive_failures = 2
+        e._turn_visual_state = 'changed'
         results = [self._ok_result()]
         e._update_failure_counter(results, turn_has_mutation=True)
         assert e._consecutive_failures == 0
@@ -160,7 +150,8 @@ class TestFailureCounter:
     def test_signal_continues_above_threshold(self):
         e = self._make_engine()
         e._consecutive_failures = 4
-        results = [self._unchanged_result()]
+        e._turn_visual_state = 'unchanged'
+        results = [self._ok_result()]
         e._update_failure_counter(results, turn_has_mutation=True)
         assert e._consecutive_failures == 5
         assert 'consecutive failure #5' in results[0]['content']

@@ -682,6 +682,11 @@ class TestSystemPromptVerification:
         assert 'Diagnose' in prompt
         assert 'escalation ladder' in prompt.lower()
 
-    def test_recovery_protocol_references_skill(self):
-        prompt = build_web_agent_system_prompt('https://x', 'test')
+    def test_recovery_protocol_references_skill_when_available(self, tmp_path):
+        metas = [SkillMetadata(name='recovery', description='d.', skill_dir=tmp_path)]
+        prompt = build_web_agent_system_prompt('u', 't', skills=metas)
         assert 'load_skill(skill_name="recovery")' in prompt
+
+    def test_recovery_protocol_omits_skill_when_unavailable(self):
+        prompt = build_web_agent_system_prompt('https://x', 'test')
+        assert 'load_skill(skill_name="recovery")' not in prompt
