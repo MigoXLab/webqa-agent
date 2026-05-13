@@ -13,6 +13,13 @@ class ToolResult:
 
 
 class Tool(ABC):
+    # Default opt-in for concurrent execution within a read-only batch.
+    # Subclasses set False when the underlying backend serialises despite
+    # being logically read-only (e.g. chrome-devtools-mcp on a single page),
+    # or when the tool keeps mutable instance state (e.g. DownloadCheckTool).
+    # MCPTool overrides per-instance in __init__.
+    concurrent_safe: bool = True
+
     @property
     @abstractmethod
     def name(self) -> str: ...

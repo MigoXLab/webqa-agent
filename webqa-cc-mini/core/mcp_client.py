@@ -59,6 +59,18 @@ _DEFAULT_STARTUP_TIMEOUT = 20.0
 _SHUTDOWN_STDIN_GRACE = 3.0
 _SHUTDOWN_TERM_GRACE = 1.0
 
+# (server_name, original_tool_name) tuples for read-only MCP tools whose
+# backend serialises on a single page (chrome-devtools-mcp's renderer main
+# thread). Putting them in the engine's parallel batch causes every waiter to
+# share one 60s clock and time out together. The engine reads the per-instance
+# `MCPTool.concurrent_safe` flag set in __init__ to keep them in sequential
+# batches instead. Server-name scoped so a third-party MCP that happens to
+# expose `take_screenshot` is not affected.
+_HEAVY_READONLY_TOOLS: frozenset[tuple[str, str]] = frozenset({
+    ('browser', 'take_snapshot'),
+    ('browser', 'take_screenshot'),
+})
+
 # Read-only tool name tokens (chrome-devtools-mcp / playwright-mcp naming conventions).
 # Used when the MCP server omits readOnlyHint to infer read-only semantics
 # heuristically.  Matching is done on word boundaries (underscores, dashes,
@@ -347,6 +359,26 @@ class MCPServer:
         if not waiter.event.wait(timeout=timeout_s):
             with self._waiters_lock:
                 self._waiters.pop(msg_id, None)
+            # Tell the server to abandon the request so it stops occupying
+            # the renderer's main thread.  Without this, an in-flight
+            # locator.wait() in chrome-devtools-mcp keeps running past our
+            # local timeout and the next call_tool queues behind it for
+            # another full timeout window.  The MCP spec lets receivers
+            # ignore the notification if the request has already finished,
+            # so a late response racing this branch is harmless.
+            try:
+                self._send_notification(
+                    'notifications/cancelled',
+                    {
+                        'requestId': msg_id,
+                        'reason': f'client timeout after {timeout_s}s',
+                    },
+                )
+            except Exception as cancel_exc:
+                _log.debug(
+                    '%s: failed to send cancellation for id=%s: %s',
+                    self.name, msg_id, cancel_exc,
+                )
             raise MCPError(f'{self.name}: {method} timed out after {timeout_s}s')
 
         result = waiter.result
@@ -481,14 +513,26 @@ class MCPTool(Tool):
         )
         self._input_schema = spec.get('inputSchema') or {'type': 'object', 'properties': {}}
         annotations = spec.get('annotations') or {}
-        self._read_only = bool(annotations.get('readOnlyHint', False))
+        # Distinguish "server omitted the hint" from "server explicitly said
+        # not read-only".  `dict.get('readOnlyHint', False)` collapses both to
+        # False, after which the name heuristic could override an *explicit*
+        # readOnlyHint=False — turning a mutating tool with a misleading name
+        # (e.g. `get_and_clear_cache`, `list_and_purge_orphans`) into a
+        # read-only one and dropping it into the parallel batch.  Honour the
+        # explicit hint when present; fall back to the heuristic only when
+        # the field is missing — chrome-devtools-mcp and playwright-mcp
+        # rarely set it at all.
+        hint = annotations.get('readOnlyHint')
+        if hint is None:
+            self._read_only = _is_likely_readonly_by_name(self._original_name)
+        else:
+            self._read_only = bool(hint)
 
-        # Heuristic: when the server omits readOnlyHint, infer from tool name.
-        # chrome-devtools-mcp and playwright-mcp rarely set this annotation,
-        # which would cause engine.py to serialize all MCP tools (no batching).
-        if not self._read_only:
-            if _is_likely_readonly_by_name(self._original_name):
-                self._read_only = True
+        # Keep heavy read-only tools sequential — see _HEAVY_READONLY_TOOLS.
+        self.concurrent_safe = (
+            self._read_only
+            and (server.name, self._original_name) not in _HEAVY_READONLY_TOOLS
+        )
 
     @property
     def name(self) -> str:

@@ -36,11 +36,30 @@ _MUTATING_TOOLS = frozenset({
     'mcp__browser__upload_file',
     'mcp__browser__select_option',
     'mcp__browser__type_text',
-    'mcp__browser__wait_for',
 })
+
+# Bounds (ms) for mcp__browser__wait_for.  setdefault was insufficient
+# because the model sometimes passes timeout=0 (chrome-devtools-mcp treats
+# 0 as "use server default") — we clamp instead so 0/missing/<0 fall back
+# to the short default and overlong values are capped 30s below the outer
+# _DEFAULT_CALL_TIMEOUT (60s).  The 30s cap is a defensive ceiling: cdm's
+# wait_for is a literal Puppeteer text/aria locator (case-sensitive, must
+# be visible, no shadow-DOM piercing, text/ doesn't match aria-label), so
+# icon buttons, shadow-DOM components, and dynamic labels all wait the
+# full timeout for nothing.  Bounding the cap at 30s limits wasted time
+# when the model picks a phrase that will never match.
+_WAIT_FOR_DEFAULT_TIMEOUT_MS = 8000
+_WAIT_FOR_MAX_TIMEOUT_MS = 30000
 _BASE_DELAY = 0.5
 _MAX_DELAY = 32.0
 _JITTER_FACTOR = 0.25
+
+# Maximum number of concurrent tool calls within one read-only batch.
+# chrome-devtools-mcp serialises tool invocations on the renderer's main
+# thread, so wider parallelism delivers no real speedup but does cause every
+# waiter to share one 60s clock.  3 covers the common "console + network +
+# get_*" trio without inviting batch-wide synchronous timeouts.
+_MAX_CONCURRENT_TOOLS = 3
 
 
 def _compute_retry_delay(attempt: int, retry_after: float | None = None) -> float:
@@ -406,12 +425,21 @@ class Engine:
 
                 tool_results = []
 
-                # Partition into batches: consecutive read-only tools run in
-                # parallel; a non-read-only tool runs alone.
+                # Partition into batches: consecutive read-only AND
+                # concurrent-safe tools run in parallel; everything else runs
+                # alone.  Both gates matter: `is_read_only()` excludes mutating
+                # tools (Nuclei scan, switch_account, etc.), `concurrent_safe`
+                # is the stricter follow-up that excludes read-only-but-
+                # serialised cases (heavy MCP reads, stateful native tools,
+                # tools that fan out to MCP themselves like VerifyTool).
                 batches: list[list] = []
                 for tu in tool_uses:
                     t = self._tools.get(_block_name(tu))
-                    is_concurrent = t is not None and t.is_read_only()
+                    is_concurrent = (
+                        t is not None
+                        and t.is_read_only()
+                        and getattr(t, 'concurrent_safe', True)
+                    )
                     if batches and batches[-1][0] == is_concurrent and is_concurrent:
                         batches[-1][1].append(tu)
                     else:
@@ -466,7 +494,9 @@ class Engine:
                                 ti = _block_input(tu)
                                 yield ('tool_executing', tn, ti, act)
 
-                            with ThreadPoolExecutor(max_workers=min(len(approved), 10)) as pool:
+                            with ThreadPoolExecutor(
+                                max_workers=min(len(approved), _MAX_CONCURRENT_TOOLS),
+                            ) as pool:
                                 futures = {}
                                 for tu, tool, act in approved:
                                     f = pool.submit(
@@ -667,6 +697,14 @@ class Engine:
         if tool_name == 'mcp__browser__take_screenshot':
             tool_input.setdefault('format', 'jpeg')
             tool_input.setdefault('quality', 55)
+
+        # Clamp wait_for timeout — see _WAIT_FOR_DEFAULT/MAX_TIMEOUT_MS for rationale.
+        if tool_name == 'mcp__browser__wait_for':
+            requested = tool_input.get('timeout')
+            if not isinstance(requested, (int, float)) or requested <= 0:
+                tool_input['timeout'] = _WAIT_FOR_DEFAULT_TIMEOUT_MS
+            elif requested > _WAIT_FOR_MAX_TIMEOUT_MS:
+                tool_input['timeout'] = _WAIT_FOR_MAX_TIMEOUT_MS
 
         try:
             return tool.execute(**tool_input)

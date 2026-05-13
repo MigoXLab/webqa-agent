@@ -30,6 +30,10 @@ def _human_size(size_bytes: int) -> str:
 class DownloadCheckTool(Tool):
     """Verify that a browser download produced a real file on disk."""
 
+    # Stateful: _snapshot writes self._baseline, _verify reads it.  Two
+    # concurrent invocations would race on the baseline.  Forced sequential.
+    concurrent_safe = False
+
     def __init__(self, download_dir: str | Path) -> None:
         self._dir = Path(download_dir)
         self._dir.mkdir(parents=True, exist_ok=True)

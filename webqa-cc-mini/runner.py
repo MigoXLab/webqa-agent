@@ -82,6 +82,27 @@ except Exception:
     _DISPLAY_AVAILABLE = False
 
 
+_TOOL_INPUT_LOG_LIMIT = 200
+
+
+def _summarize_tool_input(tool_input: Any) -> str:
+    """Compact one-line rendering of tool arguments for the tool_call log.
+
+    Truncates at _TOOL_INPUT_LOG_LIMIT so a take_snapshot dump or a long
+    fill text doesn't drown the line, but keeps enough to reveal things
+    like timeout=0 or empty selectors during diagnosis.
+    """
+    if not tool_input:
+        return '{}'
+    try:
+        rendered = json.dumps(tool_input, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):
+        rendered = repr(tool_input)
+    if len(rendered) > _TOOL_INPUT_LOG_LIMIT:
+        rendered = rendered[:_TOOL_INPUT_LOG_LIMIT] + '…'
+    return rendered
+
+
 class _DisplayProgressBridge:
     """Maps engine events to logs and Display task rows."""
 
@@ -625,7 +646,7 @@ def run_cc_mini(
 
             if kind == 'tool_call':
                 pending.append({'tool': evt[1], 'input': evt[2], 'ts': time.time()})
-                log.info('tool_call: %s', evt[1])
+                log.info('tool_call: %s %s', evt[1], _summarize_tool_input(evt[2]))
 
             elif kind == 'data_flow_event':
                 event = evt[1] if len(evt) > 1 and isinstance(evt[1], dict) else {}

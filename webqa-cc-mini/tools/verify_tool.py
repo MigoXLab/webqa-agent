@@ -26,7 +26,7 @@ _log = logging.getLogger('cc_mini.verify')
 
 _MAX_TOKENS = 1024
 _SNAPSHOT_MAX_CHARS = 40_000
-_MCP_TIMEOUT = 10.0
+_MCP_TIMEOUT = 30.0
 _JSON_FENCE_RE = re.compile(r'^```(?:json)?\s*|\s*```$', re.DOTALL)
 _VERDICT_TAGS = {'PASSED': '[SUCCESS]', 'FAILED': '[FAILURE]'}
 
@@ -62,6 +62,12 @@ def _build_user_prompt(assertion: str, snapshot_text: str | None) -> str:
 
 
 class VerifyTool(Tool):
+    # Read-only by contract, but execute() fans out to take_snapshot +
+    # take_screenshot on the same browser MCPServer; running it in a parallel
+    # batch with other read-only tools makes them all queue on the renderer's
+    # main thread and inflates the chance of a 30s/60s synchronous timeout.
+    concurrent_safe = False
+
     """Evaluate an assertion against current page state using an independent
     LLM."""
 
