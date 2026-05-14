@@ -5,7 +5,9 @@ import random
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
+
+ContextOverflowHandler = Callable[[list[dict]], list[dict] | None]
 
 from utils.data_flow import (build_llm_error_payload, build_llm_ok_payload,
                              build_tool_event_payload, iso_now, safe_copy)
@@ -19,8 +21,14 @@ from .tool import Tool, ToolResult
 _MAX_RETRIES = 10
 
 # Tools whose text results are large and only the latest is useful.
+# Older results are replaced with a short placeholder before each LLM call
+# (see ``_strip_old_snapshots``). Add only tools whose stale outputs are
+# safe to drop — i.e. the agent rarely needs to refer back to old runs.
 _LARGE_TEXT_TOOLS = frozenset({
     'mcp__browser__take_snapshot',
+    'mcp__browser__list_network_requests',
+    'mcp__browser__list_console_messages',
+    'mcp__browser__evaluate_script',
 })
 
 # Browser tools that mutate page state — if any of these are called
@@ -126,6 +134,13 @@ class Engine:
             self._model,
             provider=provider,
         )
+        # Optional callback invoked when the LLM rejects the request with a
+        # context-overflow error. Receives the current message list and is
+        # expected to return a shorter (e.g. summarised) message list, or
+        # None if it could not shrink the conversation. Set lazily via
+        # ``set_context_overflow_handler`` so the runner can construct the
+        # CompactService after the engine.
+        self._on_context_overflow: ContextOverflowHandler | None = None
         # Collect optional per-call LLM kwargs into one dict so submit()
         # can spread them without enumerating each field individually.
         self._llm_kwargs: dict[str, Any] = {
@@ -176,6 +191,20 @@ class Engine:
 
     def get_model(self) -> str:
         return self._model
+
+    def set_context_overflow_handler(
+        self,
+        handler: ContextOverflowHandler | None,
+    ) -> None:
+        """Register a callback to handle ``context_length_exceeded``.
+
+        The handler receives the current ``self._messages`` and should
+        return a shorter list (typically the result of summarising the
+        history). Returning ``None`` — or a list that isn't strictly
+        shorter — tells the engine to fall back to its legacy behaviour
+        of halving ``max_tokens`` and retrying.
+        """
+        self._on_context_overflow = handler
 
     @property
     def system_prompt(self) -> str:
@@ -385,6 +414,7 @@ class Engine:
                         # Drop stale large content before each LLM call.
                         _strip_old_images(self._messages, keep_recent=1)
                         _strip_old_snapshots(self._messages, keep_recent=1)
+                        _strip_inline_snapshots(self._messages, keep_recent=1)
                         request_payload = {
                             'model': self._model,
                             'provider': self._provider,
@@ -469,8 +499,36 @@ class Engine:
                             self._messages.pop()
                             yield ('error', f'Authentication failed: {self._client.error_message(e)}')
                             return
-                        # Context overflow: reduce max_tokens and retry
+                        # Context overflow: try to compact history first;
+                        # only fall back to halving max_tokens (output cap)
+                        # if compaction couldn't shrink the messages — that
+                        # legacy path can't help when the input alone has
+                        # already exceeded the limit.
                         if self._client.is_api_error(e) and _CONTEXT_OVERFLOW_RE.search(err_msg):
+                            if self._on_context_overflow is not None:
+                                before = len(self._messages)
+                                try:
+                                    new_messages = self._on_context_overflow(
+                                        self._messages,
+                                    )
+                                except Exception as compact_exc:
+                                    new_messages = None
+                                    yield (
+                                        'error',
+                                        f'Context overflow compact handler raised: {compact_exc}',
+                                    )
+                                if (
+                                    new_messages is not None
+                                    and len(new_messages) < before
+                                ):
+                                    self._messages = new_messages
+                                    self._turn_start_len = len(new_messages)
+                                    yield (
+                                        'error',
+                                        'Context overflow, compacted history '
+                                        f'({before} -> {len(new_messages)} messages) and retrying...',
+                                    )
+                                    continue
                             reduced = self._max_tokens // 2
                             if reduced >= 1024:
                                 self._max_tokens = reduced
@@ -938,8 +996,6 @@ def _strip_old_images(messages: list[dict], *, keep_recent: int = 2) -> None:
             'type': 'text',
             'text': _image_removal_marker(block, image_parts),
         })
-        if not text_parts:
-            text_parts = [{'type': 'text', 'text': '[screenshot removed to save context]'}]
         block['content'] = text_parts
 
 
@@ -990,6 +1046,78 @@ def _strip_old_snapshots(messages: list[dict], *, keep_recent: int = 1) -> None:
             len(p.get('text', '')) for p in old if isinstance(p, dict)
         )
         block['content'] = f'[snapshot removed to save context, was ~{old_len} chars]'
+
+
+# Regex matching the inline snapshot block that chrome-devtools-mcp appends
+# when a tool is called with ``includeSnapshot: true``. The block starts with
+# a markdown heading ("## Latest page snapshot" or similar) followed by the
+# accessibility tree dump ("uid=..." lines). We strip it from old tool
+# results to avoid duplicating what ``take_snapshot`` already captures.
+_INLINE_SNAPSHOT_RE = re.compile(
+    r'(?:\n|^)##\s*Latest page snapshot\n.*',
+    re.DOTALL,
+)
+
+
+def _strip_inline_snapshots(
+    messages: list[dict],
+    *,
+    keep_recent: int = 1,
+) -> None:
+    """Remove embedded page snapshots from old tool_result text.
+
+    Many chrome-devtools-mcp tools (click, fill, hover, …) accept an
+    ``includeSnapshot`` flag that appends the full accessibility tree to
+    the result text. These inline snapshots are valuable for the *current*
+    decision but redundant once the agent has moved on — and they can be
+    10–30K chars each. This function strips them from all but the most
+    recent *keep_recent* tool_result blocks that contain the pattern,
+    leaving just the first line (e.g. "Successfully clicked on the
+    element").
+    """
+    # Collect positions of tool_result blocks that contain inline snapshots.
+    positions: list[tuple[int, int]] = []
+    for mi, msg in enumerate(messages):
+        if msg.get('role') != 'user':
+            continue
+        content = msg.get('content')
+        if not isinstance(content, list):
+            continue
+        for bi, block in enumerate(content):
+            if not isinstance(block, dict) or block.get('type') != 'tool_result':
+                continue
+            raw = block.get('content', '')
+            if isinstance(raw, str) and _INLINE_SNAPSHOT_RE.search(raw):
+                positions.append((mi, bi))
+            elif isinstance(raw, list):
+                for part in raw:
+                    if (
+                        isinstance(part, dict)
+                        and part.get('type') == 'text'
+                        and _INLINE_SNAPSHOT_RE.search(part.get('text', ''))
+                    ):
+                        positions.append((mi, bi))
+                        break
+
+    to_strip = (
+        positions[:-keep_recent] if len(positions) > keep_recent else []
+    )
+    for mi, bi in to_strip:
+        block = messages[mi]['content'][bi]
+        raw = block.get('content', '')
+        if isinstance(raw, str):
+            block['content'] = _INLINE_SNAPSHOT_RE.sub(
+                '\n[inline snapshot removed to save context]', raw,
+            )
+        elif isinstance(raw, list):
+            for part in raw:
+                if isinstance(part, dict) and part.get('type') == 'text':
+                    text = part.get('text', '')
+                    if _INLINE_SNAPSHOT_RE.search(text):
+                        part['text'] = _INLINE_SNAPSHOT_RE.sub(
+                            '\n[inline snapshot removed to save context]',
+                            text,
+                        )
 
 
 def _image_removal_marker(

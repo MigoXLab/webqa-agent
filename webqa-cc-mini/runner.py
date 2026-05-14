@@ -91,9 +91,9 @@ _TOOL_INPUT_LOG_LIMIT = 200
 def _summarize_tool_input(tool_input: Any) -> str:
     """Compact one-line rendering of tool arguments for the tool_call log.
 
-    Truncates at _TOOL_INPUT_LOG_LIMIT so a take_snapshot dump or a long
-    fill text doesn't drown the line, but keeps enough to reveal things
-    like timeout=0 or empty selectors during diagnosis.
+    Truncates at _TOOL_INPUT_LOG_LIMIT so a take_snapshot dump or a long fill
+    text doesn't drown the line, but keeps enough to reveal things like
+    timeout=0 or empty selectors during diagnosis.
     """
     if not tool_input:
         return '{}'
@@ -633,6 +633,29 @@ def run_cc_mini(
                 new_msgs, _ = compact.compact(messages, engine.system_prompt)
                 engine.set_messages(new_msgs)
                 last_input_tokens = 0  # reset so compaction doesn't re-fire
+
+        def _on_context_overflow(messages: list[dict]) -> list[dict] | None:
+            """Force-compact when the LLM rejects the request as too long.
+
+            Engine calls this *during* its retry loop on
+            ``context_length_exceeded``. We run the same summarisation as
+            the soft auto-compact path; if it actually shrinks the
+            history, the engine retries with the smaller payload. If it
+            can't shrink, we return ``None`` so the engine falls back to
+            its legacy ``max_tokens`` halving.
+            """
+            nonlocal last_input_tokens
+            try:
+                new_msgs, _ = compact.compact(messages, engine.system_prompt)
+            except Exception as exc:
+                log.warning('Force-compact during overflow failed: %s', exc)
+                return None
+            if not new_msgs or len(new_msgs) >= len(messages):
+                return None
+            last_input_tokens = 0  # next usage event won't immediately re-fire
+            return new_msgs
+
+        engine.set_context_overflow_handler(_on_context_overflow)
 
         # engine.py emits tool_results in the same order as the batched calls.
         pending: deque[dict] = deque()

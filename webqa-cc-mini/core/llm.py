@@ -28,19 +28,23 @@ _VALID_PROVIDERS = {_ANTHROPIC_PROVIDER, _OPENAI_PROVIDER}
 
 MODEL_CONTEXT_WINDOW_DEFAULT = 200_000
 
-# Model context windows (tokens). First substring match wins — list
+# Maximum *input* tokens per model. First substring match wins — list
 # more-specific entries before less-specific ones (e.g. "gpt-5.4-mini"
 # before "gpt-5.4") since matching uses ``prefix in model_name``.
-# Single source of truth — compact.py imports get_context_window_for_model().
+# Values should reflect the **real API input limit**, not the advertised
+# "context window". compact.py uses these to decide when to trigger
+# auto-compaction.
 _MODEL_CONTEXT_WINDOWS: tuple[tuple[str, int], ...] = (
     # --- Anthropic Claude ---
     ('claude-opus-4', 200_000),
     ('claude-sonnet-4', 200_000),
     ('claude-haiku-4', 200_000),
     # --- OpenAI GPT / o-series ---
-    ('gpt-5.4-mini', 400_000),
-    ('gpt-5.4-nano', 400_000),
+    # gpt-5.4-mini: advertised 400K, but API enforces 272K input limit
+    ('gpt-5.4-mini', 272_000),
+    ('gpt-5.4-nano', 272_000),
     ('gpt-5.4', 272_000),
+    # gpt-4.1: 1M context, max output 128K → ~1M max input
     ('gpt-4.1-mini', 1_000_000),
     ('gpt-4.1-nano', 1_000_000),
     ('gpt-4.1', 1_000_000),
