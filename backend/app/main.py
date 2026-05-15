@@ -7,6 +7,7 @@ from app.api import api_router
 from app.api.internal import router as internal_router
 from app.config import get_settings
 from app.database import init_db
+from app.middleware.api_key_auth import APIKeyAuthMiddleware
 from app.services.job_monitor import job_monitor
 from app.services.progress_cache import close_redis
 from app.services.task_scheduler import task_scheduler
@@ -54,6 +55,8 @@ app = FastAPI(
     version='1.0.0',
     lifespan=lifespan,
 )
+
+app.add_middleware(APIKeyAuthMiddleware)
 
 # Mount shared reports directory for local/opensource access
 os.makedirs(settings.shared_reports_path, exist_ok=True)

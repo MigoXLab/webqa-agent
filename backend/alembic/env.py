@@ -6,7 +6,8 @@ from alembic import context
 from app.config import get_settings
 # Import your models and Base
 from app.database import Base
-from app.models import Business, Environment, Execution, TestCase
+from app.models import (APIKey, Business, Environment, Execution,  # noqa: F401
+                        TestCase)
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
@@ -26,7 +27,7 @@ target_metadata = Base.metadata
 
 # Get database URL from settings
 settings = get_settings()
-config.set_main_option('sqlalchemy.url', settings.DATABASE_URL)
+config.set_main_option('sqlalchemy.url', settings.database_url.replace('%', '%%'))
 
 
 def run_migrations_offline() -> None:

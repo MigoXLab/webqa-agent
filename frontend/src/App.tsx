@@ -7,7 +7,8 @@ import { ExecutionHistory } from './components/ExecutionHistory';
 import { ExecutionDetail } from './components/ExecutionDetail';
 import { CaseEditorPage } from './components/CaseEditorPage';
 import { GenPage } from './components/GenPage';
-import { LayoutDashboard, History, Box, Loader2, Github, Sparkles } from 'lucide-react';
+import { ApiKeyManager } from './components/ApiKeyManager';
+import { LayoutDashboard, History, Box, Loader2, Github, Sparkles, Key } from 'lucide-react';
 import { apiClient, Business as APIBusiness, Execution as APIExecution } from './api/client';
 import { toFrontendTestCase } from './utils/testCaseUtils';
 
@@ -273,6 +274,7 @@ export default function App() {
   const isCaseEditor = /^\/business\/[^/]+\/case\//.test(location.pathname);
   const view = location.pathname === '/history' ? 'history' :
                location.pathname === '/gen' ? 'gen' :
+               location.pathname === '/api-keys' ? 'api_keys' :
                isCaseEditor ? 'case_editor' :
                location.pathname.startsWith('/business/') ? 'business_detail' :
                location.pathname.startsWith('/execution/') ? 'execution_detail' : 'businesses';
@@ -423,6 +425,19 @@ export default function App() {
                   执行记录
                 </div>
               </Link>
+              <Link
+                to="/api-keys"
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  view === 'api_keys'
+                    ? 'bg-gray-100 text-gray-900'
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Key className="w-4 h-4" />
+                  API Keys
+                </div>
+              </Link>
             </nav>
           </div>
 
@@ -483,6 +498,7 @@ export default function App() {
           } />
           <Route path="/business/:businessId/case/new" element={<CaseEditorPage />} />
           <Route path="/business/:businessId/case/:caseId" element={<CaseEditorPage />} />
+          <Route path="/api-keys" element={<ApiKeyManager />} />
           <Route path="/history" element={
             <ExecutionHistory businesses={businesses} />
           } />

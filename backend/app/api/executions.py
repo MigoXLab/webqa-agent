@@ -1,7 +1,7 @@
 """Execution API routes."""
 import asyncio
 import logging
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from app.config import get_settings
@@ -129,7 +129,7 @@ async def create_execution(
     # Verify all test cases exist (skip for cases with data provided inline)
     inline_ids = set(data.case_data.keys()) if data.case_data else set()
 
-    if data.trigger_type != 'gen':
+    if data.trigger_type not in ('gen', 'mcp_quick'):
         for case_id in data.test_case_ids:
             if str(case_id) in inline_ids:
                 continue  # Data provided inline, no DB record needed
@@ -142,14 +142,37 @@ async def create_execution(
                     detail={'code': 2003, 'message': f'用例 {case_id} 不存在'}
                 )
 
+    # mcp_quick mode: rewrite to match cc-mini gen_config shape
+    if data.trigger_type == 'mcp_quick':
+        raw = data.gen_config or {}
+        report_lang = raw.pop('report_language', 'zh-CN')
+        save_shots = raw.pop('save_screenshots', True)
+        cookie_list = raw.pop('cookies', None)
+
+        gen_config_dict: Dict[str, Any] = {
+            'runner_source': 'cc-mini',
+            'target_url': raw.pop('url', ''),
+            'business_objectives': [raw.pop('task', '')] if raw.get('task') else [],
+            'llm_config': {'model': data.model},
+            'report_config': {'language': report_lang, 'save_screenshots': save_shots},
+            'max_concurrent_tests': data.workers,
+        }
+        if cookie_list:
+            gen_config_dict['browser_config'] = {'cookies': cookie_list}
+            gen_config_dict['accounts'] = [{'name': 'mcp', 'default': True, 'cookies': cookie_list}]
+        data.gen_config = gen_config_dict
+
     # Debug mode: force workers=1
     workers = 1 if data.trigger_type == 'debug' else data.workers
+
+    # mcp_quick is stored as 'gen' — it's just a shorthand for cc-mini gen mode
+    effective_trigger_type = 'gen' if data.trigger_type == 'mcp_quick' else data.trigger_type
 
     # Create execution record
     execution = Execution(
         business_id=data.business_id,
         environment_id=data.environment_id,
-        trigger_type=data.trigger_type,
+        trigger_type=effective_trigger_type,
         model=data.model,
         workers=workers,
         resolutions=data.resolutions,

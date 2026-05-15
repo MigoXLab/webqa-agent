@@ -118,6 +118,23 @@ CREATE INDEX IF NOT EXISTS ix_scheduled_tasks_enabled ON scheduled_tasks(enabled
 CREATE INDEX IF NOT EXISTS ix_scheduled_tasks_next_run_at ON scheduled_tasks(next_run_at);
 
 -- ============================================================
+-- 6. API Keys
+-- ============================================================
+CREATE TABLE IF NOT EXISTS api_keys (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id VARCHAR(100) NOT NULL,
+    key_hash VARCHAR(64) NOT NULL UNIQUE,
+    key_prefix VARCHAR(12) NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE,
+    last_used TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_api_keys_user_id ON api_keys(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS ix_api_keys_key_hash ON api_keys(key_hash);
+
+-- ============================================================
 -- Alembic version tracking
 -- ============================================================
 CREATE TABLE IF NOT EXISTS alembic_version (
@@ -125,6 +142,6 @@ CREATE TABLE IF NOT EXISTS alembic_version (
     CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)
 );
 DELETE FROM alembic_version;
-INSERT INTO alembic_version (version_num) VALUES ('013_unify_accounts_format');
+INSERT INTO alembic_version (version_num) VALUES ('014_add_api_keys');
 
 COMMIT;
