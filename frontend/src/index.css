@@ -880,6 +880,28 @@
     translate: var(--tw-translate-x) var(--tw-translate-y);
   }
 
+  .translate-x-\[-50\%\] {
+    --tw-translate-x: -50%;
+    translate: var(--tw-translate-x) var(--tw-translate-y);
+  }
+
+  .translate-y-\[-50\%\] {
+    --tw-translate-y: -50%;
+    translate: var(--tw-translate-x) var(--tw-translate-y);
+  }
+
+  .top-\[50\%\] {
+    top: 50%;
+  }
+
+  .left-\[50\%\] {
+    left: 50%;
+  }
+
+  .bg-black\/50 {
+    background-color: rgba(0, 0, 0, 0.5);
+  }
+
   .animate-pulse {
     animation: var(--animate-pulse);
   }

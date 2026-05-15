@@ -132,6 +132,20 @@ export interface ListResponse<T> {
   total: number;
 }
 
+// API Key types
+export interface ApiKey {
+  id: string;
+  name: string;
+  key_prefix: string;
+  expires_at: string | null;
+  last_used: string | null;
+  created_at: string;
+}
+
+export interface ApiKeyCreated extends ApiKey {
+  full_key: string;
+}
+
 // API Client class
 class APIClient {
   private baseUrl: string;
@@ -628,6 +642,27 @@ class APIClient {
     return this.request('/schedules/validate-cron', {
       method: 'POST',
       body: JSON.stringify({ cron_expression: cronExpression }),
+    });
+  }
+
+  // API Key APIs
+  async getApiKeys(): Promise<ListResponse<ApiKey>> {
+    return this.request<ListResponse<ApiKey>>('/settings/api-keys');
+  }
+
+  async createApiKey(data: {
+    name: string;
+    expires_in_days?: number;
+  }): Promise<ApiKeyCreated> {
+    return this.request<ApiKeyCreated>('/settings/api-keys', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteApiKey(id: string): Promise<void> {
+    await this.request(`/settings/api-keys/${id}`, {
+      method: 'DELETE',
     });
   }
 }
