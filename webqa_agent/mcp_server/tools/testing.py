@@ -1,23 +1,18 @@
 """Testing tools — run, status, report, cancel."""
 from __future__ import annotations
 
-import json
 from typing import Any, Optional
 
 from webqa_agent.mcp_server.client import WebQAClient
 
 
-def _parse_cookies(cookies_json: Optional[str]) -> Optional[list[dict[str, Any]]]:
-    """Parse cookies JSON string into list of cookie dicts."""
-    if not cookies_json:
+def _parse_cookies(cookies: Optional[list[dict[str, Any]]]) -> Optional[list[dict[str, Any]]]:
+    """Validate cookies list format."""
+    if not cookies:
         return None
-    try:
-        parsed = json.loads(cookies_json)
-        if not isinstance(parsed, list):
-            raise ValueError('cookies must be a JSON array')
-        return parsed
-    except json.JSONDecodeError as e:
-        raise ValueError(f'Invalid cookies JSON: {e}') from e
+    if not isinstance(cookies, list):
+        raise ValueError('cookies must be an array of cookie objects')
+    return cookies
 
 
 async def run_test(
@@ -26,14 +21,11 @@ async def run_test(
     task: str,
     language: str = 'zh-CN',
     model: Optional[str] = None,
-    cookies: Optional[str] = None,
+    cookies: Optional[list[dict[str, Any]]] = None,
     workers: int = 1,
     save_screenshots: bool = True,
 ) -> dict[str, Any]:
-    """Create a cc-mini test execution.
-
-    Returns execution data dict.
-    """
+    """Create a cc-mini test execution."""
     gen_config: dict[str, Any] = {
         'url': url,
         'task': task,
@@ -56,50 +48,59 @@ async def run_test(
     return await client.create_execution(params)
 
 
-async def get_test_status(client: WebQAClient, execution_id: str) -> str:
-    """Get current status and progress of a test execution."""
+async def get_test_status(client: WebQAClient, execution_id: str) -> dict[str, Any]:
+    """Get current status and progress."""
     progress = await client.get_execution_progress(execution_id)
     status_val = progress.get('status', 'unknown')
 
-    lines = [f'Status: {status_val}']
+    result: dict[str, Any] = {'status': status_val}
 
-    completed = progress.get('completed', [])
-    running = progress.get('running', [])
+    tasks_list = []
+    for t in progress.get('completed', []):
+        entry: dict[str, Any] = {
+            'name': t.get('name', 'unnamed'),
+            'result': t.get('result', 'unknown'),
+        }
+        if t.get('duration'):
+            entry['duration_seconds'] = round(t['duration'], 1)
+        tasks_list.append(entry)
 
-    if completed:
-        for t in completed:
-            result_val = t.get('result', '')
-            tag = 'PASS' if result_val == 'passed' else 'FAIL' if result_val == 'failed' else 'WARN'
-            duration = f' ({t["duration"]:.0f}s)' if t.get('duration') else ''
-            lines.append(f'  [{tag}] {t.get("name", "unnamed")}{duration}')
+    for t in progress.get('running', []):
+        entry = {
+            'name': t.get('name', 'unnamed'),
+            'result': 'running',
+        }
+        if t.get('elapsed'):
+            entry['elapsed_seconds'] = round(t['elapsed'], 1)
+        tasks_list.append(entry)
 
-    if running:
-        for t in running:
-            elapsed = f' ({t["elapsed"]:.0f}s)' if t.get('elapsed') else ''
-            lines.append(f'  [RUNNING] {t.get("name", "unnamed")}{elapsed}')
+    if tasks_list:
+        result['tasks'] = tasks_list
 
     logs = progress.get('logs', [])
     if logs:
-        for log_line in logs[-3:]:
-            lines.append(f'  > {log_line}')
+        result['recent_logs'] = logs[-3:]
 
-    return '\n'.join(lines)
+    return result
 
 
-async def get_test_report(client: WebQAClient, execution_id: str) -> str:
+async def get_test_report(client: WebQAClient, execution_id: str) -> dict[str, Any]:
     """Get test report for a completed execution."""
     execution = await client.get_execution_status(execution_id)
 
     status_val = execution.get('status', 'unknown')
     result_count = execution.get('result_count') or {}
-    error_msg = execution.get('error_message', '')
 
-    parts = [f'Status: {status_val}']
+    result: dict[str, Any] = {
+        'execution_id': execution_id,
+        'status': status_val,
+    }
 
     if result_count:
-        passed = result_count.get('passed', 0)
-        total = sum(result_count.values())
-        parts[0] += f' ({passed}/{total} passed)'
+        result['passed'] = result_count.get('passed', 0)
+        result['failed'] = result_count.get('failed', 0)
+        result['warning'] = result_count.get('warning', 0)
+        result['total'] = result_count.get('total', 0)
 
     started = execution.get('started_at', '')
     completed_at = execution.get('completed_at', '')
@@ -108,23 +109,21 @@ async def get_test_report(client: WebQAClient, execution_id: str) -> str:
         try:
             t0 = datetime.fromisoformat(started)
             t1 = datetime.fromisoformat(completed_at)
-            secs = int((t1 - t0).total_seconds())
-            m, s = divmod(secs, 60)
-            parts.append(f'Duration: {m}m {s}s')
+            result['duration_seconds'] = int((t1 - t0).total_seconds())
         except (ValueError, TypeError):
             pass
 
     report_url = execution.get('report_url') or execution.get('oss_report_url')
     if report_url:
-        parts.append(f'Report: {report_url}')
+        result['report_url'] = report_url
 
-    if error_msg:
-        parts.append(f'Error: {error_msg}')
+    if execution.get('error_message'):
+        result['error'] = execution['error_message']
 
-    return '\n'.join(parts)
+    return result
 
 
-async def cancel_test(client: WebQAClient, execution_id: str) -> str:
+async def cancel_test(client: WebQAClient, execution_id: str) -> dict[str, str]:
     """Cancel a running test execution."""
     await client.cancel_execution(execution_id)
-    return f'Cancelled: {execution_id}'
+    return {'execution_id': execution_id, 'status': 'cancelled'}

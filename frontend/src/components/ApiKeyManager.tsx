@@ -87,23 +87,25 @@ export function ApiKeyManager() {
 
   const handleCopyConfig = async () => {
     if (!createdKey) return;
-    const config = buildMcpConfig(createdKey.full_key);
-    await navigator.clipboard.writeText(JSON.stringify(config, null, 2));
+    await navigator.clipboard.writeText(configText(createdKey.full_key));
     setConfigCopied(true);
     setTimeout(() => setConfigCopied(false), 2000);
   };
 
-  const buildMcpConfig = (fullKey: string) => ({
-    mcpServers: {
-      webqa: {
-        command: 'webqa-mcp-server',
-        env: {
-          WEBQA_API_URL: window.location.origin,
-          WEBQA_API_KEY: fullKey,
+  const configText = (fullKey: string) => {
+    const config = {
+      mcpServers: {
+        webqa: {
+          command: '/path/to/webqa-mcp-server',
+          env: {
+            WEBQA_API_URL: window.location.origin,
+            WEBQA_API_KEY: fullKey,
+          },
         },
       },
-    },
-  });
+    };
+    return JSON.stringify(config, null, 2);
+  };
 
   return (
     <div className="min-h-screen px-4 sm:px-6 py-4 sm:py-6 max-w-7xl mx-auto">
@@ -193,69 +195,67 @@ export function ApiKeyManager() {
       {/* Create Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 flex items-center justify-center p-4 z-50" style={{ backgroundColor: 'rgba(0, 0, 0, 0.75)' }}>
-          <div className="bg-white rounded-lg" style={{ boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)' }} style={{ width: '480px', maxWidth: '90vw' }}>
-            <div className="border border-gray-200 rounded-lg overflow-hidden">
-              {/* Header */}
-              <div className="border-b border-gray-200 flex-shrink-0" style={{ padding: '16px 24px' }}>
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-semibold text-gray-900">创建 API Key</h2>
-                  <button
-                    type="button"
-                    onClick={() => setShowCreateModal(false)}
-                    className="text-gray-400 hover:text-gray-600 transition-colors"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Body */}
-              <div style={{ padding: '20px 24px' }} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">名称</label>
-                  <input
-                    type="text"
-                    placeholder="例如：Claude Code 集成"
-                    value={newKeyName}
-                    onChange={(e) => setNewKeyName(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    autoFocus
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">过期时间</label>
-                  <select
-                    value={newKeyExpiry}
-                    onChange={(e) => setNewKeyExpiry(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
-                  >
-                    <option value="never">永不过期</option>
-                    <option value="30">30 天</option>
-                    <option value="90">90 天</option>
-                    <option value="365">365 天</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Footer */}
-              <div className="border-t border-gray-200 flex justify-end gap-3" style={{ padding: '16px 24px' }}>
+          <div className="bg-white rounded-lg border border-gray-200" style={{ width: 480, maxWidth: '90vw', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)' }}>
+            {/* Header */}
+            <div className="border-b border-gray-200" style={{ padding: '16px 24px' }}>
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-gray-900">创建 API Key</h2>
                 <button
                   type="button"
                   onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
                 >
-                  取消
-                </button>
-                <button
-                  onClick={handleCreate}
-                  disabled={!newKeyName.trim() || creating}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  {creating && <Loader2 className="w-4 h-4 animate-spin" />}
-                  {creating ? '创建中...' : '创建'}
+                  <X className="w-5 h-5" />
                 </button>
               </div>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: '20px 24px' }} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">名称</label>
+                <input
+                  type="text"
+                  placeholder="例如：Claude Code 集成"
+                  value={newKeyName}
+                  onChange={(e) => setNewKeyName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">过期时间</label>
+                <select
+                  value={newKeyExpiry}
+                  onChange={(e) => setNewKeyExpiry(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+                >
+                  <option value="never">永不过期</option>
+                  <option value="30">30 天</option>
+                  <option value="90">90 天</option>
+                  <option value="365">365 天</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="border-t border-gray-200 flex justify-end gap-3" style={{ padding: '16px 24px' }}>
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(false)}
+                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleCreate}
+                disabled={!newKeyName.trim() || creating}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {creating && <Loader2 className="w-4 h-4 animate-spin" />}
+                {creating ? '创建中...' : '创建'}
+              </button>
             </div>
           </div>
         </div>
@@ -264,89 +264,98 @@ export function ApiKeyManager() {
       {/* Created Key Modal */}
       {showKeyModal && createdKey && (
         <div className="fixed inset-0 flex items-center justify-center p-4 z-50" style={{ backgroundColor: 'rgba(0, 0, 0, 0.75)' }}>
-          <div className="bg-white rounded-lg" style={{ boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)' }} style={{ width: '560px', maxWidth: '90vw' }}>
-            <div className="border border-gray-200 rounded-lg overflow-hidden">
-              {/* Header */}
-              <div className="border-b border-gray-200 flex-shrink-0" style={{ padding: '16px 24px' }}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
-                      <Check className="w-4 h-4 text-green-600" />
-                    </div>
-                    <h2 className="text-lg font-semibold text-gray-900">API Key 已创建</h2>
+          <div className="bg-white rounded-lg border border-gray-200" style={{ width: 600, maxWidth: '90vw', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)' }}>
+            {/* Header */}
+            <div className="border-b border-gray-200" style={{ padding: '16px 24px' }}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
+                    <Check className="w-4 h-4 text-green-600" />
+                  </div>
+                  <h2 className="text-lg font-semibold text-gray-900">API Key 已创建</h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setShowKeyModal(false); setCreatedKey(null); }}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: '20px 24px' }} className="space-y-4">
+              {/* Warning */}
+              <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5 text-sm text-amber-800 flex items-center gap-2">
+                <span className="flex-shrink-0">⚠️</span>
+                <span>请立即复制此密钥，关闭后将无法再次查看。</span>
+              </div>
+
+              {/* Full key */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">API Key</label>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 font-mono text-sm text-gray-800 break-all select-all" style={{ lineHeight: '1.5' }}>
+                    {createdKey.full_key}
                   </div>
                   <button
-                    type="button"
-                    onClick={() => { setShowKeyModal(false); setCreatedKey(null); }}
-                    className="text-gray-400 hover:text-gray-600 transition-colors"
+                    onClick={handleCopyKey}
+                    className="flex-shrink-0 p-2.5 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                    title="复制 Key"
                   >
-                    <X className="w-5 h-5" />
+                    {keyCopied ? (
+                      <Check className="w-4 h-4 text-green-600" />
+                    ) : (
+                      <Copy className="w-4 h-4 text-gray-500" />
+                    )}
                   </button>
                 </div>
               </div>
 
-              {/* Body */}
-              <div style={{ padding: '20px 24px' }} className="space-y-5">
-                {/* Warning */}
-                <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800 flex items-start gap-2">
-                  <span className="flex-shrink-0 mt-0.5">⚠️</span>
-                  <span>请立即复制此密钥，关闭后将无法再次查看。</span>
-                </div>
-
-                {/* Full key */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">API Key</label>
-                  <div className="flex items-center gap-2">
-                    <code className="flex-1 text-sm bg-gray-50 border border-gray-200 px-3 py-2.5 rounded-lg font-mono break-all text-gray-800 select-all">
-                      {createdKey.full_key}
-                    </code>
-                    <button
-                      onClick={handleCopyKey}
-                      className="flex-shrink-0 p-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-                      title="复制 Key"
-                    >
-                      {keyCopied ? (
-                        <Check className="w-4 h-4 text-green-600" />
-                      ) : (
-                        <Copy className="w-4 h-4 text-gray-500" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                {/* MCP config snippet */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              {/* MCP config snippet */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-sm font-medium text-gray-700">
                     Claude Code / Cursor 配置
                   </label>
-                  <div className="relative">
-                    <pre className="text-xs bg-gray-900 text-gray-100 px-4 py-3 rounded-lg overflow-x-auto leading-relaxed">
-                      {JSON.stringify(buildMcpConfig(createdKey.full_key), null, 2)}
-                    </pre>
-                    <button
-                      onClick={handleCopyConfig}
-                      className="absolute top-2 right-2 p-1.5 rounded-md bg-gray-700 hover:bg-gray-600 transition-colors"
-                      title="复制配置"
-                    >
-                      {configCopied ? (
-                        <Check className="w-3.5 h-3.5 text-green-400" />
-                      ) : (
-                        <Copy className="w-3.5 h-3.5 text-gray-300" />
-                      )}
-                    </button>
-                  </div>
+                  <button
+                    onClick={handleCopyConfig}
+                    className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded transition-colors"
+                  >
+                    {configCopied ? (
+                      <>
+                        <Check className="w-3 h-3 text-green-600" />
+                        <span className="text-green-600">已复制</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3 h-3" />
+                        复制配置
+                      </>
+                    )}
+                  </button>
                 </div>
+                <div className="bg-gray-50 border border-gray-200 rounded-lg overflow-hidden">
+                  <pre
+                    className="text-sm font-mono text-gray-700 overflow-x-auto"
+                    style={{ padding: '12px 16px', lineHeight: '1.6', margin: 0 }}
+                  >{configText(createdKey.full_key)}</pre>
+                </div>
+                <p className="text-xs text-gray-400 mt-1.5">
+                  * command 请替换为 <code className="text-gray-500">which webqa-mcp-server</code> 输出的实际路径
+                </p>
               </div>
+            </div>
 
-              {/* Footer */}
-              <div className="border-t border-gray-200 flex justify-end" style={{ padding: '16px 24px' }}>
-                <button
-                  onClick={() => { setShowKeyModal(false); setCreatedKey(null); setKeyCopied(false); setConfigCopied(false); }}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
-                >
-                  已复制，关闭
-                </button>
-              </div>
+            {/* Footer */}
+            <div className="border-t border-gray-200 flex justify-end" style={{ padding: '16px 24px' }}>
+              <button
+                onClick={() => { setShowKeyModal(false); setCreatedKey(null); setKeyCopied(false); setConfigCopied(false); }}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+              >
+                已复制，关闭
+              </button>
             </div>
           </div>
         </div>

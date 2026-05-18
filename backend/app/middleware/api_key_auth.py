@@ -17,24 +17,38 @@ BEARER_PREFIX = 'Bearer '
 KEY_PREFIX = 'wqa_'
 
 
-class APIKeyAuthMiddleware(BaseHTTPMiddleware):
-    """Authenticate requests via API Key in Authorization header.
+def _extract_api_key(request: Request) -> str:
+    """Extract API key from X-API-Key or Authorization header."""
+    key = request.headers.get('X-WebQA-Key', '')
+    if key.startswith(KEY_PREFIX):
+        return key
 
-    Valid `wqa_` key: sets request.state.api_key_user_id, updates last_used.
-    No auth header: passes through (existing auth handles it).
-    Invalid key: returns 401.
+    auth = request.headers.get('Authorization', '')
+    if auth.startswith(BEARER_PREFIX):
+        token = auth[len(BEARER_PREFIX):]
+        if token.startswith(KEY_PREFIX):
+            return token
+
+    return ''
+
+
+class APIKeyAuthMiddleware(BaseHTTPMiddleware):
+    """Authenticate requests via API Key.
+
+    Checks X-API-Key header first, then Authorization: Bearer.
+    No key: passes through. Invalid key: returns 401.
     """
 
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint,
     ) -> Response:
-        auth_header = request.headers.get('Authorization', '')
-
-        if not auth_header.startswith(BEARER_PREFIX):
-            return await call_next(request)
-
-        token = auth_header[len(BEARER_PREFIX):]
-        if not token.startswith(KEY_PREFIX):
+        token = _extract_api_key(request)
+        if not token:
+            if request.headers.get('X-WebQA-Key', ''):
+                return JSONResponse(
+                    status_code=401,
+                    content={'detail': {'code': 6004, 'message': 'Malformed API key'}},
+                )
             return await call_next(request)
 
         key_hash = hashlib.sha256(token.encode()).hexdigest()
