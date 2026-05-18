@@ -22,6 +22,9 @@ async def run_test(
     language: str = 'zh-CN',
     model: Optional[str] = None,
     cookies: Optional[list[dict[str, Any]]] = None,
+    business_id: Optional[str] = None,
+    environment_id: Optional[str] = None,
+    test_files: Optional[list[str]] = None,
     workers: int = 1,
     save_screenshots: bool = True,
 ) -> dict[str, Any]:
@@ -37,6 +40,9 @@ async def run_test(
     if cookie_list:
         gen_config['cookies'] = cookie_list
 
+    if test_files:
+        gen_config['test_files'] = test_files
+
     params: dict[str, Any] = {
         'trigger_type': 'mcp_quick',
         'gen_config': gen_config,
@@ -44,6 +50,10 @@ async def run_test(
     }
     if model:
         params['model'] = model
+    if business_id:
+        params['business_id'] = business_id
+    if environment_id:
+        params['environment_id'] = environment_id
 
     return await client.create_execution(params)
 

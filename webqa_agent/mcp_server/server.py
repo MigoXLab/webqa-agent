@@ -68,7 +68,21 @@ async def run_test(
     )] = None,
     cookies: Annotated[Optional[list[dict[str, Any]]], Field(
         description='Browser cookies for authenticated testing. '
-        'Array of objects: [{"name":"token","value":"xxx","domain":".example.com"}]',
+        'Array of objects: [{"name":"token","value":"xxx","domain":".example.com"}]. '
+        'Overrides business_id auth when both are provided',
+    )] = None,
+    business_id: Annotated[Optional[str], Field(
+        description='Business ID from list_businesses. When set, uses the '
+        "business's configured auth (SSO/cookies) and test files automatically. "
+        'No need to pass cookies separately',
+    )] = None,
+    environment_id: Annotated[Optional[str], Field(
+        description='Environment ID from list_environments. Use with business_id '
+        'to select a specific environment. Defaults to the first environment',
+    )] = None,
+    test_files: Annotated[Optional[list[str]], Field(
+        description='File names to use from the business file pool. '
+        'Requires business_id. Example: ["test.pdf", "invoice.xlsx"]',
     )] = None,
     workers: Annotated[int, Field(
         description='Concurrent test workers', ge=1, le=5,
@@ -82,14 +96,18 @@ async def run_test(
 
     The agent navigates the page, performs actions, and verifies results. Tests
     take 2-10 minutes. Returns execution_id for status polling.
+
+    For pages requiring login, either pass cookies directly or set business_id
+    to use the platform's pre-configured SSO/cookie auth.
     """
     client = _get_client(ctx)
     try:
         result = await testing.run_test(
             client, url=url, task=task, language=language,
             model=model or settings.default_model or None,
-            cookies=cookies, workers=workers,
-            save_screenshots=save_screenshots,
+            cookies=cookies, business_id=business_id,
+            environment_id=environment_id, test_files=test_files,
+            workers=workers, save_screenshots=save_screenshots,
         )
     except ValueError as e:
         raise ToolError(str(e)) from e

@@ -142,12 +142,25 @@ async def create_execution(
                     detail={'code': 2003, 'message': f'用例 {case_id} 不存在'}
                 )
 
+    # mcp_quick: auto-select first environment when business_id provided but no environment_id
+    if data.trigger_type == 'mcp_quick' and business and not environment:
+        from sqlalchemy.orm import selectinload
+        biz_result = await db.execute(
+            select(Business).where(Business.id == data.business_id).options(selectinload(Business.environments))
+        )
+        biz_with_envs = biz_result.scalar_one_or_none()
+        if biz_with_envs and biz_with_envs.environments:
+            environment = biz_with_envs.environments[0]
+            data.environment_id = environment.id
+
     # mcp_quick mode: rewrite to match Mini gen_config shape
     if data.trigger_type == 'mcp_quick':
         raw = data.gen_config or {}
         report_lang = raw.pop('report_language', 'zh-CN')
         save_shots = raw.pop('save_screenshots', True)
         cookie_list = raw.pop('cookies', None)
+
+        test_file_list = raw.pop('test_files', None)
 
         gen_config_dict: Dict[str, Any] = {
             'runner_source': 'mini',
@@ -160,6 +173,14 @@ async def create_execution(
         if cookie_list:
             gen_config_dict['browser_config'] = {'cookies': cookie_list}
             gen_config_dict['accounts'] = [{'name': 'mcp', 'default': True, 'cookies': cookie_list}]
+        elif environment:
+            env_auth = environment.auth_type or 'none'
+            env_accounts = environment.accounts
+            if env_auth != 'none' and env_accounts:
+                gen_config_dict['auth_type'] = env_auth
+                gen_config_dict['accounts'] = env_accounts
+        if test_file_list:
+            gen_config_dict['test_files'] = test_file_list
         data.gen_config = gen_config_dict
 
     # Debug mode: force workers=1

@@ -76,15 +76,18 @@ Settings → MCP → Add Server：
 
 ## run_test 参数
 
-| 参数               | 类型               | 必填 | 默认值   | 说明             |
-| ------------------ | ------------------ | ---- | -------- | ---------------- |
-| `url`              | string             | 是   | —        | 目标 URL         |
-| `task`             | string             | 是   | —        | 自然语言测试目标 |
-| `language`         | `zh-CN` \| `en-US` | 否   | `zh-CN`  | 报告语言         |
-| `model`            | string             | 否   | 平台默认 | LLM 模型覆盖     |
-| `cookies`          | object\[\]         | 否   | —        | 登录态 cookies   |
-| `workers`          | 1-5                | 否   | 1        | 并发数           |
-| `save_screenshots` | boolean            | 否   | true     | 保存截图         |
+| 参数               | 类型               | 必填 | 默认值   | 说明                                     |
+| ------------------ | ------------------ | ---- | -------- | ---------------------------------------- |
+| `url`              | string             | 是   | —        | 目标 URL                                 |
+| `task`             | string             | 是   | —        | 自然语言测试目标                         |
+| `language`         | `zh-CN` \| `en-US` | 否   | `zh-CN`  | 报告语言                                 |
+| `model`            | string             | 否   | 平台默认 | LLM 模型覆盖                             |
+| `cookies`          | object\[\]         | 否   | —        | 登录态 cookies，覆盖 business_id 的认证  |
+| `business_id`      | string             | 否   | —        | 平台业务 ID，自动使用 SSO 认证和关联文件 |
+| `environment_id`   | string             | 否   | —        | 环境 ID，配合 business_id 指定环境       |
+| `test_files`       | string\[\]         | 否   | —        | 文件名白名单，需配合 business_id         |
+| `workers`          | 1-5                | 否   | 1        | 并发数                                   |
+| `save_screenshots` | boolean            | 否   | true     | 保存截图                                 |
 
 ## 使用流程
 
@@ -107,6 +110,13 @@ run_test(url, task)
 > 用 webqa 测试 https://example.com/dashboard ，
 > cookies 是 \[{"name":"token","value":"abc123","domain":".example.com"}\]，
 > 验证仪表盘数据正常加载
+
+### 使用平台 SSO 认证
+
+> 用 webqa 测试论文搜索功能，business_id 用 "泛科学-知识空间" 的 ID，
+> 验证搜索结果正确展示
+
+Agent 会先调用 `list_businesses` 获取 ID，然后 `run_test(url=..., task=..., business_id=xxx)`，后端自动用 SSO 生成 cookies。
 
 ### 英文报告
 
