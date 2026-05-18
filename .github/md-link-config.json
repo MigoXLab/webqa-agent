@@ -14,6 +14,12 @@
     },
     {
       "pattern": "^#"
+    },
+    {
+      "pattern": "^https://example\\.com"
+    },
+    {
+      "pattern": "^https://your-webqa-platform\\.com"
     }
   ],
   "httpHeaders": [

@@ -26,7 +26,7 @@ class WebQAClient:
     def __init__(self, base_url: str, api_key: str, timeout: float = 30.0):
         self._client = httpx.AsyncClient(
             base_url=base_url,
-            headers={'Authorization': f'Bearer {api_key}'},
+            headers={'X-WebQA-Key': api_key},
             timeout=timeout,
         )
 
