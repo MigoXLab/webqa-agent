@@ -2,9 +2,8 @@
 from types import SimpleNamespace
 
 import pytest
-
-from webqa_agent.mcp_server.execution_config import (
-    build_mcp_quick_gen_config, sanitize_mcp_quick_gen_config)
+from app.services.mcp_execution_config import (build_mcp_quick_gen_config,
+                                               sanitize_mcp_quick_gen_config)
 
 
 def test_build_mcp_quick_uses_legacy_sso_environment():

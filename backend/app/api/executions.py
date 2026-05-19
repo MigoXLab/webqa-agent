@@ -11,15 +11,14 @@ from app.schemas.common import APIResponse
 from app.schemas.execution import (ExecutionCreate, ExecutionListResponse,
                                    ExecutionResponse, ExecutionStatusResponse)
 from app.services.executor import run_execution, stop_execution
+from app.services.mcp_execution_config import (build_mcp_quick_gen_config,
+                                               sanitize_mcp_quick_gen_config)
 from app.services.progress_cache import get_progress
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-
-from webqa_agent.mcp_server.execution_config import (
-    build_mcp_quick_gen_config, sanitize_mcp_quick_gen_config)
 
 # =============================================================================
 # Progress Response Schema
