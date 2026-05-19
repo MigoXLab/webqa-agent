@@ -583,6 +583,7 @@ async def _start_gen_executor(execution_id: str, gen_config_dict: Optional[Dict[
             env['EXECUTION_ID'] = execution_id
             env['SHARED_STORAGE_PATH'] = settings.effective_shared_storage_path
             env['BACKEND_CALLBACK_URL'] = settings.BACKEND_CALLBACK_URL
+            env['WEBQA_CASE_TIMEOUT'] = str(settings.WEBQA_CASE_TIMEOUT)
             if api_key:
                 env['OPENAI_API_KEY'] = api_key
             if base_url:

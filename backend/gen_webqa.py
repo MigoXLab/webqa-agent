@@ -206,6 +206,8 @@ async def execute_cc_mini_webqa(
     if filter_model is None and model:
         filter_model = model
 
+    case_timeout = int(os.environ.get('WEBQA_CASE_TIMEOUT', '2400'))
+
     shared_kwargs: Dict[str, Any] = dict(
         url=target_url,
         provider=provider,
@@ -217,6 +219,7 @@ async def execute_cc_mini_webqa(
         top_p=llm_cfg.get('top_p'),
         max_tokens=llm_cfg.get('max_tokens'),
         timeout=llm_cfg.get('timeout'),
+        max_time_seconds=case_timeout,
         skills_dir=skills_dir,
         file_catalog=file_catalog,
         save_screenshots=save_screenshots,
