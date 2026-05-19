@@ -1,7 +1,7 @@
 """Execution API routes."""
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 from uuid import UUID
 
 from app.config import get_settings
@@ -17,6 +17,9 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+
+from webqa_agent.mcp_server.execution_config import (
+    build_mcp_quick_gen_config, sanitize_mcp_quick_gen_config)
 
 # =============================================================================
 # Progress Response Schema
@@ -144,7 +147,6 @@ async def create_execution(
 
     # mcp_quick: auto-select first environment when business_id provided but no environment_id
     if data.trigger_type == 'mcp_quick' and business and not environment:
-        from sqlalchemy.orm import selectinload
         biz_result = await db.execute(
             select(Business).where(Business.id == data.business_id).options(selectinload(Business.environments))
         )
@@ -155,33 +157,18 @@ async def create_execution(
 
     # mcp_quick mode: rewrite to match Mini gen_config shape
     if data.trigger_type == 'mcp_quick':
-        raw = data.gen_config or {}
-        report_lang = raw.pop('report_language', 'zh-CN')
-        save_shots = raw.pop('save_screenshots', True)
-        cookie_list = raw.pop('cookies', None)
-
-        test_file_list = raw.pop('test_files', None)
-
-        gen_config_dict: Dict[str, Any] = {
-            'runner_source': 'mini',
-            'target_url': raw.pop('url', ''),
-            'business_objectives': [raw.pop('task', '')] if raw.get('task') else [],
-            'llm_config': {'model': data.model},
-            'report_config': {'language': report_lang, 'save_screenshots': save_shots},
-            'max_concurrent_tests': data.workers,
-        }
-        if cookie_list:
-            gen_config_dict['browser_config'] = {'cookies': cookie_list}
-            gen_config_dict['accounts'] = [{'name': 'mcp', 'default': True, 'cookies': cookie_list}]
-        elif environment:
-            env_auth = environment.auth_type or 'none'
-            env_accounts = environment.accounts
-            if env_auth != 'none' and env_accounts:
-                gen_config_dict['auth_type'] = env_auth
-                gen_config_dict['accounts'] = env_accounts
-        if test_file_list:
-            gen_config_dict['test_files'] = test_file_list
-        data.gen_config = gen_config_dict
+        try:
+            data.gen_config = build_mcp_quick_gen_config(
+                data.gen_config or {},
+                model=data.model,
+                workers=data.workers,
+                environment=environment,
+            )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={'code': 2006, 'message': str(e)},
+            ) from e
 
     # Debug mode: force workers=1
     workers = 1 if data.trigger_type == 'debug' else data.workers
@@ -190,6 +177,10 @@ async def create_execution(
     effective_trigger_type = 'gen' if data.trigger_type == 'mcp_quick' else data.trigger_type
 
     # Create execution record
+    persisted_config = (
+        sanitize_mcp_quick_gen_config(data.gen_config)
+        if data.trigger_type == 'mcp_quick' else data.gen_config
+    )
     execution = Execution(
         business_id=data.business_id,
         environment_id=data.environment_id,
@@ -199,7 +190,7 @@ async def create_execution(
         resolutions=data.resolutions,
         test_case_ids=[str(cid) for cid in data.test_case_ids] if data.test_case_ids else [],
         status='pending',
-        config=data.gen_config if data.gen_config else None,
+        config=persisted_config if persisted_config else None,
     )
     db.add(execution)
     await db.commit()

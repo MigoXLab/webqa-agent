@@ -10,7 +10,7 @@ from pydantic import Field
 
 from webqa_agent.mcp_server.client import WebQAAPIError, WebQAClient
 from webqa_agent.mcp_server.config import settings
-from webqa_agent.mcp_server.tools import businesses, executions, testing
+from webqa_agent.mcp_server.tools import businesses, executions, files, testing
 
 logger = logging.getLogger(__name__)
 
@@ -81,8 +81,9 @@ async def run_test(
         'to select a specific environment. Defaults to the first environment',
     )] = None,
     test_files: Annotated[Optional[list[str]], Field(
-        description='File names to use from the business file pool. '
-        'Requires business_id. Example: ["test.pdf", "invoice.xlsx"]',
+        description='Business file-pool names to use. Requires business_id. '
+        'Do not pass local paths; call upload_business_file first and pass '
+        'the returned file name. Example: ["test.pdf", "invoice.xlsx"]',
     )] = None,
     workers: Annotated[int, Field(
         description='Concurrent test workers', ge=1, le=5,
@@ -236,6 +237,63 @@ async def list_environments(
     client = _get_client(ctx)
     try:
         return await businesses.list_environments(client, business_id)
+    except WebQAAPIError as e:
+        raise ToolError(e.message) from e
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title='List Business Files',
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+)
+async def list_business_files(
+    business_id: Annotated[str, Field(description='Business ID from list_businesses')],
+    ctx: Context = None,
+) -> list[dict[str, Any]]:
+    """List files already staged for a business.
+
+    Use this before run_test when the task mentions upload/file attachment.
+    run_test.test_files accepts names from this list, not local paths.
+    """
+    client = _get_client(ctx)
+    try:
+        return await files.list_business_files(client, business_id)
+    except WebQAAPIError as e:
+        raise ToolError(e.message) from e
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title='Upload Business File',
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    ),
+)
+async def upload_business_file(
+    business_id: Annotated[str, Field(description='Business ID from list_businesses')],
+    local_path: Annotated[str, Field(
+        description='Absolute path to a local file on this machine. The file '
+        'is uploaded into the business file pool and can then be referenced by '
+        'name in run_test.test_files.',
+    )],
+    ctx: Context = None,
+) -> dict[str, Any]:
+    """Upload a local file into a business file pool.
+
+    Call this when upload testing needs a file but list_business_files shows no
+    suitable existing file.
+    """
+    client = _get_client(ctx)
+    try:
+        return await files.upload_business_file(client, business_id, local_path)
+    except ValueError as e:
+        raise ToolError(str(e)) from e
     except WebQAAPIError as e:
         raise ToolError(e.message) from e
 

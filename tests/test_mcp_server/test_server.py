@@ -5,7 +5,8 @@ from webqa_agent.mcp_server.server import mcp
 
 EXPECTED_TOOLS = {
     'run_test', 'get_test_status', 'get_test_report', 'cancel_test',
-    'list_businesses', 'list_environments', 'list_executions',
+    'list_businesses', 'list_environments', 'list_business_files',
+    'upload_business_file', 'list_executions',
 }
 
 
@@ -35,6 +36,7 @@ def test_run_test_schema():
     assert 'language' in props
     assert 'cookies' in props
     assert 'workers' in props
+    assert 'test_files' in props
 
 
 def test_run_test_has_annotations():
@@ -47,10 +49,18 @@ def test_run_test_has_annotations():
 def test_query_tools_read_only():
     tools = _get_tools()
     for name in ('list_businesses', 'list_environments',
-                 'list_executions', 'get_test_status', 'get_test_report'):
+                 'list_business_files', 'list_executions',
+                 'get_test_status', 'get_test_report'):
         anno = tools[name].annotations
         assert anno is not None, f'{name} missing annotations'
         assert anno.readOnlyHint is True, f'{name} should be readOnly'
+
+
+def test_upload_business_file_not_read_only():
+    tool = _get_tools()['upload_business_file']
+    assert tool.annotations is not None
+    assert tool.annotations.readOnlyHint is False
+    assert tool.annotations.destructiveHint is False
 
 
 def test_cancel_test_destructive():

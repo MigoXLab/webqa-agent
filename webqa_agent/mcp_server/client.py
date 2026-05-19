@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+import mimetypes
+from pathlib import Path
 from typing import Any, Optional
 
 import httpx
@@ -43,6 +45,10 @@ class WebQAClient:
             raise WebQAAPIError(404, f'Resource not found: {msg}')
         if response.status_code == 429:
             raise WebQAAPIError(429, 'Server busy, concurrent limit reached')
+        if response.status_code == 400:
+            detail = response.json().get('detail', {})
+            msg = detail.get('message', 'Bad request') if isinstance(detail, dict) else str(detail)
+            raise WebQAAPIError(400, msg)
         if response.status_code >= 500:
             raise WebQAAPIError(response.status_code, f'Backend service error: {response.text[:200]}')
         response.raise_for_status()
@@ -74,6 +80,21 @@ class WebQAClient:
         resp = await self._client.get(f'{API_PREFIX}/businesses/{business_id}')
         data = self._handle_response(resp)
         return data.get('environments', [])
+
+    async def list_files(self, business_id: str) -> list[dict[str, Any]]:
+        resp = await self._client.get(f'{API_PREFIX}/files/{business_id}')
+        data = self._handle_response(resp)
+        return data.get('items', [])
+
+    async def upload_file(self, business_id: str, local_path: str) -> dict[str, Any]:
+        path = Path(local_path).expanduser()
+        content_type = mimetypes.guess_type(path.name)[0] or 'application/octet-stream'
+        with path.open('rb') as file_obj:
+            resp = await self._client.post(
+                f'{API_PREFIX}/files/{business_id}/upload',
+                files={'file': (path.name, file_obj, content_type)},
+            )
+        return self._handle_response(resp)
 
     async def list_executions(
         self,
