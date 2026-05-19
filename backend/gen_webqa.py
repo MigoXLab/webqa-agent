@@ -283,8 +283,8 @@ async def execute_gen_webqa(config_path: str, report_dir_override: str = None):
             config_data['report_config']['report_dir'] = report_dir_override
 
         runner_source = str(config_data.get('runner_source') or 'standard').lower()
-        if runner_source in ('cc-mini', 'cc_mini'):
-            print(f'[Gen] Runner source: {runner_source}')
+        if runner_source in ('mini', 'cc-mini', 'cc_mini'):
+            print(f'[Gen] Runner source: {runner_source} -> cc-mini agent')
             return await execute_cc_mini_webqa(
                 config_data,
                 report_dir_override=report_dir_override,

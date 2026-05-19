@@ -142,7 +142,7 @@ async def create_execution(
                     detail={'code': 2003, 'message': f'用例 {case_id} 不存在'}
                 )
 
-    # mcp_quick mode: rewrite to match cc-mini gen_config shape
+    # mcp_quick mode: rewrite to match Mini gen_config shape
     if data.trigger_type == 'mcp_quick':
         raw = data.gen_config or {}
         report_lang = raw.pop('report_language', 'zh-CN')
@@ -150,7 +150,7 @@ async def create_execution(
         cookie_list = raw.pop('cookies', None)
 
         gen_config_dict: Dict[str, Any] = {
-            'runner_source': 'cc-mini',
+            'runner_source': 'mini',
             'target_url': raw.pop('url', ''),
             'business_objectives': [raw.pop('task', '')] if raw.get('task') else [],
             'llm_config': {'model': data.model},
@@ -165,7 +165,7 @@ async def create_execution(
     # Debug mode: force workers=1
     workers = 1 if data.trigger_type == 'debug' else data.workers
 
-    # mcp_quick is stored as 'gen' — it's just a shorthand for cc-mini gen mode
+    # mcp_quick is stored as 'gen' — it's just a shorthand for Mini gen mode
     effective_trigger_type = 'gen' if data.trigger_type == 'mcp_quick' else data.trigger_type
 
     # Create execution record

@@ -353,9 +353,9 @@ export function ExecutionHistory({ businesses }: Props) {
                       <div className="flex flex-col">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium text-purple-600">AI 探索</span>
-                          {getRunnerSource(exec) === 'cc-mini' ? (
+                          {getRunnerSource(exec) === 'mini' ? (
                             <span className="text-[10px] px-1.5 py-0.5">
-                              cc-mini
+                              mini
                             </span>
                           ) : null}
                         </div>

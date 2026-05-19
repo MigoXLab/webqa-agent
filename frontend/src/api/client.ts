@@ -84,7 +84,11 @@ export interface Execution {
   config?: Record<string, any>;
 }
 
-export type RunnerSource = 'standard' | 'cc-mini';
+/** UI / normalized runner label (execution history, filters). */
+export type RunnerSource = 'standard' | 'mini';
+
+/** Backend gen_config.runner_source for the Mini runner (API contract). */
+export const MINI_RUNNER_SOURCE_API = 'mini' as const;
 
 export type GenAccountPayload = {
   name: string;
@@ -375,12 +379,12 @@ class APIClient {
     workers?: number;
     base_gen_config: Record<string, any>;
     standard_gen_config?: Record<string, any>;
-    cc_mini_gen_config?: Record<string, any>;
+    mini_gen_config?: Record<string, any>;
   }): Promise<{
     batch_id: string;
     executions: {
       standard?: Execution;
-      cc_mini?: Execution;
+      mini?: Execution;
     };
     errors: string[];
   }> {
@@ -389,29 +393,29 @@ class APIClient {
     const standardGenConfig = {
       ...(data.standard_gen_config || {
         ...baseGenConfig,
-        runner_source: 'standard' as RunnerSource,
+        runner_source: 'standard',
       }),
-      runner_source: 'standard' as RunnerSource,
+      runner_source: 'standard',
       batch_id: batchId,
     };
-    const ccMiniGenConfig = {
-      ...(data.cc_mini_gen_config || {
+    const miniGenConfigMerged = {
+      ...(data.mini_gen_config || {
         ...baseGenConfig,
-        runner_source: 'cc-mini' as RunnerSource,
+        runner_source: MINI_RUNNER_SOURCE_API,
       }),
-      runner_source: 'cc-mini' as RunnerSource,
+      runner_source: MINI_RUNNER_SOURCE_API,
       batch_id: batchId,
     };
-    // Resolve cc-mini objectives: preserve array (multi-task) or fall back to
+    // Resolve Mini objectives: preserve array (multi-task) or fall back to
     // _display_objectives string (single-task legacy path).
-    const existingCcMiniObjectives = ccMiniGenConfig?.business_objectives;
-    const ccMiniFinalObjectives =
-      Array.isArray(existingCcMiniObjectives) && existingCcMiniObjectives.length > 0
-        ? existingCcMiniObjectives
+    const existingMiniObjectives = miniGenConfigMerged?.business_objectives;
+    const miniFinalObjectives =
+      Array.isArray(existingMiniObjectives) && existingMiniObjectives.length > 0
+        ? existingMiniObjectives
         : (() => {
             const raw =
-              typeof ccMiniGenConfig?._display_objectives === 'string'
-                ? ccMiniGenConfig._display_objectives.trim()
+              typeof miniGenConfigMerged?._display_objectives === 'string'
+                ? miniGenConfigMerged._display_objectives.trim()
                 : '';
             return raw || undefined;
           })();
@@ -422,34 +426,34 @@ class APIClient {
       workers: data.workers,
       gen_config: standardGenConfig,
     };
-    const ccMiniPayload = {
+    const miniPayload = {
       business_id: data.business_id,
       trigger_type: 'gen' as const,
       model: data.model,
       workers: data.workers,
       gen_config: {
-        ...ccMiniGenConfig,
-        business_objectives: ccMiniFinalObjectives,
+        ...miniGenConfigMerged,
+        business_objectives: miniFinalObjectives,
       },
     };
 
-    const [standardRes, ccMiniRes] = await Promise.allSettled([
+    const [standardRes, miniRes] = await Promise.allSettled([
       this.createExecution(standardPayload),
-      this.createExecution(ccMiniPayload),
+      this.createExecution(miniPayload),
     ]);
 
     const errors: string[] = [];
-    const executions: { standard?: Execution; cc_mini?: Execution } = {};
+    const executions: { standard?: Execution; mini?: Execution } = {};
 
     if (standardRes.status === 'fulfilled') {
       executions.standard = standardRes.value;
     } else {
       errors.push(`standard: ${standardRes.reason?.message || String(standardRes.reason)}`);
     }
-    if (ccMiniRes.status === 'fulfilled') {
-      executions.cc_mini = ccMiniRes.value;
+    if (miniRes.status === 'fulfilled') {
+      executions.mini = miniRes.value;
     } else {
-      errors.push(`cc-mini: ${ccMiniRes.reason?.message || String(ccMiniRes.reason)}`);
+      errors.push(`mini: ${miniRes.reason?.message || String(miniRes.reason)}`);
     }
 
     return { batch_id: batchId, executions, errors };

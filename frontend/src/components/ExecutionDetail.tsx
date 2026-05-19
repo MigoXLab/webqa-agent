@@ -15,7 +15,6 @@ import {
   Sparkles
 } from 'lucide-react';
 import { apiClient, ExecutionProgress, Execution } from '../api/client';
-import { isCcMiniExecution as checkCcMini } from '../utils/executionUtils';
 
 export function ExecutionDetail() {
   const { executionId } = useParams<{ executionId: string }>();
@@ -223,8 +222,6 @@ export function ExecutionDetail() {
 
   const isRunning = ['pending', 'running'].includes(execution.status);
   const isCompleted = ['completed', 'passed', 'failed', 'timeout'].includes(execution.status);
-  const isCcMiniExecution = checkCcMini(execution);
-
   return (
     <div className="min-h-screen bg-gray-50 px-4 sm:px-6 py-4 sm:py-6">
       <div className="max-w-7xl mx-auto">

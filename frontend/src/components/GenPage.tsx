@@ -16,7 +16,7 @@ import {
   Trash2,
   Plus,
 } from 'lucide-react';
-import { apiClient, GenAccountPayload, RunnerSource } from '../api/client';
+import { apiClient, GenAccountPayload, MINI_RUNNER_SOURCE_API } from '../api/client';
 import { FileManager } from './FileManager';
 import { BusinessFile } from '../App';
 
@@ -28,8 +28,8 @@ const TEST_ITEMS = [
   { key: 'security' as const, label: '安全扫描', icon: Shield },
 ];
 
-// Maps TEST_ITEMS keys to the cc-mini task texts sent to the runner.
-const CC_MINI_TASK_MAP: Record<string, string> = {
+// Maps TEST_ITEMS keys to Mini runner task texts sent to the backend.
+const MINI_TASK_MAP: Record<string, string> = {
   functional: '进行页面完整的功能测试',
   performance: '网页性能测试，输出页面性能指标（如加载时间、资源大小等）',
   traverse: '调用 button-check skill，遍历页面所有交互元素，验证点击/输入是否报错',
@@ -96,7 +96,7 @@ export function GenPage() {
   // Form State
   const [targetUrl, setTargetUrl] = useState('');
   const [businessObjectives, setBusinessObjectives] = useState('');
-  const [ccMiniObjectives, setCcMiniObjectives] = useState<string[]>(['']);
+  const [miniObjectives, setMiniObjectives] = useState<string[]>(['']);
   const [selectedModel, setSelectedModel] = useState('');
   const [availableModels, setAvailableModels] = useState<string[]>([]);
 
@@ -109,8 +109,8 @@ export function GenPage() {
     security: false,
   });
 
-  // Runner selection: 'standard' | 'cc-mini' | 'both'
-  const [runnerMode, setRunnerMode] = useState<'standard' | 'cc-mini' | 'both'>('cc-mini');
+  // Runner selection: 'standard' | 'mini' | 'both'
+  const [runnerMode, setRunnerMode] = useState<'standard' | 'mini' | 'both'>('mini');
 
   // Execution Config (default expanded)
   const [showExecutionConfig, setShowExecutionConfig] = useState(true);
@@ -146,20 +146,20 @@ export function GenPage() {
           if (cfg.target_url) setTargetUrl(cfg.target_url);
           if (Array.isArray(cfg.business_objectives) && cfg.business_objectives.length > 0) {
             const savedTasks = cfg.business_objectives as string[];
-            const presetValues = new Set(Object.values(CC_MINI_TASK_MAP));
+            const presetValues = new Set(Object.values(MINI_TASK_MAP));
             const customObjs = savedTasks.filter(t => !presetValues.has(t));
-            if (customObjs.length > 0) setCcMiniObjectives(customObjs);
+            if (customObjs.length > 0) setMiniObjectives(customObjs);
             const restored = { functional: false, performance: false, traverse: false, links: false, security: false };
-            for (const [key, task] of Object.entries(CC_MINI_TASK_MAP)) {
+            for (const [key, task] of Object.entries(MINI_TASK_MAP)) {
               if (savedTasks.includes(task)) (restored as any)[key] = true;
             }
             setTestItems(restored);
           } else if (cfg._display_objectives) {
             setBusinessObjectives(cfg._display_objectives);
-            setCcMiniObjectives([cfg._display_objectives]);
+            setMiniObjectives([cfg._display_objectives]);
           } else if (cfg.business_objectives && typeof cfg.business_objectives === 'string') {
             setBusinessObjectives(cfg.business_objectives);
-            if (cfg.business_objectives.trim()) setCcMiniObjectives([cfg.business_objectives.trim()]);
+            if (cfg.business_objectives.trim()) setMiniObjectives([cfg.business_objectives.trim()]);
           }
           const model = cfg.llm_config?.model;
           if (model && models.models.includes(model)) setSelectedModel(model);
@@ -173,8 +173,9 @@ export function GenPage() {
             links: enabled.includes('detect_dynamic_links'),
             security: enabled.includes('nuclei'),
           });
-          const rs = cfg.runner_source;
-          if (rs === 'standard' || rs === 'cc-mini' || rs === 'both') setRunnerMode(rs);
+          const rs = cfg.runner_source as string | undefined;
+          if (rs === 'standard' || rs === 'mini' || rs === 'both') setRunnerMode(rs as 'standard' | 'mini' | 'both');
+          else if (rs === 'cc-mini' || rs === 'cc_mini') setRunnerMode('mini');
           if (fromExecution.business_id) setSelectedBusinessId(fromExecution.business_id);
           // auth
           const authTypeVal = cfg.auth_type as AuthType;
@@ -213,25 +214,24 @@ export function GenPage() {
       return;
     }
 
-    const objectiveTrim = businessObjectives.trim();
-    const customCcMiniObjectives = runnerMode !== 'standard'
-      ? ccMiniObjectives.filter(o => o.trim())
+    const customMiniObjectives = runnerMode !== 'standard'
+      ? miniObjectives.filter(o => o.trim())
       : [];
-    const hasCustomObjectives = customCcMiniObjectives.length > 0;
+    const hasCustomObjectives = customMiniObjectives.length > 0;
 
     const fromCheckboxes = TEST_ITEMS.filter((item) => {
       if (!testItems[item.key]) return false;
-      // Custom 测试目标 replaces the preset functional line for CC-Mini (not Standard).
+      // Custom 测试目标 replaces the preset functional line for Mini (not Standard).
       if (runnerMode !== 'standard' && item.key === 'functional' && hasCustomObjectives) {
         return false;
       }
       return true;
-    }).map((item) => CC_MINI_TASK_MAP[item.key]);
-    const ccMiniTasks =
+    }).map((item) => MINI_TASK_MAP[item.key]);
+    const miniTasks =
       runnerMode !== 'standard' && hasCustomObjectives
-        ? [...customCcMiniObjectives, ...fromCheckboxes]
+        ? [...customMiniObjectives, ...fromCheckboxes]
         : fromCheckboxes;
-    if (runnerMode !== 'standard' && ccMiniTasks.length === 0) {
+    if (runnerMode !== 'standard' && miniTasks.length === 0) {
       setError('请至少选择一个测试项目');
       return;
     }
@@ -248,7 +248,7 @@ export function GenPage() {
 
       let finalBusinessObjectives = runnerMode === 'standard'
         ? businessObjectives
-        : (hasCustomObjectives ? customCcMiniObjectives.join('\n') : businessObjectives);
+        : (hasCustomObjectives ? customMiniObjectives.join('\n') : businessObjectives);
       if (testItems.functional) {
         const functionalInstruction = `
 测试要求：以真实用户视角对每个功能模块进行完整的端到端测试，必须执行完整的交互流程（如：表单需填写并提交、对话功能需发送消息并验证回复、搜索功能需输入关键词并验证结果），禁止仅点击入口而不完成完整操作流程。
@@ -329,7 +329,7 @@ export function GenPage() {
           }
         }
         if (runnerMode === 'standard' && normalizedAccounts.length > 1) {
-          setError('Standard 模式仅支持单账号，请切换到 CC-Mini 或全选');
+          setError('Standard 模式仅支持单账号，请切换到 Mini 或全选');
           setLoading(false);
           return;
         }
@@ -344,7 +344,7 @@ export function GenPage() {
         llm_config: { model: selectedModel },
         business_objectives: finalBusinessObjectives,
         _display_objectives: (runnerMode !== 'standard' && hasCustomObjectives
-          ? customCcMiniObjectives.join('\n')
+          ? customMiniObjectives.join('\n')
           : businessObjectives) || undefined,
         custom_tools: { enabled: enabledTools },
         browser_config: { cookies: defaultCookies },
@@ -360,7 +360,10 @@ export function GenPage() {
       if (runnerMode === 'both') {
         const standardGenConfig = {
           ...baseGenConfig,
-          runner_source: 'standard' as RunnerSource,
+          runner_source: 'standard' as const,
+          // Override: standard runner's planning_mode should be based on its own objectives,
+          // not mini's custom objectives which may have been set in baseGenConfig.
+          _display_objectives: businessObjectives.trim() || undefined,
           browser_config: { cookies: defaultCookies },
           ...(authType === 'sso'
             ? {
@@ -369,12 +372,12 @@ export function GenPage() {
               }
             : { auth_type: undefined, accounts: undefined }),
         };
-        const ccMiniGenConfig = {
+        const miniGenConfig = {
           ...baseGenConfig,
-          runner_source: 'cc-mini' as RunnerSource,
-          business_objectives: ccMiniTasks,
+          runner_source: MINI_RUNNER_SOURCE_API,
+          business_objectives: miniTasks,
           max_concurrent_tests: workers,
-          _display_objectives: (hasCustomObjectives ? customCcMiniObjectives.join('\n') : businessObjectives.trim()) || undefined,
+          _display_objectives: (hasCustomObjectives ? customMiniObjectives.join('\n') : businessObjectives.trim()) || undefined,
         };
         const dualResult = await apiClient.createDualGenExecutions({
           business_id: selectedBusinessId || undefined,
@@ -382,9 +385,9 @@ export function GenPage() {
           workers: workers,
           base_gen_config: baseGenConfig,
           standard_gen_config: standardGenConfig,
-          cc_mini_gen_config: ccMiniGenConfig,
+          mini_gen_config: miniGenConfig,
         });
-        const startedCount = Number(Boolean(dualResult.executions.standard)) + Number(Boolean(dualResult.executions.cc_mini));
+        const startedCount = Number(Boolean(dualResult.executions.standard)) + Number(Boolean(dualResult.executions.mini));
         if (startedCount === 0) {
           throw new Error(dualResult.errors.join('；') || '启动探索失败');
         }
@@ -392,8 +395,8 @@ export function GenPage() {
           setError(`已启动 ${startedCount}/2 个任务，失败：${dualResult.errors.join('；')}`);
         }
       } else {
-        const isCcMini = runnerMode === 'cc-mini';
-        const genConfigBase = isCcMini
+        const isMiniRunner = runnerMode === 'mini';
+        const genConfigBase = isMiniRunner
           ? (() => {
               const { business_objectives: _, ...rest } = baseGenConfig;
               return rest;
@@ -414,11 +417,11 @@ export function GenPage() {
                     : { auth_type: undefined, accounts: undefined }),
                 }
               : {
-                  business_objectives: ccMiniTasks,
+                  business_objectives: miniTasks,
                   max_concurrent_tests: workers,
-                  _display_objectives: (hasCustomObjectives ? customCcMiniObjectives.join('\n') : businessObjectives.trim()) || undefined,
+                  _display_objectives: (hasCustomObjectives ? customMiniObjectives.join('\n') : businessObjectives.trim()) || undefined,
                 }),
-            runner_source: runnerMode as RunnerSource,
+            runner_source: runnerMode === 'standard' ? 'standard' : MINI_RUNNER_SOURCE_API,
           },
         });
       }
@@ -499,7 +502,7 @@ export function GenPage() {
               <span className="ml-1.5 text-xs text-gray-400 font-normal">
                 {runnerMode === 'standard'
                   ? '【可选】留空则由 AI 自主探索'
-                  : '【可选】每条目标作为 CC-Mini 的独立任务；填写后不再执行预设「功能测试」'}
+                  : '【可选】每条目标作为 Mini 的独立任务；填写后不再执行预设「功能测试」'}
               </span>
             </label>
             {runnerMode === 'standard' ? (
@@ -512,7 +515,7 @@ export function GenPage() {
               />
             ) : (
               <div className="space-y-2">
-                {ccMiniObjectives.map((obj, idx) => (
+                {miniObjectives.map((obj, idx) => (
                   <div key={idx} className="flex gap-2 items-start">
                     <textarea
                       rows={2}
@@ -520,15 +523,15 @@ export function GenPage() {
                       placeholder="例如：测试用户登录、搜索商品、加入购物车并结算的核心流程"
                       value={obj}
                       onChange={(e) => {
-                        const updated = [...ccMiniObjectives];
+                        const updated = [...miniObjectives];
                         updated[idx] = e.target.value;
-                        setCcMiniObjectives(updated);
+                        setMiniObjectives(updated);
                       }}
                     />
-                    {ccMiniObjectives.length > 1 && (
+                    {miniObjectives.length > 1 && (
                       <button
                         type="button"
-                        onClick={() => setCcMiniObjectives(ccMiniObjectives.filter((_, i) => i !== idx))}
+                        onClick={() => setMiniObjectives(miniObjectives.filter((_, i) => i !== idx))}
                         className="mt-1 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
                         title="删除此目标"
                       >
@@ -539,7 +542,7 @@ export function GenPage() {
                 ))}
                 <button
                   type="button"
-                  onClick={() => setCcMiniObjectives([...ccMiniObjectives, ''])}
+                  onClick={() => setMiniObjectives([...miniObjectives, ''])}
                   className="flex items-center gap-1.5 text-sm text-purple-600 hover:text-purple-700 hover:bg-purple-50 px-2 py-1 rounded transition-colors"
                 >
                   + 新增测试目标
@@ -602,7 +605,7 @@ export function GenPage() {
               {!showExecutionConfig && (
                 <div className="flex items-center gap-2 ml-2 flex-wrap">
                   <span className="px-2 py-0.5 bg-white border border-gray-200 rounded text-xs text-gray-500">
-                    {runnerMode === 'both' ? '全选' : runnerMode === 'cc-mini' ? 'CC-Mini' : 'Standard'}
+                    {runnerMode === 'both' ? '全选' : runnerMode === 'mini' ? 'Mini' : 'Standard'}
                   </span>
                   <span className="px-2 py-0.5 bg-white border border-gray-200 rounded text-xs text-gray-500">
                     {selectedModel || '默认模型'}
@@ -614,7 +617,7 @@ export function GenPage() {
                     const count = TEST_ITEMS.filter((item) => testItems[item.key]).length;
                     return count > 0 ? (
                       <span className="px-2 py-0.5 bg-white border border-gray-200 rounded text-xs text-gray-500">
-                        CC-Mini × {count}
+                        Mini × {count}
                       </span>
                     ) : null;
                   })()}
@@ -636,7 +639,7 @@ export function GenPage() {
                     {([
                       { value: 'both', label: '全选' },
                       { value: 'standard', label: 'Standard' },
-                      { value: 'cc-mini', label: 'CC-Mini' },
+                      { value: 'mini', label: 'Mini' },
                     ] as const).map((opt) => (
                       <button
                         key={opt.value}
@@ -939,8 +942,8 @@ export function GenPage() {
             )}
           </div>
 
-          {/* Advanced Options — collapsible, hidden for cc-mini mode */}
-          {runnerMode !== 'cc-mini' && <div className="border border-gray-200 rounded-lg overflow-hidden">
+          {/* Advanced Options — collapsible, hidden for Mini mode */}
+          {runnerMode !== 'mini' && <div className="border border-gray-200 rounded-lg overflow-hidden">
             <button
               type="button"
               onClick={() => setShowAdvanced(!showAdvanced)}

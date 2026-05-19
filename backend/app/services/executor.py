@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 # Project root directory
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 
+# API / persisted gen_config uses "mini". Legacy values and agent internals may still use cc-mini.
+_MINI_RUNNER_INPUT_ALIASES = frozenset({'mini', 'cc-mini', 'cc_mini'})
+_GEN_RUNNER_SOURCE_MINI = 'mini'
+
 
 def _is_default_account(account: Dict[str, Any]) -> bool:
     """Support both runtime and legacy account default flags."""
@@ -106,6 +110,7 @@ def _prepare_gen_config(
             logger.info(f'{log_prefix} Injected test_files_dir for business {execution.business_id}')
 
     runner_source = _resolve_gen_runner_source(gen_config_dict)
+    gen_config_dict['runner_source'] = runner_source
     _resolve_gen_auth_config(gen_config_dict, runner_source, log_prefix)
     _resolve_planning_mode(gen_config_dict, log_prefix)
 
@@ -227,7 +232,7 @@ def _resolve_gen_auth_config(gen_config_dict: Dict[str, Any], runner_source: str
         browser_cfg = gen_config_dict.setdefault('browser_config', {})
         browser_cfg['cookies'] = default_account.get('cookies')
 
-    if runner_source in {'cc-mini', 'cc_mini'}:
+    if runner_source == _GEN_RUNNER_SOURCE_MINI:
         gen_config_dict['accounts'] = resolved_accounts
     else:
         # Standard runner only consumes browser_config.cookies.
@@ -287,17 +292,21 @@ _active_containers: Dict[str, str] = {}  # execution_id -> container_id (Docker 
 
 
 def _resolve_gen_runner_source(gen_config: Optional[Dict[str, Any]]) -> str:
-    """Resolve which gen runner should execute this task."""
+    """Resolve which gen runner should execute this task.
+
+    Stored/API convention: ``mini`` for the lightweight multi-task runner.
+    Accepts legacy ``cc-mini`` / ``cc_mini`` from older clients or configs.
+    """
     if not isinstance(gen_config, dict):
         return 'standard'
 
     raw = str(gen_config.get('runner_source') or '').strip().lower()
-    if raw in {'cc-mini', 'cc_mini'}:
-        return 'cc-mini'
+    if raw in _MINI_RUNNER_INPUT_ALIASES:
+        return _GEN_RUNNER_SOURCE_MINI
 
     test_cfg = gen_config.get('test_config') or {}
     if bool(test_cfg.get('use_cc_mini', False)):
-        return 'cc-mini'
+        return _GEN_RUNNER_SOURCE_MINI
 
     return 'standard'
 
@@ -499,7 +508,7 @@ async def run_execution(execution_id: str, case_data: Optional[Dict[str, Any]] =
         )
         effective_gen_config = _clone_gen_config_for_runtime(source_gen_config)
         runner_source = _resolve_gen_runner_source(effective_gen_config)
-        effective_gen_config.setdefault('runner_source', runner_source)
+        effective_gen_config['runner_source'] = runner_source
         logger.info(
             f'[Run] Gen execution runner selected: execution_id={execution_id}, '
             f'runner_source={runner_source}, mode={mode}'
