@@ -13,6 +13,7 @@ from tools.load_skill_tool import LoadSkillTool
 from tools.nuclei_tool import NucleiScanTool
 from tools.upload_tool import CDPUploadTool
 from tools.verify_tool import VerifyTool
+from tools.wait_stable_tool import WaitForDomStableTool
 
 __all__ = [
     'CDPUploadTool',
@@ -20,4 +21,5 @@ __all__ = [
     'LoadSkillTool',
     'NucleiScanTool',
     'VerifyTool',
+    'WaitForDomStableTool',
 ]

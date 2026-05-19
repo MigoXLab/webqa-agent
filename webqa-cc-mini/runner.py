@@ -71,7 +71,7 @@ from core.skill_registry import SkillRegistry
 from core.tool import Tool
 from features.compact import CompactService, should_compact
 from tools import (CDPUploadTool, DownloadCheckTool, LoadSkillTool,
-                   NucleiScanTool, VerifyTool)
+                   NucleiScanTool, VerifyTool, WaitForDomStableTool)
 
 log = logging.getLogger('cc_mini.runner')
 
@@ -574,6 +574,10 @@ def run_cc_mini(
             except Exception as exc:
                 log.warning('cdp_upload_file: bind_mcp failed: %s', exc)
         tools.append(upload_tool)
+
+        # Add DOM stability tool (for streaming output, async loads)
+        if browser_server is not None:
+            tools.append(WaitForDomStableTool(browser_server))
 
         # Add independent verification tool (always registered)
         if browser_server is not None:
