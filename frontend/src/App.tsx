@@ -8,9 +8,10 @@ import { ExecutionDetail } from './components/ExecutionDetail';
 import { CaseEditorPage } from './components/CaseEditorPage';
 import { GenPage } from './components/GenPage';
 import { ApiKeyManager } from './components/ApiKeyManager';
-import { LayoutDashboard, History, Box, Loader2, Github, Sparkles, Key } from 'lucide-react';
+import { LayoutDashboard, History, Box, Loader2, Github, Sparkles, Key, ExternalLink } from 'lucide-react';
 import { apiClient, Business as APIBusiness, Execution as APIExecution } from './api/client';
 import { toFrontendTestCase } from './utils/testCaseUtils';
+import { getCasePortalUrl } from './utils/env';
 
 // Re-export types for backward compatibility
 export type AccountEntry = {
@@ -399,6 +400,17 @@ export default function App() {
                   AI 探索
                 </div>
               </Link>
+              <a
+                href={getCasePortalUrl()}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-4 py-2 rounded-lg text-sm font-medium transition-colors text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+              >
+                <div className="flex items-center gap-2">
+                  <ExternalLink className="w-4 h-4" />
+                  用例生成
+                </div>
+              </a>
               <Link
                 to="/"
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
