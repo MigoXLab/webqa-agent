@@ -853,6 +853,12 @@ class Engine:
         tool_name = _block_name(tool_use)
         tool_input = _block_input(tool_use)
         tool = self._tools.get(tool_name)
+        resolved_name = tool_name
+        if tool is None and '__' in tool_name:
+            bare = tool_name.split('__')[-1]
+            tool = self._tools.get(bare)
+            if tool is not None:
+                resolved_name = bare
         if tool is None:
             return ToolResult(content=f'Unknown tool: {tool_name}', is_error=True)
 
@@ -873,9 +879,16 @@ class Engine:
                 tool_input['timeout'] = _WAIT_FOR_MAX_TIMEOUT_MS
 
         try:
-            return tool.execute(**tool_input)
+            result = tool.execute(**tool_input)
         except Exception as e:
             return ToolResult(content=f'Tool error: {e}', is_error=True)
+        if resolved_name != tool_name:
+            result.content = (
+                f'[resolved {tool_name!r} → {resolved_name!r}; '
+                f'use {resolved_name!r} directly next time]\n'
+                + (result.content or '')
+            )
+        return result
 
 
 def _block_type(block: Any) -> str | None:

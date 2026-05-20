@@ -259,6 +259,149 @@ class RunResult:
     data_flow_events: list[dict[str, Any]] = field(default_factory=list)
 
 
+# ---------------------------------------------------------------------------
+# Event-loop state and pure dispatchers
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _EventLoopState:
+    """Mutable state owned by the engine-events consumer loop."""
+    steps: list[Step] = field(default_factory=list)
+    pending: deque[dict[str, Any]] = field(default_factory=deque)
+    pending_turn_metrics: deque[dict[str, int]] = field(default_factory=deque)
+    agent_text_buf: list[str] = field(default_factory=list)
+    cur_step: Step | None = None
+    total_tokens: dict[str, int] = field(default_factory=lambda: {'input': 0, 'output': 0})
+    last_input_tokens: int = 0
+    seen_usage: bool = False
+    data_flow_events: list[dict] = field(default_factory=list)
+
+
+def _attach_pending_metrics_to(step: Step, pending_turn_metrics: deque[dict[str, int]]) -> None:
+    if pending_turn_metrics and step.input_tokens == 0 and step.output_tokens == 0:
+        m = pending_turn_metrics.popleft()
+        step.input_tokens = int(m.get('input_tokens', 0))
+        step.output_tokens = int(m.get('output_tokens', 0))
+
+
+def _handle_event(
+    evt: tuple,
+    state: _EventLoopState,
+    *,
+    screenshot_root: Path | None = None,
+    data_flow_sink: DataFlowSink | None = None,
+) -> None:
+    """Apply one engine event to *state*.
+
+    Pure dispatcher: does not perform abort / time / iteration checks (those
+    stay in the outer ``run_cc_mini`` loop). Logging and screenshot
+    persistence still happen here.
+    """
+    kind = evt[0]
+    if kind == 'tool_call':
+        state.pending.append({'tool': evt[1], 'input': evt[2], 'ts': time.time()})
+        log.info('tool_call: %s %s', evt[1], _summarize_tool_input(evt[2]))
+
+    elif kind == 'data_flow_event':
+        event = evt[1] if len(evt) > 1 and isinstance(evt[1], dict) else {}
+        if event:
+            state.data_flow_events.append(event)
+            if data_flow_sink is not None:
+                try:
+                    data_flow_sink(event)
+                except Exception as sink_exc:
+                    log.warning('data_flow_sink raised: %s', sink_exc)
+
+    elif kind == 'tool_result':
+        tool_result = evt[3]
+        if state.pending:
+            p = state.pending.popleft()
+            ended_at = time.time()
+            step_index = len(state.steps) + 1
+            if state.cur_step is None:
+                state.cur_step = Step(description='', timestamp=p.get('ts', time.time()))
+                _attach_pending_metrics_to(state.cur_step, state.pending_turn_metrics)
+            screenshots = _persist_step_screenshots(
+                tool_result=tool_result,
+                step_index=step_index,
+                screenshot_root=screenshot_root,
+                image_index_start=len(state.cur_step.screenshots),
+            )
+            tc = ToolCall(
+                tool=p['tool'],
+                input=p['input'],
+                result=tool_result.content,
+                is_error=tool_result.is_error,
+                start_ts=p.get('ts', ended_at),
+                end_ts=ended_at,
+            )
+            state.cur_step.tool_calls.append(tc)
+            state.cur_step.screenshots.extend(screenshots)
+            state.cur_step.end_ts = max(state.cur_step.end_ts, ended_at)
+
+        if tool_result.is_error:
+            snippet = (tool_result.content or '')[:200]
+            log.warning('tool_error [%s]: %s', evt[1], snippet)
+        else:
+            snippet = (tool_result.content or '')[:300].replace('\n', ' ')
+            log.info('tool_result [%s]: %s', evt[1], snippet)
+
+    elif kind == 'error':
+        log.error('engine error: %s', evt[1] if len(evt) > 1 else '?')
+
+    elif kind == 'text':
+        chunk = str(evt[1] if len(evt) > 1 else '')
+        if chunk:
+            state.agent_text_buf.append(chunk)
+
+    elif kind == 'waiting':
+        # POST-FIX (Bug 1): do NOT backfill description on the step we are
+        # flushing — that text belongs to the UPCOMING step's tool calls.
+        description = ''.join(state.agent_text_buf).strip()
+        state.agent_text_buf.clear()
+        if description:
+            log.info('agent: %s', description)
+        if state.cur_step is not None:
+            state.cur_step.end_ts = state.cur_step.end_ts or time.time()
+            state.steps.append(state.cur_step)
+            state.cur_step = None
+        state.cur_step = Step(description=description)
+        _attach_pending_metrics_to(state.cur_step, state.pending_turn_metrics)
+
+    elif kind == 'usage':
+        u = evt[1]
+        state.seen_usage = True
+        input_tokens = int(getattr(u, 'input_tokens', 0) or 0)
+        output_tokens = int(getattr(u, 'output_tokens', 0) or 0)
+        state.last_input_tokens = input_tokens
+        state.total_tokens['input'] += input_tokens
+        state.total_tokens['output'] += output_tokens
+        metrics = {'input_tokens': input_tokens, 'output_tokens': output_tokens}
+        if (
+            state.cur_step is not None
+            and state.cur_step.input_tokens == 0
+            and state.cur_step.output_tokens == 0
+        ):
+            state.cur_step.input_tokens = input_tokens
+            state.cur_step.output_tokens = output_tokens
+        else:
+            state.pending_turn_metrics.append(metrics)
+
+
+def _finalize_steps(state: _EventLoopState) -> None:
+    """Flush the in-progress step when the engine loop ends.
+
+    Drops trailing pure-text turns (no tool_calls). The final summary
+    text reaches the report via ``RunResult.final_text`` → the case-level
+    ``final_summary`` field that the frontend renders as the Summary card
+    at the top, so including it again as a Step would be redundant.
+    """
+    if state.cur_step is not None and state.cur_step.tool_calls:
+        state.cur_step.end_ts = state.cur_step.end_ts or time.time()
+        state.steps.append(state.cur_step)
+        state.cur_step = None
+
+
 def run_cc_mini(
     url: str,
     user_input: str,
@@ -448,13 +591,7 @@ def run_cc_mini(
         pass
 
     engine: Engine | None = None
-    steps: list[Step] = []
-    total_tokens = {'input': 0, 'output': 0}
-    # Replace semantics: should_compact() needs this call's input_tokens only.
-    last_input_tokens = 0
-    # Falls back to estimate_tokens when a provider never emits "usage" events.
-    seen_usage = False
-    data_flow_events: list[dict[str, Any]] = []
+    state = _EventLoopState()
     display_bridge = _DisplayProgressBridge(
         enabled=enable_display_progress,
         language=progress_language,
@@ -631,12 +768,11 @@ def run_cc_mini(
         )
 
         def _maybe_compact(last_input: int | None) -> None:
-            nonlocal last_input_tokens
             messages = engine.get_messages()
             if should_compact(messages, engine.get_model(), last_input):
                 new_msgs, _ = compact.compact(messages, engine.system_prompt)
                 engine.set_messages(new_msgs)
-                last_input_tokens = 0  # reset so compaction doesn't re-fire
+                state.last_input_tokens = 0  # reset so compaction doesn't re-fire
 
         def _on_context_overflow(messages: list[dict]) -> list[dict] | None:
             """Force-compact when the LLM rejects the request as too long.
@@ -648,7 +784,6 @@ def run_cc_mini(
             can't shrink, we return ``None`` so the engine falls back to
             its legacy ``max_tokens`` halving.
             """
-            nonlocal last_input_tokens
             try:
                 new_msgs, _ = compact.compact(messages, engine.system_prompt)
             except Exception as exc:
@@ -656,22 +791,10 @@ def run_cc_mini(
                 return None
             if not new_msgs or len(new_msgs) >= len(messages):
                 return None
-            last_input_tokens = 0  # next usage event won't immediately re-fire
+            state.last_input_tokens = 0  # next usage event won't immediately re-fire
             return new_msgs
 
         engine.set_context_overflow_handler(_on_context_overflow)
-
-        # engine.py emits tool_results in the same order as the batched calls.
-        pending: deque[dict] = deque()
-        pending_turn_metrics: deque[dict[str, int]] = deque()
-        _agent_text_buf: list[str] = []
-        _cur_step: Step | None = None  # step being built for the current agent turn
-
-        def _attach_pending_metrics(step: Step) -> None:
-            if pending_turn_metrics and step.input_tokens == 0 and step.output_tokens == 0:
-                metrics = pending_turn_metrics.popleft()
-                step.input_tokens = metrics.get('input_tokens', 0)
-                step.output_tokens = metrics.get('output_tokens', 0)
 
         seed = (
             f'Target URL: {url}\n\n'
@@ -700,154 +823,69 @@ def run_cc_mini(
                 except Exception as cb_exc:
                     log.warning('on_event callback raised: %s', cb_exc)
 
-            kind = evt[0]
+            _handle_event(
+                evt, state,
+                screenshot_root=screenshot_root,
+                data_flow_sink=data_flow_sink,
+            )
 
-            if kind == 'tool_call':
-                pending.append({'tool': evt[1], 'input': evt[2], 'ts': time.time()})
-                log.info('tool_call: %s %s', evt[1], _summarize_tool_input(evt[2]))
+            # Compaction triggers stay outside _handle_event (needs engine closure)
+            if evt[0] == 'tool_result' and not state.seen_usage:
+                _maybe_compact(None)
+            elif evt[0] == 'usage':
+                _maybe_compact(state.last_input_tokens)
 
-            elif kind == 'data_flow_event':
-                event = evt[1] if len(evt) > 1 and isinstance(evt[1], dict) else {}
-                if event:
-                    data_flow_events.append(event)
-                    if data_flow_sink is not None:
-                        try:
-                            data_flow_sink(event)
-                        except Exception as sink_exc:
-                            log.warning('data_flow_sink raised: %s', sink_exc)
-
-            elif kind == 'tool_result':
-                tool_result = evt[3]
-                if pending:
-                    p = pending.popleft()
-                    ended_at = time.time()
-                    step_index = len(steps) + 1
-                    screenshots = _persist_step_screenshots(
-                        tool_result=evt[3],
-                        step_index=step_index,
-                        screenshot_root=screenshot_root,
-                    )
-                    tc = ToolCall(
-                        tool=p['tool'],
-                        input=p['input'],
-                        result=tool_result.content,
-                        is_error=tool_result.is_error,
-                        start_ts=p.get('ts', ended_at),
-                        end_ts=ended_at,
-                    )
-                    if _cur_step is None:
-                        _cur_step = Step(description='', timestamp=p.get('ts', time.time()))
-                        _attach_pending_metrics(_cur_step)
-                    _cur_step.tool_calls.append(tc)
-                    _cur_step.screenshots.extend(screenshots)
-                    _cur_step.end_ts = max(_cur_step.end_ts, ended_at)
-
-                if tool_result.is_error:
-                    snippet = (tool_result.content or '')[:200]
-                    log.warning('tool_error [%s]: %s', evt[1], snippet)
-                else:
-                    snippet = (tool_result.content or '')[:300].replace('\n', ' ')
-                    log.info('tool_result [%s]: %s', evt[1], snippet)
-
-                # Fallback compact trigger for providers that never emit "usage".
-                if not seen_usage:
-                    _maybe_compact(None)
-
-            elif kind == 'error':
-                log.error('engine error: %s', evt[1] if len(evt) > 1 else '?')
-
-            elif kind == 'text':
-                chunk = str(evt[1] if len(evt) > 1 else '')
-                if chunk:
-                    _agent_text_buf.append(chunk)
-
-            elif kind == 'waiting':
-                # text stream ended — flush current step and start a new one
-                description = ''.join(_agent_text_buf).strip()
-                _agent_text_buf.clear()
-                if description:
-                    log.info('agent: %s', description)
-                if _cur_step is not None:
-                    # attach description to the step that just finished
-                    _cur_step.description = _cur_step.description or description
-                    _cur_step.end_ts = _cur_step.end_ts or time.time()
-                    steps.append(_cur_step)
-                    _cur_step = None
-                # open a fresh step for the upcoming tool_calls
-                _cur_step = Step(description=description)
-                _attach_pending_metrics(_cur_step)
-
-            elif kind == 'usage':
-                u = evt[1]
-                seen_usage = True
-                last_input_tokens = getattr(u, 'input_tokens', 0) or 0
-                output_tokens = getattr(u, 'output_tokens', 0) or 0
-                total_tokens['input'] += last_input_tokens
-                total_tokens['output'] += output_tokens
-                metrics = {
-                    'input_tokens': int(last_input_tokens),
-                    'output_tokens': int(output_tokens),
-                }
-                if _cur_step is not None and _cur_step.input_tokens == 0 and _cur_step.output_tokens == 0:
-                    _cur_step.input_tokens = metrics['input_tokens']
-                    _cur_step.output_tokens = metrics['output_tokens']
-                else:
-                    pending_turn_metrics.append(metrics)
-                _maybe_compact(last_input_tokens)
-
-            if len(steps) >= max_iterations:
+            if len(state.steps) >= max_iterations:
                 engine.abort()
                 aborted = True
                 break
 
-        # flush any step still in progress when the loop ends
-        if _cur_step is not None and _cur_step.tool_calls:
-            _cur_step.end_ts = _cur_step.end_ts or time.time()
-            steps.append(_cur_step)
-            _cur_step = None
+        _finalize_steps(state)
 
-        failed = sum(1 for s in steps if s.is_error)
+        failed = sum(1 for s in state.steps if s.is_error)
         log.info(
             'Run complete: %d steps (%d failed), %d↑ %d↓ tokens, aborted=%s',
-            len(steps), failed,
-            total_tokens['input'], total_tokens['output'],
+            len(state.steps), failed,
+            state.total_tokens['input'], state.total_tokens['output'],
             aborted,
         )
         _run_result = RunResult(
             final_text=engine.last_assistant_text(),
-            steps=steps,
+            steps=state.steps,
             aborted=aborted,
-            input_tokens=total_tokens['input'],
-            output_tokens=total_tokens['output'],
+            input_tokens=state.total_tokens['input'],
+            output_tokens=state.total_tokens['output'],
             extensions_failed=extensions_failed,
-            data_flow_events=data_flow_events,
+            data_flow_events=state.data_flow_events,
         )
         return _run_result
 
     except AbortedError:
         aborted = True
+        _finalize_steps(state)
         _run_result = RunResult(
             final_text=engine.last_assistant_text() if engine is not None else '',
-            steps=steps,
+            steps=state.steps,
             aborted=True,
-            input_tokens=total_tokens['input'],
-            output_tokens=total_tokens['output'],
+            input_tokens=state.total_tokens['input'],
+            output_tokens=state.total_tokens['output'],
             extensions_failed=extensions_failed,
-            data_flow_events=data_flow_events,
+            data_flow_events=state.data_flow_events,
         )
         return _run_result
 
     except Exception as exc:
         aborted = True
+        _finalize_steps(state)
         log.error('cc-mini aborted due to exception: %s', exc, exc_info=True)
         _run_result = RunResult(
             final_text=f'Error: {exc}',
-            steps=steps,
+            steps=state.steps,
             aborted=True,
-            input_tokens=total_tokens['input'],
-            output_tokens=total_tokens['output'],
+            input_tokens=state.total_tokens['input'],
+            output_tokens=state.total_tokens['output'],
             extensions_failed=extensions_failed,
-            data_flow_events=data_flow_events,
+            data_flow_events=state.data_flow_events,
         )
         return _run_result
 
@@ -861,7 +899,7 @@ def run_cc_mini(
             except Exception:
                 _ft = ''
         display_bridge.finish(
-            aborted=aborted, steps=steps, final_text=_ft,
+            aborted=aborted, steps=state.steps, final_text=_ft,
         )
         display_bridge.close()
         try:
@@ -1203,6 +1241,7 @@ def _persist_step_screenshots(
     tool_result: Any,
     step_index: int,
     screenshot_root: Path | None,
+    image_index_start: int = 0,
 ) -> list[dict[str, str]]:
     """Persist images from a tool result and return step-screenshot dicts.
 
@@ -1219,6 +1258,12 @@ def _persist_step_screenshots(
 
     Callers don't have to pass any extra parameters: the directory layout
     they create on disk fully determines the URL.
+
+    ``image_index_start`` is the number of screenshots already persisted for
+    the current step.  Newly-written images are numbered starting *after* this
+    offset, so passing ``image_index_start=2`` means the first new file will
+    be ``step_NNN_03``.  The default of ``0`` preserves the original
+    single-call behaviour (numbering from ``01``).
     """
     if screenshot_root is None:
         return []
@@ -1231,7 +1276,7 @@ def _persist_step_screenshots(
     else:
         prefix_path = Path(leaf)
     screenshots: list[dict[str, str]] = []
-    image_idx = 0
+    image_idx = image_index_start
     for block in blocks:
         if not isinstance(block, dict) or block.get('type') != 'image':
             continue

@@ -54,6 +54,11 @@ from core.outcome_status import (extract_final_outcome,
 _RESULT_TEXT_LIMIT = 4000
 
 
+def _bare_tool_name(tool: str) -> str:
+    """Strip MCP namespace prefix; e.g. 'mcp__browser__click' -> 'click'."""
+    return tool.split('__')[-1] if '__' in tool else tool
+
+
 def _int_attr(obj: Any, name: str) -> int:
     """Read integer-like attribute with a safe zero fallback."""
     return int(getattr(obj, name, 0) or 0)
@@ -462,9 +467,9 @@ def _map_step_dict(index: int, step: Any) -> dict:
     if tool_calls:
         actions = [
             {
-                'description': tc.tool.split('__')[-1] if '__' in tc.tool else tc.tool,
+                'description': _bare_tool_name(tc.tool),
                 'success': not tc.is_error,
-                'message': tc.tool.split('__')[-1] if '__' in tc.tool else tc.tool,
+                'message': _bare_tool_name(tc.tool),
                 'index': i,
             }
             for i, tc in enumerate(tool_calls, start=1)
@@ -480,10 +485,16 @@ def _map_step_dict(index: int, step: Any) -> dict:
         except Exception:
             model_io = ''
         error_text = '\n'.join(tc.result for tc in tool_calls if tc.is_error)
+        if not description.strip():
+            first_tc = tool_calls[0]
+            bare_tool = _bare_tool_name(first_tc.tool)
+            description = _describe_step(bare_tool, first_tc.input or {})
+            if len(tool_calls) > 1:
+                description += f' (+{len(tool_calls) - 1} more)'
     else:
         # fallback for old-style Step
         tool, is_error, input_dict, result_text, screenshots = _extract_step_fields(step)
-        bare = tool.split('__')[-1] if '__' in tool else tool
+        bare = _bare_tool_name(tool)
         actions = [{'description': bare, 'success': not is_error, 'message': bare, 'index': 1}]
         model_io = _build_model_io(tool=tool, input_dict=input_dict, result_text=result_text)
         error_text = result_text if is_error else ''

@@ -11,7 +11,8 @@ from dataclasses import dataclass, field
 from webqa_agent.data.gen_structures import (ParallelTestSession, TestCategory,
                                              TestStatus)
 from webqa_agent.executor.cc_mini_report_adapter import (
-    run_result_to_aggregated_data, run_result_to_session)
+    _bare_tool_name, _map_step_dict, run_result_to_aggregated_data,
+    run_result_to_session)
 
 
 @dataclass
@@ -356,3 +357,101 @@ class TestAggregatedDataShape:
         items_zh = agg_zh['gen']['index']['aggregated_results']['test_items']
         assert items_en[0]['name'] == 'Functional'
         assert items_zh[0]['name'] == '功能测试'
+
+
+# ---------------------------------------------------------------------------
+# Adapter fallback: empty description uses _describe_step on first tool_call
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _ToolCall:
+    tool: str
+    input: dict = field(default_factory=dict)
+    result: str = 'ok'
+    is_error: bool = False
+    start_ts: float = 0.0
+    end_ts: float = 0.0
+
+
+@dataclass
+class _StepWithToolCalls:
+    """Mimics runner.Step with tool_calls list (new style)."""
+    description: str = ''
+    tool_calls: list = field(default_factory=list)
+    screenshots: list = field(default_factory=list)
+    timestamp: float = 0.0
+    end_ts: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    is_error: bool = False
+
+
+class TestAdapterDescriptionFallback:
+    """Edit 2 (A.3): when description == '' and tool_calls exist,
+    _map_step_dict must derive a description from the first tool_call via
+    _describe_step."""
+
+    def test_empty_description_falls_back_to_first_tool_navigate(self):
+        step = _StepWithToolCalls(
+            description='',
+            tool_calls=[
+                _ToolCall(
+                    tool='mcp__browser__navigate_page',
+                    input={'url': 'https://example.com'},
+                ),
+            ],
+        )
+        result = _map_step_dict(1, step)
+        assert result['description'] == 'Navigate to https://example.com', (
+            f'Fallback description wrong: {result["description"]!r}'
+        )
+
+    def test_empty_description_multiple_tool_calls_adds_suffix(self):
+        step = _StepWithToolCalls(
+            description='',
+            tool_calls=[
+                _ToolCall(
+                    tool='mcp__browser__navigate_page',
+                    input={'url': 'https://example.com'},
+                ),
+                _ToolCall(tool='mcp__browser__snapshot', input={}),
+                _ToolCall(tool='mcp__browser__click', input={'selector': '#x'}),
+            ],
+        )
+        result = _map_step_dict(1, step)
+        assert result['description'] == 'Navigate to https://example.com (+2 more)', (
+            f'Fallback with suffix wrong: {result["description"]!r}'
+        )
+
+    def test_non_empty_description_is_not_overwritten(self):
+        step = _StepWithToolCalls(
+            description='click the login button',
+            tool_calls=[
+                _ToolCall(
+                    tool='mcp__browser__navigate_page',
+                    input={'url': 'https://example.com'},
+                ),
+            ],
+        )
+        result = _map_step_dict(1, step)
+        # Description must NOT be overwritten when already set
+        assert result['description'] == 'click the login button', (
+            f'Existing description should be preserved: {result["description"]!r}'
+        )
+
+
+# ---------------------------------------------------------------------------
+# A1: _bare_tool_name helper
+# ---------------------------------------------------------------------------
+
+class TestBareToolName:
+    def test_bare_tool_name_strips_mcp_prefix(self):
+        assert _bare_tool_name('mcp__browser__click') == 'click'
+        assert _bare_tool_name('navigate') == 'navigate'
+        assert _bare_tool_name('') == ''
+
+    def test_bare_tool_name_multi_segment(self):
+        assert _bare_tool_name('mcp__browser__navigate_page') == 'navigate_page'
+
+    def test_bare_tool_name_single_segment_no_change(self):
+        assert _bare_tool_name('click') == 'click'
