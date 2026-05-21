@@ -57,4 +57,3 @@ RUN npm config set registry https://registry.npmmirror.com \
 # 6. 复制项目代码 (最后复制最常变动的代码)
 COPY webqa_agent/ /app/webqa_agent/
 COPY backend/ /app/backend/
-COPY webqa-cc-mini/ /app/webqa-cc-mini/

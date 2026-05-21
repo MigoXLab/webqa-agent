@@ -46,4 +46,3 @@ RUN npm install && npm install -g chrome-devtools-mcp@latest
 
 COPY webqa_agent/ /app/webqa_agent/
 COPY backend/ /app/backend/
-COPY webqa-cc-mini/ /app/webqa-cc-mini/

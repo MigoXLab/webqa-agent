@@ -51,4 +51,3 @@ RUN npm config set registry https://registry.npmmirror.com \
 
 COPY webqa_agent/ /app/webqa_agent/
 COPY backend/ /app/backend/
-COPY webqa-cc-mini/ /app/webqa-cc-mini/
