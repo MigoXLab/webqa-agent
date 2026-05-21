@@ -17,7 +17,7 @@ from webqa_agent.executor.mini.features.cookies.cdp_client import CDPCookieClien
 
 # Reuse the fake server defined in test_cdp_client.py rather than duplicating
 # ~250 lines of framing code.
-from tests.test_cdp_client import FakeCDPServer  # noqa: E402
+from webqa_agent.executor.mini.tests.test_cdp_client import FakeCDPServer  # noqa: E402
 
 
 pytestmark = pytest.mark.perf
