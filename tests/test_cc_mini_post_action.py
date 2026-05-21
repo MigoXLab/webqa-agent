@@ -1,15 +1,8 @@
 """Tests for post-action screenshot hash comparison in the engine."""
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-_CC_MINI_ROOT = Path(__file__).resolve().parent.parent / 'webqa-cc-mini'
-if str(_CC_MINI_ROOT) not in sys.path:
-    sys.path.insert(0, str(_CC_MINI_ROOT))
-
-from core.engine import Engine, _screenshot_content_hash  # noqa: E402
-from core.tool import ToolResult  # noqa: E402
+from webqa_agent.executor.mini.core.engine import Engine, _screenshot_content_hash
+from webqa_agent.executor.mini.core.tool import ToolResult
 
 
 class TestScreenshotContentHash:

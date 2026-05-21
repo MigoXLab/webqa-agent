@@ -2,17 +2,13 @@
 from __future__ import annotations
 
 import socket
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 
 def _load_runner(monkeypatch: pytest.MonkeyPatch):
-    cc_mini_root = Path(__file__).resolve().parent.parent / 'webqa-cc-mini'
-    monkeypatch.syspath_prepend(str(cc_mini_root))
-    import runner
-
+    from webqa_agent.executor.mini import runner
     return runner
 
 

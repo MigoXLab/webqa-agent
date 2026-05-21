@@ -1,23 +1,15 @@
 """Shared utilities for loading and rendering cc-mini runs.
 
-Centralises ``_load_cc_mini_runner`` and ``render_cc_mini_report`` so both
+Centralises ``load_cc_mini_runner`` and ``render_cc_mini_report`` so both
 ``webqa_agent.cli`` and ``backend.gen_webqa`` use a single implementation.
 """
 from __future__ import annotations
 
-import importlib.util
 import logging
-import sys
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 log = logging.getLogger(__name__)
-
-
-def _cc_mini_root(project_root: Path | None = None) -> Path:
-    if project_root is None:
-        project_root = Path(__file__).resolve().parent.parent.parent
-    return project_root / 'webqa-cc-mini'
 
 
 def _load_cookies_module(
@@ -25,39 +17,13 @@ def _load_cookies_module(
     project_root: Path | None = None,
     module_name: str = 'webqa_cc_mini_cookies',
 ):
-    """Soft-load ``features.cookies`` from the sibling webqa-cc-mini tree.
+    """Soft-load ``features.cookies`` from the mini package.
 
-    Mirrors ``load_cc_mini_runner``'s isolation pattern (temporary sys.path
-    insertion + sys.modules cache key) so that ``webqa_agent`` keeps its
-    soft dependency on webqa-cc-mini — pip-installing only ``webqa-agent``
-    without the sibling tree must not blow up at import time.
+    Backward-compatible signature: ``project_root`` and ``module_name``
+    are accepted but ignored — the package is now importable directly.
     """
-    cc_mini_root = _cc_mini_root(project_root)
-    init_path = cc_mini_root / 'features' / 'cookies' / '__init__.py'
-    if not init_path.exists():
-        raise FileNotFoundError(
-            f'webqa-cc-mini cookies module not found: {init_path}')
-
-    cached = sys.modules.get(module_name)
-    if cached is not None and hasattr(cached, 'build_cookie_extensions'):
-        return cached
-
-    original_sys_path = list(sys.path)
-    try:
-        if str(cc_mini_root) not in sys.path:
-            sys.path.insert(0, str(cc_mini_root))
-        spec = importlib.util.spec_from_file_location(
-            module_name, init_path,
-            submodule_search_locations=[str(init_path.parent)],
-        )
-        if spec is None or spec.loader is None:
-            raise ImportError(f'Failed to import spec for {init_path}')
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = module
-        spec.loader.exec_module(module)
-        return module
-    finally:
-        sys.path[:] = original_sys_path
+    from webqa_agent.executor.mini.features import cookies
+    return cookies
 
 
 def build_cookie_extensions_from_config(
@@ -168,51 +134,15 @@ def load_cc_mini_runner(
     project_root: Path | None = None,
     module_name: str = 'webqa_cc_mini_runner',
 ) -> Callable[..., Any]:
-    """Load ``run_cc_mini`` from the sibling ``webqa-cc-mini/`` tree.
+    """Load ``run_cc_mini`` from the mini package.
 
-    Args:
-        project_root: Root directory containing ``webqa-cc-mini/``.
-            Defaults to two levels above this file.
-        module_name: Module name used for ``sys.modules`` caching.
-            Callers in different processes may pass different names to
-            avoid cross-pollution.
+    Backward-compatible signature: ``project_root`` and ``module_name``
+    are accepted but ignored — the package is now importable directly.
 
     Returns:
-        The ``run_cc_mini`` callable from ``webqa-cc-mini/runner.py``.
+        The ``run_cc_mini`` callable from ``webqa_agent.executor.mini.runner``.
     """
-    if project_root is None:
-        project_root = Path(__file__).resolve().parent.parent.parent
-
-    cc_mini_root = project_root / 'webqa-cc-mini'
-    runner_path = cc_mini_root / 'runner.py'
-
-    if not runner_path.exists():
-        raise FileNotFoundError(f'webqa-cc-mini runner not found: {runner_path}')
-
-    cached_module = sys.modules.get(module_name)
-    if cached_module is not None:
-        run_cc_mini = getattr(cached_module, 'run_cc_mini', None)
-        if callable(run_cc_mini):
-            return run_cc_mini
-
-    original_sys_path = list(sys.path)
-    try:
-        if str(cc_mini_root) not in sys.path:
-            sys.path.insert(0, str(cc_mini_root))
-
-        spec = importlib.util.spec_from_file_location(module_name, runner_path)
-        if spec is None or spec.loader is None:
-            raise ImportError(f'Failed to create import spec for {runner_path}')
-
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = module
-        spec.loader.exec_module(module)
-    finally:
-        sys.path[:] = original_sys_path
-
-    run_cc_mini = getattr(module, 'run_cc_mini', None)
-    if not callable(run_cc_mini):
-        raise AttributeError(f'run_cc_mini not found in {runner_path}')
+    from webqa_agent.executor.mini.runner import run_cc_mini
     return run_cc_mini
 
 
@@ -302,10 +232,7 @@ def render_cc_mini_multi_report(
         log.warning('Gen-mode report rendering failed, trying fallback: %s', exc)
 
     try:
-        cc_mini_root = Path(__file__).resolve().parent.parent.parent / 'webqa-cc-mini'
-        if str(cc_mini_root) not in sys.path:
-            sys.path.insert(0, str(cc_mini_root))
-        from features.report import render_html_report
+        from webqa_agent.executor.mini.features.report import render_html_report
 
         # Standalone fallback only renders one run; pick the first.
         html_path = render_html_report(

@@ -35,8 +35,9 @@ def _load_cli_module(monkeypatch: pytest.MonkeyPatch):
     cc_mini_executor_module = _real_submodules[
         'webqa_agent.executor.cc_mini_executor'
     ]
+    import webqa_agent.executor as _real_executor_pkg
     executor_pkg = types.ModuleType('webqa_agent.executor')
-    executor_pkg.__path__ = []
+    executor_pkg.__path__ = list(_real_executor_pkg.__path__)
     # Re-export the real CcMiniExecutor on the stubbed package so the CLI's
     # `from webqa_agent.executor import CcMiniExecutor` keeps working without
     # pulling in GenExecutor (which is what the stub is trying to avoid).

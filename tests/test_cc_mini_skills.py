@@ -4,23 +4,16 @@ Covers:
 * :class:`SkillRegistry` — frontmatter parsing, discovery, lazy loading
 * :class:`LoadSkillTool` — tool contract, error cases, caching
 * :func:`build_web_agent_system_prompt` — skill-metadata injection
-
-The cc-mini tree uses bare imports, so sys.path is adjusted at module load.
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 
-_CC_MINI_ROOT = Path(__file__).resolve().parent.parent / 'webqa-cc-mini'
-if str(_CC_MINI_ROOT) not in sys.path:
-    sys.path.insert(0, str(_CC_MINI_ROOT))
-
-from core.context import build_web_agent_system_prompt  # noqa: E402
-from core.skill_registry import SkillMetadata, SkillRegistry  # noqa: E402
-from tools.load_skill_tool import LoadSkillTool  # noqa: E402
+from webqa_agent.executor.mini.core.context import build_web_agent_system_prompt
+from webqa_agent.executor.mini.core.skill_registry import SkillMetadata, SkillRegistry
+from webqa_agent.executor.mini.tools.load_skill_tool import LoadSkillTool
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -442,7 +435,7 @@ class TestLoadSkillToolReference:
 # Real skills in webqa-cc-mini/skills/ — integration smoke tests
 # ---------------------------------------------------------------------------
 
-_REAL_SKILLS_DIR = Path(__file__).resolve().parent.parent / 'webqa-cc-mini' / 'skills'
+_REAL_SKILLS_DIR = Path(__file__).resolve().parent.parent / 'webqa_agent' / 'executor' / 'mini' / 'skills'
 
 
 class TestPlanSkillIntegration:

@@ -7,16 +7,9 @@ strip the prefix and resolve to the correct tool rather than returning
 """
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-_CC_MINI_ROOT = Path(__file__).resolve().parent.parent / 'webqa-cc-mini'
-if str(_CC_MINI_ROOT) not in sys.path:
-    sys.path.insert(0, str(_CC_MINI_ROOT))
-
-from core.engine import Engine  # noqa: E402
-from core.permissions import PermissionChecker  # noqa: E402
-from core.tool import Tool, ToolResult  # noqa: E402
+from webqa_agent.executor.mini.core.engine import Engine
+from webqa_agent.executor.mini.core.permissions import PermissionChecker
+from webqa_agent.executor.mini.core.tool import Tool, ToolResult
 
 
 class _StubTool(Tool):

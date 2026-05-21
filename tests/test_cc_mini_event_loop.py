@@ -7,21 +7,13 @@ Tests cover:
     the final summary reaches the report via RunResult.final_text.
   - Regression: normal single-step flow still works.
   - Accumulation: consecutive no-text tool turns share one Step.
-
-The cc-mini tree uses bare imports, so sys.path is prepended before importing.
 """
 from __future__ import annotations
 
-import sys
 import types
-from pathlib import Path
 
-_CC_MINI_ROOT = Path(__file__).resolve().parent.parent / 'webqa-cc-mini'
-if str(_CC_MINI_ROOT) not in sys.path:
-    sys.path.insert(0, str(_CC_MINI_ROOT))
-
-from runner import (_EventLoopState, _finalize_steps,  # noqa: E402
-                    _handle_event)
+from webqa_agent.executor.mini.runner import (_EventLoopState, _finalize_steps,
+                                              _handle_event)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -218,8 +210,8 @@ class TestAbortedRunPreservesSteps:
         survive into RunResult via the except handler."""
         from types import SimpleNamespace
 
-        from core.engine import AbortedError
-        from runner import run_cc_mini  # noqa: F401
+        from webqa_agent.executor.mini.core.engine import AbortedError
+        from webqa_agent.executor.mini.runner import run_cc_mini  # noqa: F401
 
         class FakeMCP:
             _servers: dict = {}
@@ -272,11 +264,11 @@ class TestAbortedRunPreservesSteps:
             def compact(self, messages, system_prompt):
                 return messages, None
 
-        monkeypatch.setattr('runner.MCPManager', FakeMCP)
-        monkeypatch.setattr('runner.Engine', FakeEngine)
-        monkeypatch.setattr('runner.CompactService', FakeCompact)
-        monkeypatch.setattr('runner.should_compact', lambda *a, **kw: False)
-        monkeypatch.setattr('runner.signal.signal', lambda s, h: None)
+        monkeypatch.setattr('webqa_agent.executor.mini.runner.MCPManager', FakeMCP)
+        monkeypatch.setattr('webqa_agent.executor.mini.runner.Engine', FakeEngine)
+        monkeypatch.setattr('webqa_agent.executor.mini.runner.CompactService', FakeCompact)
+        monkeypatch.setattr('webqa_agent.executor.mini.runner.should_compact', lambda *a, **kw: False)
+        monkeypatch.setattr('webqa_agent.executor.mini.runner.signal.signal', lambda s, h: None)
 
         result = run_cc_mini(
             url='http://x',

@@ -28,7 +28,6 @@ Mapping:
 from __future__ import annotations
 
 import json
-import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -40,13 +39,12 @@ from webqa_agent.data.gen_structures import (ParallelTestSession,
                                              TestResult, TestStatus)
 from webqa_agent.utils.reporting_utils import sanitize_case_name
 
-# Shared with webqa-cc-mini (report + progress must agree on pass/fail).
-_cc_mini_root = Path(__file__).resolve().parent.parent.parent / 'webqa-cc-mini'
-if _cc_mini_root.is_dir() and str(_cc_mini_root) not in sys.path:
-    sys.path.insert(0, str(_cc_mini_root))
-from core.outcome_status import derive_status  # type: ignore  # noqa: E402
-from core.outcome_status import (extract_final_outcome,
-                                 strip_final_outcome_block)
+# Shared with mini (report + progress must agree on pass/fail).
+from webqa_agent.executor.mini.core.outcome_status import (
+    derive_status,
+    extract_final_outcome,
+    strip_final_outcome_block,
+)
 
 # Soft cap on how much of each tool result we embed in the report.
 # cc-mini tool outputs are sometimes multi-KB (accessibility snapshots,

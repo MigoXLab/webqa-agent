@@ -1,20 +1,9 @@
-"""Tests for webqa-cc-mini features/report.py.
-
-The cc-mini tree uses bare imports (``from core.engine import ...``),
-so these tests prepend the webqa-cc-mini directory to ``sys.path`` before
-importing.
-"""
+"""Tests for webqa_agent.executor.mini features/report.py."""
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass, field
-from pathlib import Path
 
-_CC_MINI_ROOT = Path(__file__).resolve().parent.parent / 'webqa-cc-mini'
-if str(_CC_MINI_ROOT) not in sys.path:
-    sys.path.insert(0, str(_CC_MINI_ROOT))
-
-from features.report import render_html_report  # noqa: E402
+from webqa_agent.executor.mini.features.report import render_html_report
 
 
 @dataclass

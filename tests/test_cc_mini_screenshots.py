@@ -1,20 +1,10 @@
-"""Tests for screenshot filename-collision bug in webqa-cc-mini/runner.py.
-
-The cc-mini tree uses bare imports, so we prepend its directory to sys.path
-before importing, mirroring the pattern in tests/test_cc_mini_report.py.
-"""
+"""Tests for screenshot filename-collision bug in webqa_agent/executor/mini/runner.py."""
 from __future__ import annotations
 
 import base64
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 
-_CC_MINI_ROOT = Path(__file__).resolve().parent.parent / 'webqa-cc-mini'
-if str(_CC_MINI_ROOT) not in sys.path:
-    sys.path.insert(0, str(_CC_MINI_ROOT))
-
-from runner import _persist_step_screenshots  # noqa: E402
+from webqa_agent.executor.mini.runner import _persist_step_screenshots
 
 # ---------------------------------------------------------------------------
 # Helpers

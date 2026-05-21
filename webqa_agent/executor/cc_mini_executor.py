@@ -423,22 +423,14 @@ def _synthesize_failure_result(exc: BaseException) -> Any:
     (e.g. webqa-cc-mini tree missing in unit tests).
     """
     try:
-        from webqa_agent.utils.cc_mini_utils import load_cc_mini_runner
-        runner_mod_fn = load_cc_mini_runner
-        # load_cc_mini_runner returns the run_cc_mini callable, but its
-        # module is cached in sys.modules — pull RunResult from there.
-        runner_mod_fn()  # ensure module is loaded into sys.modules
-        import sys as _sys
-        runner_module = _sys.modules.get('webqa_cc_mini_runner')
-        RunResult = getattr(runner_module, 'RunResult', None)
-        if RunResult is not None:
-            return RunResult(
-                final_text=f'Error: {exc}',
-                steps=[],
-                aborted=True,
-                input_tokens=0,
-                output_tokens=0,
-            )
+        from webqa_agent.executor.mini.runner import RunResult
+        return RunResult(
+            final_text=f'Error: {exc}',
+            steps=[],
+            aborted=True,
+            input_tokens=0,
+            output_tokens=0,
+        )
     except Exception:
         logger.debug(
             'falling back to SimpleNamespace synthetic RunResult',
