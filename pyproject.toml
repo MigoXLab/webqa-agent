@@ -65,4 +65,12 @@ where = ["."]
 include = ["webqa_agent*"]
 
 [tool.setuptools.package-data]
-webqa_agent = ["static/*", "static/**/*", "crawler/js/*", "templates/*.yaml.example", "templates/**"]
+webqa_agent = [
+    "static/*", "static/**/*",
+    "crawler/js/*",
+    "templates/*.yaml.example", "templates/**",
+    "executor/mini/skills/**/*",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "webqa_agent/executor/mini/tests"]
