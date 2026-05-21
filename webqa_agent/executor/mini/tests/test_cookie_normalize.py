@@ -1,17 +1,11 @@
 """Tests for cookie dict → CDP ``Network.CookieParam`` normalisation."""
 from __future__ import annotations
 
-import sys
 from datetime import datetime, timezone
-from pathlib import Path
 
 import pytest
 
-_ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
-
-from features.cookies.cdp_client import _normalize_cookie as normalize_cookie
+from webqa_agent.executor.mini.features.cookies.cdp_client import _normalize_cookie as normalize_cookie
 
 
 def test_basic_fields_preserved():

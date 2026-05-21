@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.llm import LLMClient, get_context_window_for_model
+from ..core.llm import LLMClient, get_context_window_for_model
 
 # ---------------------------------------------------------------------------
 # Constants

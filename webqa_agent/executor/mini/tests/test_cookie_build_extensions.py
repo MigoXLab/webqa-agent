@@ -1,17 +1,11 @@
 """Tests for ``features.cookies.build_cookie_extensions`` + ``Extensions``."""
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-_ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
-
-from features.cookies import (
+from webqa_agent.executor.mini.features.cookies import (
     AccountSpec, Extensions, SwitchAccountTool, build_cookie_extensions,
     validate_cookie_list,
 )
@@ -274,7 +268,7 @@ def test_merge_with_non_extensions_raises_type_error():
 
 
 def test_hook_invokes_cdp_client_with_default_cookies(monkeypatch):
-    from features import cookies as cookies_init
+    from webqa_agent.executor.mini.features import cookies as cookies_init
 
     captured_calls: list[tuple[str, tuple, dict]] = []
 

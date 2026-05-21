@@ -15,18 +15,12 @@ Covers the changes introduced in the cookie-injection plan PR-1:
 """
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-_ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
-
-import runner
-from core.tool import Tool, ToolResult
+from webqa_agent.executor.mini import runner
+from webqa_agent.executor.mini.core.tool import Tool, ToolResult
 
 
 class _FakeMCPServer:
@@ -415,7 +409,7 @@ def test_custom_mcp_without_resolvable_port_records_extension_failure(patched_ru
             def shutdown_all(self): pass
         return _FakeMCP()
 
-    import runner as _runner
+    from webqa_agent.executor.mini import runner as _runner
     orig_mgr = _runner.MCPManager
     _runner.MCPManager = _fake_manager_factory
     try:

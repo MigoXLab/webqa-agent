@@ -9,8 +9,8 @@ from __future__ import annotations
 import logging
 import time
 
-from core.mcp_client import MCPServer
-from core.tool import Tool, ToolResult
+from ..core.mcp_client import MCPServer
+from ..core.tool import Tool, ToolResult
 
 _log = logging.getLogger(__name__)
 

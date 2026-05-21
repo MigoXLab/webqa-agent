@@ -1,15 +1,8 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-_ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
-
-from core.engine import Engine
-from core.llm import LLMMessage, LLMUsage
-from core.permissions import PermissionChecker
+from webqa_agent.executor.mini.core.engine import Engine
+from webqa_agent.executor.mini.core.llm import LLMMessage, LLMUsage
+from webqa_agent.executor.mini.core.permissions import PermissionChecker
 
 
 class _FakeStream:

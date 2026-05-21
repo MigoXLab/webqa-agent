@@ -11,21 +11,15 @@ not in the CDP framing (the latter is covered by test_cdp_client.py).
 """
 from __future__ import annotations
 
-import sys
 import threading
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-_ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
-
-import runner
-from core.tool import Tool, ToolResult
-from features import cookies as cookies_pkg
-from features.cookies import AccountSpec, build_cookie_extensions
+from webqa_agent.executor.mini import runner
+from webqa_agent.executor.mini.core.tool import Tool, ToolResult
+from webqa_agent.executor.mini.features import cookies as cookies_pkg
+from webqa_agent.executor.mini.features.cookies import AccountSpec, build_cookie_extensions
 
 
 # ---------------------------------------------------------------------------

@@ -22,20 +22,14 @@ import asyncio
 import gc
 import os
 import subprocess
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-_ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
-
-import runner
-from core.tool import ToolResult
-from features import cookies as cookies_pkg
-from features.cookies import AccountSpec, build_cookie_extensions
+from webqa_agent.executor.mini import runner
+from webqa_agent.executor.mini.core.tool import ToolResult
+from webqa_agent.executor.mini.features import cookies as cookies_pkg
+from webqa_agent.executor.mini.features.cookies import AccountSpec, build_cookie_extensions
 
 
 pytestmark = pytest.mark.perf

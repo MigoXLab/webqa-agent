@@ -1,21 +1,15 @@
 """Tests for ``features.cookies.switch_account_tool``."""
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-_ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
-
-from core.tool import ToolResult
-from features.cookies.account_pool import AccountPool, AccountSpec
-from features.cookies import switch_account_tool as sat_module
-from features.cookies.cdp_client import CDPCookieError
-from features.cookies.switch_account_tool import (
+from webqa_agent.executor.mini.core.tool import ToolResult
+from webqa_agent.executor.mini.features.cookies.account_pool import AccountPool, AccountSpec
+from webqa_agent.executor.mini.features.cookies import switch_account_tool as sat_module
+from webqa_agent.executor.mini.features.cookies.cdp_client import CDPCookieError
+from webqa_agent.executor.mini.features.cookies.switch_account_tool import (
     SwitchAccountTool, _classify_cdp_error,
 )
 

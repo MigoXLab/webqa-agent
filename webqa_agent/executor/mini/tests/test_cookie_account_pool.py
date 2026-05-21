@@ -1,16 +1,9 @@
 """Tests for ``features.cookies.account_pool``."""
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
 
-_ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
-
-from features.cookies.account_pool import AccountPool, AccountSpec
+from webqa_agent.executor.mini.features.cookies.account_pool import AccountPool, AccountSpec
 
 
 COOK_A = [{'name': 'a', 'value': '1'}]

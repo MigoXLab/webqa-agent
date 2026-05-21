@@ -16,26 +16,21 @@ Verifies that:
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-_ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
-
 from concurrent.futures import ThreadPoolExecutor as _RealThreadPoolExecutor
 
-from core.engine import (Engine, _MAX_CONCURRENT_TOOLS,
-                         _WAIT_FOR_DEFAULT_TIMEOUT_MS,
-                         _WAIT_FOR_MAX_TIMEOUT_MS)
-from core.llm import LLMMessage
-from core.mcp_client import MCPServer, MCPTool
-from core.permissions import PermissionChecker
-from core.tool import Tool, ToolResult
-from tools.download_tool import DownloadCheckTool
-from tools.verify_tool import VerifyTool
+from webqa_agent.executor.mini.core.engine import (Engine, _MAX_CONCURRENT_TOOLS,
+                                                   _WAIT_FOR_DEFAULT_TIMEOUT_MS,
+                                                   _WAIT_FOR_MAX_TIMEOUT_MS)
+from webqa_agent.executor.mini.core.llm import LLMMessage
+from webqa_agent.executor.mini.core.mcp_client import MCPServer, MCPTool
+from webqa_agent.executor.mini.core.permissions import PermissionChecker
+from webqa_agent.executor.mini.core.tool import Tool, ToolResult
+from webqa_agent.executor.mini.tools.download_tool import DownloadCheckTool
+from webqa_agent.executor.mini.tools.verify_tool import VerifyTool
 
 
 # --------------------------------------------------------------------------- helpers

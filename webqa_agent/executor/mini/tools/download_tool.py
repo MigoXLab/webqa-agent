@@ -13,7 +13,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from core.tool import Tool, ToolResult
+from ..core.tool import Tool, ToolResult
 
 _DEFAULT_TIMEOUT = 15  # seconds to wait for download to complete
 _POLL_INTERVAL = 1.0   # seconds between checks

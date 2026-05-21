@@ -25,8 +25,8 @@ from __future__ import annotations
 
 import re
 
-from core.skill_registry import SkillRegistry
-from core.tool import Tool, ToolResult
+from ..core.skill_registry import SkillRegistry
+from ..core.tool import Tool, ToolResult
 
 # Defensive regex for skill_name values coming from the LLM. Discovered
 # skill names are filesystem directory names — restricting to this

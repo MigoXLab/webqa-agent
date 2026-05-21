@@ -13,7 +13,7 @@ import shlex
 import shutil
 import subprocess
 
-from core.tool import Tool, ToolResult
+from ..core.tool import Tool, ToolResult
 
 _log = logging.getLogger('cc_mini.nuclei_tool')
 

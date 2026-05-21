@@ -15,18 +15,12 @@ import http.client
 import json
 import socket
 import struct
-import sys
 import threading
 import time
-from pathlib import Path
 
 import pytest
 
-_ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
-
-from features.cookies.cdp_client import (
+from webqa_agent.executor.mini.features.cookies.cdp_client import (
     CDPCookieClient, CDPCookieError, _WS_GUID,
 )
 

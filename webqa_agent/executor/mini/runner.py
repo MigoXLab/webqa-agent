@@ -60,18 +60,18 @@ from typing import Any, Callable
 EventCallback = Callable[[tuple[Any, ...]], None]
 DataFlowSink = Callable[[dict[str, Any]], None]
 
-from core.config import DEFAULT_MODEL, DEFAULT_PROVIDER, MCPServerConfig
-from core.context import build_web_agent_system_prompt
-from core.engine import AbortedError, Engine
-from core.llm import LLMClient, infer_provider_from_model
-from core.mcp_client import MCPManager
-from core.outcome_status import derive_status, extract_final_outcome
-from core.permissions import PermissionChecker
-from core.skill_registry import SkillRegistry
-from core.tool import Tool
-from features.compact import CompactService, should_compact
-from tools import (CDPUploadTool, DownloadCheckTool, LoadSkillTool,
-                   NucleiScanTool, VerifyTool, WaitForDomStableTool)
+from .core.config import DEFAULT_MODEL, DEFAULT_PROVIDER, MCPServerConfig
+from .core.context import build_web_agent_system_prompt
+from .core.engine import AbortedError, Engine
+from .core.llm import LLMClient, infer_provider_from_model
+from .core.mcp_client import MCPManager
+from .core.outcome_status import derive_status, extract_final_outcome
+from .core.permissions import PermissionChecker
+from .core.skill_registry import SkillRegistry
+from .core.tool import Tool
+from .features.compact import CompactService, should_compact
+from .tools import (CDPUploadTool, DownloadCheckTool, LoadSkillTool,
+                    NucleiScanTool, VerifyTool, WaitForDomStableTool)
 
 log = logging.getLogger('cc_mini.runner')
 

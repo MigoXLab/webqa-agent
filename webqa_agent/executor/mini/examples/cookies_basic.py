@@ -20,13 +20,9 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from pathlib import Path
 
-# Allow ``python -m examples.cookies_basic`` to find ``runner`` / ``features``.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from features.cookies import AccountSpec, build_cookie_extensions
-from runner import run_cc_mini
+from webqa_agent.executor.mini.features.cookies import AccountSpec, build_cookie_extensions
+from webqa_agent.executor.mini.runner import run_cc_mini
 
 
 _DUMMY_ADMIN = [{

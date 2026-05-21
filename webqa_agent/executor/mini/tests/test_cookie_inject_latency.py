@@ -10,16 +10,10 @@ from __future__ import annotations
 
 import json
 import statistics
-import sys
-from pathlib import Path
 
 import pytest
 
-_ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
-
-from features.cookies.cdp_client import CDPCookieClient
+from webqa_agent.executor.mini.features.cookies.cdp_client import CDPCookieClient
 
 # Reuse the fake server defined in test_cdp_client.py rather than duplicating
 # ~250 lines of framing code.

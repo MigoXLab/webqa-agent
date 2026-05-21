@@ -15,7 +15,7 @@ import copy
 from datetime import datetime, timedelta
 from typing import Any
 
-from core.tool import ToolResult
+from ..core.tool import ToolResult
 
 
 # ---------------------------------------------------------------------------

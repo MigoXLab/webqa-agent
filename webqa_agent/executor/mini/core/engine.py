@@ -9,8 +9,8 @@ from typing import Any, Callable, Iterator
 
 ContextOverflowHandler = Callable[[list[dict]], list[dict] | None]
 
-from utils.data_flow import (build_llm_error_payload, build_llm_ok_payload,
-                             build_tool_event_payload, iso_now, safe_copy)
+from ..utils.data_flow import (build_llm_error_payload, build_llm_ok_payload,
+                               build_tool_event_payload, iso_now, safe_copy)
 
 from .config import DEFAULT_MODEL, default_max_tokens_for_model, resolve_model
 from .llm import LLMClient

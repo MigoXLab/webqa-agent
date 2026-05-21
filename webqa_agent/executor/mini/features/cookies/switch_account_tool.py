@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from core.tool import Tool, ToolResult
+from ...core.tool import Tool, ToolResult
 
 from .account_pool import AccountPool
 from .cdp_client import CDPCookieClient, CDPCookieError

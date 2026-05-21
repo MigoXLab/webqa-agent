@@ -36,7 +36,7 @@ import struct
 from pathlib import Path
 from typing import Any
 
-from core.tool import Tool, ToolResult
+from ..core.tool import Tool, ToolResult
 
 _log = logging.getLogger('cc_mini.upload')
 
