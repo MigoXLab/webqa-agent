@@ -335,6 +335,7 @@ WebQA Agent 支持**自定义工具开发**，满足特定领域的测试需求�
 - [natbot](https://github.com/nat/natbot): 通过GPT-3驱动浏览器
 - [Midscene.js](https://github.com/web-infra-dev/midscene/)：Web、Android、自动化和测试的AI Operator
 - [browser-use](https://github.com/browser-use/browser-use/)：用于浏览器控制的AI Agent
+- [cc-mini](https://github.com/e10nMa2k/cc-mini)：面向 Claude Code Agent 工作流的超轻量 Python 框架；为 WebQA Agent 的 cc-mini 执行模式提供核心引擎、MCP 客户端、技能注册表和 Cookie 管理层
 
 ## 📄 开源许可证
 

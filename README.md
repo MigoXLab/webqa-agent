@@ -335,6 +335,7 @@ For teams that need a **persistent web dashboard** with test management, schedul
 - [natbot](https://github.com/nat/natbot): Drive a browser with GPT-3
 - [Midscene.js](https://github.com/web-infra-dev/midscene/): AI Operator for Web, Android, Automation & Testing
 - [browser-use](https://github.com/browser-use/browser-use/): AI Agent for Browser control
+- [cc-mini](https://github.com/e10nMa2k/cc-mini): Ultra-light Python harness for agentic Claude Code workflows; provides the core engine, MCP client, skill registry, and cookie-management layer that powers WebQA Agent's cc-mini execution mode
 
 ## 📄 License
 
