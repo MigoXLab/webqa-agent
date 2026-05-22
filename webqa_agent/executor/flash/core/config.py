@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Portions adapted from cc-mini (https://github.com/e10nMa2k/cc-mini)
+# Original author: e10nMa2k. Modifications © 2026 WebQA Agent contributors.
 """Minimal config helpers for the library-mode web agent.
 
 Kept from the original cc-mini config.py: model alias resolution, per-model max

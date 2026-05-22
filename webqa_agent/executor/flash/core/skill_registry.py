@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Portions adapted from cc-mini (https://github.com/e10nMa2k/cc-mini)
+# Original author: e10nMa2k. Modifications © 2026 WebQA Agent contributors.
 """Skill discovery and lazy loading.
 
 A minimal implementation of the Claude Code skill pattern adapted for the

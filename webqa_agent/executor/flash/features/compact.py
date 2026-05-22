@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Portions adapted from cc-mini (https://github.com/e10nMa2k/cc-mini)
+# Original author: e10nMa2k. Modifications © 2026 WebQA Agent contributors.
 """Context compression — summarise old messages to free token budget.
 
 Modelled after claude-code's ``src/services/compact/compact.ts``.

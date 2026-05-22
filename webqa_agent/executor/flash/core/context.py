@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Portions adapted from cc-mini (https://github.com/e10nMa2k/cc-mini)
+# Original author: e10nMa2k. Modifications © 2026 WebQA Agent contributors.
 """System prompt builder for the cc-mini web agent."""
 from __future__ import annotations
 

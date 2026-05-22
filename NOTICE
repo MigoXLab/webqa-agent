@@ -1,0 +1,33 @@
+WebQA Agent
+Copyright 2026 WebQA Agent contributors.
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+------------------------------------------------------------------------------
+Third-party attributions
+------------------------------------------------------------------------------
+
+This product includes software derived from cc-mini
+  Source: https://github.com/e10nMa2k/cc-mini
+  Author: e10nMa2k
+
+The following files under webqa_agent/executor/flash/ are derivative works
+of cc-mini source files. See per-file SPDX headers for details.
+
+  webqa_agent/executor/flash/core/config.py          <- cc-mini src/core/config.py
+  webqa_agent/executor/flash/core/context.py         <- cc-mini src/core/context.py
+  webqa_agent/executor/flash/core/engine.py          <- cc-mini src/core/engine.py
+  webqa_agent/executor/flash/core/llm.py             <- cc-mini src/core/llm.py
+  webqa_agent/executor/flash/core/permissions.py     <- cc-mini src/core/permissions.py
+  webqa_agent/executor/flash/core/tool.py            <- cc-mini src/core/tool.py
+  webqa_agent/executor/flash/core/skill_registry.py  <- cc-mini src/features/skills.py
+  webqa_agent/executor/flash/features/compact.py     <- cc-mini src/features/compact.py
+
+All other files under webqa_agent/executor/flash/ (including the cookies,
+MCP client, report, data_flow, tools and runner modules) are original work
+of the WebQA Agent contributors.
+
+NOTE: At the time of this release the upstream cc-mini repository does not
+publish an explicit open-source license. The above attribution is provided
+in good faith pending upstream license clarification. Downstream redistributors
+should consult the upstream project before further redistribution.
