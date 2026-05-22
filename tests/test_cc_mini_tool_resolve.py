@@ -7,9 +7,9 @@ strip the prefix and resolve to the correct tool rather than returning
 """
 from __future__ import annotations
 
-from webqa_agent.executor.mini.core.engine import Engine
-from webqa_agent.executor.mini.core.permissions import PermissionChecker
-from webqa_agent.executor.mini.core.tool import Tool, ToolResult
+from webqa_agent.executor.flash.core.engine import Engine
+from webqa_agent.executor.flash.core.permissions import PermissionChecker
+from webqa_agent.executor.flash.core.tool import Tool, ToolResult
 
 
 class _StubTool(Tool):

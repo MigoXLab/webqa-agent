@@ -1,10 +1,12 @@
-"""Tests for screenshot filename-collision bug in webqa_agent/executor/mini/runner.py."""
+"""Tests for screenshot filename-collision bug in
+webqa_agent/executor/flash/runner.py."""
 from __future__ import annotations
 
 import base64
+from pathlib import Path
 from types import SimpleNamespace
 
-from webqa_agent.executor.mini.runner import _persist_step_screenshots
+from webqa_agent.executor.flash.runner import _persist_step_screenshots
 
 # ---------------------------------------------------------------------------
 # Helpers

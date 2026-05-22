@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import types
 
-from webqa_agent.executor.mini.runner import (_EventLoopState, _finalize_steps,
-                                              _handle_event)
+from webqa_agent.executor.flash.runner import (_EventLoopState,
+                                               _finalize_steps, _handle_event)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -210,8 +210,8 @@ class TestAbortedRunPreservesSteps:
         survive into RunResult via the except handler."""
         from types import SimpleNamespace
 
-        from webqa_agent.executor.mini.core.engine import AbortedError
-        from webqa_agent.executor.mini.runner import run_cc_mini  # noqa: F401
+        from webqa_agent.executor.flash.core.engine import AbortedError
+        from webqa_agent.executor.flash.runner import run_cc_mini  # noqa: F401
 
         class FakeMCP:
             _servers: dict = {}
@@ -264,11 +264,11 @@ class TestAbortedRunPreservesSteps:
             def compact(self, messages, system_prompt):
                 return messages, None
 
-        monkeypatch.setattr('webqa_agent.executor.mini.runner.MCPManager', FakeMCP)
-        monkeypatch.setattr('webqa_agent.executor.mini.runner.Engine', FakeEngine)
-        monkeypatch.setattr('webqa_agent.executor.mini.runner.CompactService', FakeCompact)
-        monkeypatch.setattr('webqa_agent.executor.mini.runner.should_compact', lambda *a, **kw: False)
-        monkeypatch.setattr('webqa_agent.executor.mini.runner.signal.signal', lambda s, h: None)
+        monkeypatch.setattr('webqa_agent.executor.flash.runner.MCPManager', FakeMCP)
+        monkeypatch.setattr('webqa_agent.executor.flash.runner.Engine', FakeEngine)
+        monkeypatch.setattr('webqa_agent.executor.flash.runner.CompactService', FakeCompact)
+        monkeypatch.setattr('webqa_agent.executor.flash.runner.should_compact', lambda *a, **kw: False)
+        monkeypatch.setattr('webqa_agent.executor.flash.runner.signal.signal', lambda s, h: None)
 
         result = run_cc_mini(
             url='http://x',

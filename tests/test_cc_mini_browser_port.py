@@ -8,7 +8,7 @@ import pytest
 
 
 def _load_runner(monkeypatch: pytest.MonkeyPatch):
-    from webqa_agent.executor.mini import runner
+    from webqa_agent.executor.flash import runner
     return runner
 
 

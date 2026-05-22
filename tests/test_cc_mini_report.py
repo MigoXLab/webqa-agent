@@ -1,9 +1,9 @@
-"""Tests for webqa_agent.executor.mini features/report.py."""
+"""Tests for webqa_agent.executor.flash features/report.py."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from webqa_agent.executor.mini.features.report import render_html_report
+from webqa_agent.executor.flash.features.report import render_html_report
 
 
 @dataclass

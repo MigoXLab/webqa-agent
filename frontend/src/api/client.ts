@@ -87,7 +87,7 @@ export interface Execution {
 /** UI / normalized runner label (execution history, filters). */
 export type RunnerSource = 'standard' | 'mini';
 
-/** Backend gen_config.runner_source for the Mini runner (API contract). */
+/** Backend gen_config.runner_source for the Flash runner (API contract). */
 export const MINI_RUNNER_SOURCE_API = 'mini' as const;
 
 export type GenAccountPayload = {
@@ -406,7 +406,7 @@ class APIClient {
       runner_source: MINI_RUNNER_SOURCE_API,
       batch_id: batchId,
     };
-    // Resolve Mini objectives: preserve array (multi-task) or fall back to
+    // Resolve Flash objectives: preserve array (multi-task) or fall back to
     // _display_objectives string (single-task legacy path).
     const existingMiniObjectives = miniGenConfigMerged?.business_objectives;
     const miniFinalObjectives =
@@ -453,7 +453,7 @@ class APIClient {
     if (miniRes.status === 'fulfilled') {
       executions.mini = miniRes.value;
     } else {
-      errors.push(`mini: ${miniRes.reason?.message || String(miniRes.reason)}`);
+      errors.push(`Flash: ${miniRes.reason?.message || String(miniRes.reason)}`);
     }
 
     return { batch_id: batchId, executions, errors };

@@ -355,7 +355,7 @@ export function ExecutionHistory({ businesses }: Props) {
                           <span className="text-sm font-medium text-purple-600">AI 探索</span>
                           {getRunnerSource(exec) === 'mini' ? (
                             <span className="text-[10px] px-1.5 py-0.5">
-                              mini
+                              Flash
                             </span>
                           ) : null}
                         </div>

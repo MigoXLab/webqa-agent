@@ -73,12 +73,12 @@ def _extract_cc_mini_tasks(config_data: Dict) -> list:
 
 def _bundled_cc_mini_skills_dir() -> Path:
     """Shipped skills next to ``webqa-cc-mini`` (plan, ui-audit, …)."""
-    return Path(__file__).resolve().parent.parent / 'webqa_agent' / 'executor' / 'mini' / 'skills'
+    return Path(__file__).resolve().parent.parent / 'webqa_agent' / 'executor' / 'flash' / 'skills'
 
 
 def _resolve_cc_mini_skills_dir(config_data: Dict) -> Optional[str]:
     """``test_config.cc_mini_skills_dir`` or bundled ``webqa-cc-
-    mini/skills``."""
+    flash/skills``."""
     test_cfg = config_data.get('test_config') or {}
     explicit = str(test_cfg.get('cc_mini_skills_dir') or '').strip()
     if explicit:

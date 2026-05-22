@@ -30,21 +30,16 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from webqa_agent.data.gen_structures import (ParallelTestSession,
                                              SubTestReport, SubTestResult,
                                              SubTestStep, TestCategory,
                                              TestResult, TestStatus)
-from webqa_agent.utils.reporting_utils import sanitize_case_name
-
 # Shared with mini (report + progress must agree on pass/fail).
-from webqa_agent.executor.mini.core.outcome_status import (
-    derive_status,
-    extract_final_outcome,
-    strip_final_outcome_block,
-)
+from webqa_agent.executor.flash.core.outcome_status import (
+    derive_status, extract_final_outcome, strip_final_outcome_block)
+from webqa_agent.utils.reporting_utils import sanitize_case_name
 
 # Soft cap on how much of each tool result we embed in the report.
 # cc-mini tool outputs are sometimes multi-KB (accessibility snapshots,

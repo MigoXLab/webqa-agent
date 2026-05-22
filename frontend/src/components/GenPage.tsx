@@ -28,7 +28,7 @@ const TEST_ITEMS = [
   { key: 'security' as const, label: '安全扫描', icon: Shield },
 ];
 
-// Maps TEST_ITEMS keys to Mini runner task texts sent to the backend.
+// Maps TEST_ITEMS keys to Flash runner task texts sent to the backend.
 const MINI_TASK_MAP: Record<string, string> = {
   functional: '进行页面完整的功能测试',
   performance: '网页性能测试，输出页面性能指标（如加载时间、资源大小等）',
@@ -221,7 +221,7 @@ export function GenPage() {
 
     const fromCheckboxes = TEST_ITEMS.filter((item) => {
       if (!testItems[item.key]) return false;
-      // Custom 测试目标 replaces the preset functional line for Mini (not Standard).
+      // Custom 测试目标 replaces the preset functional line for Flash (not Standard).
       if (runnerMode !== 'standard' && item.key === 'functional' && hasCustomObjectives) {
         return false;
       }
@@ -329,7 +329,7 @@ export function GenPage() {
           }
         }
         if (runnerMode === 'standard' && normalizedAccounts.length > 1) {
-          setError('Standard 模式仅支持单账号，请切换到 Mini 或全选');
+          setError('Standard 模式仅支持单账号，请切换到 Flash 或全选');
           setLoading(false);
           return;
         }
@@ -362,7 +362,7 @@ export function GenPage() {
           ...baseGenConfig,
           runner_source: 'standard' as const,
           // Override: standard runner's planning_mode should be based on its own objectives,
-          // not mini's custom objectives which may have been set in baseGenConfig.
+          // not Flash's custom objectives which may have been set in baseGenConfig.
           _display_objectives: businessObjectives.trim() || undefined,
           browser_config: { cookies: defaultCookies },
           ...(authType === 'sso'
@@ -502,7 +502,7 @@ export function GenPage() {
               <span className="ml-1.5 text-xs text-gray-400 font-normal">
                 {runnerMode === 'standard'
                   ? '【可选】留空则由 AI 自主探索'
-                  : '【可选】每条目标作为 Mini 的独立任务；填写后不再执行预设「功能测试」'}
+                  : '【可选】每条目标作为 Flash 的独立任务；填写后不再执行预设「功能测试」'}
               </span>
             </label>
             {runnerMode === 'standard' ? (
@@ -605,7 +605,7 @@ export function GenPage() {
               {!showExecutionConfig && (
                 <div className="flex items-center gap-2 ml-2 flex-wrap">
                   <span className="px-2 py-0.5 bg-white border border-gray-200 rounded text-xs text-gray-500">
-                    {runnerMode === 'both' ? '全选' : runnerMode === 'mini' ? 'Mini' : 'Standard'}
+                    {runnerMode === 'both' ? '全选' : runnerMode === 'mini' ? 'Flash' : 'Standard'}
                   </span>
                   <span className="px-2 py-0.5 bg-white border border-gray-200 rounded text-xs text-gray-500">
                     {selectedModel || '默认模型'}
@@ -617,7 +617,7 @@ export function GenPage() {
                     const count = TEST_ITEMS.filter((item) => testItems[item.key]).length;
                     return count > 0 ? (
                       <span className="px-2 py-0.5 bg-white border border-gray-200 rounded text-xs text-gray-500">
-                        Mini × {count}
+                        Flash × {count}
                       </span>
                     ) : null;
                   })()}
@@ -639,7 +639,7 @@ export function GenPage() {
                     {([
                       { value: 'both', label: '全选' },
                       { value: 'standard', label: 'Standard' },
-                      { value: 'mini', label: 'Mini' },
+                      { value: 'mini', label: 'Flash' },
                     ] as const).map((opt) => (
                       <button
                         key={opt.value}
@@ -942,7 +942,7 @@ export function GenPage() {
             )}
           </div>
 
-          {/* Advanced Options — collapsible, hidden for Mini mode */}
+          {/* Advanced Options — collapsible, hidden for Flash mode */}
           {runnerMode !== 'mini' && <div className="border border-gray-200 rounded-lg overflow-hidden">
             <button
               type="button"

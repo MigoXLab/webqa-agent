@@ -11,9 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from webqa_agent.executor.mini.core.context import build_web_agent_system_prompt
-from webqa_agent.executor.mini.core.skill_registry import SkillMetadata, SkillRegistry
-from webqa_agent.executor.mini.tools.load_skill_tool import LoadSkillTool
+from webqa_agent.executor.flash.core.context import \
+    build_web_agent_system_prompt
+from webqa_agent.executor.flash.core.skill_registry import (SkillMetadata,
+                                                            SkillRegistry)
+from webqa_agent.executor.flash.tools.load_skill_tool import LoadSkillTool
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -435,7 +437,7 @@ class TestLoadSkillToolReference:
 # Real skills in webqa-cc-mini/skills/ — integration smoke tests
 # ---------------------------------------------------------------------------
 
-_REAL_SKILLS_DIR = Path(__file__).resolve().parent.parent / 'webqa_agent' / 'executor' / 'mini' / 'skills'
+_REAL_SKILLS_DIR = Path(__file__).resolve().parent.parent / 'webqa_agent' / 'executor' / 'flash' / 'skills'
 
 
 class TestPlanSkillIntegration:

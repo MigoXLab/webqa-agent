@@ -1,1 +1,0 @@
-"""webqa-cc-mini utility modules."""

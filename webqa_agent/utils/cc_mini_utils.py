@@ -22,7 +22,7 @@ def _load_cookies_module(
     Backward-compatible signature: ``project_root`` and ``module_name``
     are accepted but ignored — the package is now importable directly.
     """
-    from webqa_agent.executor.mini.features import cookies
+    from webqa_agent.executor.flash.features import cookies
     return cookies
 
 
@@ -140,9 +140,9 @@ def load_cc_mini_runner(
     are accepted but ignored — the package is now importable directly.
 
     Returns:
-        The ``run_cc_mini`` callable from ``webqa_agent.executor.mini.runner``.
+        The ``run_cc_mini`` callable from ``webqa_agent.executor.flash.runner``.
     """
-    from webqa_agent.executor.mini.runner import run_cc_mini
+    from webqa_agent.executor.flash.runner import run_cc_mini
     return run_cc_mini
 
 
@@ -232,7 +232,8 @@ def render_cc_mini_multi_report(
         log.warning('Gen-mode report rendering failed, trying fallback: %s', exc)
 
     try:
-        from webqa_agent.executor.mini.features.report import render_html_report
+        from webqa_agent.executor.flash.features.report import \
+            render_html_report
 
         # Standalone fallback only renders one run; pick the first.
         html_path = render_html_report(

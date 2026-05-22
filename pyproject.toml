@@ -69,8 +69,8 @@ webqa_agent = [
     "static/*", "static/**/*",
     "crawler/js/*",
     "templates/*.yaml.example", "templates/**",
-    "executor/mini/skills/**/*",
+    "executor/flash/skills/**/*",
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "webqa_agent/executor/mini/tests"]
+testpaths = ["tests", "webqa_agent/executor/flash/tests"]

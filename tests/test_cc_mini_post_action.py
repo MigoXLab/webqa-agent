@@ -1,8 +1,9 @@
 """Tests for post-action screenshot hash comparison in the engine."""
 from __future__ import annotations
 
-from webqa_agent.executor.mini.core.engine import Engine, _screenshot_content_hash
-from webqa_agent.executor.mini.core.tool import ToolResult
+from webqa_agent.executor.flash.core.engine import (Engine,
+                                                    _screenshot_content_hash)
+from webqa_agent.executor.flash.core.tool import ToolResult
 
 
 class TestScreenshotContentHash:

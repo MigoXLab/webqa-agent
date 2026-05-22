@@ -423,7 +423,7 @@ def _synthesize_failure_result(exc: BaseException) -> Any:
     (e.g. webqa-cc-mini tree missing in unit tests).
     """
     try:
-        from webqa_agent.executor.mini.runner import RunResult
+        from webqa_agent.executor.flash.runner import RunResult
         return RunResult(
             final_text=f'Error: {exc}',
             steps=[],
