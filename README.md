@@ -82,27 +82,6 @@ For a detailed comparison and configuration guides for standard modes, see **[do
 - **Zero selector maintenance**: Say goodbye to CSS selectors and XPath. Multimodal AI identifies page elements directly — when the UI is redesigned or styles change, the agent looks and clicks like a human would.
 - **Native IDE & agent integration**: Ships with a standard MCP server. Issue test commands in natural language directly from **Cursor** or **Claude Code**, letting your AI coding assistant run the automation for you.
 
-**`business_objectives` supports a single string or a list for concurrent execution:**
-
-```yaml
-# Single objective
-test_config:
-  business_objectives: Search for "laptop", verify the results page loads and displays relevant items
-
-# Multiple objectives — run concurrently (set max_concurrent_tests accordingly)
-target:
-  url: https://example.com
-  max_concurrent_tests: 2
-test_config:
-  business_objectives:
-    - >
-      Search for "laptop", click the first result and confirm the detail page loads,
-      then go back and switch to the "Images" tab and verify the content is related.
-    - Apply a price filter and verify all displayed results fall within the selected range
-```
-
-**Built-in skills** (loaded on demand, no extra config needed): `plan`, `ui-audit`, `recovery`, `nuclei-scan`, `button-check`. See [docs/MODES&CLI.md](docs/MODES&CLI.md#built-in-skills) for details.
-
 ### 🧭 Architecture
 
 <p>
@@ -140,7 +119,19 @@ uv run webqa-agent init      # Generates config.yaml (edit with your target URL 
 uv run webqa-agent gen       # Start testing
 ```
 
-For standard mode configuration details, see **[docs/MODES&CLI.md](docs/MODES&CLI.md)**.
+```yaml
+target:
+  url: https://example.com
+  max_concurrent_tests: 2
+test_config:
+  business_objectives:
+    - >
+      Search for "laptop", click the first result and confirm the detail page loads,
+      then go back and switch to the "Images" tab and verify the content is related.
+    - Apply a price filter and verify all displayed results fall within the selected range
+```
+
+**Built-in skills** (loaded on demand, no extra config needed): `plan`, `ui-audit`, `recovery`, `nuclei-scan`, `button-check`. See [docs/MODES&CLI.md](docs/MODES&CLI.md#built-in-skills) for details.
 
 ### 🖥️ Full-stack Deployment (Recommended for Teams)
 

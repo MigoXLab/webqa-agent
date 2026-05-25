@@ -80,27 +80,6 @@ Vibecoding, Vibe coding, 网页测试自动化, 浏览器测试工具, AI驱动�
 - **零 Selector 维护成本**：彻底告别 CSS 选择器与 XPath。AI 多模态智能识别页面元素——界面改版、样式变更，AI 会像人类一样自己看、自己点击。
 - **原生 IDE 与智能体协同**：提供标准 MCP Server，直接在 **Cursor**、**Claude Code** 中用自然语言下达测试指令，让 AI 编码助手帮你跑自动化测试。
 
-**`business_objectives` 支持单条字符串或列表（并发执行）：**
-
-```yaml
-# 单条目标
-test_config:
-  business_objectives: 在搜索框输入"笔记本电脑"，验证结果页正常加载并包含相关商品
-
-# 多条目标——并发执行（同步设置 max_concurrent_tests）
-target:
-  url: https://example.com
-  max_concurrent_tests: 2
-test_config:
-  business_objectives:
-    - >
-      在搜索框输入"笔记本电脑"，点击第一条结果确认详情页正常打开，
-      返回后切换到"图片"子频道，验证内容与搜索词相关且页面无报错。
-    - 使用价格筛选功能，验证过滤后的结果均符合所选价格区间
-```
-
-**内置 Skill**（按需加载，无需额外配置）：`plan`、`ui-audit`、`recovery`、`nuclei-scan`、`button-check`。详见 [docs/MODES&CLI_zh-CN.md](docs/MODES&CLI_zh-CN.md)。
-
 ### 🧭 架构图
 
 <p>
@@ -138,7 +117,20 @@ uv run webqa-agent init      # 初始化配置 config.yaml (编辑填入 URL 和
 uv run webqa-agent gen       # 启动测试
 ```
 
-关于标准模式的配置和详细说明，请参考 **[docs/MODES&CLI_zh-CN.md](docs/MODES&CLI_zh-CN.md)**。
+```yaml
+# 多条目标——并发执行（同步设置 max_concurrent_tests）
+target:
+  url: https://example.com
+  max_concurrent_tests: 2
+test_config:
+  business_objectives:
+    - >
+      在搜索框输入"笔记本电脑"，点击第一条结果确认详情页正常打开，
+      返回后切换到"图片"子频道，验证内容与搜索词相关且页面无报错。
+    - 使用价格筛选功能，验证过滤后的结果均符合所选价格区间
+```
+
+**内置 Skill**（按需加载，无需额外配置）：`plan`、`ui-audit`、`recovery`、`nuclei-scan`、`button-check`。详见 [docs/MODES&CLI_zh-CN.md](docs/MODES&CLI_zh-CN.md)。
 
 ### 🖥️ 全栈部署 (推荐团队使用)
 
