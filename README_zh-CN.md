@@ -39,7 +39,7 @@
   </a>
 </p>
 
-<p align="center">🤖 <strong>WebQA Agent</strong> 是全自动网页评估测试 Agent，具备多模态网页理解、智能生成测试用例、精准执行的核心能力，一键完成性能、功能与交互体验的全面测试评估 ✨ 支持 GUI/CLI 直接使用，且支持 OpenClaw Skill 调用</p>
+<p align="center">🤖 <strong>WebQA Agent</strong> 是全自动网页评估测试 Agent，具备多模态网页理解能力，无需编写任何测试脚本。<strong>主打 ⚡ WebQA Flash 模式</strong>——只需一句话业务目标，秒级自动驱动浏览器完成测试；✨ 支持 GUI / CLI 直接使用，并通过 MCP / Skill 无缝接入 Cursor、Claude Code 与 OpenClaw 等 IDE 与智能体框架。</p>
 </div>
 
 <!-- Additional SEO Keywords and Context
@@ -52,7 +52,6 @@ Vibecoding, Vibe coding, 网页测试自动化, 浏览器测试工具, AI驱动�
 - [示例演示](#示例演示)
 - [快速开始](#快速开始)
 - [CLI 使用说明](#cli-使用说明)
-- [扩展 WebQA Agent 工具](#扩展-webqa-agent-工具)
 - [全栈部署](#全栈部署)
 - [RoadMap](#roadmap)
 - [致谢](#致谢)
@@ -64,40 +63,43 @@ Vibecoding, Vibe coding, 网页测试自动化, 浏览器测试工具, AI驱动�
 
 ### 📋 功能介绍
 
-**WebQA-Agent** 提供两种测试模式，满足不同场景需求: **🤖 自动探索模式**和 **📋 执行模式**
+**WebQA Agent** 覆盖从轻量探索到深度回归的全链路 QA：
 
-| 能力         | 🤖 **自动探索模式 (Generate模式)**                                         | 📋 **执行模式 (Run模式)**                                             |
-| :----------- | :------------------------------------------------------------------------- | :-------------------------------------------------------------------- |
-| **核心特性** | AI 自主探索 -> 动态生成 -> 精确执行                                        | 依据指令执行和预期验证                                                |
-| **适用场景** | 新功能探索、全面质量保障                                                   | 适合可重复、可回归的测试场景                                          |
-| **用户输入** | **极简**：只需 URL 或一句话业务目标                                        | **结构化**：简单的自然语言步骤描述                                    |
-| **优势**     | 具备反思能力，自适应 UI 变化；配置功能/性能/安全/UX 评估，提供全面质量保障 | 结果稳定可预期，摆脱繁琐的Selector维护；实时监控 Console/Network 状态 |
+| 能力         | ⚡ **WebQA Flash**（默认推荐）                                | 🤖 **标准 Generate 模式**                                                    | 📋 **Run 模式**              |
+| :----------- | :------------------------------------------------------------ | :--------------------------------------------------------------------------- | :--------------------------- |
+| **定位**     | 轻量级探索引擎，秒级执行自然语言测试目标                      | AI 自主探索 → 动态生成 → 精确执行                                            | 依据 YAML 指令执行和预期验证 |
+| **适用场景** | 快速冒烟、IDE 内联调、平台 Flash 探索、MCP/Skill 自然语言测试 | 新功能探索、全面质量保障、Focused/Explore 深度规划                           | 可重复、可回归的测试场景     |
+| **用户输入** | 一句话业务目标（或目标列表并发）                              | URL + 可选业务目标；平台在填写目标时使用 **Focused**，留空时使用 **Explore** | 结构化自然语言步骤           |
+| **入口**     | CLI `gen` + `engine: flash`、Web 平台、MCP `run_test`、Skill  | CLI `gen` + `engine: standard`、Web 平台                                     | CLI `run`、Web 平台          |
 
-**使用与部署**：支持 CLI 命令行运行，可参考 [CLI 使用说明](#cli-使用说明)；同时支持以完整前后端形态部署（Local / Docker / K8s），通过 Web 界面进行可视化管理。详见 [全栈部署](#全栈部署)。
+**使用与部署**：支持 CLI 命令行（见 [CLI 使用说明](#cli-使用说明)）；支持全栈部署（Local / Docker / K8s）进行可视化管理，含 Flash 探索报告、API Key 管理、一键参数回填。详见 [全栈部署](#全栈部署)。
 
-### 🛠️ 工具系统
+### ⚡ Flash 核心优势
 
-**默认工具**（始终启用）：
+- **秒级执行，极速反馈**：无需笨重的离线规划与漫长的测试准备。基于轻量级 Chrome DevTools MCP，实时接收自然语言目标，即时驱动浏览器进行交互与断言。
+- **零 Selector 维护成本**：彻底告别 CSS 选择器与 XPath。AI 多模态智能识别页面元素——界面改版、样式变更，AI 会像人类一样自己看、自己点击。
+- **原生 IDE 与智能体协同**：提供标准 MCP Server，直接在 **Cursor**、**Claude Code** 中用自然语言下达测试指令，让 AI 编码助手帮你跑自动化测试。
 
-- **UI 操作**: 浏览器交互（点击、输入、导航）
-- **UI 断言**: 状态验证
-- **UX 验证**: 文本错误检查、布局分析
-
-**自定义工具**（可选，通过配置启用）：
-
-- **性能测试**: 基于 Lighthouse 的性能测试
-- **安全测试**: Nuclei 漏洞扫描
-- **链接检测**: 动态链接发现
-
-在 `config.yaml` 中启用自定义工具：
+**`business_objectives` 支持单条字符串或列表（并发执行）：**
 
 ```yaml
+# 单条目标
 test_config:
-  custom_tools:
-    enabled:
-      - lighthouse
-      - nuclei
+  business_objectives: 在搜索框输入"笔记本电脑"，验证结果页正常加载并包含相关商品
+
+# 多条目标——并发执行（同步设置 max_concurrent_tests）
+target:
+  url: https://example.com
+  max_concurrent_tests: 2
+test_config:
+  business_objectives:
+    - >
+      在搜索框输入"笔记本电脑"，点击第一条结果确认详情页正常打开，
+      返回后切换到"图片"子频道，验证内容与搜索词相关且页面无报错。
+    - 使用价格筛选功能，验证过滤后的结果均符合所选价格区间
 ```
+
+**内置 Skill**（按需加载，无需额外配置）：`plan`、`ui-audit`、`recovery`、`nuclei-scan`、`button-check`。详见 [docs/MODES&CLI_zh-CN.md](docs/MODES&CLI_zh-CN.md)。
 
 ### 🧭 架构图
 
@@ -119,28 +121,24 @@ test_config:
 
 您可以根据需求选择 **🛠️ 命令行快速上手** 或 **🖥️ 全栈部署 (Web 管理平台)**。
 
-### 🛠️ 命令行快速上手 (推荐开发者使用)
+### 🛠️ 命令行快速上手
 
-推荐使用 [uv](https://github.com/astral-sh/uv) (Python>=3.11) 安装:
+推荐使用 [uv](https://github.com/astral-sh/uv) (Python>=3.11) 安装；Flash 模式底层通过 [chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp) 驱动浏览器。
 
 ```bash
 # 1) 创建项目并安装包
 uv init my-webqa && cd my-webqa
 uv add webqa-agent
 
-# 2) 安装浏览器（必需）
-uv run playwright install chromium
+# 2) 安装 chrome browser & Chrome MCP 前置依赖
+npm install -g chrome-devtools-mcp@latest  # Flash 模式必需
 
-# 3) 自动探索模式 (Generate)
-uv run webqa-agent init -m gen  # 初始化配置，编辑 config.yaml 填入 URL 和 API Key
-uv run webqa-agent gen          # 启动 AI 自动测试
-
-# 4) 执行模式 (Run)
-uv run webqa-agent init -m run  # 初始化配置，编写自然语言测试用例
-uv run webqa-agent run          # 启动测试执行
+# 3) 初始化并运行 (默认即启用 Flash 模式)
+uv run webqa-agent init      # 初始化配置 config.yaml (编辑填入 URL 和 LLM API Key)
+uv run webqa-agent gen       # 启动测试
 ```
 
-> 详见 [CLI 使用说明](#cli-使用说明) 获取更多 CLI 参数。
+关于标准模式的配置和详细说明，请参考 **[docs/MODES&CLI_zh-CN.md](docs/MODES&CLI_zh-CN.md)**。
 
 ### 🖥️ 全栈部署 (推荐团队使用)
 
@@ -156,8 +154,6 @@ cp .env.example .env
 
 > 启动后访问 `http://localhost`。其他部署方式请查看 [全栈部署](#全栈部署)。
 
-<a id="使用说明"></a>
-
 ## ⚙️ CLI 使用说明
 
 <a id="cli-使用说明"></a>
@@ -166,149 +162,78 @@ cp .env.example .env
 
 WebQA Agent 提供简洁的命令行工具，支持初始化、自动探索、用例执行及 Web UI 启动。
 
-| 命令   | 说明                                    | 常用参数                                                             |
-| :----- | :-------------------------------------- | :------------------------------------------------------------------- |
-| `init` | 初始化配置文件                          | `-m <gen/run>`: 指定模式；`-o <path>`: 输出路径；`--force`: 强制覆盖 |
-| `gen`  | **自动探索模式**：AI 自动生成并执行用例 | `-c <path>`: 指定配置文件；`-w <n>`: 并发 Worker 数                  |
-| `run`  | **执行模式**：运行 YAML 定义的测试用例  | `-c <path/dir>`: 指定文件或文件夹；`-w <n>`: 并发 Worker 数          |
+| 命令   | 说明                                   | 常用参数                                                                                                     |
+| :----- | :------------------------------------- | :----------------------------------------------------------------------------------------------------------- |
+| `init` | 初始化配置文件                         | `-m <gen/run>`: 指定模式；`-o <path>`: 输出路径；`--force`: 强制覆盖                                         |
+| `gen`  | **探索/Flash 模式**：AI 自动执行用例   | `-c <path>`: 指定配置文件；`-w <n>`: 并发 Worker 数；默认启用 Flash 引擎（本地 Chrome 通过 Chrome MCP 执行） |
+| `run`  | **执行模式**：运行 YAML 定义的测试用例 | `-c <path/dir>`: 指定文件或文件夹；`-w <n>`: 并发 Worker 数；需要 Standard 引擎（Playwright 执行器）         |
 
-**示例：**
-
-```bash
-# 初始化 Run 模式配置
-webqa-agent init -m run
-
-# 以 4 并发运行指定目录下的所有测试用例
-webqa-agent run -c ./my_cases -w 4
-```
-
-______________________________________________________________________
-
-### Generate 模式 - 配置介绍
-
-#### 🔧 可选依赖项 (自定义工具)
-
-- 性能测试（Lighthouse）：`npm install lighthouse chrome-launcher`（需 Node.js ≥18）
-- 安全测试（Nuclei）：
-
-```bash
-  brew install nuclei      # macOS
-  nuclei -ut               # 更新模板
-  # Linux/Windows: https://github.com/projectdiscovery/nuclei/releases
-```
-
-#### 📄 配置文件说明
-
-配置文件需包含 `test_config` 字段，用于定义需要执行的测试类型。
-
-- **业务目标**: 指定测试的业务目标，以指导 AI 规划测试重点和覆盖范围。
-- **自定义工具**: 可选启用性能（Lighthouse）、安全（Nuclei）、按钮检查、链接检测等工具。
-- **动态步骤生成**: 启用后，在执行过程中检测到新的 UI 元素时，会自动生成额外的测试步骤。
-- **过滤模型**: 配置一个轻量级模型，用于预过滤页面元素，从而提高规划效率。
-
-更多教程，请参考 [docs/MODES&CLI_zh-CN.md](docs/MODES&CLI_zh-CN.md)
-
-```yaml
-target:
-  url: https://example.com              # 需要测试的网站 URL
-  description: 网站质量保证测试
-
-test_config:
-  business_objectives: 测试搜索功能，生成3个测试用例
-  custom_tools:                         # 可选：启用自定义测试工具（通过 step_type）
-    enabled:
-      # - lighthouse                    # Lighthouse 性能测试
-                                        # 需要：npm install lighthouse chrome-launcher（本地，推荐）
-                                        # 或：npm install -g lighthouse chrome-launcher（全局）
-      # - nuclei                        # Nuclei 安全扫描
-                                        # 需要：go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
-                                        # 或从以下地址下载：https://github.com/projectdiscovery/nuclei/releases
-      # - traverse_clickable_elements   # 可点击元素遍历测试
-      # - detect_dynamic_links          # 动态链接发现和验证
-
-llm_config:                             # LLM 配置，支持 OpenAI、Anthropic Claude、Google Gemini 以及 OpenAI 兼容格式模型（如豆包、通义千问等）
-  model: gpt-5.4                        # 主模型
-  filter_model: gpt-5-mini              # 轻量级模型用于元素过滤（可选）
-  api_key: your_api_key                 # 或通过环境变量设置 (OPENAI_API_KEY)
-  base_url: https://api.openai.com/v1   # 可选，API 端点。对于 OpenAI 兼容格式模型（豆包、通义千问等），设置为对应的 API 端点
-
-browser_config:
-  headless: False                       # Docker 环境自动设为 True
-  language: en-US
-
-report:
-  language: en-US                       # zh-CN 或 en-US
-```
-
-### Run 模式 - 配置介绍
-
-Run 模式配置文件需包含 `cases` 字段，用于定义具体的测试用例。
-
-- **多模态 AI 交互式能力**：使用 `action` 描述页面上可见的文字、图片或相对位置。支持浏览器操作：点击、悬停、输入、清空、键盘按键、页面滚动、鼠标移动和滚轮滚动、文件上传、拖拽、等待等；以及页面操作：跳转url、页面后退。
-- **多模态 AI 验证能力**：使用 `verify`，确保 Agent 没“跑偏”。校验页面符合预期：视觉内容确认、URL 与路径校验、组合图片和页面元素验证等。
-- **全链路自动监控**：获取浏览器的 `Console` 日志和 `Network` 请求状态，同时支持配置 `ignore_rules` 来忽略已知的浏览器 console 和 network 错误。
-
-更多教程和测试用例编写规范，请参考 [docs/MODES&CLI_zh-CN.md](docs/MODES&CLI_zh-CN.md)
-
-```yaml
-target:
-  url: https://example.com              # 目标网站 URL
-
-llm_config:                             # LLM 配置
-  api: openai
-  model: gpt-5-mini
-  api_key: your_api_key_here
-  base_url: https://api.openai.com/v1
-
-browser_config:
-  viewport: {"width": 1280, "height": 720}
-  headless: False                       # Docker 环境自动设为 True
-  language: en-US
-  # cookies: /path/to/cookie.json
-
-ignore_rules:                           # 忽略规则配置（可选）
-  network:                              # 网络请求忽略规则
-    - pattern: ".*\\.google-analytics\\.com.*"
-      type: "domain"
-  console:                              # 控制台日志忽略规则
-    - pattern: "Failed to load resource.*favicon"
-      match_type: "regex"
-    - pattern: "Warning:"
-      match_type: "contains"
-
-cases:                                  # 测试用例列表
-  - name: 图片上传                       # 用例名称
-    steps:                              # 测试步骤
-      - action: 上传图标是输入框内的图片图标，位于百度搜索按钮旁边，用于上传文件
-        args:
-          file_path: ./tests/data/test.jpeg
-      - action: 等待图像上传
-      - verify: 验证输入字段是否显示张开的手掌/手图标图像
-      - action: 输入"图片中有多少根手指？"在搜索输入框中，然后按Enter键，等待2秒
-```
+关于标准探索模式 (Standard Gen) 与执行模式 (Run) 的详细配置说明，请参考 **[docs/MODES&CLI_zh-CN.md](docs/MODES&CLI_zh-CN.md)**。
 
 ### 📊 查看结果
 
 测试报告生成在 `reports/` 目录下，打开 HTML 文件即可查看详细结果。
 
-<a id="扩展-webqa-agent-工具"></a>
+______________________________________________________________________
 
-## 🛠️ 扩展 WebQA Agent 工具
+### 🔌 MCP 与 Skill 集成
 
-WebQA Agent 支持**自定义工具开发**，满足特定领域的测试需求。
+#### WebQA MCP Server
 
-| 文档                                                        | 描述                                  |
-| ----------------------------------------------------------- | ------------------------------------- |
-| **[自定义工具开发](docs/CUSTOM_TOOL_DEVELOPMENT_zh-CN.md)** | 自定义工具开发快速参考                |
-| **[LLM 上下文文档](docs/CUSTOM_TOOL_DEVELOPMENT_AI.md)**    | AI 辅助开发的完整指南，可用于氛围编程 |
+通过 MCP 协议将浏览器测试能力暴露给 **Cursor**、**Claude Code** 等 IDE。安装后即可使用 `webqa-mcp-server` 命令。
 
-欢迎贡献！查看[现有工具示例](webqa_agent/tools/custom/)获取参考。
+**1. 安装**
+
+```bash
+git clone https://github.com/MigoXLab/webqa-agent.git
+cd webqa-agent
+pip install -e .
+which webqa-mcp-server   # 获取绝对路径
+```
+
+**2. 获取 API Key**
+
+进入 WebQA 平台 → **API Keys** → 创建密钥（仅显示一次）。
+
+**3. IDE 中添加 Server**（以 Cursor 为例：Settings → MCP → Add Server）：
+
+```json
+{
+  "mcpServers": {
+    "webqa": {
+      "command": "/您的绝对路径/webqa-mcp-server",
+      "env": {
+        "WEBQA_API_URL": "https://your-webqa-platform.com",
+        "WEBQA_API_KEY": "wqa_xxxxxxxx..."
+      }
+    }
+  }
+}
+```
+
+完整工具说明参考：**[docs/MCP_SERVER.md](docs/MCP_SERVER.md)**。
+
+#### WebQA Skill
+
+`skills/webqa/` 提供即插即用的 Skill 包，配合 **OpenClaw** 与 **Claude Code** 实现无脚本的自然语言测试。
+
+- **Claude Code**：将 `skills/webqa` 加入项目的 Skills 路径，或复制到 `.claude/skills/webqa`。
+- **OpenClaw**：按 OpenClaw Skill 规范注册 `skills/webqa`。
+
+参考文档：`skills/webqa/SKILL.md`、`skills/webqa/references/mini-agent.md`、`skills/webqa/references/setup.md`。
 
 <a id="全栈部署"></a>
 
 ## 🖥️ 全栈部署
 
-如果团队需要一个**持续使用的 Web 管理平台**（测试管理、定时任务、执行历史），可以部署完整的前后端服务。我们支持三种部署方式：
+如果团队需要一个**持续使用的 Web 管理平台**（测试管理、定时任务、执行历史），可以部署完整的前后端服务。
+
+**平台能力**：
+
+- **Flash 探索**：前后端打通，报告含截图与逐步执行详情
+- **API Key 管理**：申请与管理 MCP API Key，供 Cursor / Claude Code 接入
+
+我们支持三种部署方式：
 
 | 方式           | 适用场景            | 参考文档                                                        |
 | -------------- | ------------------- | --------------------------------------------------------------- |
@@ -324,9 +249,9 @@ WebQA Agent 支持**自定义工具开发**，满足特定领域的测试需求�
 
 ## 🗺️ RoadMap
 
-1. **交互与可视化**：实时展示推理过程
-2. Gen模式能力扩展：更多评估维度集成
-3. Tool Agent上下文接入，更全面更精确的执行
+1. **交互与可视化**：在测试执行过程中实时展示 Agent 的推理链与决策依据，便于用户即时理解 AI 为何选择某条路径，并据此优化业务目标描述与 prompt（当前仅支持报告侧事后回溯）。
+2. **Flash 多步骤 case**：将「一句话业务目标 → 单一 case 链路」扩展为支持「前置条件 / 步骤 / 断言」的结构化执行模型，便于复杂场景的回归测试、失败定位与跨执行复用（当前以用户输入作为单一 case 链路）。
+3. **Explore 模式增强**：将 Agent 在无 PRD 场景下广覆盖发现的结果沉淀为结构化、可复用的测试用例库，让「发现 → 回归」形成闭环，而非一次性的探索报告（当前由 Agent 广覆盖发现，结果不入库）。
 
 <a id="致谢"></a>
 
@@ -335,8 +260,10 @@ WebQA Agent 支持**自定义工具开发**，满足特定领域的测试需求�
 - [natbot](https://github.com/nat/natbot): 通过GPT-3驱动浏览器
 - [Midscene.js](https://github.com/web-infra-dev/midscene/)：Web、Android、自动化和测试的AI Operator
 - [browser-use](https://github.com/browser-use/browser-use/)：用于浏览器控制的AI Agent
-- [cc-mini](https://github.com/e10nMa2k/cc-mini)：面向 Claude Code Agent 工作流的超轻量 Python 框架；为 WebQA Agent 的 cc-mini 执行模式提供核心引擎、MCP 客户端、技能注册表和 Cookie 管理层
+- [cc-mini](https://github.com/e10nMa2k/cc-mini)：面向 Claude Code Agent 工作流的超轻量 Python 框架；为 WebQA Agent 的 Flash 执行模式提供核心引擎、MCP 客户端、技能注册表和 Cookie 管理层
+
+<a id="开源许可证"></a>
 
 ## 📄 开源许可证
 
-该项目采用 [Apache 2.0 开源许可证](LICENSE)
+该项目采用 [Apache 2.0 开源许可证](LICENSE)。

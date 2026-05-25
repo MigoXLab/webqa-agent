@@ -1,3 +1,8 @@
+# WebQA Agent Configuration - Run Mode (Standard engine)
+# This mode executes YAML-defined test cases against a fixed plan.
+# Run Mode only supports `engine: standard` — Flash is gen-only.
+engine: standard
+
 target:
   url: https://image.baidu.com/
 
@@ -90,4 +95,4 @@ log:
 
 report:
   language: en-US # zh-CN, en-US
-  save_screenshots: False  # Whether to enable screenshots. If True, screenshots are saved as local files. If False, screenshots are stored as base64 in the test data.
+  save_screenshots: True  # Whether to enable screenshots. If True, screenshots are saved as local files. If False, screenshots are stored as base64 in the test data.
