@@ -1,8 +1,8 @@
-"""Adapter: cc-mini RunResult → gen-mode report payload.
+"""Adapter: Flash RunResult → gen-mode report payload.
 
-Keeps the cc-mini library (``webqa-cc-mini/``) free of any dependency on
+Keeps the underlying Flash engine library free of any dependency on
 ``webqa_agent``. This mapping layer lives here so the CLI can render
-cc-mini runs using the existing gen-mode React frontend (the same
+Flash runs using the existing gen-mode React frontend (the same
 ``static/index.html`` template inlined by :class:`ResultAggregator`).
 
 Two mapping targets:
@@ -11,7 +11,7 @@ Two mapping targets:
   ``{"gen": {"case_1_<safe>": {...}, "index": {...}}}`` dict that the
   React frontend ACTUALLY consumes. ``ResultAggregator`` normally builds
   this by scanning per-case JSON files written during a gen-mode run;
-  cc-mini has no such files, so we synthesize the dict in memory.
+  Flash has no such files, so we synthesize the dict in memory.
 * :func:`run_result_to_session` returns a lightweight
   :class:`ParallelTestSession` carrying session-level metadata
   (``report_path``, config). Its ``to_dict`` shape is NOT what the
@@ -19,10 +19,10 @@ Two mapping targets:
   combine it with ``run_result_to_aggregated_data`` when rendering.
 
 Mapping:
-    * One cc-mini run → one "case" entry (``case_1_<safe_name>``)
-    * Each cc-mini ``Step`` → one step dict with ``modelIO`` holding the
+    * One Flash run → one "case" entry (``case_1_<safe_name>``)
+    * Each Flash ``Step`` → one step dict with ``modelIO`` holding the
       tool input + result as JSON. Screenshots are left empty for now —
-      cc-mini stores them inside MCP tool output, not as separate paths.
+      Flash stores them inside MCP tool output, not as separate paths.
       (Extracting them is a future enhancement; the UI tolerates ``[]``.)
 """
 from __future__ import annotations
@@ -42,7 +42,7 @@ from webqa_agent.executor.flash.core.outcome_status import (
 from webqa_agent.utils.reporting_utils import sanitize_case_name
 
 # Soft cap on how much of each tool result we embed in the report.
-# cc-mini tool outputs are sometimes multi-KB (accessibility snapshots,
+# Flash tool outputs are sometimes multi-KB (accessibility snapshots,
 # full DOM dumps) and inlining them verbatim would bloat every report.
 _RESULT_TEXT_LIMIT = 4000
 
@@ -65,15 +65,15 @@ def run_result_to_session(
     report_dir: str | None = None,
     language: str = 'zh-CN',
 ) -> ParallelTestSession:
-    """Convert a cc-mini ``RunResult`` to a ``ParallelTestSession``.
+    """Convert a Flash ``RunResult`` to a ``ParallelTestSession``.
 
     Args:
         run_result: The object returned by ``run_cc_mini``. Must expose
             ``final_text``, ``steps``, ``aborted``, ``input_tokens``,
             ``output_tokens`` attributes (duck-typed; concrete class not
-            imported to keep this module independent of cc-mini).
+            imported to keep this module independent of the Flash engine).
         url: Target URL of the run (populates ``target_url`` + step 0).
-        task: Task description given to cc-mini (used as the test name).
+        task: Task description given to the Flash run (used as the test name).
         report_dir: Optional report directory — stored on the session so
             ``ResultAggregator`` can find it during rendering.
         language: Report language; stored in ``TestConfiguration.report_config``
@@ -104,10 +104,10 @@ def run_result_to_session(
         report_sections.append(SubTestReport(title='Summary', issues=final_text))
 
     now = datetime.now()
-    sub_test_id = f'cc-mini-sub-{uuid.uuid4().hex[:8]}'
+    sub_test_id = f'flash-sub-{uuid.uuid4().hex[:8]}'
     sub = SubTestResult(
         sub_test_id=sub_test_id,
-        name=task or 'cc-mini run',
+        name=task or 'Flash run',
         status=overall_status,
         metrics={
             'total_steps': len(sub_steps),
@@ -126,10 +126,10 @@ def run_result_to_session(
         report=report_sections,
     )
 
-    test_id = f'cc-mini-{uuid.uuid4().hex[:8]}'
+    test_id = f'flash-{uuid.uuid4().hex[:8]}'
     test = TestResult(
         test_id=test_id,
-        test_name=_truncate(f'cc-mini — {task}' if task else 'cc-mini run', 120),
+        test_name=_truncate(f'Flash — {task}' if task else 'Flash run', 120),
         status=overall_status,
         category=TestCategory.FUNCTION,
         start_time=now,
@@ -147,7 +147,7 @@ def run_result_to_session(
     )
     if overall_status == TestStatus.FAILED:
         test.error_message = (
-            'cc-mini run aborted' if aborted
+            'Flash run aborted' if aborted
             else (
                 'final outcome marked objective_achieved=false'
                 if status_source == 'final_outcome'
@@ -164,7 +164,7 @@ def run_result_to_session(
     )
 
     session = ParallelTestSession(
-        session_id=f'cc-mini-{uuid.uuid4().hex[:8]}',
+        session_id=f'flash-{uuid.uuid4().hex[:8]}',
         target_url=url,
         test_configurations=[test_cfg],
         test_results={test_id: test},
@@ -248,12 +248,14 @@ def run_result_to_aggregated_data(
     url: str,
     task: str,
     language: str = 'zh-CN',
+    model: str | None = None,
+    filter_model: str | None = None,
 ) -> dict:
     """Build the gen-mode aggregated dict the React frontend consumes.
 
     The React shell keyed off ``window.testResultData`` expects a shape
     that :meth:`ResultAggregator.aggregate_report_json` normally produces
-    by scanning per-case JSON files. cc-mini has no such files, so this
+    by scanning per-case JSON files. Flash has no such files, so this
     function synthesizes the equivalent structure in memory::
 
         {
@@ -281,6 +283,7 @@ def run_result_to_aggregated_data(
     """
     return run_results_to_aggregated_data(
         [run_result], url=url, tasks=[task], language=language,
+        model=model, filter_model=filter_model,
     )
 
 
@@ -290,6 +293,8 @@ def run_results_to_aggregated_data(
     url: str,
     tasks: list[str],
     language: str = 'zh-CN',
+    model: str | None = None,
+    filter_model: str | None = None,
 ) -> dict:
     """Multi-case version of :func:`run_result_to_aggregated_data`.
 
@@ -298,7 +303,7 @@ def run_results_to_aggregated_data(
     ``gen_result``. ``run_results`` and ``tasks`` are zipped positionally
     — they must have the same length.
 
-    Used by :class:`webqa_agent.executor.cc_mini_executor.CcMiniExecutor`
+    Used by :class:`webqa_agent.executor.flash_executor.FlashExecutor`
     to render one HTML report containing every concurrent task.
     """
     if len(run_results) != len(tasks):
@@ -317,6 +322,10 @@ def run_results_to_aggregated_data(
     summaries: list[str] = []
     total_steps_all = 0
     count = {'total': 0, 'passed': 0, 'failed': 0, 'warning': 0}
+
+    # Collect step timestamps across all run_results to compute session timing.
+    all_start_ts: list[float] = []
+    all_end_ts: list[float] = []
 
     for idx, (run_result, task) in enumerate(zip(run_results, tasks), start=1):
         case_key, case_entry, gen_entry, summary_text = _build_case_entry(
@@ -337,6 +346,30 @@ def run_results_to_aggregated_data(
         else:  # status not in canonical bucket falls back to 'failed'
             count['failed'] += 1
 
+        # Accumulate per-run timestamps for session-level start/end.
+        steps = list(getattr(run_result, 'steps', None) or [])
+        if steps:
+            first_ts: float = getattr(steps[0], 'timestamp', 0) or 0.0
+            last_step = steps[-1]
+            last_ts: float = (
+                getattr(last_step, 'end_ts', 0)
+                or getattr(last_step, 'timestamp', 0)
+                or 0.0
+            )
+            if first_ts:
+                all_start_ts.append(first_ts)
+            if last_ts:
+                all_end_ts.append(last_ts)
+
+    session_start_iso = (
+        datetime.fromtimestamp(min(all_start_ts)).isoformat(timespec='seconds')
+        if all_start_ts else now_iso
+    )
+    session_end_iso = (
+        datetime.fromtimestamp(max(all_end_ts)).isoformat(timespec='seconds')
+        if all_end_ts else now_iso
+    )
+
     test_items = [{
         'name': '功能测试' if language != 'en-US' else 'Functional',
         'item': (
@@ -349,10 +382,10 @@ def run_results_to_aggregated_data(
 
     index_entry = {
         'session_info': {
-            'session_id': f'cc-mini-{uuid.uuid4().hex[:8]}',
+            'session_id': f'flash-{uuid.uuid4().hex[:8]}',
             'target_url': url,
-            'start_time': now_iso,
-            'end_time': now_iso,
+            'start_time': session_start_iso,
+            'end_time': session_end_iso,
         },
         'aggregated_results': {
             'title': 'Overview',
@@ -363,10 +396,48 @@ def run_results_to_aggregated_data(
             'gen_result': gen_results,
         },
         'count': count,
+        'config': {
+            'target_url': url,
+            'llm_config': {
+                'model': model or '',
+                'filter_model': filter_model or '',
+            },
+            'browser_config': {},
+        },
     }
 
     gen_block['index'] = index_entry
     return {'gen': gen_block}
+
+
+def _extract_case_timing(
+    raw_steps: list[Any], now_iso: str,
+) -> tuple[str, str, float]:
+    """Derive (start_iso, end_iso, duration_seconds) from step timestamps.
+
+    Falls back to ``now_iso`` / zero duration when steps carry no timestamps.
+    """
+    if not raw_steps:
+        return now_iso, now_iso, 0.0
+
+    first_ts: float = getattr(raw_steps[0], 'timestamp', 0) or 0.0
+    last_step = raw_steps[-1]
+    last_ts: float = (
+        getattr(last_step, 'end_ts', 0)
+        or getattr(last_step, 'timestamp', 0)
+        or 0.0
+    )
+
+    start_iso = (
+        datetime.fromtimestamp(first_ts).isoformat(timespec='seconds')
+        if first_ts else now_iso
+    )
+    end_iso = (
+        datetime.fromtimestamp(last_ts).isoformat(timespec='seconds')
+        if last_ts else now_iso
+    )
+    duration = max(0.0, last_ts - first_ts) if (first_ts and last_ts) else 0.0
+    return start_iso, end_iso, duration
 
 
 def _build_case_entry(
@@ -392,11 +463,13 @@ def _build_case_entry(
         aborted=aborted, failed_count=failed_count, outcome=outcome,
     )
 
-    display_name = (task or 'cc-mini run').strip()
-    safe_name = sanitize_case_name(display_name) or 'cc_mini_run'
+    display_name = (task or 'Flash run').strip()
+    safe_name = sanitize_case_name(display_name) or 'flash_run'
     case_id = f'case_{case_index}'
     case_key = f'{case_id}_{safe_name}'
     sub_test_id = case_id
+
+    case_start_iso, case_end_iso, duration = _extract_case_timing(raw_steps, now_iso)
 
     case_entry: dict[str, Any] = {
         'name': safe_name,
@@ -404,9 +477,9 @@ def _build_case_entry(
         'safe_name': safe_name,
         'case_id': case_id,
         'sub_test_id': sub_test_id,
-        'start_time': now_iso,
-        'end_time': now_iso,
-        'duration': 0.0,
+        'start_time': case_start_iso,
+        'end_time': case_end_iso,
+        'duration': duration,
         'status': overall_status,
         'steps': step_dicts,
         'case_info': {
@@ -443,7 +516,7 @@ def _build_case_entry(
 
 
 def _map_step_dict(index: int, step: Any) -> dict:
-    """Map a cc-mini ``Step`` into the step-dict shape the React UI renders."""
+    """Map a Flash ``Step`` into the step-dict shape the React UI renders."""
     description = getattr(step, 'description', '') or ''
     is_error = bool(getattr(step, 'is_error', False))
     screenshots = list(getattr(step, 'screenshots', []) or [])
@@ -508,7 +581,7 @@ def _map_step_dict(index: int, step: Any) -> dict:
 
 
 def _extract_step_fields(step: Any) -> tuple[str, bool, dict[str, Any], str, list[dict[str, str]]]:
-    """Extract normalized step attributes from a duck-typed cc-mini step."""
+    """Extract normalized step attributes from a duck-typed Flash step."""
     tool = str(getattr(step, 'tool', '') or 'unknown')
     is_error = bool(getattr(step, 'is_error', False))
     input_dict = getattr(step, 'input', {}) or {}

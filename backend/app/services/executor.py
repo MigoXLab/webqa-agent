@@ -294,21 +294,24 @@ _active_containers: Dict[str, str] = {}  # execution_id -> container_id (Docker 
 def _resolve_gen_runner_source(gen_config: Optional[Dict[str, Any]]) -> str:
     """Resolve which gen runner should execute this task.
 
-    Stored/API convention: ``mini`` for the lightweight multi-task runner.
+    Stored/API convention: ``mini`` for the Flash multi-task runner.
     Accepts legacy ``cc-mini`` / ``cc_mini`` from older clients or configs.
     """
     if not isinstance(gen_config, dict):
-        return 'standard'
+        return _GEN_RUNNER_SOURCE_MINI
 
     raw = str(gen_config.get('runner_source') or '').strip().lower()
     if raw in _MINI_RUNNER_INPUT_ALIASES:
         return _GEN_RUNNER_SOURCE_MINI
+    if raw == 'standard':
+        return 'standard'
 
-    test_cfg = gen_config.get('test_config') or {}
-    if bool(test_cfg.get('use_cc_mini', False)):
-        return _GEN_RUNNER_SOURCE_MINI
+    # Retrieve 'engine' field, defaulting to 'flash'
+    engine = str(gen_config.get('engine', 'flash')).strip().lower()
+    if engine == 'standard':
+        return 'standard'
 
-    return 'standard'
+    return _GEN_RUNNER_SOURCE_MINI
 
 
 async def stop_execution(execution_id: str) -> bool:

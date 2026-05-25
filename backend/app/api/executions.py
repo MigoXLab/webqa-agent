@@ -154,7 +154,7 @@ async def create_execution(
             environment = biz_with_envs.environments[0]
             data.environment_id = environment.id
 
-    # mcp_quick mode: rewrite to match Mini gen_config shape
+    # mcp_quick mode: rewrite to match Flash gen_config shape
     if data.trigger_type == 'mcp_quick':
         try:
             data.gen_config = build_mcp_quick_gen_config(
@@ -172,7 +172,7 @@ async def create_execution(
     # Debug mode: force workers=1
     workers = 1 if data.trigger_type == 'debug' else data.workers
 
-    # mcp_quick is stored as 'gen' — it's just a shorthand for Mini gen mode
+    # mcp_quick is stored as 'gen' — it's just a shorthand for Flash gen mode
     effective_trigger_type = 'gen' if data.trigger_type == 'mcp_quick' else data.trigger_type
 
     # Create execution record

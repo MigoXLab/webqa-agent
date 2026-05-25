@@ -68,7 +68,7 @@ def build_mcp_quick_gen_config(
     workers: int,
     environment: Any = None,
 ) -> dict[str, Any]:
-    """Convert MCP quick payload into Mini Gen config.
+    """Convert MCP quick payload into Flash Gen config.
 
     Supports both the current multi-account environment shape and legacy
     environment-level SSO/cookies fields so MCP runs do not silently start

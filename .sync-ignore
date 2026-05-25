@@ -23,4 +23,5 @@ frontend/Dockerfile.zadig
 
 # --- 内部文档 ---
 docs/design
+docs/superpowers
 vebdor/

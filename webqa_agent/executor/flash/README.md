@@ -1,6 +1,6 @@
-# webqa-cc-mini
+# webqa-flash (engine)
 
-轻量级 Web 浏览器代理库，通过 MCP（Model Context Protocol）驱动 Chrome 执行 AI 自动化测试任务。
+轻量级 Web 浏览器代理库，通过 MCP（Model Context Protocol）驱动 Chrome 执行 AI 自动化测试任务。也是 `webqa-agent gen` 的默认引擎（`engine: flash`）。
 
 ## 前置要求
 
@@ -21,14 +21,15 @@ npm install -g chrome-devtools-mcp@latest
 
 ### 通过 webqa-agent 配置文件运行
 
-在 `config/config.yaml` 中启用 cc-mini 模式：
+Flash 是 `webqa-agent gen` 的默认引擎。在 `config/config.yaml` 中可显式声明（也可省略，默认即为 `flash`）：
 
 ```yaml
+engine: flash
+
 target:
   url: https://example.com
 
 test_config:
-  use_cc_mini: true
   business_objectives: "测试搜索功能"
 
 llm_config:
@@ -39,7 +40,7 @@ llm_config:
 然后执行：
 
 ```bash
-webqa-agent run config/config.yaml
+webqa-agent gen -c config/config.yaml
 ```
 
 ## 配置说明
@@ -55,7 +56,7 @@ webqa-agent run config/config.yaml
 ## 目录结构
 
 ```
-webqa-cc-mini/
+webqa_agent/executor/flash/
 ├── runner.py          # 入口：run_cc_mini()
 ├── core/
 │   ├── config.py      # 模型别名、MCPServerConfig

@@ -7,7 +7,9 @@ COPY frontend/package.json ./
 RUN npm install
 
 COPY frontend/ .
-RUN npm run build
+
+ARG VITE_CASE_PORTAL_URL
+RUN VITE_CASE_PORTAL_URL=$VITE_CASE_PORTAL_URL npm run build
 
 # Production stage
 FROM acr-openxlab-prod-registry-vpc.cn-shanghai.cr.aliyuncs.com/public/nginx:1.27-alpine

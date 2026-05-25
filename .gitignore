@@ -150,6 +150,7 @@ __marimo__/
 # -------------------------------------------------------
 
 # Credentials — never commit
+config.yaml
 config/config*.yaml
 !config/config.yaml.example
 !config/config_run.yaml.example

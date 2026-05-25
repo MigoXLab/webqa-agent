@@ -1,7 +1,6 @@
 """Executor package for WebQA Agent test modes."""
 
-from webqa_agent.executor.cc_mini_executor import (CcMiniBatchResult,
-                                                   CcMiniExecutor)
+from webqa_agent.executor.flash_executor import FlashBatchResult, FlashExecutor
 from webqa_agent.executor.result_aggregator import ResultAggregator
 
 try:
@@ -12,8 +11,8 @@ except ModuleNotFoundError:
     RunExecutor = None
 
 __all__ = [
-    'CcMiniBatchResult',
-    'CcMiniExecutor',
+    'FlashBatchResult',
+    'FlashExecutor',
     'GenExecutor',
     'RunExecutor',
     'ResultAggregator',

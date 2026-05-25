@@ -400,17 +400,19 @@ export default function App() {
                   AI 探索
                 </div>
               </Link>
-              <a
-                href={getCasePortalUrl()}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-4 py-2 rounded-lg text-sm font-medium transition-colors text-gray-600 hover:text-gray-900 hover:bg-gray-50"
-              >
-                <div className="flex items-center gap-2">
-                  <ExternalLink className="w-4 h-4" />
-                  用例生成
-                </div>
-              </a>
+              {getCasePortalUrl() && (
+                <a
+                  href={getCasePortalUrl()}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-4 py-2 rounded-lg text-sm font-medium transition-colors text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+                >
+                  <div className="flex items-center gap-2">
+                    <ExternalLink className="w-4 h-4" />
+                    用例生成
+                  </div>
+                </a>
+              )}
               <Link
                 to="/"
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${

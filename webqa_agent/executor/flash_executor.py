@@ -1,4 +1,4 @@
-"""Concurrent batch executor for cc-mini runs.
+"""Concurrent batch executor for Flash engine runs.
 
 Owns the scheduling logic that turns ``test_config.business_objectives``
 (a single string OR a list of strings) into N concurrent ``run_cc_mini``
@@ -20,8 +20,8 @@ Design:
   one consolidated data-flow report when enabled.
 
 The CLI (``webqa_agent/cli.py``) is reduced to: build ``shared_kwargs``
-(model/api_key/extensions/etc.), construct ``CcMiniExecutor``, await
-``execute(tasks)``, print the summary lines from ``CcMiniBatchResult``.
+(model/api_key/extensions/etc.), construct ``FlashExecutor``, await
+``execute(tasks)``, print the summary lines from ``FlashBatchResult``.
 """
 from __future__ import annotations
 
@@ -36,11 +36,11 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class CcMiniBatchResult:
-    """Outcome of a concurrent cc-mini batch run.
+class FlashBatchResult:
+    """Outcome of a concurrent Flash batch run.
 
     ``run_results`` and ``statuses`` are positional with respect to the
-    ``tasks`` list passed to :meth:`CcMiniExecutor.execute`.
+    ``tasks`` list passed to :meth:`FlashExecutor.execute`.
     """
     run_results: list[Any] = field(default_factory=list)
     statuses: list[str] = field(default_factory=list)
@@ -52,8 +52,8 @@ class CcMiniBatchResult:
     total_steps: int = 0
 
 
-class CcMiniExecutor:
-    """Run N cc-mini tasks concurrently and render one consolidated report.
+class FlashExecutor:
+    """Run N Flash tasks concurrently and render one consolidated report.
 
     Args:
         shared_kwargs: Keyword arguments forwarded to every
@@ -93,7 +93,7 @@ class CcMiniExecutor:
         log_sink: Optional[Callable[[str], None]] = None,
         tracker_factory: Optional[Callable[[str], ContextManager]] = None,
     ) -> None:
-        """Construct a concurrent cc-mini batch executor.
+        """Construct a concurrent Flash batch executor.
 
         ``tracker_factory(task_text)`` is expected to return a context
         manager whose ``__enter__`` yields an object with a settable
@@ -131,7 +131,7 @@ class CcMiniExecutor:
                     'executor injects this per-task.'
                 )
 
-    async def execute(self, tasks: list[str]) -> CcMiniBatchResult:
+    async def execute(self, tasks: list[str]) -> FlashBatchResult:
         """Run ``tasks`` concurrently and return the aggregated result.
 
         ``tasks`` must be non-empty; an empty list raises ``ValueError``.
@@ -148,7 +148,7 @@ class CcMiniExecutor:
         is_multi = n > 1
 
         logger.info(
-            'cc-mini batch: %d task(s), concurrency=%d', n, concurrency,
+            'Flash batch: %d task(s), concurrency=%d', n, concurrency,
         )
 
         async def _run_one(idx: int, task_text: str) -> Any:
@@ -176,7 +176,7 @@ class CcMiniExecutor:
         total_out = sum(int(getattr(r, 'output_tokens', 0) or 0) for r in run_results)
         total_steps = sum(len(getattr(r, 'steps', None) or []) for r in run_results)
 
-        return CcMiniBatchResult(
+        return FlashBatchResult(
             run_results=run_results,
             statuses=statuses,
             overall_status=overall,
@@ -245,24 +245,29 @@ class CcMiniExecutor:
                     tracker.result = _derive_case_status(result)
             return result
         except Exception as exc:
-            logger.exception('cc-mini case %d/%d aborted', idx + 1, total)
+            logger.exception('Flash case %d/%d aborted', idx + 1, total)
             return _synthesize_failure_result(exc)
 
     def _render_report(
         self, tasks: list[str], run_results: list[Any],
     ) -> str | None:
-        from webqa_agent.utils.cc_mini_utils import render_cc_mini_multi_report
+        from webqa_agent.utils.flash_utils import render_flash_multi_report
+
+        model = str(self._shared_kwargs.get('model') or '')
+        filter_model = str(self._shared_kwargs.get('filter_model') or '')
 
         try:
-            return render_cc_mini_multi_report(
+            return render_flash_multi_report(
                 run_results,
                 report_dir=self._report_dir,
                 url=self._url,
                 tasks=tasks,
                 language=self._language,
+                model=model or None,
+                filter_model=filter_model or None,
             )
         except Exception:
-            logger.exception('cc-mini multi-report rendering failed')
+            logger.exception('Flash multi-report rendering failed')
             return None
 
     def _render_dataflow(self) -> str | None:
@@ -274,7 +279,7 @@ class CcMiniExecutor:
                 group_mode='tool',
             )
         except Exception:
-            logger.exception('cc-mini data-flow report generation failed')
+            logger.exception('Flash data-flow report generation failed')
             return None
 
 
@@ -287,9 +292,8 @@ def _build_stream_handler(
 ):
     """Return an ``on_event`` handler that prefixes lines with ``[case-i/N]``.
 
-    Mirrors the shape of ``cli._make_cc_mini_stream_handler`` but adds a
-    case prefix so concurrent stdout streams stay attributable to a task.
-    For single-task runs the prefix is omitted to preserve the prior
+    Adds a case prefix so concurrent stdout streams stay attributable to a
+    task. For single-task runs the prefix is omitted to preserve the prior
     user-facing format.
 
     When ``log_sink`` is provided, each complete line is also forwarded to it
@@ -398,9 +402,9 @@ def _build_data_flow_sink(
 
 
 def _derive_case_status(run_result: Any) -> str:
-    """Re-derive a status label for one case using cc-mini's shared logic."""
-    # Local import keeps cc-mini sys.path patching out of module load.
-    from webqa_agent.executor.cc_mini_report_adapter import \
+    """Re-derive a status label for one case using Flash's shared logic."""
+    # Local import keeps Flash sys.path patching out of module load.
+    from webqa_agent.executor.flash_report_adapter import \
         _build_case_entry  # noqa: F401
 
     # _build_case_entry already calls derive_status; reuse it instead of

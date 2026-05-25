@@ -130,9 +130,9 @@ def validate_and_build_llm_config(cfg):
 
 
 def _load_cc_mini_runner():
-    """Load ``run_cc_mini`` from the sibling webqa-cc-mini tree on demand."""
-    from webqa_agent.utils.cc_mini_utils import load_cc_mini_runner
-    return load_cc_mini_runner(module_name='webqa_cc_mini_runner')
+    """Load ``run_cc_mini`` (the Flash engine entrypoint) on demand."""
+    from webqa_agent.utils.flash_utils import load_flash_runner
+    return load_flash_runner(module_name='webqa_cc_mini_runner')
 
 
 async def execute_cc_mini_mode(
@@ -223,81 +223,6 @@ async def execute_cc_mini_mode(
 _execute_cc_mini_mode = execute_cc_mini_mode
 
 
-def _render_cc_mini_report(
-    result, *, cfg: dict, url: str, task: str, run_timestamp: str | None = None,
-    report_dir_override: str | None = None,
-) -> str | None:
-    """Thin wrapper that delegates to the shared ``render_cc_mini_report``."""
-    report_dir = report_dir_override or _resolve_cc_mini_report_dir(
-        cfg=cfg, run_timestamp=run_timestamp,
-    )
-    language = (cfg.get('report') or {}).get('language', 'zh-CN')
-
-    from webqa_agent.utils.cc_mini_utils import render_cc_mini_report
-    return render_cc_mini_report(
-        result,
-        report_dir=report_dir,
-        url=url,
-        task=task,
-        language=language,
-    )
-
-
-def _make_cc_mini_stream_handler():
-    """Return an ``on_event`` callback that streams runner progress to stdout.
-
-    Without this handler the user sees only the final ``result.final_text``
-    after the entire run completes, which makes a multi-step web agent feel
-    unresponsive. The handler forwards every engine event the moment it
-    arrives:
-
-    * ``text`` chunks — printed inline, flushed per chunk
-    * ``tool_call`` — one line with the MCP activity description
-    * ``tool_result`` — only errors are surfaced (success is implicit)
-    * ``usage`` — per-call token counts so long runs have visible heartbeat
-    * ``error`` — non-fatal API errors forwarded verbatim
-
-    The handler tracks whether the last printed character was a newline so
-    tool-call markers don't glue onto a half-streamed sentence.
-    """
-    # Mutable flag captured by closure; list form avoids ``nonlocal`` noise.
-    text_open = [False]
-
-    def _close_text() -> None:
-        if text_open[0]:
-            print('', flush=True)
-            text_open[0] = False
-
-    def handle(evt) -> None:
-        kind = evt[0]
-        if kind == 'text':
-            chunk = evt[1]
-            print(chunk, end='', flush=True)
-            text_open[0] = not chunk.endswith('\n')
-        elif kind == 'waiting':
-            _close_text()
-        elif kind == 'tool_call':
-            _close_text()
-            _, name, _tool_input, activity = evt
-            print(f'🔧 {activity or name}', flush=True)
-        elif kind == 'tool_result':
-            _, name, _input, result = evt
-            if result.is_error:
-                content = result.content if isinstance(result.content, str) else str(result.content)
-                snippet = content[:200].replace('\n', ' ')
-                print(f'   ❌ [{name}] {snippet}', flush=True)
-        elif kind == 'usage':
-            u = evt[1]
-            inp = getattr(u, 'input_tokens', 0) or 0
-            out = getattr(u, 'output_tokens', 0) or 0
-            print(f'   📊 {inp}↑ {out}↓', flush=True)
-        elif kind == 'error':
-            _close_text()
-            print(f'⚠️  {evt[1]}', flush=True)
-
-    return handle
-
-
 def _resolve_cc_mini_report_dir(*, cfg: dict, run_timestamp: str | None) -> str:
     report_base_dir = (cfg.get('report') or {}).get('report_dir')
     timestamp = (
@@ -358,7 +283,10 @@ def cmd_init(args):
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(template)
 
-        mode_name = 'Gen Mode' if mode == 'gen' else 'Run Mode'
+        mode_name = (
+            'Gen Mode (Flash engine by default)' if mode == 'gen'
+            else 'Run Mode (Standard engine)'
+        )
         print(f'✅ Configuration file created: {output_path} ({mode_name})')
         print()
         print('📝 Next steps:')
@@ -430,7 +358,11 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
 
     planning_mode = tconf.get('planning_mode', 'explore')
     business_objectives = tconf.get('business_objectives', '')
-    use_cc_mini = bool(tconf.get('use_cc_mini', False))
+    engine = str(cfg.get('engine', 'flash')).strip().lower()
+    if engine not in {'flash', 'standard'}:
+        print(f'❌ Invalid engine: "{engine}". Supported engines are: "flash", "standard"', file=sys.stderr)
+        sys.exit(1)
+    use_flash = (engine == 'flash')
 
     # Validate and build LLM config
     try:
@@ -450,7 +382,7 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
         print(f'\n{e}', file=sys.stderr)
         sys.exit(1)
 
-    if use_cc_mini:
+    if use_flash:
         # Normalize tasks: accept either a single string (legacy) or a list of
         # strings (new — concurrent batch). Whitespace-only entries are dropped
         # so a stray blank line in YAML doesn't waste a worker slot.
@@ -469,7 +401,7 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
             )
             sys.exit(1)
         if not tasks:
-            print('❌ test_config.business_objectives is required when test_config.use_cc_mini=true', file=sys.stderr)
+            print('❌ test_config.business_objectives is required when engine is flash', file=sys.stderr)
             sys.exit(1)
 
         run_timestamp = (
@@ -518,12 +450,12 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
         if len(tasks) == 1:
             max_concurrent = 1
 
-        print('📋 Tests enabled: Gen Mode (cc-mini backend)')
-        print(f'⚙️ cc-mini URL: {target_url}')
-        print(f'📝 cc-mini Tasks: {len(tasks)} (concurrency={max_concurrent})')
+        print('📋 Tests enabled: Gen Mode (Flash engine)')
+        print(f'🌐 Flash URL: {target_url}')
+        print(f'📝 Flash Tasks: {len(tasks)} (concurrency={max_concurrent})')
         for i, t in enumerate(tasks, start=1):
             print(f'   {i}. {t}')
-        print(f'🤖 cc-mini Provider: {provider}')
+        print(f'🤖 Flash LLM Provider: {provider}')
         print('-' * 60, flush=True)
 
         log_level = cfg.get('log', {}).get('level', 'info')
@@ -533,7 +465,7 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
         browser_headless = True if is_docker else bool(
             browser_cfg_raw.get('headless', True),
         )
-        print(f'🌐 cc-mini browser headless: {browser_headless}', flush=True)
+        print(f'🌐 Flash browser headless: {browser_headless}', flush=True)
         _vp = browser_cfg_raw.get('viewport')
         browser_viewport: tuple[int, int] | None = (
             (int(_vp['width']), int(_vp['height'])) if isinstance(_vp, dict) else None
@@ -567,7 +499,7 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
         # cookie state — see CUSTOM_TOOL_DEVELOPMENT.md / cc-mini README.
         cc_mini_extensions: Any = None
         try:
-            from webqa_agent.utils.cc_mini_utils import \
+            from webqa_agent.utils.flash_utils import \
                 build_cookie_extensions_from_config
             cc_mini_extensions = build_cookie_extensions_from_config(
                 cfg, source_file=cfg.get('_source_file'),
@@ -575,9 +507,9 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
             if cc_mini_extensions is not None:
                 acc_count = len(cc_mini_extensions.extra_tools or [])
                 if acc_count:
-                    print(f'🔐 cc-mini accounts: {acc_count} switch_account tool(s) registered')
+                    print(f'🔐 Flash accounts: {acc_count} switch_account tool(s) registered')
                 else:
-                    print('🔐 cc-mini cookies: startup-injection extension active')
+                    print('🔐 Flash cookies: startup-injection extension active')
         except ValueError as exc:
             # Friendly error wrapping for config mistakes — the underlying
             # validator messages are user-readable; surface them without
@@ -595,8 +527,8 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
 
         # Build the executor: shared kwargs go to every task; the executor
         # injects per-task task/worker_id/screenshot_dir/on_event/sink.
-        from webqa_agent.executor import CcMiniExecutor
-        executor = CcMiniExecutor(
+        from webqa_agent.executor import FlashExecutor
+        executor = FlashExecutor(
             shared_kwargs=dict(
                 url=target_url,
                 provider=provider,
@@ -820,6 +752,12 @@ async def execute_run_mode(config_path: str, workers: int = None):
             print(f'📋 Total cases: {len(cases)}')
     except Exception as e:
         print(f'❌ Failed to load configs: {e}', file=sys.stderr)
+        sys.exit(1)
+
+    # Ensure run mode only executes on 'standard' engine
+    engine = str(configs[0].get('engine', 'standard')).strip().lower()
+    if engine != 'standard':
+        print(f'❌ Run Mode is only supported on the "standard" engine, but "engine: {engine}" was configured.', file=sys.stderr)
         sys.exit(1)
 
     # Pre-process cookies for all configs (load from file path if needed)

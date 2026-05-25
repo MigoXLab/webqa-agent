@@ -137,9 +137,9 @@ async def execute_cc_mini_webqa(
 
     A single, unified path for both single-task (``business_objectives`` as
     a string) and multi-task (``business_objectives`` as a list). Both go
-    through ``CcMiniExecutor`` with shared progress hooks; single-task
-    is just the N=1 case of the same code path. ``render_cc_mini_report``
-    itself is a thin wrapper around ``render_cc_mini_multi_report`` so the
+    through ``FlashExecutor`` with shared progress hooks; single-task
+    is just the N=1 case of the same code path. ``render_flash_report``
+    itself is a thin wrapper around ``render_flash_multi_report`` so the
     HTML output is identical to the legacy single-task path.
     """
     llm_cfg = config_data.get('llm_config') or {}
@@ -168,16 +168,16 @@ async def execute_cc_mini_webqa(
     save_dataflow = bool(report_cfg.get('save_dataflow', True))
     language = str(report_cfg.get('language') or 'zh-CN')
 
-    # Setup data flow recording (CcMiniExecutor's per-task sinks rely on
+    # Setup data flow recording (FlashExecutor's per-task sinks rely on
     # this global flag — see data_flow_reporter.record_data_flow_event_object).
     from webqa_agent.utils.data_flow_reporter import set_dataflow_enabled
     set_dataflow_enabled(bool(save_dataflow and report_dir_override))
 
-    # Build cookie extensions (passed through CcMiniExecutor's shared_kwargs
+    # Build cookie extensions (passed through FlashExecutor's shared_kwargs
     # → cli.execute_cc_mini_mode → run_cc_mini).
     extensions = None
     try:
-        from webqa_agent.utils.cc_mini_utils import \
+        from webqa_agent.utils.flash_utils import \
             build_cookie_extensions_from_config
         extensions = build_cookie_extensions_from_config(
             config_data,
@@ -195,7 +195,7 @@ async def execute_cc_mini_webqa(
     max_concurrent = int(config_data.get('max_concurrent_tests') or len(tasks))
 
     from webqa_agent.cli import execute_cc_mini_mode
-    from webqa_agent.executor import CcMiniExecutor
+    from webqa_agent.executor import FlashExecutor
 
     filter_model_raw = llm_cfg.get('filter_model')
     filter_model = (
@@ -232,7 +232,7 @@ async def execute_cc_mini_webqa(
 
     log_sink, tracker_factory = _make_cc_mini_progress_hooks()
 
-    executor = CcMiniExecutor(
+    executor = FlashExecutor(
         shared_kwargs=shared_kwargs,
         max_concurrent=max_concurrent,
         report_dir=report_dir_override or '.',
@@ -285,9 +285,15 @@ async def execute_gen_webqa(config_path: str, report_dir_override: str = None):
                 config_data['report_config'] = {}
             config_data['report_config']['report_dir'] = report_dir_override
 
-        runner_source = str(config_data.get('runner_source') or 'standard').lower()
+        runner_source = str(config_data.get('runner_source') or '').lower()
         if runner_source in ('mini', 'cc-mini', 'cc_mini'):
-            print(f'[Gen] Runner source: {runner_source} -> cc-mini agent')
+            use_flash = True
+        else:
+            engine = str(config_data.get('engine', 'flash')).strip().lower()
+            use_flash = (engine == 'flash')
+
+        if use_flash:
+            print('[Gen] Running on Flash engine')
             return await execute_cc_mini_webqa(
                 config_data,
                 report_dir_override=report_dir_override,

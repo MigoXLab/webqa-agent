@@ -1,6 +1,6 @@
-"""Shared utilities for loading and rendering cc-mini runs.
+"""Shared utilities for loading and rendering Flash engine runs.
 
-Centralises ``load_cc_mini_runner`` and ``render_cc_mini_report`` so both
+Centralises ``load_flash_runner`` and ``render_flash_report`` so both
 ``webqa_agent.cli`` and ``backend.gen_webqa`` use a single implementation.
 """
 from __future__ import annotations
@@ -111,7 +111,7 @@ def build_cookie_extensions_from_config(
         # legacy config shape). Treat as a single anonymous default — and
         # tell them to migrate so this branch can be removed eventually.
         log.warning(
-            'browser_config.cookies is deprecated for cc-mini mode; '
+            'browser_config.cookies is deprecated for Flash mode; '
             'migrate to accounts: [{name: ..., cookies_file: ...}] '
             'in your config. The legacy field will be wrapped as a '
             'fallback identity for this run.'
@@ -129,12 +129,12 @@ def build_cookie_extensions_from_config(
         raise ValueError(f'Cookie configuration rejected: {exc}') from exc
 
 
-def load_cc_mini_runner(
+def load_flash_runner(
     *,
     project_root: Path | None = None,
     module_name: str = 'webqa_cc_mini_runner',
 ) -> Callable[..., Any]:
-    """Load ``run_cc_mini`` from the mini package.
+    """Load ``run_cc_mini`` (the Flash engine entrypoint).
 
     Backward-compatible signature: ``project_root`` and ``module_name``
     are accepted but ignored — the package is now importable directly.
@@ -146,42 +146,48 @@ def load_cc_mini_runner(
     return run_cc_mini
 
 
-def render_cc_mini_report(
+def render_flash_report(
     run_result: Any,
     *,
     report_dir: str,
     url: str,
     task: str,
     language: str = 'zh-CN',
+    model: str | None = None,
+    filter_model: str | None = None,
 ) -> Optional[str]:
-    """Render an HTML report for a single cc-mini ``RunResult``.
+    """Render an HTML report for a single Flash ``RunResult``.
 
-    Thin wrapper around :func:`render_cc_mini_multi_report` for
+    Thin wrapper around :func:`render_flash_multi_report` for
     backward compatibility with callers that only have one run.
     """
-    return render_cc_mini_multi_report(
+    return render_flash_multi_report(
         [run_result],
         report_dir=report_dir,
         url=url,
         tasks=[task],
         language=language,
+        model=model,
+        filter_model=filter_model,
     )
 
 
-def render_cc_mini_multi_report(
+def render_flash_multi_report(
     run_results: list[Any],
     *,
     report_dir: str,
     url: str,
     tasks: list[str],
     language: str = 'zh-CN',
+    model: str | None = None,
+    filter_model: str | None = None,
 ) -> Optional[str]:
-    """Render a single HTML report from N cc-mini ``RunResult`` objects.
+    """Render a single HTML report from N Flash ``RunResult`` objects.
 
     Preferred path uses the gen-mode React frontend via the multi-case
     adapter + ``ResultAggregator``.  Falls back to the standalone
-    ``webqa-cc-mini/features/report.py`` for the FIRST run only when
-    the gen-mode path fails (the fallback can't render multi-case).
+    ``webqa_agent/executor/flash/features/report.py`` for the FIRST run
+    only when the gen-mode path fails (the fallback can't render multi-case).
 
     Returns the absolute report path on success, ``None`` on failure.
     """
@@ -197,7 +203,7 @@ def render_cc_mini_multi_report(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        from webqa_agent.executor.cc_mini_report_adapter import (
+        from webqa_agent.executor.flash_report_adapter import (
             run_result_to_session, run_results_to_aggregated_data)
         from webqa_agent.executor.result_aggregator import ResultAggregator
 
@@ -216,6 +222,8 @@ def render_cc_mini_multi_report(
             url=url,
             tasks=tasks,
             language=language,
+            model=model,
+            filter_model=filter_model,
         )
         aggregator = ResultAggregator(report_config={
             'language': language,
@@ -239,7 +247,7 @@ def render_cc_mini_multi_report(
         html_path = render_html_report(
             run_results[0],
             out_dir / 'report.html',
-            title=f'WebQA cc-mini — {url}',
+            title=f'WebQA Flash — {url}',
             url=url,
             task=tasks[0],
         )
