@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "webqa-agent"
-version = "0.3.0.1"
+version = "0.3.2"
 description = "WebQA Agent is an autonomous web browser agent that audits performance, functionality & UX for engineers and vibe-coding creators."
 readme = "README.md"
 requires-python = ">=3.11"
