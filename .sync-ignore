@@ -10,10 +10,10 @@ backend/app/services/feishu_notify.py
 
 # --- 内部部署配置（阿里云特化 K8s） ---
 k8s/
-Dockerfile.k8s
+webqa_agent/Dockerfile.k8s
 backend/Dockerfile.k8s
 frontend/Dockerfile.k8s
-Dockerfile.zadig
+webqa_agent/Dockerfile.zadig
 backend/Dockerfile.zadig
 frontend/Dockerfile.zadig
 
@@ -24,4 +24,4 @@ frontend/Dockerfile.zadig
 # --- 内部文档 ---
 docs/design
 docs/superpowers
-vebdor/
+vendor/
