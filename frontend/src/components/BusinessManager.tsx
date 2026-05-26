@@ -1,7 +1,46 @@
 import { Plus, FolderOpen, Settings, Loader2, ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
-import { Business, Environment } from '../App';
+import { Business, Environment, AccountEntry } from '../App';
 import React, { useState, useEffect } from 'react';
 import { apiClient } from '../api/client';
+
+/** Cookies JSON textarea with local string state to avoid controlled-input revert bug. */
+function CookiesTextarea({ cookies, onChange }: { cookies: any[]; onChange: (cookies: any[]) => void }) {
+  const serialized = JSON.stringify(cookies || [], null, 2);
+  const [raw, setRaw] = useState(serialized);
+  const [error, setError] = useState(false);
+  const lastCommitted = React.useRef(serialized);
+
+  // Sync only when cookies change externally (not from our own onChange)
+  if (serialized !== lastCommitted.current) {
+    lastCommitted.current = serialized;
+    setRaw(serialized);
+    setError(false);
+  }
+
+  return (
+    <>
+      <textarea
+        value={raw}
+        onChange={(e) => {
+          setRaw(e.target.value);
+          try {
+            const parsed = JSON.parse(e.target.value);
+            const newSerialized = JSON.stringify(parsed, null, 2);
+            lastCommitted.current = newSerialized;
+            onChange(parsed);
+            setError(false);
+          } catch {
+            setError(true);
+          }
+        }}
+        className={`w-full px-2 py-1.5 border rounded text-sm font-mono bg-white ${error ? 'border-red-400' : ''}`}
+        rows={1}
+        placeholder='[{"name": "session", "value": "..."}]'
+      />
+      {error && <p className="text-xs text-red-500 mt-0.5">JSON 格式不正确</p>}
+    </>
+  );
+}
 
 type Props = {
   businesses: Business[];
@@ -17,8 +56,18 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
   const [editingBusiness, setEditingBusiness] = useState<Business | null>(
     initialEditId ? businesses.find(b => b.id === initialEditId) || null : null
   );
-  // Track which env sections are collapsed (default: all expanded)
-  const [collapsedEnvSections, setCollapsedEnvSections] = useState<Record<string, Record<string, boolean>>>({});
+  // Track which env sections are collapsed; auto-expand auth when already configured
+  const [collapsedEnvSections, setCollapsedEnvSections] = useState<Record<string, Record<string, boolean>>>(() => {
+    const initial: Record<string, Record<string, boolean>> = {};
+    for (const env of editingBusiness?.environments ?? []) {
+      if (env.auth_type && env.auth_type !== 'none') {
+        initial[env.id] = { auth: false };
+      }
+    }
+    return initial;
+  });
+  // Cache accounts per env per auth_type so switching doesn't lose data
+  const accountsCacheRef = React.useRef<Record<string, { sso?: AccountEntry[]; cookies?: AccountEntry[] }>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -66,42 +115,90 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+
+    // Validate accounts before submit
+    for (const env of formData.environments) {
+      if ((env.auth_type === 'cookies' || env.auth_type === 'sso') && env.accounts && env.accounts.length > 0) {
+        for (const acc of env.accounts) {
+          if (!acc.name.trim()) {
+            setError(`环境「${env.name}」中存在未命名的账户，请填写账户名称`);
+            return;
+          }
+          if (env.auth_type === 'cookies' && (!acc.cookies || acc.cookies.length === 0)) {
+            setError(`环境「${env.name}」中账户「${acc.name}」的 Cookies 为空`);
+            return;
+          }
+          if (env.auth_type === 'sso' && (!acc.sso_username || (!acc.sso_password && !acc.has_password))) {
+            setError(`环境「${env.name}」中 SSO 账户「${acc.name}」缺少用户名或密码`);
+            return;
+          }
+        }
+        const names = env.accounts.map(a => a.name.trim());
+        const duplicates = names.filter((n, i) => names.indexOf(n) !== i);
+        if (duplicates.length > 0) {
+          setError(`环境「${env.name}」中存在重复的账户名称「${duplicates[0]}」`);
+          return;
+        }
+      }
+    }
+
     setSaving(true);
 
     try {
+      const envPayload = (env: Environment) => ({
+        id: env.id,
+        name: env.name,
+        url: env.url,
+        auth_type: env.auth_type || 'none',
+        sso_username: env.sso_username,
+        sso_password: env.sso_password,
+        sso_env: env.sso_env || 'prod',
+        cookies: env.cookies,
+        accounts: env.accounts?.map(({ name, role, is_default, sso_username, sso_password, sso_env, cookies }) => ({
+          name, role, is_default,
+          ...(env.auth_type === 'sso'
+            ? { sso_username, sso_password, sso_env }
+            : { cookies }),
+        })),
+        browser_config: env.browser_config,
+        ignore_rules: env.ignore_rules,
+      });
+
+      let savedBusiness: any;
       if (editingBusiness) {
-        // Update existing business
-        await apiClient.updateBusiness(editingBusiness.id, {
+        savedBusiness = await apiClient.updateBusiness(editingBusiness.id, {
           name: formData.name,
-          environments: formData.environments.map(env => ({
-            id: env.id,
-            name: env.name,
-            url: env.url,
-            auth_type: env.auth_type || 'none',
-            sso_username: env.sso_username,
-            sso_password: env.sso_password,
-            sso_env: env.sso_env || 'prod',
-            cookies: env.cookies,
-            browser_config: env.browser_config,
-            ignore_rules: env.ignore_rules,
-          })),
+          environments: formData.environments.map(envPayload),
         });
       } else {
-        // Create new business
-        await apiClient.createBusiness({
+        savedBusiness = await apiClient.createBusiness({
           name: formData.name,
-          environments: formData.environments.map(env => ({
-            name: env.name,
-            url: env.url,
-            auth_type: env.auth_type || 'none',
-            sso_username: env.sso_username,
-            sso_password: env.sso_password,
-            sso_env: env.sso_env || 'prod',
-            cookies: env.cookies,
-            browser_config: env.browser_config,
-            ignore_rules: env.ignore_rules,
-          })),
+          environments: formData.environments.map(env => ({ ...envPayload(env), id: undefined })),
         });
+      }
+
+      // Sync formData accounts from server response (has_password etc.)
+      if (savedBusiness?.environments) {
+        setFormData(prev => ({
+          ...prev,
+          environments: prev.environments.map(prevEnv => {
+            const serverEnv = (savedBusiness.environments as any[]).find((e: any) => e.id === prevEnv.id);
+            if (!serverEnv?.accounts?.length) return prevEnv;
+            return {
+              ...prevEnv,
+              accounts: serverEnv.accounts.map((acc: any) => ({
+                id: crypto.randomUUID(),
+                name: acc.name || '',
+                role: acc.role ?? undefined,
+                is_default: acc.is_default ?? false,
+                sso_username: acc.sso_username,
+                sso_env: acc.sso_env,
+                has_password: acc.has_password ?? false,
+                cookies: acc.cookies || [],
+              })),
+            };
+          }),
+        }));
       }
 
       // Trigger parent to reload
@@ -318,7 +415,16 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
                                   type="radio"
                                   name={`auth-${env.id}`}
                                   checked={env.auth_type === 'none' || !env.auth_type}
-                                  onChange={() => updateEnvironment(index, { auth_type: 'none' })}
+                                  onChange={() => {
+                                    delete accountsCacheRef.current[env.id];
+                                    updateEnvironment(index, {
+                                      auth_type: 'none',
+                                      accounts: undefined,
+                                      cookies: undefined,
+                                      sso_username: undefined,
+                                      sso_password: undefined,
+                                    });
+                                  }}
                                 />
                                 无
                               </label>
@@ -327,7 +433,29 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
                                   type="radio"
                                   name={`auth-${env.id}`}
                                   checked={env.auth_type === 'sso'}
-                                  onChange={() => updateEnvironment(index, { auth_type: 'sso' })}
+                                  onChange={() => {
+                                    // Save current accounts to cache before switching
+                                    if (env.auth_type && env.auth_type !== 'none' && env.accounts?.length) {
+                                      if (!accountsCacheRef.current[env.id]) accountsCacheRef.current[env.id] = {};
+                                      accountsCacheRef.current[env.id][env.auth_type as 'sso' | 'cookies'] = env.accounts;
+                                    }
+                                    const updates: Partial<Environment> = { auth_type: 'sso' };
+                                    // Restore from cache, or initialize new
+                                    const cached = accountsCacheRef.current[env.id]?.sso;
+                                    if (cached && cached.length > 0) {
+                                      updates.accounts = cached;
+                                    } else {
+                                      updates.accounts = [{
+                                        id: crypto.randomUUID(),
+                                        name: '',
+                                        is_default: true,
+                                        sso_username: '',
+                                        sso_password: '',
+                                        sso_env: 'prod',
+                                      }];
+                                    }
+                                    updateEnvironment(index, updates);
+                                  }}
                                 />
                                 SSO
                               </label>
@@ -336,92 +464,250 @@ export function BusinessManager({ businesses, setBusinesses, onSelectBusiness, i
                                   type="radio"
                                   name={`auth-${env.id}`}
                                   checked={env.auth_type === 'cookies'}
-                                  onChange={() => updateEnvironment(index, { auth_type: 'cookies' })}
+                                  onChange={() => {
+                                    // Save current accounts to cache before switching
+                                    if (env.auth_type && env.auth_type !== 'none' && env.accounts?.length) {
+                                      if (!accountsCacheRef.current[env.id]) accountsCacheRef.current[env.id] = {};
+                                      accountsCacheRef.current[env.id][env.auth_type as 'sso' | 'cookies'] = env.accounts;
+                                    }
+                                    const updates: Partial<Environment> = { auth_type: 'cookies' };
+                                    // Restore from cache, or initialize new
+                                    const cached = accountsCacheRef.current[env.id]?.cookies;
+                                    if (cached && cached.length > 0) {
+                                      updates.accounts = cached;
+                                    } else {
+                                      updates.accounts = [{ id: crypto.randomUUID(), name: '', is_default: true, cookies: [] }];
+                                    }
+                                    updateEnvironment(index, updates);
+                                  }}
                                 />
                                 Cookies
                               </label>
                             </div>
 
                             {env.auth_type === 'sso' && (
-                              <div className="bg-blue-50 p-3 rounded-lg space-y-3">
-                                <div className="grid grid-cols-2 gap-3">
-                                  <div>
-                                    <label className="block text-xs text-gray-500 mb-1">SSO 用户名</label>
-                                    <input
-                                      type="text"
-                                      value={env.sso_username || ''}
-                                      onChange={(e) => updateEnvironment(index, { sso_username: e.target.value })}
-                                      className="w-full px-2 py-1.5 border rounded text-sm bg-white"
-                                    />
+                              <div className="space-y-3">
+                                {(env.accounts || []).map((account, accIdx) => (
+                                  <div key={account.id} className="bg-blue-50 p-3 rounded-lg space-y-3">
+                                    <div className="flex items-start gap-2">
+                                      <label className="flex-shrink-0 flex flex-col items-center cursor-pointer">
+                                        <span className="block text-xs text-gray-500 mb-1">默认</span>
+                                        <div className="flex items-center h-[34px]">
+                                          <input
+                                            type="radio"
+                                            name={`default_account_${env.id}`}
+                                            checked={account.is_default}
+                                            onChange={() => {
+                                              const newAccounts = (env.accounts || []).map((a, i) => ({
+                                                ...a,
+                                                is_default: i === accIdx,
+                                              }));
+                                              updateEnvironment(index, { accounts: newAccounts });
+                                            }}
+                                            className="text-blue-600"
+                                          />
+                                        </div>
+                                      </label>
+                                      <div className="flex-1 min-w-0">
+                                        <label className="block text-xs text-gray-500 mb-1">账户名称</label>
+                                        <input
+                                          type="text"
+                                          value={account.name}
+                                          onChange={(e) => {
+                                            const newAccounts = [...(env.accounts || [])];
+                                            newAccounts[accIdx] = { ...newAccounts[accIdx], name: e.target.value };
+                                            updateEnvironment(index, { accounts: newAccounts });
+                                          }}
+                                          className="w-full px-2 py-1.5 border rounded text-sm bg-white"
+                                          placeholder="例如：管理员"
+                                        />
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <label className="block text-xs text-gray-500 mb-1">SSO 用户名</label>
+                                        <input
+                                          type="text"
+                                          value={account.sso_username || ''}
+                                          autoComplete="off"
+                                          data-lpignore="true"
+                                          data-form-type="other"
+                                          onChange={(e) => {
+                                            const newAccounts = [...(env.accounts || [])];
+                                            newAccounts[accIdx] = { ...newAccounts[accIdx], sso_username: e.target.value };
+                                            updateEnvironment(index, { accounts: newAccounts });
+                                          }}
+                                          className="w-full px-2 py-1.5 border rounded text-sm bg-white"
+                                        />
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <label className="block text-xs text-gray-500 mb-1">SSO 密码</label>
+                                        <input
+                                          type={account.has_password && !account.sso_password ? 'text' : 'password'}
+                                          value={account.sso_password || ''}
+                                          autoComplete="new-password"
+                                          data-lpignore="true"
+                                          data-form-type="other"
+                                          readOnly={account.has_password && !account.sso_password}
+                                          placeholder={account.has_password && !account.sso_password ? '(密码已保存，点击修改)' : ''}
+                                          onFocus={(e) => {
+                                            if (account.has_password && !account.sso_password) {
+                                              // Switch to editable password mode on focus
+                                              const newAccounts = [...(env.accounts || [])];
+                                              newAccounts[accIdx] = { ...newAccounts[accIdx], sso_password: '', has_password: false };
+                                              updateEnvironment(index, { accounts: newAccounts });
+                                              // Re-focus after state update
+                                              setTimeout(() => e.target.focus(), 0);
+                                            }
+                                          }}
+                                          onChange={(e) => {
+                                            const newAccounts = [...(env.accounts || [])];
+                                            newAccounts[accIdx] = { ...newAccounts[accIdx], sso_password: e.target.value, has_password: false };
+                                            updateEnvironment(index, { accounts: newAccounts });
+                                          }}
+                                          className={`w-full px-2 py-1.5 border rounded text-sm bg-white ${account.has_password && !account.sso_password ? 'text-gray-400 cursor-pointer' : ''}`}
+                                        />
+                                      </div>
+                                      {(env.accounts || []).length > 1 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            let newAccounts = (env.accounts || []).filter((_, i) => i !== accIdx);
+                                            if (account.is_default && newAccounts.length > 0) {
+                                              newAccounts[0] = { ...newAccounts[0], is_default: true };
+                                            }
+                                            updateEnvironment(index, { accounts: newAccounts });
+                                          }}
+                                          className="p-1.5 mb-0.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
+                                          title="删除账户"
+                                        >
+                                          <Trash2 className="w-4 h-4" />
+                                        </button>
+                                      )}
+                                    </div>
+                                    <div>
+                                      <label className="block text-xs text-gray-500 mb-1">SSO 环境</label>
+                                      <div className="flex gap-4">
+                                        {(['prod', 'staging', 'dev'] as const).map(envVal => (
+                                          <label key={envVal} className="flex items-center gap-2 cursor-pointer">
+                                            <input
+                                              type="radio"
+                                              name={`sso_env_${index}_${accIdx}`}
+                                              value={envVal}
+                                              checked={(account.sso_env || 'prod') === envVal}
+                                              onChange={(e) => {
+                                                const newAccounts = [...(env.accounts || [])];
+                                                newAccounts[accIdx] = { ...newAccounts[accIdx], sso_env: e.target.value as 'prod' | 'staging' | 'dev' };
+                                                updateEnvironment(index, { accounts: newAccounts });
+                                              }}
+                                              className="text-blue-600"
+                                            />
+                                            <span className="text-sm text-gray-700">
+                                              {envVal === 'prod' ? '生产环境' : envVal === 'staging' ? '测试环境' : '开发环境'} ({envVal})
+                                            </span>
+                                          </label>
+                                        ))}
+                                      </div>
+                                    </div>
                                   </div>
-                                  <div>
-                                    <label className="block text-xs text-gray-500 mb-1">SSO 密码</label>
-                                    <input
-                                      type="password"
-                                      value={env.sso_password || ''}
-                                      onChange={(e) => updateEnvironment(index, { sso_password: e.target.value })}
-                                      className="w-full px-2 py-1.5 border rounded text-sm bg-white"
-                                    />
-                                  </div>
-                                </div>
-                                <div>
-                                  <label className="block text-xs text-gray-500 mb-1">SSO 环境</label>
-                                  <div className="flex gap-4">
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                      <input
-                                        type="radio"
-                                        name={`sso_env_${index}`}
-                                        value="prod"
-                                        checked={(env.sso_env || 'prod') === 'prod'}
-                                        onChange={(e) => updateEnvironment(index, { sso_env: e.target.value as 'prod' | 'staging' | 'dev' })}
-                                        className="text-blue-600"
-                                      />
-                                      <span className="text-sm text-gray-700">生产环境 (prod)</span>
-                                    </label>
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                      <input
-                                        type="radio"
-                                        name={`sso_env_${index}`}
-                                        value="staging"
-                                        checked={env.sso_env === 'staging'}
-                                        onChange={(e) => updateEnvironment(index, { sso_env: e.target.value as 'prod' | 'staging' | 'dev' })}
-                                        className="text-blue-600"
-                                      />
-                                      <span className="text-sm text-gray-700">测试环境 (staging)</span>
-                                    </label>
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                      <input
-                                        type="radio"
-                                        name={`sso_env_${index}`}
-                                        value="dev"
-                                        checked={env.sso_env === 'dev'}
-                                        onChange={(e) => updateEnvironment(index, { sso_env: e.target.value as 'prod' | 'staging' | 'dev' })}
-                                        className="text-blue-600"
-                                      />
-                                      <span className="text-sm text-gray-700">开发环境 (dev)</span>
-                                    </label>
-                                  </div>
-                                </div>
+                                ))}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const hasDefault = (env.accounts || []).some(a => a.is_default);
+                                    const newAccounts = [...(env.accounts || []), {
+                                      id: crypto.randomUUID(),
+                                      name: '',
+                                      is_default: !hasDefault,
+                                      sso_username: '',
+                                      sso_password: '',
+                                      sso_env: 'prod' as const,
+                                    }];
+                                    updateEnvironment(index, { accounts: newAccounts });
+                                  }}
+                                  className="text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50 px-2 py-1 rounded-md font-medium transition-colors"
+                                >
+                                  + 添加 SSO 账户
+                                </button>
                               </div>
                             )}
 
                             {env.auth_type === 'cookies' && (
-                              <div className="bg-blue-50 p-3 rounded-lg">
-                                <label className="block text-xs text-gray-500 mb-1">Cookies (JSON 格式)</label>
-                                <textarea
-                                  value={JSON.stringify(env.cookies || [], null, 2)}
-                                  onChange={(e) => {
-                                    try {
-                                      const cookies = JSON.parse(e.target.value);
-                                      updateEnvironment(index, { cookies });
-                                    } catch (err) {
-                                      // ignore invalid json while typing
-                                    }
+                              <div className="space-y-3">
+                                {(env.accounts || []).map((account, accIdx) => (
+                                  <div key={account.id} className="bg-blue-50 p-3 rounded-lg">
+                                    <div className="flex items-start gap-2">
+                                      <div className="flex-shrink-0">
+                                        <label className="block text-xs text-gray-500 mb-1 text-center">默认</label>
+                                        <label className="flex items-center justify-center px-2 py-[7px] cursor-pointer">
+                                          <input
+                                            type="radio"
+                                            name={`default_account_${env.id}`}
+                                            checked={account.is_default}
+                                            onChange={() => {
+                                              const newAccounts = (env.accounts || []).map((a, i) => ({
+                                                ...a,
+                                                is_default: i === accIdx,
+                                              }));
+                                              updateEnvironment(index, { accounts: newAccounts });
+                                            }}
+                                            className="w-4 h-4 text-blue-600"
+                                          />
+                                        </label>
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <label className="block text-xs text-gray-500 mb-1">账户名称</label>
+                                        <input
+                                          type="text"
+                                          value={account.name}
+                                          onChange={(e) => {
+                                            const newAccounts = [...(env.accounts || [])];
+                                            newAccounts[accIdx] = { ...newAccounts[accIdx], name: e.target.value };
+                                            updateEnvironment(index, { accounts: newAccounts });
+                                          }}
+                                          className="w-full px-2 py-1.5 border rounded text-sm bg-white"
+                                          placeholder="例如：admin"
+                                        />
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <label className="block text-xs text-gray-500 mb-1">Cookies (JSON 格式)</label>
+                                        <CookiesTextarea
+                                          cookies={account.cookies || []}
+                                          onChange={(cookies) => {
+                                            const newAccounts = [...(env.accounts || [])];
+                                            newAccounts[accIdx] = { ...newAccounts[accIdx], cookies };
+                                            updateEnvironment(index, { accounts: newAccounts });
+                                          }}
+                                        />
+                                      </div>
+                                      {(env.accounts || []).length > 1 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            let newAccounts = (env.accounts || []).filter((_, i) => i !== accIdx);
+                                            if (account.is_default && newAccounts.length > 0) {
+                                              newAccounts[0] = { ...newAccounts[0], is_default: true };
+                                            }
+                                            updateEnvironment(index, { accounts: newAccounts });
+                                          }}
+                                          className="p-1.5 mb-0.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
+                                          title="删除账户"
+                                        >
+                                          <Trash2 className="w-4 h-4" />
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                ))}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const hasDefault = (env.accounts || []).some(a => a.is_default);
+                                    const newAccounts = [...(env.accounts || []), { id: crypto.randomUUID(), name: '', is_default: !hasDefault, cookies: [] }];
+                                    updateEnvironment(index, { accounts: newAccounts });
                                   }}
-                                  className="w-full px-2 py-1.5 border rounded text-sm font-mono bg-white"
-                                  rows={3}
-                                  placeholder='[{"name": "session", "value": "..."}]'
-                                />
+                                  className="text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50 px-2 py-1 rounded-md font-medium transition-colors"
+                                >
+                                  + 添加 Cookies 账户
+                                </button>
                               </div>
                             )}
                           </div>

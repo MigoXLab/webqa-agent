@@ -459,8 +459,8 @@ class LLMPrompt:
         ```
         Note: Use `Scroll` for element-based navigation, use `Mouse` wheel for precise distance/horizontal scrolling.
 
-        #### Example 4: 上传文件'example.pdf',等待10s
-        "Upload a file and then wait"
+        #### Example 4: Upload file 'example.pdf' and wait
+        "Upload a file directly to the file input element (no prior click needed)"
         ```json
         {
           "actions": [
@@ -469,14 +469,14 @@ class LLMPrompt:
                 "id": "41"
               },
               "param": null,
-              "thought": "Tap on the area that allows file uploads, as it's currently visible and interactive.",
+              "thought": "Upload file directly to the file input element (id 41). The Upload action automatically handles file chooser interaction without needing a prior click.",
               "type": "Upload"
             },
             {
               "param": {
-                "timeMs": 10000
+                "timeMs": 2000
               },
-              "thought": "Wait for 10 seconds to allow the upload to complete.",
+              "thought": "Wait briefly for the upload to complete and the page to process the file.",
               "type": "Sleep"
             }
           ]

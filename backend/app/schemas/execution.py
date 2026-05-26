@@ -16,7 +16,8 @@ class ExecutionCreate(BaseModel):
     test_case_ids: Optional[List[UUID]] = Field(default=None)
     model: str = settings.LLM_DEFAULT_MODEL
     workers: int = Field(default=settings.DEFAULT_WORKERS, ge=1)
-    trigger_type: str = Field(default='manual', pattern='^(manual|debug|gen)$')
+    resolutions: Optional[List[str]] = None
+    trigger_type: str = Field(default='manual', pattern='^(manual|debug|gen|mcp_quick)$')
     # Debug mode: frontend passes case data directly; not persisted to DB
     # Format: {case_id_str: {login_required: bool, name: str, steps: [...], ...}}
     case_data: Optional[Dict[str, Any]] = None
@@ -45,6 +46,13 @@ class ExecutionCreate(BaseModel):
         elif trigger_type == 'gen':
             if not gen_config:
                 raise ValueError('gen mode requires gen_config')
+        elif trigger_type == 'mcp_quick':
+            if not gen_config:
+                raise ValueError('mcp_quick mode requires gen_config')
+            if not gen_config.get('url'):
+                raise ValueError('mcp_quick mode requires url in gen_config')
+            if not gen_config.get('task'):
+                raise ValueError('mcp_quick mode requires task in gen_config')
 
         return self
 
@@ -60,6 +68,7 @@ class ExecutionResponse(BaseModel):
     scheduled_task_id: Optional[UUID] = None
     model: str
     workers: int
+    resolutions: Optional[List[str]] = None
     test_case_ids: List[str]
     status: str
     oss_report_url: Optional[str] = None

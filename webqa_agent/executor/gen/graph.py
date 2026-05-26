@@ -26,6 +26,10 @@ from webqa_agent.executor.gen.utils.error_classifier import is_system_error
 from webqa_agent.executor.gen.utils.summary_utils import (i18n_select,
                                                           make_user_summary)
 from webqa_agent.llm.llm_api import get_last_llm_call_metrics
+from webqa_agent.prompts.focused_planning_prompts import (
+    get_focused_element_filtering_system_prompt,
+    get_focused_element_filtering_user_prompt, get_focused_planning_prompt,
+    get_focused_reflection_prompt)
 from webqa_agent.prompts.test_planning_prompts import (
     get_element_filtering_system_prompt, get_element_filtering_user_prompt,
     get_planning_prompt, get_reflection_prompt)
@@ -132,6 +136,7 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
     business_objectives = state.get(
         'business_objectives', 'No specific business objectives provided.'
     )
+    planning_mode = state.get('planning_mode', 'explore')
     language = state.get('language', 'zh-CN')
     report_dir = _resolve_report_dir(state)
 
@@ -225,13 +230,22 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
 
         # === Stage 1: LLM-Driven Element Filtering ===
         logging.info('Stage 1: LLM-driven element filtering...')
-        filter_system = get_element_filtering_system_prompt(language)
-        filter_user = get_element_filtering_user_prompt(
-            url=state['url'],
-            business_objectives=business_objectives,
-            elements=filtered_elements_for_llm,
-            max_elements=50,
-        )
+        if planning_mode == 'focused':
+            filter_system = get_focused_element_filtering_system_prompt(language)
+            filter_user = get_focused_element_filtering_user_prompt(
+                url=state['url'],
+                focused_objective=business_objectives,
+                elements=filtered_elements_for_llm,
+                max_elements=30,
+            )
+        else:
+            filter_system = get_element_filtering_system_prompt(language)
+            filter_user = get_element_filtering_user_prompt(
+                url=state['url'],
+                business_objectives=business_objectives,
+                elements=filtered_elements_for_llm,
+                max_elements=50,
+            )
         record_data_flow_event(
             stage='planning',
             event_type='stage1_filter_request',
@@ -370,16 +384,32 @@ async def plan_test_cases(state: MainGraphState) -> Dict[str, List[Dict[str, Any
         logging.info('Stage 2: Test case planning with enhanced context...')
         # Get enabled custom tools from state for prompt filtering
         enabled_custom_tools = state.get('enabled_custom_tools')
-        system_prompt, user_prompt = get_planning_prompt(
-            business_objectives=enhanced_business_objectives,
-            state_url=state['url'],
-            language=language,
-            page_text_summary=page_text_info,
-            priority_elements=priority_elements,
-            all_page_links=all_page_links,
-            navigation_map=navigation_map,
-            enabled_custom_tools=enabled_custom_tools,
-        )
+        _lib = state.get('test_file_library')
+
+        if planning_mode == 'focused':
+            system_prompt, user_prompt = get_focused_planning_prompt(
+                focused_objective=enhanced_business_objectives,
+                state_url=state['url'],
+                language=language,
+                page_text_summary=page_text_info,
+                priority_elements=priority_elements,
+                all_page_links=all_page_links,
+                navigation_map=navigation_map,
+                enabled_custom_tools=enabled_custom_tools,
+                file_catalog=_lib.get_catalog_for_llm() if _lib else '',
+            )
+        else:
+            system_prompt, user_prompt = get_planning_prompt(
+                business_objectives=enhanced_business_objectives,
+                state_url=state['url'],
+                language=language,
+                page_text_summary=page_text_info,
+                priority_elements=priority_elements,
+                all_page_links=all_page_links,
+                navigation_map=navigation_map,
+                enabled_custom_tools=enabled_custom_tools,
+                file_catalog=_lib.get_catalog_for_llm() if _lib else '',
+            )
         record_data_flow_event(
             stage='planning',
             event_type='stage2_case_planning_request',
@@ -523,9 +553,8 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
 
     sp = state['session_pool']
     pool_size = sp.pool_size
-    max_replan_count = state.get(
-        'max_replan_count', 3
-    )  # 限制最大 replan 次数，防止无限循环
+    planning_mode = state.get('planning_mode', 'explore')
+    max_replan_count = state.get('max_replan_count', 3)
 
     logging.info(
         f'Starting worker pool with {pool_size} workers for {len(test_cases)} cases'
@@ -602,7 +631,6 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                     language=state.get('language', 'zh-CN'),
                 )
                 await ui_tester.initialize()
-
                 # P0 Fix: Initialize URLValidator to prevent LLM URL hallucinations in worker execution
                 if state.get('url'):
                     ui_tester._actions.set_url_validator(state['url'])
@@ -630,7 +658,8 @@ async def run_test_cases(state: MainGraphState) -> Dict[str, Any]:
                     logging.debug(f"Worker {worker_id}: Executing '{case_name}'")
 
                     # Execute test case via agent worker
-                    case_timeout = 1800.0
+                    # Focused mode allows longer timeout for deep E2E journeys
+                    case_timeout = 3600.0 if planning_mode == 'focused' else 1800.0
                     case_timeout_minutes = int(case_timeout / 60)
                     worker_input_state = {
                         **state,
@@ -1166,15 +1195,27 @@ async def _do_reflection(
 
         language = state.get('language', 'zh-CN')
         enabled_custom_tools = state.get('enabled_custom_tools')
-        system_prompt, user_prompt = get_reflection_prompt(
-            business_objectives=state.get('business_objectives'),
-            current_plan=state.get('test_cases', []),
-            completed_cases=state.get('completed_cases', []),
-            page_content_summary=page_content_summary,
-            language=language,
-            enabled_custom_tools=enabled_custom_tools,
-            running_cases=state.get('running_cases', []),
-        )
+        planning_mode = state.get('planning_mode', 'explore')
+        if planning_mode == 'focused':
+            system_prompt, user_prompt = get_focused_reflection_prompt(
+                focused_objective=state.get('business_objectives'),
+                current_plan=state.get('test_cases', []),
+                completed_cases=state.get('completed_cases', []),
+                page_content_summary=page_content_summary,
+                language=language,
+                enabled_custom_tools=enabled_custom_tools,
+                running_cases=state.get('running_cases', []),
+            )
+        else:
+            system_prompt, user_prompt = get_reflection_prompt(
+                business_objectives=state.get('business_objectives'),
+                current_plan=state.get('test_cases', []),
+                completed_cases=state.get('completed_cases', []),
+                page_content_summary=page_content_summary,
+                language=language,
+                enabled_custom_tools=enabled_custom_tools,
+                running_cases=state.get('running_cases', []),
+            )
         report_dir = _resolve_report_dir(state)
         record_data_flow_event(
             stage='planning',

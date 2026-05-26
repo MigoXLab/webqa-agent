@@ -6,6 +6,7 @@ All modes execute by starting an independent Agent process, which callbacks Back
 - kubernetes: Create K8s Job to run
 """
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -25,6 +26,227 @@ logger = logging.getLogger(__name__)
 
 # Project root directory
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
+
+# API / persisted gen_config uses "mini". Legacy values and agent internals may still use cc-mini.
+_MINI_RUNNER_INPUT_ALIASES = frozenset({'mini', 'cc-mini', 'cc_mini'})
+_GEN_RUNNER_SOURCE_MINI = 'mini'
+
+
+def _is_default_account(account: Dict[str, Any]) -> bool:
+    """Support both runtime and legacy account default flags."""
+    return bool(account.get('default', account.get('is_default', False)))
+
+
+def _resolve_planning_mode(gen_config_dict: Dict[str, Any], log_prefix: str) -> None:
+    """Auto-resolve planning_mode based on user's original business objective
+    input.
+
+    Uses `_display_objectives` (the raw user input preserved by the frontend)
+    rather than `business_objectives` (which may contain auto-injected instructions
+    from the test items panel) to determine the user's actual intent:
+    - User provided an explicit objective -> focused mode
+    - User left it blank -> explore mode
+
+    An explicit `planning_mode` in gen_config_dict always takes priority and is
+    preserved as-is. The `_display_objectives` marker field is removed after use.
+
+    Args:
+        gen_config_dict: Gen mode config dictionary, modified in-place.
+        log_prefix: Log prefix for tracing (e.g., '[Gen]', '[Gen K8s]').
+    """
+    if gen_config_dict.get('planning_mode'):
+        gen_config_dict.pop('_display_objectives', None)
+        return
+
+    display_obj = (gen_config_dict.get('_display_objectives') or '').strip()
+    gen_config_dict['planning_mode'] = 'focused' if display_obj else 'explore'
+    gen_config_dict.pop('_display_objectives', None)
+    logger.info(
+        f"{log_prefix} Auto-resolved planning_mode='{gen_config_dict['planning_mode']}' "
+        f'(user_objective_provided={bool(display_obj)})'
+    )
+
+
+def _prepare_gen_config(
+    gen_config_dict: Dict[str, Any],
+    execution: 'Execution',
+    log_prefix: str,
+    *,
+    container_mode: bool = False,
+) -> Tuple[str, str]:
+    """Inject secrets, file paths, and planning mode into *gen_config_dict*.
+
+    Shared by ``_start_gen_executor``, ``_start_gen_k8s``, and
+    ``_start_gen_docker`` to avoid triplicating the same logic.
+
+    Args:
+        gen_config_dict: Mutable config dict, modified in-place.
+        execution: DB Execution row (needs ``business_id``).
+        log_prefix: Logging prefix (e.g. ``'[Gen]'``).
+        container_mode: When True, test_files_dir is mapped to
+            ``/shared/files/<business_id>`` for container runtimes.
+
+    Returns:
+        ``(api_key, base_url)`` extracted after injection.
+    """
+    llm_cfg = gen_config_dict.setdefault('llm_config', {})
+    model_name = llm_cfg.get('model', '')
+    if not llm_cfg.get('api_key'):
+        llm_cfg['api_key'] = settings.get_api_key_for_model(model_name)
+    if not llm_cfg.get('base_url'):
+        llm_cfg['base_url'] = settings.get_base_url_for_model(model_name)
+    if not llm_cfg.get('max_tokens'):
+        llm_cfg['max_tokens'] = 8192
+
+    if execution.business_id:
+        _files_dir = os.path.join(
+            settings.effective_shared_storage_path, 'files', str(execution.business_id)
+        )
+        if os.path.isdir(_files_dir) and os.listdir(_files_dir):
+            if container_mode:
+                gen_config_dict['test_files_dir'] = f'/shared/files/{execution.business_id}'
+            else:
+                gen_config_dict['test_files_dir'] = _files_dir
+            logger.info(f'{log_prefix} Injected test_files_dir for business {execution.business_id}')
+
+    runner_source = _resolve_gen_runner_source(gen_config_dict)
+    gen_config_dict['runner_source'] = runner_source
+    _resolve_gen_auth_config(gen_config_dict, runner_source, log_prefix)
+    _resolve_planning_mode(gen_config_dict, log_prefix)
+
+    return llm_cfg.get('api_key', ''), llm_cfg.get('base_url', '')
+
+
+def _resolve_sso_accounts(
+    accounts: List[Dict[str, Any]],
+    log_prefix: str,
+) -> List[Dict[str, Any]]:
+    """Generate cookies for SSO accounts and normalize them for run config."""
+    resolved_accounts: List[Dict[str, Any]] = []
+    for acc in accounts:
+        acc_env = acc.get('sso_env', 'prod') or 'prod'
+        acc_name = acc.get('name', '?')
+        acc_user = str(acc.get('sso_username') or '').strip()
+        acc_password = str(acc.get('sso_password') or '')
+        has_pwd = bool(acc.get('sso_password'))
+        if not acc_user or not acc_password:
+            raise ValueError(
+                f"账户 '{acc_name}' 缺少 SSO 凭据："
+                f'username_present={bool(acc_user)}, password_present={bool(acc_password)}, sso_env={acc_env}'
+            )
+        logger.info(
+            f"[{log_prefix}] Generating cookies: account='{acc_name}', "
+            f"username='{acc_user}', env='{acc_env}', has_password={has_pwd}"
+        )
+        try:
+            _, acc_cookies = generate_sso_cookies(
+                acc_user, acc_password, acc_env,
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"账户 '{acc_name}' (username={acc_user}, sso_env={acc_env}) 登录失败: {e}"
+            ) from e
+        resolved_accounts.append({
+            'name': acc_name,
+            'role': acc.get('role') or '',
+            'default': acc.get('is_default', False),
+            'cookies': acc_cookies,
+        })
+
+    return resolved_accounts
+
+
+def _normalize_gen_accounts(accounts: Any) -> List[Dict[str, Any]]:
+    """Normalize gen accounts and enforce deterministic default selection."""
+    if not isinstance(accounts, list):
+        return []
+
+    normalized: List[Dict[str, Any]] = []
+    for raw in accounts:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get('name') or '').strip()
+        if not name:
+            continue
+        is_default = bool(raw.get('default', raw.get('is_default', False)))
+        normalized.append({
+            **raw,
+            'name': name,
+            'default': is_default,
+            'is_default': is_default,
+        })
+
+    if not normalized:
+        return []
+
+    default_indices = [idx for idx, acc in enumerate(normalized) if bool(acc.get('default'))]
+    keep_idx = default_indices[0] if default_indices else 0
+    for idx, acc in enumerate(normalized):
+        is_default = idx == keep_idx
+        acc['default'] = is_default
+        acc['is_default'] = is_default
+    return normalized
+
+
+def _resolve_gen_auth_config(gen_config_dict: Dict[str, Any], runner_source: str, log_prefix: str) -> None:
+    """Resolve gen auth config into runner-compatible cookies/accounts."""
+    accounts = _normalize_gen_accounts(gen_config_dict.get('accounts'))
+    if not accounts:
+        gen_config_dict.pop('auth_type', None)
+        return
+
+    auth_type = str(gen_config_dict.get('auth_type') or '').strip().lower()
+    if not auth_type:
+        has_sso_fields = any(
+            isinstance(acc, dict) and (
+                'sso_username' in acc or 'sso_password' in acc or 'sso_env' in acc
+            )
+            for acc in accounts
+        )
+        auth_type = 'sso' if has_sso_fields else 'cookies'
+
+    resolved_accounts: List[Dict[str, Any]]
+    if auth_type == 'sso':
+        logger.info(f'{log_prefix} GenAuth resolving SSO accounts: count={len(accounts)}')
+        resolved_accounts = _resolve_sso_accounts(accounts, f'{log_prefix} GenAuth')
+        for acc in resolved_accounts:
+            is_default = bool(acc.get('default', acc.get('is_default', False)))
+            acc['default'] = is_default
+            acc['is_default'] = is_default
+    else:
+        resolved_accounts = []
+        for acc in accounts:
+            resolved_accounts.append({
+                'name': acc.get('name') or '',
+                'role': acc.get('role') or '',
+                'default': bool(acc.get('default', False)),
+                'is_default': bool(acc.get('default', False)),
+                'cookies': acc.get('cookies') if isinstance(acc.get('cookies'), list) else [],
+            })
+
+    default_account = next(
+        (acc for acc in resolved_accounts if bool(acc.get('default', acc.get('is_default', False)))),
+        resolved_accounts[0] if resolved_accounts else None,
+    )
+    if default_account and default_account.get('cookies') is not None:
+        browser_cfg = gen_config_dict.setdefault('browser_config', {})
+        browser_cfg['cookies'] = default_account.get('cookies')
+
+    if runner_source == _GEN_RUNNER_SOURCE_MINI:
+        gen_config_dict['accounts'] = resolved_accounts
+    else:
+        # Standard runner only consumes browser_config.cookies.
+        gen_config_dict.pop('accounts', None)
+
+    # Avoid leaking raw auth config to the runtime config file.
+    gen_config_dict.pop('auth_type', None)
+
+
+def _clone_gen_config_for_runtime(gen_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Clone gen config for runtime mutations to avoid side effects."""
+    if not isinstance(gen_config, dict):
+        return {}
+    return copy.deepcopy(gen_config)
 
 
 def _compute_k8s_resources(workers: int, business_id: Optional[UUID] = None) -> tuple[int, int]:
@@ -67,6 +289,29 @@ def _compute_k8s_resources(workers: int, business_id: Optional[UUID] = None) -> 
 # Store active processes/containers for cancellation
 _active_processes: Dict[str, asyncio.subprocess.Process] = {}
 _active_containers: Dict[str, str] = {}  # execution_id -> container_id (Docker mode)
+
+
+def _resolve_gen_runner_source(gen_config: Optional[Dict[str, Any]]) -> str:
+    """Resolve which gen runner should execute this task.
+
+    Stored/API convention: ``mini`` for the Flash multi-task runner.
+    Accepts legacy ``cc-mini`` / ``cc_mini`` from older clients or configs.
+    """
+    if not isinstance(gen_config, dict):
+        return _GEN_RUNNER_SOURCE_MINI
+
+    raw = str(gen_config.get('runner_source') or '').strip().lower()
+    if raw in _MINI_RUNNER_INPUT_ALIASES:
+        return _GEN_RUNNER_SOURCE_MINI
+    if raw == 'standard':
+        return 'standard'
+
+    # Retrieve 'engine' field, defaulting to 'flash'
+    engine = str(gen_config.get('engine', 'flash')).strip().lower()
+    if engine == 'standard':
+        return 'standard'
+
+    return _GEN_RUNNER_SOURCE_MINI
 
 
 async def stop_execution(execution_id: str) -> bool:
@@ -243,6 +488,7 @@ async def run_execution(execution_id: str, case_data: Optional[Dict[str, Any]] =
     """
     # Check execution trigger_type first
     trigger_type = None
+    persisted_gen_config: Optional[Dict[str, Any]] = None
     async with AsyncSessionLocal() as db:
         try:
             result = await db.execute(
@@ -251,6 +497,8 @@ async def run_execution(execution_id: str, case_data: Optional[Dict[str, Any]] =
             execution = result.scalar_one_or_none()
             if execution:
                 trigger_type = execution.trigger_type
+                if trigger_type == 'gen' and isinstance(execution.config, dict):
+                    persisted_gen_config = execution.config
         except Exception as e:
             logger.exception(f'[Run] Failed to check execution type: {e}')
             return
@@ -258,12 +506,22 @@ async def run_execution(execution_id: str, case_data: Optional[Dict[str, Any]] =
     mode = settings.EXECUTION_MODE.lower()
 
     if trigger_type == 'gen':
+        source_gen_config = (
+            gen_config_dict if isinstance(gen_config_dict, dict) else persisted_gen_config
+        )
+        effective_gen_config = _clone_gen_config_for_runtime(source_gen_config)
+        runner_source = _resolve_gen_runner_source(effective_gen_config)
+        effective_gen_config['runner_source'] = runner_source
+        logger.info(
+            f'[Run] Gen execution runner selected: execution_id={execution_id}, '
+            f'runner_source={runner_source}, mode={mode}'
+        )
         if mode == 'kubernetes':
-            await _start_gen_k8s(execution_id, gen_config_dict)
+            await _start_gen_k8s(execution_id, effective_gen_config)
         elif mode == 'docker':
-            await _start_gen_docker(execution_id, gen_config_dict)
+            await _start_gen_docker(execution_id, effective_gen_config)
         else:
-            await _start_gen_executor(execution_id, gen_config_dict)
+            await _start_gen_executor(execution_id, effective_gen_config)
     elif mode == 'kubernetes':
         await _start_agent_k8s(execution_id, case_data=case_data)
     elif mode == 'docker':
@@ -303,20 +561,9 @@ async def _start_gen_executor(execution_id: str, gen_config_dict: Optional[Dict[
                 await db.commit()
                 return
 
-            # Inject API key and base URL from backend settings
-            llm_cfg = gen_config_dict.setdefault('llm_config', {})
-            model_name = llm_cfg.get('model', '')
-            if not llm_cfg.get('api_key'):
-                llm_cfg['api_key'] = settings.get_api_key_for_model(model_name)
-            if not llm_cfg.get('base_url'):
-                llm_cfg['base_url'] = settings.get_base_url_for_model(model_name)
-            if not llm_cfg.get('max_tokens'):
-                llm_cfg['max_tokens'] = 8192
-            if not llm_cfg.get('max_tokens'):
-                llm_cfg['max_tokens'] = 8192
-
-            api_key = llm_cfg.get('api_key', '')
-            base_url = llm_cfg.get('base_url', '')
+            api_key, base_url = _prepare_gen_config(
+                gen_config_dict, execution, '[Gen]',
+            )
 
             # Write config to file (JSON format, compatible with GenConfig loading)
             config_dir = Path(settings.shared_reports_path) / f'exec_{execution_id}'
@@ -339,6 +586,7 @@ async def _start_gen_executor(execution_id: str, gen_config_dict: Optional[Dict[
             env['EXECUTION_ID'] = execution_id
             env['SHARED_STORAGE_PATH'] = settings.effective_shared_storage_path
             env['BACKEND_CALLBACK_URL'] = settings.BACKEND_CALLBACK_URL
+            env['WEBQA_CASE_TIMEOUT'] = str(settings.WEBQA_CASE_TIMEOUT)
             if api_key:
                 env['OPENAI_API_KEY'] = api_key
             if base_url:
@@ -448,18 +696,10 @@ async def _start_gen_k8s(execution_id: str, gen_config_dict: Optional[Dict[str, 
                 await db.commit()
                 return
 
-            # Inject API key and base URL from backend settings
-            llm_cfg = gen_config_dict.setdefault('llm_config', {})
-            model_name = llm_cfg.get('model', '')
-            if not llm_cfg.get('api_key'):
-                llm_cfg['api_key'] = settings.get_api_key_for_model(model_name)
-            if not llm_cfg.get('base_url'):
-                llm_cfg['base_url'] = settings.get_base_url_for_model(model_name)
-            if not llm_cfg.get('max_tokens'):
-                llm_cfg['max_tokens'] = 8192
-
-            api_key = llm_cfg.get('api_key', '')
-            base_url = llm_cfg.get('base_url', '')
+            api_key, base_url = _prepare_gen_config(
+                gen_config_dict, execution, '[Gen K8s]',
+                container_mode=True,
+            )
 
             # Write config to shared storage so the K8s Job container can read it
             config_dir = Path(settings.shared_reports_path) / f'exec_{execution_id}'
@@ -536,6 +776,7 @@ async def _create_gen_k8s_job(
     k8s_job_image = os.getenv('K8S_JOB_IMAGE', 'webqa-agent:latest')
     k8s_pvc_name = os.getenv('K8S_PVC_NAME', 'webqa-pvc')
     k8s_sa_name = os.getenv('K8S_JOB_SERVICE_ACCOUNT', 'webqa-agent-sa')
+
     cpu_limit, memory_gi = _compute_k8s_resources(workers, business_id)
 
     job_name = f'webqa-gen-{execution_id[:8]}'
@@ -629,6 +870,7 @@ def _build_cases_from_request(
             business_id=business_id,
             name=data.get('name', 'Draft Case'),
             login_required=data.get('login_required', False),
+            account=data.get('account'),
             steps=data.get('steps', []),
             snapshot=data.get('snapshot'),
             use_snapshot=data.get('use_snapshot'),
@@ -686,23 +928,25 @@ async def _prepare_run_config(
                 await db.commit()
                 return None
 
-            cookies = None
-            if environment.auth_type == 'sso' and environment.sso_username:
+            cookies, accounts = _resolve_auth(environment)
+            if environment.auth_type == 'sso':
                 try:
-                    sso_env = getattr(environment, 'sso_env', 'prod') or 'prod'
-                    logger.info(f"[SSO] Environment ID: {environment.id}, sso_env from DB: '{environment.sso_env}', using: '{sso_env}'")
-                    _, cookies = generate_sso_cookies(environment.sso_username, environment.sso_password, sso_env)
+                    if accounts:
+                        accounts = _resolve_sso_accounts(accounts, 'SSO')
+                    elif environment.sso_username:
+                        # Legacy single SSO account fallback
+                        sso_env = getattr(environment, 'sso_env', 'prod') or 'prod'
+                        logger.info(f"[SSO] Environment ID: {environment.id}, sso_env from DB: '{environment.sso_env}', using: '{sso_env}'")
+                        _, cookies = generate_sso_cookies(environment.sso_username, environment.sso_password, sso_env)
                 except Exception as e:
                     execution.status = 'failed'
                     execution.error_message = f'SSO 认证失败: {e}'
                     execution.completed_at = now_with_tz()
                     await db.commit()
                     return None
-            elif environment.auth_type == 'cookies' and environment.cookies:
-                cookies = environment.cookies
 
             configs = _build_agent_configs(
-                environment, test_cases, execution.workers, cookies
+                environment, test_cases, execution.workers, cookies, accounts, execution.resolutions
             )
             if not configs:
                 execution.status = 'failed'
@@ -917,6 +1161,7 @@ async def _start_agent_k8s(execution_id: str, case_data: Optional[Dict[str, Any]
                     test_cases=test_cases,
                     model=execution.model,
                     workers=execution.workers,
+                    resolutions=execution.resolutions,
                     business_id=execution.business_id,
                 )
 
@@ -939,6 +1184,7 @@ async def _create_k8s_job(
     test_cases: List[TestCase],
     model: str,
     workers: int,
+    resolutions: Optional[List[str]] = None,
     business_id: Optional[UUID] = None,
 ) -> str:
     """Create a Kubernetes Job to run webqa-agent."""
@@ -965,16 +1211,18 @@ async def _create_k8s_job(
 
     cpu_limit, memory_gi = _compute_k8s_resources(workers, business_id)
 
-    # Fetch auth cookies
-    cookies = None
-    if environment.auth_type == 'sso' and environment.sso_username:
-        sso_env = getattr(environment, 'sso_env', 'prod') or 'prod'
-        _, cookies = generate_sso_cookies(environment.sso_username, environment.sso_password, sso_env)
-    elif environment.auth_type == 'cookies' and environment.cookies:
-        cookies = environment.cookies
+    # Fetch auth cookies/accounts
+    cookies, accounts = _resolve_auth(environment)
+    if environment.auth_type == 'sso':
+        if accounts:
+            accounts = _resolve_sso_accounts(accounts, 'SSO/K8s')
+        elif environment.sso_username:
+            # Legacy single SSO account fallback
+            sso_env = getattr(environment, 'sso_env', 'prod') or 'prod'
+            _, cookies = generate_sso_cookies(environment.sso_username, environment.sso_password, sso_env)
 
     # Build configs grouped by login_required
-    configs = _build_agent_configs(environment, test_cases, workers, cookies)
+    configs = _build_agent_configs(environment, test_cases, workers, cookies, accounts, resolutions)
 
     if not configs:
         raise ValueError('没有可执行的测试用例')
@@ -1293,17 +1541,10 @@ async def _start_gen_docker(execution_id: str, gen_config_dict: Optional[Dict[st
                 await db.commit()
                 return
 
-            llm_cfg = gen_config_dict.setdefault('llm_config', {})
-            model_name = llm_cfg.get('model', '')
-            if not llm_cfg.get('api_key'):
-                llm_cfg['api_key'] = settings.get_api_key_for_model(model_name)
-            if not llm_cfg.get('base_url'):
-                llm_cfg['base_url'] = settings.get_base_url_for_model(model_name)
-            if not llm_cfg.get('max_tokens'):
-                llm_cfg['max_tokens'] = 8192
-
-            api_key = llm_cfg.get('api_key', '')
-            base_url = llm_cfg.get('base_url', '')
+            api_key, base_url = _prepare_gen_config(
+                gen_config_dict, execution, '[Gen Docker]',
+                container_mode=True,
+            )
 
             config_dir = Path(settings.shared_reports_path) / f'exec_{execution_id}'
             config_dir.mkdir(parents=True, exist_ok=True)
@@ -1395,13 +1636,22 @@ async def _fetch_execution_data(
     return environment, test_cases, None
 
 
-def _build_case_dict(case: TestCase) -> Dict[str, Any]:
+def _build_case_dict(
+    case: TestCase,
+    suffix: str = '',
+    default_account: Optional[str] = None,
+) -> Dict[str, Any]:
     """Build the configuration dict for a single case."""
+    case_name = f'{case.name} [{suffix}]' if suffix else case.name
     case_dict = {
-        'name': case.name,
+        'name': case_name,
         'case_id': str(case.id),
         'steps': [],
     }
+
+    account = case.account or default_account
+    if account:
+        case_dict['account'] = account
 
     for step in case.steps:
         step_dict = {}
@@ -1409,6 +1659,8 @@ def _build_case_dict(case: TestCase) -> Dict[str, Any]:
             step_dict['action'] = step.get('description', '')
         elif step.get('step_type') == 'verify':
             step_dict['verify'] = step.get('assertion', '')
+        elif step.get('step_type') == 'switch_account':
+            step_dict['switch_account'] = step.get('switch_account', '')
 
         # Handle args, especially file paths
         args = (step.get('args') or {}).copy()
@@ -1441,11 +1693,35 @@ def _build_case_dict(case: TestCase) -> Dict[str, Any]:
     return case_dict
 
 
+def _resolve_auth(
+    environment: Environment,
+) -> Tuple[Optional[List[Dict]], Optional[List[Dict]]]:
+    """Resolve authentication data from environment.
+
+    Returns:
+        (cookies, accounts) — accounts takes priority over cookies.
+        For SSO with accounts, returns raw SSO credentials (caller generates cookies).
+        For SSO without accounts, returns (None, None) and caller uses legacy sso_username.
+    """
+    if environment.auth_type == 'none':
+        return None, None
+    if environment.accounts:
+        # New multi-account path (both SSO and cookies)
+        return None, environment.accounts
+    if environment.auth_type == 'cookies' and environment.cookies:
+        # Legacy cookies fallback
+        return environment.cookies, None
+    # SSO legacy path or no auth: caller handles sso_username directly
+    return None, None
+
+
 def _build_agent_configs(
     environment: Environment,
     test_cases: List[TestCase],
     workers: int,
     cookies: Optional[List[Dict]] = None,
+    accounts: Optional[List[Dict]] = None,
+    resolutions: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     """Build webqa-agent config list grouped by login_required.
 
@@ -1462,6 +1738,15 @@ def _build_agent_configs(
     logger.info(f'[Config] Cases 分组: 需要登录={len(login_cases)}, 不需要登录={len(no_login_cases)}')
 
     configs = []
+
+    # Determine default account name from accounts list
+    default_account: Optional[str] = None
+    if accounts:
+        default_acc = next((a for a in accounts if _is_default_account(a)), None)
+        if default_acc:
+            default_account = default_acc.get('name')
+        elif accounts:
+            default_account = accounts[0].get('name')
 
     # Fix escaping in ignore_rules (JSON may turn \ into \\)
     def _fix_ignore_rules_escaping(rules: dict) -> dict:
@@ -1490,43 +1775,71 @@ def _build_agent_configs(
         'language': 'zh-CN',
     }
 
-    # Build config for login-required cases (with cookies)
-    if login_cases:
-        browser_config_with_auth = {**base_browser_config}
-        if cookies:
-            browser_config_with_auth['cookies'] = cookies
-            logger.info('[Config] 需要登录的 cases 已添加 cookies')
-        else:
-            logger.warning(f'[Config] 有 {len(login_cases)} 个 case 需要登录，但环境未配置认证')
+    # Determine viewports to use
+    viewports = []
+    if resolutions:
+        for res in resolutions:
+            if not res or res == 'default':
+                viewports.append({'viewport': base_browser_config.get('viewport'), 'suffix': ''})
+            else:
+                try:
+                    w, h = map(int, res.split('x'))
+                    viewports.append({'width': w, 'height': h, 'suffix': res})
+                except Exception:
+                    logger.warning(f'[Config] Invalid resolution format: {res}')
+    if not viewports:
+        viewports.append({'viewport': base_browser_config.get('viewport'), 'suffix': ''})
 
-        config_with_auth = {
-            'target': {
-                'url': environment.url,
-                'max_concurrent_tests': workers,
-            },
-            'browser_config': browser_config_with_auth,
-            'cases': [_build_case_dict(c) for c in login_cases],
-        }
-        if fixed_ignore_rules:
-            config_with_auth['ignore_rules'] = fixed_ignore_rules
-            logger.info(f'[Config] ignore_rules 已添加到配置: {fixed_ignore_rules}')
-        else:
-            logger.info('[Config] 没有配置 ignore_rules')
-        configs.append(config_with_auth)
+    for vp in viewports:
+        current_browser_config = {**base_browser_config}
+        if 'viewport' in vp and vp['viewport']:
+            current_browser_config['viewport'] = vp['viewport']
+        elif 'width' in vp and 'height' in vp:
+            current_browser_config['viewport'] = {'width': vp['width'], 'height': vp['height']}
 
-    # Build config for cases that do not require login (no cookies)
-    if no_login_cases:
-        config_no_auth = {
-            'target': {
-                'url': environment.url,
-                'max_concurrent_tests': workers,
-            },
-            'browser_config': {**base_browser_config},  # no cookies
-            'cases': [_build_case_dict(c) for c in no_login_cases],
-        }
-        if fixed_ignore_rules:
-            config_no_auth['ignore_rules'] = fixed_ignore_rules
-        configs.append(config_no_auth)
-        logger.info('[Config] 不需要登录的 cases 配置完成（无 cookies）')
+        suffix = vp['suffix']
+
+        # Build config for login-required cases (with cookies or accounts)
+        if login_cases:
+            browser_config_with_auth = {**current_browser_config}
+            if accounts:
+                logger.info(f'[Config] 需要登录的 cases 使用 accounts ({len(accounts)} 个账户)')
+            elif cookies:
+                browser_config_with_auth['cookies'] = cookies
+                logger.info('[Config] 需要登录的 cases 已添加 cookies')
+            else:
+                logger.warning(f'[Config] 有 {len(login_cases)} 个 case 需要登录，但环境未配置认证')
+
+            config_with_auth = {
+                'target': {
+                    'url': environment.url,
+                    'max_concurrent_tests': workers,
+                },
+                'browser_config': browser_config_with_auth,
+                'cases': [_build_case_dict(c, suffix, default_account) for c in login_cases],
+            }
+            if accounts:
+                config_with_auth['accounts'] = accounts
+            if fixed_ignore_rules:
+                config_with_auth['ignore_rules'] = fixed_ignore_rules
+                logger.info(f'[Config] ignore_rules 已添加到配置: {fixed_ignore_rules}')
+            else:
+                logger.info('[Config] 没有配置 ignore_rules')
+            configs.append(config_with_auth)
+
+        # Build config for cases that do not require login (no cookies)
+        if no_login_cases:
+            config_no_auth = {
+                'target': {
+                    'url': environment.url,
+                    'max_concurrent_tests': workers,
+                },
+                'browser_config': {**current_browser_config},  # no cookies
+                'cases': [_build_case_dict(c, suffix, default_account) for c in no_login_cases],
+            }
+            if fixed_ignore_rules:
+                config_no_auth['ignore_rules'] = fixed_ignore_rules
+            configs.append(config_no_auth)
+            logger.info('[Config] 不需要登录的 cases 配置完成（无 cookies）')
 
     return configs

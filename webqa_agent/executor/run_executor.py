@@ -13,6 +13,7 @@ from typing import Any, Dict, Optional, Tuple
 from pydantic import ValidationError
 
 from webqa_agent.actions.action_handler import ActionHandler
+from webqa_agent.browser import AccountPool
 from webqa_agent.browser.config import DEFAULT_CONFIG
 from webqa_agent.config_models.run_config import RunConfig
 from webqa_agent.data import (ParallelTestSession, TestCategory,
@@ -21,7 +22,8 @@ from webqa_agent.data.run_structures import Case
 from webqa_agent.executor.result_aggregator import ResultAggregator
 from webqa_agent.executor.run.case_runner import CaseRunner
 from webqa_agent.utils import Display, i18n
-from webqa_agent.utils.config import load_cookies, load_yaml_files
+from webqa_agent.utils.config import (load_accounts, load_cookies,
+                                      load_yaml_files, resolve_config_dir)
 from webqa_agent.utils.data_flow_reporter import (generate_data_flow_report,
                                                   set_dataflow_enabled)
 from webqa_agent.utils.get_log import GetLog
@@ -94,16 +96,28 @@ class RunExecutor:
                 })
 
             raw_cookies = config.get('cookies') or config.get('browser_config', {}).get('cookies')
-            resolved_cookies = load_cookies(raw_cookies) if raw_cookies else None
+            resolved_cookies = (
+                load_cookies(raw_cookies, config_dir=resolve_config_dir(source_file))
+                if raw_cookies else None
+            )
+            accounts = load_accounts(config.get('accounts'), source_file=source_file)
+            account_pool = AccountPool(accounts=accounts, fallback_cookies=resolved_cookies) if accounts else None
 
             # Attach config info to each case
             for case in cfg_cases:
                 case_id_counter += 1
+                case_account = case.get('account')
+                account_key = (
+                    account_pool.resolve_account_name(case_account)
+                    if account_pool else None
+                ) or ('__fallback__' if resolved_cookies else None)
                 case['_config'] = {
                     'url': cfg_url,
                     'cookies': resolved_cookies,
                     'browser_config': config.get('browser') or config.get('browser_config', {}),
                     'ignore_rules': cfg_ignore_rules,
+                    'account_pool': account_pool,
+                    'account_key': account_key,
                     '_source_file': source_file,
                 }
                 case['case_id'] = f'case_{case_id_counter}'
@@ -254,6 +268,10 @@ class RunExecutor:
                 test_config=test_config,
                 llm_config=self.config.llm_config.model_dump(),
                 report_dir=report_dir,
+                account_pool=AccountPool(
+                    accounts=self.config.accounts,
+                    fallback_cookies=self.config.browser_config.cookies,
+                ) if self.config.accounts else None,
             )
 
             case_results = await case_executor.execute_cases(

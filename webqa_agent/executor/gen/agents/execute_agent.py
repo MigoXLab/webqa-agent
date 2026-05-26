@@ -11,7 +11,7 @@ import json
 import logging
 import re
 import time
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
@@ -60,8 +60,9 @@ from webqa_agent.executor.gen.utils.url_utils import (extract_domain,
 from webqa_agent.llm.llm_api import (EXTENDED_THINKING_EFFORT_MAPPING,
                                      get_llm_duration_stats,
                                      reset_llm_duration_stats)
-from webqa_agent.prompts.agent_execution_prompts import \
-    get_execute_system_prompt
+from webqa_agent.prompts.agent_execution_prompts import (
+    get_execute_system_prompt, get_file_upload_context,
+    get_preamble_system_prompt)
 from webqa_agent.tools.base import ResponseTags
 from webqa_agent.tools.registry import get_registry
 from webqa_agent.utils.data_flow_reporter import (record_data_flow_event,
@@ -70,6 +71,38 @@ from webqa_agent.utils.data_flow_reporter import (record_data_flow_event,
 from webqa_agent.utils.log_icon import icon
 from webqa_agent.utils.timing_breakdown import (get_tool_timing_bucket,
                                                 reset_tool_timing_bucket)
+
+
+def _create_agent_executor(
+    llm: Any,
+    tools: list,
+    system_prompt: str,
+    max_iterations: int = 5,
+) -> AgentExecutor:
+    """Create a configured AgentExecutor bound to the given system prompt.
+
+    Args:
+        llm: LangChain chat model instance.
+        tools: List of LangChain tools to bind.
+        system_prompt: System prompt string for this executor profile.
+        max_iterations: Maximum ReAct loop iterations (default 5).
+
+    Returns:
+        Configured AgentExecutor instance.
+    """
+    prompt = ChatPromptTemplate.from_messages([
+        ('system', system_prompt),
+        MessagesPlaceholder(variable_name='messages'),
+        MessagesPlaceholder(variable_name='agent_scratchpad'),
+    ])
+    agent = create_tool_calling_agent(llm, tools, prompt)
+    return AgentExecutor(
+        agent=agent,
+        tools=tools,
+        verbose=False,
+        max_iterations=max_iterations,
+        return_intermediate_steps=True,
+    )
 
 
 async def agent_worker_node(state: dict, config: dict) -> dict:
@@ -107,6 +140,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
     ui_tester_instance = config['configurable']['ui_tester_instance']
     ui_tester_instance.report_dir = report_dir
+    # Attach test file library for path security validation in action_tool
+    ui_tester_instance.test_file_library = state.get('test_file_library')
 
     case_recorder = config.get('configurable', {}).get('case_recorder')
     if case_recorder is None:
@@ -117,11 +152,26 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     original_planned_steps = copy.deepcopy(case.get('steps', []))
 
     language = state.get('language', 'zh-CN')
+    planning_mode = state.get('planning_mode', 'explore')
     case_objective = case.get('objective', case_name)
-    system_prompt_string = get_execute_system_prompt(case, language=language)
+    system_prompt_string = get_execute_system_prompt(
+        case,
+        language=language,
+    )
     logging.debug(
         f'Generated system prompt length: {len(system_prompt_string)} characters'
     )
+
+    # Inject file upload context if test file library is available
+    test_file_library = state.get('test_file_library')
+    if test_file_library:
+        file_catalog = test_file_library.get_catalog_for_llm()
+        if file_catalog:
+            system_prompt_string += get_file_upload_context(file_catalog)
+            logging.debug(
+                f'Injected file upload context ({len(file_catalog)} chars) '
+                f'into agent system prompt'
+            )
 
     llm_config = ui_tester_instance.llm.llm_config
     logging.info(f"{icon['running']} Agent worker for test case started: {case_name}")
@@ -231,27 +281,24 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
     logging.debug(f'Enabled custom tools from config: {enabled_custom_tools}')
 
     tools = get_tools(
-        ui_tester_instance, llm_config, case_recorder, enabled_custom_tools
+        ui_tester_instance,
+        llm_config,
+        case_recorder,
+        enabled_custom_tools,
     )
     logging.debug(f'Tools initialized: {[tool.name for tool in tools]}')
 
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ('system', system_prompt_string),
-            MessagesPlaceholder(variable_name='messages'),
-            MessagesPlaceholder(variable_name='agent_scratchpad'),
-        ]
+    preamble_system_prompt_str = get_preamble_system_prompt(language=language)
+    preamble_executor = _create_agent_executor(
+        llm, tools, preamble_system_prompt_str, max_iterations=3
     )
-
-    agent = create_tool_calling_agent(llm, tools, prompt)
-    agent_executor = AgentExecutor(
-        agent=agent,
-        tools=tools,
-        verbose=False,
-        max_iterations=5,
-        return_intermediate_steps=True,
+    action_executor = _create_agent_executor(
+        llm, tools, system_prompt_string, max_iterations=5
     )
-    logging.debug('AgentExecutor created successfully')
+    verify_executor = _create_agent_executor(
+        llm, tools, system_prompt_string, max_iterations=3
+    )
+    logging.debug('AgentExecutor profiles created (preamble=3, action=5, verify=3)')
 
     # ---------------------------------------------------------------------------
     # Shared helper: close a preamble failure and build the return dict.
@@ -339,7 +386,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                             f'Preamble action {i + 1}/{len(preamble_actions)}: '
                             f'GoToPage executed directly → {target_url}'
                         )
-                        continue  # Done — skip agent_executor entirely
+                        continue  # Done — skip preamble_executor entirely
                     except Exception as _nav_err:
                         logging.error(
                             f'Preamble GoToPage direct execution failed: {target_url} — {_nav_err}'
@@ -440,7 +487,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 # Use a simple invoke, as preamble steps should be straightforward
                 logging.debug(f'Executing preamble action {i + 1} - Calling Agent...')
                 start_time = datetime.datetime.now()
-                result = await agent_executor.ainvoke(
+                result = await preamble_executor.ainvoke(
                     {'messages': preamble_messages}
                 )
 
@@ -666,7 +713,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
         step_type = parse_step_type(step)
 
         # Handle unified format custom tools: {"action": "tool_name", "params": {...}}
-        # Convert params to function call instruction for agent_executor
+        # Convert params to function call instruction for current_executor
         action_value = step.get('action')
         if action_value and action_value in custom_tool_names:
             # Update step_type to the tool's actual step_type for correct timeout lookup.
@@ -690,6 +737,11 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                 or step.get('instruction')  # Support custom tool instruction
             )
 
+        # Select executor by step type: verify/ux_verify → max_iterations=3; action → 5
+        current_executor = (
+            verify_executor if step_type in ('Assertion', 'UX_Verify') else action_executor
+        )
+
         logging.info(
             f'Executing Step {i + 1}/{total_steps} ({step_type}), step instruction: {instruction_to_execute}'
         )
@@ -707,18 +759,15 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
             report_dir=report_dir,
         )
 
-        # Define instruction templates for variation
+        # Rotating instruction templates with scope constraint to prevent over-execution
         instruction_templates = [
-            'Now, execute this instruction: {instruction}',
-            'Please proceed with the following step: {instruction}',
-            'The next task is to perform this action: {instruction}',
-            'Execute the instruction as follows: {instruction}',
+            'Now, execute this instruction: {instruction}\n\nComplete this step only. Do not proceed to any other actions.',
+            'Please proceed with the following step: {instruction}\n\nOnce done, report the result. Do not execute additional actions.',
+            'The next task is to perform this action: {instruction}\n\nAfter completing this action, stop and report. Do not continue further.',
+            'Execute the instruction as follows: {instruction}\n\nReport the result when complete. Do not perform any other operations.',
         ]
-        # Vary the instruction prompt to avoid repetitive context
         prompt_template = instruction_templates[i % len(instruction_templates)]
-        formatted_instruction = prompt_template.format(
-            instruction=instruction_to_execute
-        )
+        formatted_instruction = prompt_template.format(instruction=instruction_to_execute)
         reset_tool_timing_bucket()
         reset_llm_duration_stats()
         step_llm_timing_callback.reset_step()
@@ -825,7 +874,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
 
             try:
                 result = await asyncio.wait_for(
-                    agent_executor.ainvoke(
+                    current_executor.ainvoke(
                         {'messages': pruned_messages},
                     ),
                     timeout=step_timeout,
@@ -1158,6 +1207,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 current_case=case,
                                 screenshot=recovery_screenshot,
                                 report_dir=report_dir,
+                                planning_mode=planning_mode,
                             )
 
                             strategy = recovery_result.get('strategy')
@@ -1305,6 +1355,7 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                     current_case=case,  # Include current_case for context
                                     screenshot=screenshot_b64,
                                     report_dir=report_dir,
+                                    planning_mode=planning_mode,
                                 )
 
                                 # Process recovery strategy
@@ -1534,6 +1585,8 @@ async def agent_worker_node(state: dict, config: dict) -> dict:
                                 tool_output=tool_output,
                                 step_success=step_success,
                                 report_dir=report_dir,
+                                planning_mode=planning_mode,
+                                original_planned_steps=original_planned_steps,
                             )
 
                             # Handle dynamic steps based on LLM strategy decision

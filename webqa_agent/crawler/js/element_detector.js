@@ -55,7 +55,11 @@
                 pointerEvents: 'none',
                 zIndex: '2147483647'
             });
-            document.body.appendChild(c);
+            if (document.body) {
+                document.body.appendChild(c);
+            } else if (document.documentElement) {
+                document.documentElement.appendChild(c);
+            }
             return c;
         })();
 
@@ -185,7 +189,7 @@
             const hasVisibleChildren = [...element.children].some(isVisible);
 
             // Avoid highlighting elements whose parent is <body> (top-level wrappers)
-            const isParentBody = element.parentElement && element.parentElement.isSameNode(document.body);
+            const isParentBody = element.parentElement && document.body && element.parentElement.isSameNode(document.body);
 
             return (
                 (isInteractiveElement(element) || hasInteractiveAttributes || hasInteractiveClass) &&
@@ -622,7 +626,7 @@
 
             // Simple slider/captcha detection (matches slide-btn, slider-control, etc.)
             const className = (element.getAttribute('class') || '').toLowerCase();
-            if ((className.includes('slide') || className.includes('slider')) && 
+            if ((className.includes('slide') || className.includes('slider')) &&
                 (className.includes('btn') || className.includes('control') || className.includes('handle'))) {
                 return true;
             }
@@ -1214,8 +1218,8 @@
          */
         function getElementInfo(elem, isParentHighlighted) {
             const r = elem.getBoundingClientRect();
-            const sx = window.pageXOffset || document.documentElement.scrollLeft;
-            const sy = window.pageYOffset || document.documentElement.scrollTop;
+            const sx = window.pageXOffset || (document.documentElement ? document.documentElement.scrollLeft : 0);
+            const sy = window.pageYOffset || (document.documentElement ? document.documentElement.scrollTop : 0);
             let txt = '';
 
             elem.childNodes.forEach(c => {
@@ -1483,7 +1487,9 @@
          */
         window.buildElementTree = function () {
             highlightIdMap = {};
-            const tree = buildTree(document.body);
+            const rootElement = document.body || document.documentElement;
+            if (!rootElement) return [null, {}];
+            const tree = buildTree(rootElement);
 
             if (window._highlight) {
                 renderHighlights(tree);

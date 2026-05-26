@@ -18,6 +18,23 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def _convert_steps_to_dict(steps: list) -> list:
+    """Convert TestStep schema objects to dict format for JSONB storage."""
+    result = []
+    for step in steps:
+        step_dict = {'step_type': step.step_type}
+        if step.step_type == 'action':
+            step_dict['description'] = step.description or ''
+        elif step.step_type == 'verify':
+            step_dict['assertion'] = step.assertion or ''
+        elif step.step_type == 'switch_account':
+            step_dict['switch_account'] = step.switch_account or ''
+        if step.args:
+            step_dict['args'] = step.args
+        result.append(step_dict)
+    return result
+
+
 @router.post('', response_model=APIResponse[TestCaseResponse], status_code=status.HTTP_201_CREATED)
 async def create_test_case(
     data: TestCaseCreate,
@@ -35,16 +52,7 @@ async def create_test_case(
         )
 
     # Convert steps to dict format
-    steps = []
-    for step in data.steps:
-        step_dict = {'step_type': step.step_type}
-        if step.step_type == 'action':
-            step_dict['description'] = step.description or ''
-        else:
-            step_dict['assertion'] = step.assertion or ''
-        if step.args:
-            step_dict['args'] = step.args
-        steps.append(step_dict)
+    steps = _convert_steps_to_dict(data.steps)
 
     # Calculate sort_order: max existing + 1
     max_order_result = await db.execute(
@@ -58,6 +66,7 @@ async def create_test_case(
         name=data.name,
         description=data.description,
         login_required=data.login_required,
+        account=data.account,
         steps=steps,
         version=data.version,
         snapshot=data.snapshot,
@@ -111,34 +120,26 @@ async def update_test_case(
             detail={'code': 2003, 'message': '用例不存在'}
         )
 
-    # Update fields
-    if data.name is not None:
+    # Update fields. Nullable fields must support explicit clearing.
+    if 'name' in data.model_fields_set and data.name is not None:
         test_case.name = data.name
-    if data.description is not None:
+    if 'description' in data.model_fields_set:
         test_case.description = data.description
-    if data.login_required is not None:
+    if 'login_required' in data.model_fields_set and data.login_required is not None:
         test_case.login_required = data.login_required
-    if data.steps is not None:
-        steps = []
-        for step in data.steps:
-            step_dict = {'step_type': step.step_type}
-            if step.step_type == 'action':
-                step_dict['description'] = step.description or ''
-            else:
-                step_dict['assertion'] = step.assertion or ''
-            if step.args:
-                step_dict['args'] = step.args
-            steps.append(step_dict)
-        test_case.steps = steps
-    if data.version is not None:
+    if 'account' in data.model_fields_set:
+        test_case.account = data.account
+    if 'steps' in data.model_fields_set and data.steps is not None:
+        test_case.steps = _convert_steps_to_dict(data.steps)
+    if 'version' in data.model_fields_set:
         test_case.version = data.version
-    if data.snapshot is not None:
+    if 'snapshot' in data.model_fields_set:
         test_case.snapshot = data.snapshot
-    if data.use_snapshot is not None:
+    if 'use_snapshot' in data.model_fields_set:
         test_case.use_snapshot = data.use_snapshot
-    if data.status is not None:
+    if 'status' in data.model_fields_set and data.status is not None:
         test_case.status = data.status
-    if data.sort_order is not None:
+    if 'sort_order' in data.model_fields_set and data.sort_order is not None:
         test_case.sort_order = data.sort_order
 
     await db.commit()
@@ -253,6 +254,11 @@ async def import_cases_from_yaml(
                     'step_type': 'verify',
                     'assertion': step['verify'],
                 }
+            elif 'switch_account' in step:
+                step_dict = {
+                    'step_type': 'switch_account',
+                    'switch_account': step['switch_account'],
+                }
             else:
                 continue
 
@@ -265,6 +271,7 @@ async def import_cases_from_yaml(
             name=case_data.get('name', 'Unnamed Case'),
             description=case_data.get('description'),
             login_required=case_data.get('login_required', False),
+            account=case_data.get('account'),
             steps=steps,
             version=case_data.get('version'),
             snapshot=case_data.get('snapshot'),
@@ -296,6 +303,8 @@ def export_cases_to_yaml(cases: List[TestCase]) -> str:
             'steps': [],
         }
 
+        if case.account:
+            case_dict['account'] = case.account
         if case.version:
             case_dict['version'] = case.version
         if case.snapshot:
@@ -309,6 +318,8 @@ def export_cases_to_yaml(cases: List[TestCase]) -> str:
                 step_dict['action'] = step.get('description', '')
             elif step.get('step_type') == 'verify':
                 step_dict['verify'] = step.get('assertion', '')
+            elif step.get('step_type') == 'switch_account':
+                step_dict['switch_account'] = step.get('switch_account', '')
 
             if 'args' in step and step['args']:
                 step_dict['args'] = step['args']

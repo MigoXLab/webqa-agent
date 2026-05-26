@@ -11,6 +11,8 @@ from app.schemas.common import APIResponse
 from app.schemas.execution import (ExecutionCreate, ExecutionListResponse,
                                    ExecutionResponse, ExecutionStatusResponse)
 from app.services.executor import run_execution, stop_execution
+from app.services.mcp_execution_config import (build_mcp_quick_gen_config,
+                                               sanitize_mcp_quick_gen_config)
 from app.services.progress_cache import get_progress
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
@@ -129,7 +131,7 @@ async def create_execution(
     # Verify all test cases exist (skip for cases with data provided inline)
     inline_ids = set(data.case_data.keys()) if data.case_data else set()
 
-    if data.trigger_type != 'gen':
+    if data.trigger_type not in ('gen', 'mcp_quick'):
         for case_id in data.test_case_ids:
             if str(case_id) in inline_ids:
                 continue  # Data provided inline, no DB record needed
@@ -142,19 +144,52 @@ async def create_execution(
                     detail={'code': 2003, 'message': f'用例 {case_id} 不存在'}
                 )
 
+    # mcp_quick: auto-select first environment when business_id provided but no environment_id
+    if data.trigger_type == 'mcp_quick' and business and not environment:
+        biz_result = await db.execute(
+            select(Business).where(Business.id == data.business_id).options(selectinload(Business.environments))
+        )
+        biz_with_envs = biz_result.scalar_one_or_none()
+        if biz_with_envs and biz_with_envs.environments:
+            environment = biz_with_envs.environments[0]
+            data.environment_id = environment.id
+
+    # mcp_quick mode: rewrite to match Flash gen_config shape
+    if data.trigger_type == 'mcp_quick':
+        try:
+            data.gen_config = build_mcp_quick_gen_config(
+                data.gen_config or {},
+                model=data.model,
+                workers=data.workers,
+                environment=environment,
+            )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={'code': 2006, 'message': str(e)},
+            ) from e
+
     # Debug mode: force workers=1
     workers = 1 if data.trigger_type == 'debug' else data.workers
 
+    # mcp_quick is stored as 'gen' — it's just a shorthand for Flash gen mode
+    effective_trigger_type = 'gen' if data.trigger_type == 'mcp_quick' else data.trigger_type
+
     # Create execution record
+    persisted_config = (
+        sanitize_mcp_quick_gen_config(data.gen_config)
+        if data.trigger_type == 'mcp_quick' else data.gen_config
+    )
     execution = Execution(
         business_id=data.business_id,
         environment_id=data.environment_id,
-        trigger_type=data.trigger_type,
+        trigger_type=effective_trigger_type,
         model=data.model,
         workers=workers,
+        resolutions=data.resolutions,
         test_case_ids=[str(cid) for cid in data.test_case_ids] if data.test_case_ids else [],
         status='pending',
-        config=data.gen_config if data.gen_config else None,
+        config=persisted_config if persisted_config else None,
     )
     db.add(execution)
     await db.commit()
@@ -183,6 +218,7 @@ async def create_execution(
         trigger_type=execution.trigger_type,
         model=execution.model,
         workers=execution.workers,
+        resolutions=execution.resolutions,
         test_case_ids=execution.test_case_ids,
         status=execution.status,
         oss_report_url=execution.oss_report_url,
@@ -268,6 +304,7 @@ async def list_executions(
             scheduled_task_id=exc.scheduled_task_id,
             model=exc.model,
             workers=exc.workers,
+            resolutions=exc.resolutions,
             test_case_ids=exc.test_case_ids,
             status=exc.status,
             oss_report_url=exc.oss_report_url,
@@ -321,6 +358,7 @@ async def get_execution(
         scheduled_task_id=execution.scheduled_task_id,
         model=execution.model,
         workers=execution.workers,
+        resolutions=execution.resolutions,
         test_case_ids=execution.test_case_ids,
         status=execution.status,
         oss_report_url=execution.oss_report_url,

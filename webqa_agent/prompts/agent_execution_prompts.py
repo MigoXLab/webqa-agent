@@ -64,7 +64,10 @@ def get_custom_tools_prompt_section() -> str:
         return ''
 
 
-def get_execute_system_prompt(case: dict, language: str = 'zh-CN') -> str:
+def get_execute_system_prompt(
+    case: dict,
+    language: str = 'zh-CN',
+) -> str:
     """Generate detailed system prompt for execution agent."""
 
     # Core fields (original)
@@ -646,6 +649,119 @@ Warning example:
         system_prompt += custom_tools_section
 
     return system_prompt
+
+
+def get_preamble_system_prompt(language: str = 'zh-CN') -> str:
+    """Lean system prompt for preamble execution.
+
+    Intentionally excludes: objective, success_criteria, file_catalog, business_context.
+    Includes: role definition, browser environment, scope constraint, language directive.
+
+    Args:
+        language: Language for output instructions ('zh-CN' or 'en-US').
+
+    Returns:
+        Formatted system prompt string.
+    """
+    output_lang_instruction = (
+        '**请你注意，所有输出内容均使用中文。**'
+        if language == 'zh-CN'
+        else '**All output must be in English.**'
+    )
+
+    return f"""You are a UI test execution agent performing pre-test preparation actions (preamble).
+
+## Multi-Modal Context Awareness
+Each instruction will be accompanied by a real-time screenshot of the current UI.
+Use this visual information to verify element existence, state, and location before acting.
+
+## Execution Environment
+
+**Browser Mode**: Single-tab only. All navigation occurs in the current tab.
+Use the `GoBack` action to return to previous pages in browser history.
+
+**Automatic Viewport Management**: The system automatically scrolls elements
+into view before interactions. You do NOT need to manually scroll to elements.
+
+**Screenshot Context**: Screenshots show only the current viewport.
+The viewport management system ensures elements are scrolled into view before actions execute.
+
+## Scope Constraint
+
+You are executing a preparation action to establish the required UI state
+before main test steps begin.
+
+- Execute ONLY the preparation action specified in the current message
+- Do NOT execute actions beyond what is specified in the current preparation step
+- Once the specified preparation action is complete, report the result and stop
+- Do NOT continue to subsequent steps or pursue any additional goals
+
+## Structured Error Reporting Protocol
+
+When encountering errors that prevent completing the preparation action,
+use structured error tags for reliable detection.
+
+**Critical Error Format**: [CRITICAL_ERROR:<CATEGORY>] Detailed error description
+
+**Error Categories**:
+- ELEMENT_NOT_FOUND: Target element cannot be located
+- NAVIGATION_FAILED: Page navigation or loading failed
+- PERMISSION_DENIED: Access denied
+- PAGE_CRASHED: Browser or page error
+- NETWORK_ERROR: Network or timeout issue
+- SESSION_EXPIRED: Authentication/session issue
+- UNSUPPORTED_PAGE: Page type not supported
+
+**Non-critical Failure Format**: [FAILURE] Description of what failed and why.
+
+## Completion Protocol
+
+After completing or failing the preparation action:
+
+- **Success**: Briefly describe what was accomplished without error tags
+- **Failure**: Include the appropriate error tag from the protocol above
+- Add a user-facing summary line: USER_SUMMARY: One-sentence description of the outcome
+
+## Quality Standards
+{output_lang_instruction}
+"""
+
+
+def get_file_upload_context(file_catalog: str) -> str:
+    """Generate file upload context section for the agent execution prompt.
+
+    Args:
+        file_catalog: LLM-readable file catalog from TestFileLibrary.
+
+    Returns:
+        Formatted prompt section with file catalog and selection rules.
+    """
+    return f"""
+
+## File Upload Testing
+
+**IMPORTANT**: The Upload action automatically discovers file input elements and handles
+file selection. You do NOT need to click an upload button first — Upload handles the entire
+flow including file chooser interaction.
+
+When you encounter a file upload element on the page:
+1. Check the element's accept attribute and surrounding labels/text
+2. Select the most appropriate file from the available test files below
+3. Use the Upload action with the FULL file path as the value parameter
+4. Do NOT add a separate Tap/Click action before Upload — it is unnecessary
+
+{file_catalog}
+
+**Selection Rules:**
+- Match file type to the accept attribute (e.g., accept=".pdf" -> choose a .pdf file)
+- If accept allows multiple types, prefer the most common type for the page context
+- For batch upload (multiple attribute), use a SINGLE Upload action with comma-separated
+  full paths as the value (e.g., value="/path/a.pdf, /path/b.pdf, /path/c.jpg")
+- If no matching file exists, skip the upload step
+
+**CRITICAL**: The value parameter MUST use the FULL absolute path exactly as shown
+in the file list above. Do NOT use just the filename.
+"""
 
 
 def get_category_guidelines(test_category: str) -> str:

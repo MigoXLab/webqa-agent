@@ -4,11 +4,11 @@
 import argparse
 import asyncio
 import os
-import subprocess
 import sys
-import threading
 import traceback
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from webqa_agent.config_models.base_config import (BrowserConfig, LLMConfig,
                                                    LogConfig, ReportConfig)
@@ -18,17 +18,17 @@ from webqa_agent.executor.gen_executor import GenExecutor
 from webqa_agent.utils import (check_lighthouse_installation,
                                check_nuclei_installation,
                                check_playwright_browsers_async,
-                               find_config_file, load_cookies, load_yaml,
-                               load_yaml_files)
+                               find_config_file, load_accounts, load_cookies,
+                               load_yaml, load_yaml_files, resolve_config_dir)
 
 
-def get_version():
+def get_version() -> str:
     """Get the package version."""
     from webqa_agent import __version__
     return __version__
 
 
-def get_template_content(mode):
+def get_template_content(mode: str) -> str | None:
     """Get configuration template content from example files.
 
     Args:
@@ -129,6 +129,116 @@ def validate_and_build_llm_config(cfg):
     return llm_config
 
 
+def _load_cc_mini_runner():
+    """Load ``run_cc_mini`` (the Flash engine entrypoint) on demand."""
+    from webqa_agent.utils.flash_utils import load_flash_runner
+    return load_flash_runner(module_name='webqa_cc_mini_runner')
+
+
+async def execute_cc_mini_mode(
+    *,
+    url: str,
+    task: str,
+    provider: str,
+    model: str,
+    api_key: str,
+    base_url: str | None = None,
+    effort: str | None = None,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    max_tokens: int | None = None,
+    timeout: float | None = None,
+    max_time_seconds: float | None = None,
+    skills_dir: str | None = None,
+    file_catalog: str | None = None,
+    save_screenshots: bool = False,
+    screenshot_dir: str | None = None,
+    data_flow_sink=None,
+    browser_headless: bool = False,
+    browser_viewport: tuple[int, int] | None = None,
+    log_level: str = 'info',
+    on_event=None,
+    worker_id: int = 0,
+    extensions: Any = None,
+    filter_model: str | None = None,
+):
+    """Execute one cc-mini run without blocking the main event loop.
+
+    Initialises the shared logger so cc-mini's ``cc_mini.runner`` /
+    ``cc_mini.mcp`` loggers inherit file + stream handlers. Without this
+    call the cc-mini path bypasses ``GenExecutor`` (which normally wires
+    logging) and every ``log.info`` in cc-mini is silently dropped by
+    Python's ``lastResort`` handler.
+
+    ``skills_dir`` is forwarded to ``run_cc_mini``. When provided, the
+    cc-mini engine discovers skills under that directory and exposes
+    them via Progressive Disclosure (see webqa-cc-mini/skills/README.md).
+
+    ``worker_id`` is threaded through so concurrent CLI invocations get
+    distinct Chromium profiles + CDP ports (each worker uses port
+    ``9222 + worker_id``). Defaults to 0 for the single-case CLI flow.
+
+    ``extensions`` accepts a ``features.cookies.Extensions`` instance (or
+    duck-typed equivalent exposing ``as_kwargs()``). When set, its
+    ``pre_engine_hook`` / ``extra_tools`` / ``extra_section`` are spread
+    into ``run_cc_mini``. Use a single param so adding new feature bundles
+    in the future doesn't require expanding this signature each time.
+    """
+    from webqa_agent.utils.get_log import GetLog
+    GetLog.get_log(log_level=log_level)
+
+    extension_kwargs: dict = {}
+    if extensions is not None and hasattr(extensions, 'as_kwargs'):
+        extension_kwargs = extensions.as_kwargs()
+
+    run_cc_mini = _load_cc_mini_runner()
+    return await asyncio.to_thread(
+        run_cc_mini,
+        url,
+        task,
+        provider=provider,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        effort=effort,
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_tokens,
+        timeout=timeout,
+        max_time_seconds=max_time_seconds,
+        skills_dir=skills_dir,
+        file_catalog=file_catalog,
+        save_screenshots=save_screenshots,
+        screenshot_dir=screenshot_dir,
+        data_flow_sink=data_flow_sink,
+        browser_headless=browser_headless,
+        browser_viewport=browser_viewport,
+        worker_id=worker_id,
+        on_event=on_event,
+        filter_model=filter_model,
+        **extension_kwargs,
+    )
+
+
+_execute_cc_mini_mode = execute_cc_mini_mode
+
+
+def _resolve_cc_mini_report_dir(*, cfg: dict, run_timestamp: str | None) -> str:
+    report_base_dir = (cfg.get('report') or {}).get('report_dir')
+    timestamp = (
+        run_timestamp
+        or os.getenv('WEBQA_REPORT_TIMESTAMP')
+        or os.getenv('WEBQA_TIMESTAMP')
+        or datetime.now().strftime('%Y-%m-%d_%H-%M-%S_%f')
+    )
+    if report_base_dir and str(report_base_dir).strip():
+        base_path = Path(report_base_dir)
+        if base_path.name.startswith('test_'):
+            return str(base_path)
+        return str(base_path / f'test_{timestamp}')
+    return f'reports/test_{timestamp}'
+
+
 # ============================================================================
 # Command: init
 # ============================================================================
@@ -173,7 +283,10 @@ def cmd_init(args):
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(template)
 
-        mode_name = 'Gen Mode' if mode == 'gen' else 'Run Mode'
+        mode_name = (
+            'Gen Mode (Flash engine by default)' if mode == 'gen'
+            else 'Run Mode (Standard engine)'
+        )
         print(f'✅ Configuration file created: {output_path} ({mode_name})')
         print()
         print('📝 Next steps:')
@@ -228,10 +341,10 @@ async def run_tests(cfg, execution_mode, config_path: str = None, workers: int =
         except (ValueError, TypeError):
             workers = 4
         print('🎯 Mode: Gen Mode (AI-driven test generation)')
-        await execute_gen_mode(cfg, workers=workers)
+        await execute_gen_mode(cfg, config_path=config_path, workers=workers)
 
 
-async def execute_gen_mode(cfg, workers: int = 1):
+async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1):
     """Execute Gen mode tests using GenConfig and GenExecutor."""
     # Get config sections
     tconf = cfg.get('test_config', {})
@@ -242,6 +355,262 @@ async def execute_gen_mode(cfg, workers: int = 1):
         sys.exit(1)
 
     print(f'🎯 Target URL: {target_url}')
+
+    planning_mode = tconf.get('planning_mode', 'explore')
+    business_objectives = tconf.get('business_objectives', '')
+    engine = str(cfg.get('engine', 'flash')).strip().lower()
+    if engine not in {'flash', 'standard'}:
+        print(f'❌ Invalid engine: "{engine}". Supported engines are: "flash", "standard"', file=sys.stderr)
+        sys.exit(1)
+    use_flash = (engine == 'flash')
+
+    # Validate and build LLM config
+    try:
+        llm_config_dict = validate_and_build_llm_config(cfg)
+        llm_config = LLMConfig(
+            model=llm_config_dict['model'],
+            api_key=llm_config_dict['api_key'],
+            base_url=llm_config_dict.get('base_url'),
+            filter_model=llm_config_dict.get('filter_model'),
+            temperature=llm_config_dict.get('temperature'),
+            top_p=llm_config_dict.get('top_p'),
+            max_tokens=llm_config_dict.get('max_tokens'),
+            reasoning=llm_config_dict.get('reasoning'),
+            timeout=llm_config_dict.get('timeout'),
+        )
+    except ValueError as e:
+        print(f'\n{e}', file=sys.stderr)
+        sys.exit(1)
+
+    if use_flash:
+        # Normalize tasks: accept either a single string (legacy) or a list of
+        # strings (new — concurrent batch). Whitespace-only entries are dropped
+        # so a stray blank line in YAML doesn't waste a worker slot.
+        if isinstance(business_objectives, str):
+            tasks = [business_objectives.strip()] if business_objectives.strip() else []
+        elif isinstance(business_objectives, list):
+            tasks = [
+                str(t).strip() for t in business_objectives
+                if isinstance(t, (str,)) and str(t).strip()
+            ]
+        else:
+            print(
+                '❌ test_config.business_objectives must be a string or list of '
+                f'strings, got {type(business_objectives).__name__}',
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not tasks:
+            print('❌ test_config.business_objectives is required when engine is flash', file=sys.stderr)
+            sys.exit(1)
+
+        run_timestamp = (
+            os.getenv('WEBQA_REPORT_TIMESTAMP')
+            or os.getenv('WEBQA_TIMESTAMP')
+            or datetime.now().strftime('%Y-%m-%d_%H-%M-%S_%f')
+        )
+        resolved_report_dir = _resolve_cc_mini_report_dir(
+            cfg=cfg, run_timestamp=run_timestamp,
+        )
+        report_cfg_raw = cfg.get('report', {})
+        save_screenshots = bool(report_cfg_raw.get('save_screenshots', False))
+        save_dataflow = bool(report_cfg_raw.get('save_dataflow', True))
+
+        from webqa_agent.utils.data_flow_reporter import set_dataflow_enabled
+        set_dataflow_enabled(save_dataflow)
+
+        provider = llm_config.get_provider()
+        if provider == 'gemini':
+            print('ℹ️ cc-mini will use OpenAI-compatible mode for Gemini-style endpoints')
+            provider = 'openai'
+        elif provider not in {'anthropic', 'openai'}:
+            print(f'❌ Unsupported provider for cc-mini: {provider}', file=sys.stderr)
+            sys.exit(1)
+
+        effort = llm_config.reasoning.get('effort') if llm_config.reasoning else None
+
+        # Anthropic users without an explicit base_url must not inherit the
+        # OpenAI default injected by validate_and_build_llm_config() — passing
+        # https://api.openai.com/v1 to the Anthropic SDK breaks every request.
+        cc_mini_base_url = llm_config.base_url
+        if provider == 'anthropic' and cc_mini_base_url == 'https://api.openai.com/v1':
+            cc_mini_base_url = None
+
+        # Resolve concurrency: CLI arg already lives in `workers`; fall back to
+        # config target.max_concurrent_tests (the same key non-cc-mini gen mode
+        # reads). Single-task runs are forced serial regardless.
+        max_concurrent_raw = (
+            workers if workers is not None
+            else cfg.get('target', {}).get('max_concurrent_tests', 1)
+        )
+        try:
+            max_concurrent = max(1, int(max_concurrent_raw))
+        except (ValueError, TypeError):
+            max_concurrent = 1
+        if len(tasks) == 1:
+            max_concurrent = 1
+
+        print('📋 Tests enabled: Gen Mode (Flash engine)')
+        print(f'🌐 Flash URL: {target_url}')
+        print(f'📝 Flash Tasks: {len(tasks)} (concurrency={max_concurrent})')
+        for i, t in enumerate(tasks, start=1):
+            print(f'   {i}. {t}')
+        print(f'🤖 Flash LLM Provider: {provider}')
+        print('-' * 60, flush=True)
+
+        log_level = cfg.get('log', {}).get('level', 'info')
+
+        browser_cfg_raw = cfg.get('browser_config', {})
+        is_docker = os.getenv('DOCKER_ENV') == 'true'
+        browser_headless = True if is_docker else bool(
+            browser_cfg_raw.get('headless', True),
+        )
+        print(f'🌐 Flash browser headless: {browser_headless}', flush=True)
+        _vp = browser_cfg_raw.get('viewport')
+        browser_viewport: tuple[int, int] | None = (
+            (int(_vp['width']), int(_vp['height'])) if isinstance(_vp, dict) else None
+        )
+
+        # Mirror GenExecutor: when the user configured a test-files directory
+        # (+ optional filename whitelist) we build an LLM-readable catalog and
+        # inject it into the cc-mini system prompt so the agent can autonomously
+        # plan uploads with mcp__browser__upload_file.
+        cc_mini_file_catalog: str | None = None
+        cc_mini_test_files_dir = tconf.get('test_files_dir')
+        if cc_mini_test_files_dir:
+            try:
+                from webqa_agent.utils.test_file_library import TestFileLibrary
+                _whitelist = tconf.get('test_files')
+                if _whitelist is not None and not isinstance(_whitelist, list):
+                    print(f'⚠️ Ignoring malformed test_config.test_files (expected list, got {type(_whitelist).__name__})')
+                    _whitelist = None
+                _library = TestFileLibrary(cc_mini_test_files_dir, file_whitelist=_whitelist)
+                if _library.files:
+                    cc_mini_file_catalog = _library.get_catalog_for_llm() or None
+                    print(f'📎 cc-mini test files: {len(_library.files)} from {cc_mini_test_files_dir}')
+                else:
+                    print(f'ℹ️ cc-mini test_files_dir={cc_mini_test_files_dir} has no eligible files; catalog skipped')
+            except Exception as exc:
+                print(f'⚠️ Failed to build cc-mini file catalog: {exc}')
+
+        # Build cookie-injection extensions from the top-level `accounts:`
+        # config (and the legacy `browser_config.cookies` fallback). This
+        # is the only path that turns config-file accounts into cc-mini
+        # cookie state — see CUSTOM_TOOL_DEVELOPMENT.md / cc-mini README.
+        cc_mini_extensions: Any = None
+        try:
+            from webqa_agent.utils.flash_utils import \
+                build_cookie_extensions_from_config
+            cc_mini_extensions = build_cookie_extensions_from_config(
+                cfg, source_file=cfg.get('_source_file'),
+            )
+            if cc_mini_extensions is not None:
+                acc_count = len(cc_mini_extensions.extra_tools or [])
+                if acc_count:
+                    print(f'🔐 Flash accounts: {acc_count} switch_account tool(s) registered')
+                else:
+                    print('🔐 Flash cookies: startup-injection extension active')
+        except ValueError as exc:
+            # Friendly error wrapping for config mistakes — the underlying
+            # validator messages are user-readable; surface them without
+            # a stacktrace and exit cleanly.
+            print(f'\n❌ cc-mini cookie configuration error: {exc}',
+                  file=sys.stderr)
+            sys.exit(1)
+        except Exception as exc:
+            # Unexpected — print the trace because this is a bug, not a
+            # config issue.
+            print(f'\n❌ Failed to build cc-mini cookie extensions: {exc}',
+                  file=sys.stderr)
+            traceback.print_exc()
+            sys.exit(1)
+
+        # Build the executor: shared kwargs go to every task; the executor
+        # injects per-task task/worker_id/screenshot_dir/on_event/sink.
+        from webqa_agent.executor import FlashExecutor
+        executor = FlashExecutor(
+            shared_kwargs=dict(
+                url=target_url,
+                provider=provider,
+                model=llm_config.model,
+                api_key=llm_config.api_key,
+                base_url=cc_mini_base_url,
+                effort=effort,
+                temperature=llm_config.temperature,
+                top_p=llm_config.top_p,
+                max_tokens=llm_config.max_tokens,
+                timeout=llm_config.timeout,
+                skills_dir=tconf.get('cc_mini_skills_dir'),
+                file_catalog=cc_mini_file_catalog,
+                save_screenshots=save_screenshots,
+                browser_headless=browser_headless,
+                browser_viewport=browser_viewport,
+                log_level=log_level,
+                extensions=cc_mini_extensions,
+                filter_model=llm_config.filter_model,
+            ),
+            max_concurrent=max_concurrent,
+            report_dir=resolved_report_dir,
+            url=target_url,
+            language=(cfg.get('report') or {}).get('language', 'zh-CN'),
+            save_screenshots=save_screenshots,
+            save_dataflow=save_dataflow,
+            invoke_runner=_execute_cc_mini_mode,
+        )
+
+        prev_report_ts = os.environ.get('WEBQA_REPORT_TIMESTAMP')
+        os.environ['WEBQA_REPORT_TIMESTAMP'] = run_timestamp
+        try:
+            batch = await executor.execute(tasks)
+        except Exception:
+            # Only infrastructure-level failure (e.g. ResultAggregator crash)
+            # reaches here; per-task crashes are absorbed inside the executor.
+            print('\n❌ cc-mini batch execution failed:', file=sys.stderr)
+            traceback.print_exc()
+            sys.exit(1)
+        finally:
+            if prev_report_ts is None:
+                os.environ.pop('WEBQA_REPORT_TIMESTAMP', None)
+            else:
+                os.environ['WEBQA_REPORT_TIMESTAMP'] = prev_report_ts
+
+        passed_count = sum(1 for s in batch.statuses if s == 'passed')
+        print('\n' + '-' * 60)
+        status_label = (
+            '✅ Done' if batch.overall_status == 'passed'
+            else '❌ Some cases failed'
+        )
+        print(
+            f'{status_label}  |  Cases: {passed_count}/{len(tasks)} passed  |  '
+            f'Steps: {batch.total_steps}  |  '
+            f'Tokens: {batch.total_input_tokens}↑ {batch.total_output_tokens}↓'
+        )
+        for i, (task_text, status) in enumerate(zip(tasks, batch.statuses), start=1):
+            icon = {'passed': '✅', 'warning': '⚠️ ', 'failed': '❌'}.get(status, '❌')
+            preview = task_text if len(task_text) <= 60 else task_text[:57] + '...'
+            print(f'   case-{i} {icon} {status:<7}  {preview}')
+
+        # Surface extension-loading failures from any case. Each result keeps
+        # its own list; merge them so users see the union without duplicates.
+        ext_failed_all: list[str] = []
+        seen: set[str] = set()
+        for r in batch.run_results:
+            for line in (getattr(r, 'extensions_failed', None) or []):
+                if line not in seen:
+                    seen.add(line)
+                    ext_failed_all.append(line)
+        if ext_failed_all:
+            print('⚠️  cc-mini extensions reported failures:', file=sys.stderr)
+            for line in ext_failed_all:
+                print(f'   - {line}', file=sys.stderr)
+
+        if batch.report_path:
+            print(f'📄 Report: {batch.report_path}')
+        if batch.dataflow_path:
+            print(f'📊 Data flow: {batch.dataflow_path}')
+        if batch.overall_status != 'passed':
+            sys.exit(1)
+        return
 
     # Check Playwright browsers
     ok = await check_playwright_browsers_async()
@@ -261,31 +630,14 @@ async def execute_gen_mode(cfg, workers: int = 1):
             print('\n💡 Install Nuclei: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest or download from https://github.com/projectdiscovery/nuclei/releases', file=sys.stderr)
             sys.exit(1)
 
-    # Validate and build LLM config
-    try:
-        llm_config_dict = validate_and_build_llm_config(cfg)
-        llm_config = LLMConfig(
-            model=llm_config_dict['model'],
-            api_key=llm_config_dict['api_key'],
-            base_url=llm_config_dict.get('base_url'),
-            filter_model=llm_config_dict.get('filter_model'),
-            temperature=llm_config_dict.get('temperature'),
-            top_p=llm_config_dict.get('top_p'),
-            max_tokens=llm_config_dict.get('max_tokens'),
-            reasoning=llm_config_dict.get('reasoning'),
-        )
-    except ValueError as e:
-        print(f'\n{e}', file=sys.stderr)
-        sys.exit(1)
-
     # Build browser config
     browser_cfg_raw = cfg.get('browser_config', {})
     is_docker = os.getenv('DOCKER_ENV') == 'true'
     headless = True if is_docker else browser_cfg_raw.get('headless', True)
 
+    config_dir = resolve_config_dir(config_path)
     cookies_value = browser_cfg_raw.get('cookies', [])
-    cookies = load_cookies(cookies_value)
-
+    cookies = load_cookies(cookies_value, config_dir=config_dir)
     browser_config = BrowserConfig(
         browser_type=browser_cfg_raw.get('browser_type', 'chromium'),
         headless=headless,
@@ -310,8 +662,6 @@ async def execute_gen_mode(cfg, workers: int = 1):
     )
 
     # Build test configuration
-    business_objectives = tconf.get('business_objectives', '')
-
     dynamic_step_cfg = tconf.get('dynamic_step_generation', {})
     dynamic_step_config = DynamicStepConfig(
         enabled=dynamic_step_cfg.get('enabled', True),
@@ -327,6 +677,9 @@ async def execute_gen_mode(cfg, workers: int = 1):
     enable_reflection = tconf.get('enable_reflection', True)
     skip_reflection = not enable_reflection
 
+    # Test files directory for upload testing
+    test_files_dir = tconf.get('test_files_dir')
+
     # Build GenConfig
     gen_config = GenConfig(
         target_url=target_url,
@@ -334,11 +687,13 @@ async def execute_gen_mode(cfg, workers: int = 1):
         browser_config=browser_config,
         report_config=report_config,
         log_config=log_config,
+        planning_mode=planning_mode,
         business_objectives=business_objectives,
         dynamic_step_generation=dynamic_step_config,
         custom_tools=custom_tools_config,
         max_concurrent_tests=workers,
         skip_reflection=skip_reflection,
+        test_files_dir=test_files_dir,
     )
 
     # Display configuration
@@ -399,11 +754,20 @@ async def execute_run_mode(config_path: str, workers: int = None):
         print(f'❌ Failed to load configs: {e}', file=sys.stderr)
         sys.exit(1)
 
+    # Ensure run mode only executes on 'standard' engine
+    engine = str(configs[0].get('engine', 'standard')).strip().lower()
+    if engine != 'standard':
+        print(f'❌ Run Mode is only supported on the "standard" engine, but "engine: {engine}" was configured.', file=sys.stderr)
+        sys.exit(1)
+
     # Pre-process cookies for all configs (load from file path if needed)
     for cfg in configs:
         raw_cookies = cfg.get('cookies') or cfg.get('browser_config', {}).get('cookies')
         if raw_cookies:
-            loaded_cookies = load_cookies(raw_cookies)
+            loaded_cookies = load_cookies(
+                raw_cookies,
+                config_dir=resolve_config_dir(cfg.get('_source_file') or config_path),
+            )
             # Update both possible locations to ensure consistency
             if 'cookies' in cfg:
                 cfg['cookies'] = loaded_cookies
@@ -441,7 +805,11 @@ async def execute_run_mode(config_path: str, workers: int = None):
             log_config=LogConfig(**configs[0].get('log', {'level': 'info'})),
             cases_path=config_path,  # Pass original path for RunExecutor to load
             workers=workers,
-            ignore_rules=configs[0].get('ignore_rules')
+            ignore_rules=configs[0].get('ignore_rules'),
+            accounts=load_accounts(
+                configs[0].get('accounts'),
+                source_file=configs[0].get('_source_file') or config_path,
+            ),
         )
     except Exception as e:
         print(f'❌ Failed to create RunConfig: {e}', file=sys.stderr)
@@ -525,84 +893,7 @@ def cmd_gen(args):
         print('💡 Create a Gen mode config: webqa-agent init', file=sys.stderr)
         sys.exit(1)
 
-    asyncio.run(run_tests(cfg, execution_mode='gen', workers=workers))
-
-
-def cmd_ui(args):
-    """Launch Gradio web UI."""
-    # Set language if provided
-    if args.lang:
-        os.environ['GRADIO_LANGUAGE'] = args.lang
-
-    # Check gradio
-    try:
-        import gradio
-    except ImportError:
-        print("❌ Gradio is not installed. Install with: uv add \"gradio>5.44.0\"")
-        sys.exit(1)
-
-    # Optional version check
-    try:
-        from packaging import version
-        required = '5.44.0'
-        if version.parse(gradio.__version__) <= version.parse(required):
-            print(f'❌ Gradio version {gradio.__version__} detected, need >= {required}')
-            print(f"Install/upgrade: uv add \"gradio>={required}\"")
-            sys.exit(1)
-    except ImportError:
-        pass
-
-    # Import UI factory
-    try:
-        from app_gradio.demo_gradio import (create_gradio_interface,
-                                            process_queue)
-    except ImportError as e:
-        print(f'❌ Failed to import Gradio app: {e}')
-        sys.exit(1)
-
-    # Ensure Playwright browsers
-    ok = asyncio.run(check_playwright_browsers_async())
-    if not ok:
-        print('🔍 Playwright browsers missing, installing chromium ...')
-        try:
-            subprocess.run([sys.executable, '-m', 'playwright', 'install', 'chromium'], check=True)
-            ok = asyncio.run(check_playwright_browsers_async())
-        except Exception as e:
-            print(f'❌ Failed to install Playwright browsers: {e}')
-            print('Please run manually: playwright install chromium')
-            sys.exit(1)
-
-    if not ok:
-        print('❌ Playwright browsers still unavailable. Please run: playwright install chromium')
-        sys.exit(1)
-
-    # Start queue processor thread
-    def _run_queue():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(process_queue())
-
-    queue_thread = threading.Thread(target=_run_queue, daemon=True)
-    queue_thread.start()
-
-    language = os.getenv('GRADIO_LANGUAGE', 'en-US')
-    print('🚀 Starting WebQA Agent Gradio UI ...')
-    print(f'🌐 Language: {language}')
-    print(f'🔗 http://{args.host}:{args.port}')
-    print('💡 Set GRADIO_LANGUAGE=en-US or zh-CN to switch interface language.')
-
-    app = create_gradio_interface(language=language)
-    try:
-        app.launch(
-            server_name=args.host,
-            server_port=args.port,
-            share=False,
-            show_error=True,
-            inbrowser=not args.no_browser,
-        )
-    except Exception as e:
-        print(f'❌ Failed to launch Gradio UI: {e}')
-        sys.exit(1)
+    asyncio.run(run_tests(cfg, execution_mode='gen', config_path=config_path, workers=workers))
 
 
 # ============================================================================
@@ -766,8 +1057,6 @@ def main():
         cmd_gen(args)
     elif args.command == 'run':
         cmd_run(args)
-    elif args.command == 'ui':
-        cmd_ui(args)
 
 
 if __name__ == '__main__':

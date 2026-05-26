@@ -79,6 +79,8 @@ async def generate_dynamic_steps_with_llm(
     failed_instruction: str = '',
     error_message: str = '',
     report_dir: Optional[str] = None,
+    planning_mode: str = 'explore',
+    original_planned_steps: Optional[list[dict]] = None,
 ) -> dict:
     """Generate dynamic test steps or recover from failed steps using LLM.
 
@@ -105,6 +107,9 @@ async def generate_dynamic_steps_with_llm(
         failure_recovery_mode: If True, operate in failure recovery mode instead of DOM change mode
         failed_instruction: The instruction that failed (used in failure recovery mode)
         error_message: The error message from the failed step (used in failure recovery mode)
+        planning_mode: Planning mode ('explore' or 'focused'), affects strategy constraints
+        original_planned_steps: Deep copy of original planned steps before dynamic
+            modifications, used in focused mode to provide journey milestone context
 
     Returns:
         Dict containing strategy and generated test steps
@@ -443,6 +448,34 @@ Use this logic to select strategy:
         # Build system prompt
         system_prompt = get_dynamic_step_generation_prompt()
 
+        # Focused mode: force insert strategy to protect E2E journey steps
+        if planning_mode == 'focused':
+            system_prompt += """
+
+## FOCUSED MODE CONSTRAINT (OVERRIDE)
+This test case is part of a focused end-to-end user journey where steps
+form a sequential, dependent workflow.
+
+### 1. Strategy Protection
+ALWAYS use "insert" strategy. NEVER use "replace".
+The remaining steps represent critical journey milestones that MUST be preserved.
+Only ADD complementary steps — never remove or replace existing planned steps.
+
+### 2. Interaction Continuity Enforcement (Reinforced for Focused Mode)
+In focused mode, the Interaction Continuity Principle is STRICTLY enforced:
+- When the previous action triggered new elements (menus, modals, dropdowns),
+  you MUST generate steps that interact with these elements
+- These triggered elements are almost certainly prerequisites for the next
+  planned journey milestone — do NOT skip them
+- Do NOT generate steps for features/pages that are unrelated to the current
+  UI context
+
+### 3. Journey Context Awareness
+When generating steps, consider the "Original Journey Intent" section in the
+user prompt. Your generated steps should help BRIDGE the current UI state to
+the next journey milestone — not jump to arbitrary milestones or repeat
+previously completed operations."""
+
         # Prepare test case context for better coherence
         test_case_context = ''
         if current_case and 'steps' in current_case:
@@ -466,6 +499,39 @@ Executed Steps (for context):
 
 Remaining Steps (may need adjustment after replan):
 {json.dumps(remaining_steps, ensure_ascii=False, indent=2) if remaining_steps else "None"}
+"""
+
+        # Focused mode: add original journey intent for milestone reference
+        next_milestones_section = ''
+        if planning_mode == 'focused' and original_planned_steps:
+            # Estimate progress position in original plan using execution ratio.
+            # This is a heuristic approximation — dynamic step insertions may
+            # cause the ratio to under-represent actual progress in the original plan.
+            total_current = len(current_case.get('steps', [])) if current_case else 0
+            if total_current > 0:
+                progress_ratio = executed_steps / total_current
+                progress_idx = min(
+                    int(progress_ratio * len(original_planned_steps)),
+                    len(original_planned_steps) - 1,
+                )
+            else:
+                progress_idx = 0
+            next_few = original_planned_steps[progress_idx:progress_idx + 5]
+            logger.debug(
+                f'Focused mode: milestone reference generated '
+                f'(progress_idx={progress_idx}, milestones_shown={len(next_few)}, '
+                f'original_total={len(original_planned_steps)})'
+            )
+            if next_few:
+                next_milestones_section = f"""
+## Original Journey Intent (Reference)
+The following are the NEXT milestones from the original test plan. Use them
+to understand the INTENDED direction of this journey — your generated steps
+should help advance toward these goals, not diverge from them:
+{json.dumps(next_few, ensure_ascii=False, indent=2)}
+
+If the new UI elements can be used to accomplish or prepare for these
+milestones, generate steps accordingly.
 """
 
         # Build multi-modal user prompt with dynamic status context
@@ -514,6 +580,8 @@ Use this visual information along with the DOM diff to understand the complete U
 {visual_context_section}
 
 {test_case_context}
+
+{next_milestones_section}
 
 ## Analysis Context
 Max steps to generate: {max_steps}

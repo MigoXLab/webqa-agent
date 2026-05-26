@@ -7,10 +7,27 @@ import { ExecutionHistory } from './components/ExecutionHistory';
 import { ExecutionDetail } from './components/ExecutionDetail';
 import { CaseEditorPage } from './components/CaseEditorPage';
 import { GenPage } from './components/GenPage';
-import { LayoutDashboard, History, Box, Loader2, Github, Sparkles } from 'lucide-react';
-import { apiClient, Business as APIBusiness, TestCase as APITestCase, Execution as APIExecution } from './api/client';
+import { ApiKeyManager } from './components/ApiKeyManager';
+import { LayoutDashboard, History, Box, Loader2, Github, Sparkles, Key, ExternalLink } from 'lucide-react';
+import { apiClient, Business as APIBusiness, Execution as APIExecution } from './api/client';
+import { toFrontendTestCase } from './utils/testCaseUtils';
+import { getCasePortalUrl } from './utils/env';
 
 // Re-export types for backward compatibility
+export type AccountEntry = {
+  id: string;           // Frontend-only key
+  name: string;
+  role?: string;
+  is_default: boolean;
+  // SSO fields
+  sso_username?: string;
+  sso_password?: string;
+  sso_env?: 'prod' | 'staging' | 'dev';
+  has_password?: boolean;  // Backend flag: password exists but not returned
+  // Cookies fields
+  cookies?: any[];
+};
+
 export type Environment = {
   id: string;
   name: string;
@@ -20,6 +37,7 @@ export type Environment = {
   sso_password?: string;
   sso_env?: 'prod' | 'staging' | 'dev';
   cookies?: any[];
+  accounts?: AccountEntry[];
   ignore_rules?: {
     network?: Array<{ pattern: string; type: string }>;
     console?: Array<{ pattern: string; match_type: string }>;
@@ -55,6 +73,7 @@ export type TestCase = {
   name: string;
   description: string;
   login_required: boolean;
+  account?: string;
   steps: TestStep[];
   version?: string;
   snapshot?: string;
@@ -75,7 +94,7 @@ export type VerifyArgs = {
 export type TestStep = {
   id: string;
   order: number;
-  step_type: 'action' | 'verify';
+  step_type: 'action' | 'verify' | 'switch_account';
   action?: {
     description: string;
     args?: ActionArgs;
@@ -84,6 +103,7 @@ export type TestStep = {
     assertion: string;
     args?: VerifyArgs;
   };
+  switch_account?: string;
 };
 
 export type ExecutionResult = {
@@ -142,66 +162,22 @@ function toFrontendBusiness(apiBusiness: APIBusiness): Business {
       sso_password: env.sso_password,
       sso_env: env.sso_env || 'prod',
       cookies: env.cookies || [],
+      accounts: (env.accounts || []).map((acc: any) => ({
+        id: acc.id || crypto.randomUUID(),
+        name: acc.name || '',
+        role: acc.role || undefined,
+        is_default: acc.is_default ?? false,
+        sso_username: acc.sso_username,
+        sso_password: acc.sso_password,
+        sso_env: acc.sso_env,
+        has_password: acc.has_password ?? false,
+        cookies: acc.cookies || [],
+      })),
       ignore_rules: env.ignore_rules || {},
       browser_config: env.browser_config || {},
     })),
     files: [], // Files are managed separately via OSS
     createdAt: (apiBusiness.created_at || new Date().toISOString()).split('T')[0],
-  };
-}
-
-function toFrontendTestCase(apiCase: APITestCase): TestCase {
-  if (!apiCase) {
-     console.error('Invalid test case data:', apiCase);
-     return {} as TestCase;
-  }
-  return {
-    id: apiCase.id,
-    businessId: apiCase.business_id,
-    name: apiCase.name,
-    description: apiCase.description || '',
-    login_required: apiCase.login_required ?? false,
-    steps: (apiCase.steps || []).map((step, idx) => {
-      // Handle malformed data where description/assertion might be objects
-      let description = '';
-      let assertion = '';
-      let args = step.args || {};
-
-      if (step.step_type === 'action') {
-        // If description is an object with nested structure, extract it
-        if (typeof step.description === 'object' && step.description !== null) {
-          const descObj = step.description as any;
-          description = descObj.description || JSON.stringify(step.description);
-          // Merge args if present in the nested object
-          if (descObj.args) {
-            args = { ...args, ...descObj.args };
-          }
-        } else {
-          description = step.description || '';
-        }
-      } else {
-        assertion = step.assertion || '';
-      }
-
-      return {
-        id: crypto.randomUUID(),
-        order: idx + 1,
-        step_type: step.step_type,
-        action: step.step_type === 'action' ? {
-          description,
-          args,
-        } : undefined,
-        verify: step.step_type === 'verify' ? {
-          assertion,
-          args,
-        } : undefined,
-      };
-    }),
-    version: apiCase.version,
-    snapshot: apiCase.snapshot,
-    use_snapshot: apiCase.use_snapshot,
-    createdAt: (apiCase.created_at || new Date().toISOString()).split('T')[0],
-    status: (apiCase.status || 'active') as 'draft' | 'active' | 'disabled',
   };
 }
 
@@ -299,6 +275,7 @@ export default function App() {
   const isCaseEditor = /^\/business\/[^/]+\/case\//.test(location.pathname);
   const view = location.pathname === '/history' ? 'history' :
                location.pathname === '/gen' ? 'gen' :
+               location.pathname === '/api-keys' ? 'api_keys' :
                isCaseEditor ? 'case_editor' :
                location.pathname.startsWith('/business/') ? 'business_detail' :
                location.pathname.startsWith('/execution/') ? 'execution_detail' : 'businesses';
@@ -423,6 +400,19 @@ export default function App() {
                   AI 探索
                 </div>
               </Link>
+              {getCasePortalUrl() && (
+                <a
+                  href={getCasePortalUrl()}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-4 py-2 rounded-lg text-sm font-medium transition-colors text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+                >
+                  <div className="flex items-center gap-2">
+                    <ExternalLink className="w-4 h-4" />
+                    用例生成
+                  </div>
+                </a>
+              )}
               <Link
                 to="/"
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -447,6 +437,19 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <History className="w-4 h-4" />
                   执行记录
+                </div>
+              </Link>
+              <Link
+                to="/api-keys"
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  view === 'api_keys'
+                    ? 'bg-gray-100 text-gray-900'
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Key className="w-4 h-4" />
+                  API Keys
                 </div>
               </Link>
             </nav>
@@ -509,6 +512,7 @@ export default function App() {
           } />
           <Route path="/business/:businessId/case/new" element={<CaseEditorPage />} />
           <Route path="/business/:businessId/case/:caseId" element={<CaseEditorPage />} />
+          <Route path="/api-keys" element={<ApiKeyManager />} />
           <Route path="/history" element={
             <ExecutionHistory businesses={businesses} />
           } />

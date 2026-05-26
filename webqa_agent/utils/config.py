@@ -8,7 +8,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 import yaml
 
@@ -70,7 +70,18 @@ def load_yaml(path):
         sys.exit(1)
 
 
-def load_cookies(cookies_value):
+def resolve_config_dir(source_file: Optional[Union[str, Path]]) -> Optional[str]:
+    """Resolve the directory containing a config file."""
+    if not source_file:
+        return None
+
+    path = Path(source_file)
+    if path.is_dir():
+        return str(path.resolve())
+    return str(path.resolve().parent)
+
+
+def load_cookies(cookies_value, config_dir: Optional[Union[str, Path]] = None):
     """Load cookies from value (list, string path, or file path).
 
     Args:
@@ -103,14 +114,20 @@ def load_cookies(cookies_value):
     # If string, treat as file path
     if isinstance(cookies_value, str):
         cookies_path = cookies_value.strip()
+        candidate_paths = [cookies_path]
+
+        if config_dir and not os.path.isabs(cookies_path):
+            candidate_paths.append(str(Path(config_dir) / cookies_path))
+
+        resolved_path = next((path for path in candidate_paths if os.path.isfile(path)), None)
 
         # Check if file exists
-        if not os.path.isfile(cookies_path):
+        if not resolved_path:
             print(f'⚠️ Cookies file not found: {cookies_path}', file=sys.stderr)
             return []
 
         try:
-            with open(cookies_path, 'r', encoding='utf-8') as f:
+            with open(resolved_path, 'r', encoding='utf-8') as f:
                 content = f.read().strip()
 
                 # Try to parse as JSON
@@ -120,7 +137,7 @@ def load_cookies(cookies_value):
                         print(f'⚠️ Cookies file must contain a JSON array, got {type(cookies_list).__name__}',
                               file=sys.stderr)
                         return []
-                    print(f'✓ Loaded {len(cookies_list)} cookies from {cookies_path}')
+                    print(f'✓ Loaded {len(cookies_list)} cookies from {resolved_path}')
                     return cookies_list
                 except json.JSONDecodeError as e:
                     print(f'⚠️ Failed to parse cookies JSON: {e}', file=sys.stderr)
@@ -176,3 +193,21 @@ def load_yaml_files(yaml_path: Union[str, Path]) -> List[Dict[str, Any]]:
 
     print(f'Loaded {len(configs)} configuration(s) from {yaml_path}')
     return configs
+
+
+def load_accounts(
+    accounts_value: Optional[List[Dict[str, Any]]],
+    source_file: Optional[Union[str, Path]] = None,
+):
+    """Load account configs with config-relative cookies_file resolution."""
+    if not accounts_value:
+        return None
+
+    from webqa_agent.config_models.base_config import AccountConfig
+
+    config_dir = resolve_config_dir(source_file)
+    return [
+        AccountConfig.from_raw(account, config_dir=config_dir)
+        if not isinstance(account, AccountConfig) else account
+        for account in accounts_value
+    ]

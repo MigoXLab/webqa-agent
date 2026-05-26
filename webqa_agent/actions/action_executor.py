@@ -1,7 +1,7 @@
 import asyncio
 import inspect
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 from webqa_agent.actions.action_handler import action_context_var
 
@@ -22,7 +22,7 @@ class ActionExecutor:
             'Drag': self._execute_drag,
             'GoToPage': self._execute_go_to_page,  # Added missing action
             'GoBack': self._execute_go_back,  # Added browser back navigation
-            'Mouse': self._execute_mouse, # Added mouse action
+            'Mouse': self._execute_mouse,  # Added mouse action
         }
 
     async def initialize(self):
@@ -147,11 +147,11 @@ class ActionExecutor:
                 elif ctx.error_type == 'scroll_timeout_lazy_loading':
                     base_message = f'Tap failed: Element viewport positioning succeeded but page content unstable after {ctx.scroll_attempts} attempts.'
                 elif ctx.error_type == 'element_not_found':
-                    base_message = f'Tap failed: Element not found on page.'
+                    base_message = 'Tap failed: Element not found on page.'
                 elif ctx.error_type == 'element_not_clickable':
-                    base_message = f'Tap failed: Element exists but is not clickable.'
+                    base_message = 'Tap failed: Element exists but is not clickable.'
                 elif ctx.error_type == 'playwright_error':
-                    base_message = f'Tap failed: Browser interaction error.'
+                    base_message = 'Tap failed: Browser interaction error.'
             else:
                 base_message = 'Tap action failed. The element might not be clickable.'
 
@@ -191,9 +191,9 @@ class ActionExecutor:
                 if ctx.error_type == 'scroll_failed':
                     base_message = f'Hover failed: Could not scroll element into viewport after {ctx.scroll_attempts} attempts.'
                 elif ctx.error_type == 'element_not_found':
-                    base_message = f'Hover failed: Element not found on page or missing coordinates.'
+                    base_message = 'Hover failed: Element not found on page or missing coordinates.'
                 elif ctx.error_type == 'playwright_error':
-                    base_message = f'Hover failed: Browser interaction error.'
+                    base_message = 'Hover failed: Browser interaction error.'
             else:
                 base_message = 'Hover action failed. The element might not be hoverable.'
 
@@ -245,13 +245,13 @@ class ActionExecutor:
                     if ctx.error_type == 'scroll_failed':
                         base_message = f'Input failed: Could not scroll element into viewport after {ctx.scroll_attempts} attempts.'
                     elif ctx.error_type == 'element_not_found':
-                        base_message = f'Input failed: Element not found on page.'
+                        base_message = 'Input failed: Element not found on page.'
                     elif ctx.error_type == 'element_not_typeable':
-                        base_message = f'Input failed: Element exists but cannot accept text input.'
+                        base_message = 'Input failed: Element exists but cannot accept text input.'
                     elif ctx.error_type == 'element_not_clickable':
-                        base_message = f'Input failed: Could not focus element for typing.'
+                        base_message = 'Input failed: Could not focus element for typing.'
                     elif ctx.error_type == 'playwright_error':
-                        base_message = f'Input failed: Browser interaction error.'
+                        base_message = 'Input failed: Browser interaction error.'
                 else:
                     base_message = 'Input action failed. The element might not be available for typing.'
 
@@ -336,9 +336,21 @@ class ActionExecutor:
                 'error_details': error_details
             }
 
+    async def _execute_upload(self, action, file_path: Union[str, List[str], None] = None):
+        """Execute upload action.
 
-    async def _execute_upload(self, action, file_path):
-        """Execute upload action."""
+        Args:
+            action: Action dict with locate.id
+            file_path: File path(s) to upload. Single str or list of str for
+                      batch upload. If None, returns failure with guidance.
+        """
+        if not file_path:
+            return {
+                'success': False,
+                'message': 'No file path provided for upload action. '
+                           'Configure test_files_dir in config.yaml to enable '
+                           'file upload testing in Gen mode.',
+            }
         if not self._validate_params(action, ['locate.id']):
             return {'success': False, 'message': 'Missing locate.id for upload action'}
 
@@ -538,7 +550,7 @@ class ActionExecutor:
 
                             # Make message more specific based on error type
                             if ctx.error_type == 'playwright_error':
-                                base_message = f'Navigation failed: Browser interaction error.'
+                                base_message = 'Navigation failed: Browser interaction error.'
                             else:
                                 base_message = f"Navigation failed: {ctx.error_reason or 'Unknown reason'}"
 
@@ -570,7 +582,7 @@ class ActionExecutor:
                     }
 
                     if ctx.error_type == 'playwright_error':
-                        base_message = f'Navigation failed: Browser interaction error.'
+                        base_message = 'Navigation failed: Browser interaction error.'
                     else:
                         base_message = f"Navigation failed: {ctx.error_reason or 'Unknown reason'}"
 
@@ -639,7 +651,7 @@ class ActionExecutor:
 
                         # Make message more specific based on error type
                         if ctx.error_type == 'playwright_error':
-                            base_message = f'Go back failed: Browser interaction error.'
+                            base_message = 'Go back failed: Browser interaction error.'
                         else:
                             base_message = f"Go back failed: {ctx.error_reason or 'Unknown reason'}"
                     else:
@@ -740,7 +752,7 @@ class ActionExecutor:
 
                         # Make message more specific based on error type
                         if ctx.error_type == 'playwright_error':
-                            base_message = f'Mouse move failed: Browser interaction error.'
+                            base_message = 'Mouse move failed: Browser interaction error.'
                         else:
                             base_message = f"Mouse move failed: {ctx.error_reason or 'Unknown reason'}"
                     else:
@@ -784,7 +796,7 @@ class ActionExecutor:
 
                         # Make message more specific based on error type
                         if ctx.error_type == 'playwright_error':
-                            base_message = f'Mouse wheel scroll failed: Browser interaction error.'
+                            base_message = 'Mouse wheel scroll failed: Browser interaction error.'
                         else:
                             base_message = f"Mouse wheel scroll failed: {ctx.error_reason or 'Unknown reason'}"
                     else:

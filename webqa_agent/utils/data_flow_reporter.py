@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import queue
+import re
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -11,6 +13,37 @@ from typing import Any
 
 _WRITE_LOCK = threading.Lock()
 _DATAFLOW_ENABLED: bool = True  # Module-level switch; set via set_dataflow_enabled()
+_MAX_STRING_LENGTH = 12000
+_MAX_LIST_ITEMS = 200
+_SENSITIVE_KEYS = {
+    'authorization',
+    'cookie',
+    'set-cookie',
+    'api_key',
+    'apikey',
+    'api-key',
+    'x-api-key',
+    'password',
+    'passwd',
+    'secret',
+    'credential',
+    'credentials',
+    'access_token',
+    'refresh_token',
+    'id_token',
+    'session',
+    'session_id',
+    'sessionid',
+}
+_TOKEN_METRIC_KEYS = {
+    'input_tokens',
+    'output_tokens',
+    'prompt_tokens',
+    'completion_tokens',
+    'total_tokens',
+    'cache_read_input_tokens',
+    'cache_creation_input_tokens',
+}
 
 # Background writer: events are queued and flushed by a daemon thread
 # so that callers (often on the asyncio event loop) never block on file I/O.
@@ -63,21 +96,83 @@ def _round_float_by_key(key: str, value: float) -> float:
     return value
 
 
-def _sanitize_value(value: Any, _key: str = '') -> Any:
+def _is_sensitive_key(key: str) -> bool:
+    normalized = key.strip().lower().replace('-', '_')
+    if normalized in _TOKEN_METRIC_KEYS:
+        return False
+    if normalized in {k.replace('-', '_') for k in _SENSITIVE_KEYS}:
+        return True
+    return normalized.endswith('_token') and normalized not in _TOKEN_METRIC_KEYS
+
+
+def _looks_like_base64(value: str) -> bool:
+    if len(value) < 512:
+        return False
+    sample = value[:512].replace('\n', '').replace('\r', '')
+    return bool(re.fullmatch(r'[A-Za-z0-9+/=_-]+', sample))
+
+
+def _omitted_blob(value: str, label: str = 'binary data') -> str:
+    digest = hashlib.sha256(value.encode('utf-8', errors='ignore')).hexdigest()[:16]
+    return f'<{label} omitted; length={len(value)}; sha256={digest}>'
+
+
+def _redact_sensitive_text(value: str) -> str:
+    patterns = [
+        r'(?i)(authorization\s*[:=]\s*)(bearer\s+)?[^\s,;]+',
+        r'(?i)((?:api[_-]?key|password|passwd|access_token|refresh_token|id_token|secret)\s*[:=]\s*)[^\s,;]+',
+        r'(?i)(cookie\s*[:=]\s*)[^\n]+',
+        r'(?i)(set-cookie\s*[:=]\s*)[^\n]+',
+    ]
+    redacted = value
+    for pattern in patterns:
+        redacted = re.sub(pattern, lambda m: f'{m.group(1)}<redacted>', redacted)
+    return redacted
+
+
+def _truncate_long_string(value: str) -> str:
+    if len(value) <= _MAX_STRING_LENGTH:
+        return value
+    digest = hashlib.sha256(value.encode('utf-8', errors='ignore')).hexdigest()[:16]
+    return (
+        value[:_MAX_STRING_LENGTH]
+        + f'\n<truncated; original_length={len(value)}; sha256={digest}>'
+    )
+
+
+def _sanitize_value(value: Any, _key: str = '', _depth: int = 0) -> Any:
     """Sanitize values for JSON/Markdown output without losing structure."""
+    if _is_sensitive_key(_key):
+        return '<redacted>'
+    if _depth > 40:
+        return '<max depth exceeded>'
+
     if isinstance(value, dict):
-        return {str(k): _sanitize_value(v, _key=str(k)) for k, v in value.items()}
+        return {
+            str(k): _sanitize_value(v, _key=str(k), _depth=_depth + 1)
+            for k, v in value.items()
+        }
 
     if isinstance(value, list):
-        return [_sanitize_value(item, _key=_key) for item in value]
+        items = [_sanitize_value(item, _key=_key, _depth=_depth + 1)
+                 for item in value[:_MAX_LIST_ITEMS]]
+        if len(value) > _MAX_LIST_ITEMS:
+            items.append(f'<truncated list; omitted={len(value) - _MAX_LIST_ITEMS}>')
+        return items
 
     if isinstance(value, tuple):
-        return [_sanitize_value(item, _key=_key) for item in value]
+        items = [_sanitize_value(item, _key=_key, _depth=_depth + 1)
+                 for item in value[:_MAX_LIST_ITEMS]]
+        if len(value) > _MAX_LIST_ITEMS:
+            items.append(f'<truncated tuple; omitted={len(value) - _MAX_LIST_ITEMS}>')
+        return items
 
     if isinstance(value, str):
         if value.startswith('data:image'):
-            return f'<image data omitted; length={len(value)}>'
-        return value
+            return _omitted_blob(value, 'image data')
+        if _key.lower() in {'data', 'image', 'image_base64'} and _looks_like_base64(value):
+            return _omitted_blob(value)
+        return _truncate_long_string(_redact_sensitive_text(value))
 
     if isinstance(value, bool) or value is None:
         return value
@@ -154,7 +249,38 @@ def record_data_flow_event(
         return None
 
 
-def flush_data_flow_events(timeout: float = 5.0) -> None:
+def record_data_flow_event_object(
+    event: dict[str, Any],
+    report_dir: str | None = None,
+) -> str | None:
+    """Append a pre-shaped data-flow event to the JSONL log.
+
+    Unlike ``record_data_flow_event()``, this preserves the event timestamp
+    captured at the source.  It is used by cc-mini, where timing is measured in
+    the Engine thread and only written by WebQA's CLI bridge.
+    """
+    if not _DATAFLOW_ENABLED:
+        return None
+    target_dir = _resolve_report_dir(report_dir)
+    if target_dir is None:
+        return None
+
+    try:
+        event_path = target_dir / 'data_flow_events.jsonl'
+        shaped = {
+            'timestamp': str(event.get('timestamp') or datetime.now().isoformat(timespec='milliseconds')),
+            'stage': str(event.get('stage') or 'unknown'),
+            'event_type': str(event.get('event_type') or 'unknown'),
+            'payload': _sanitize_value(event.get('payload', {})),
+        }
+        line = json.dumps(shaped, ensure_ascii=False) + '\n'
+        _EVENT_QUEUE.put_nowait((event_path, line))
+        return str(event_path)
+    except Exception:
+        return None
+
+
+def flush_data_flow_events() -> None:
     """Block until the background writer has drained all queued events."""
     _EVENT_QUEUE.join()
 
@@ -165,8 +291,6 @@ def _truncate_text(value: str, limit: int = 120) -> str:
     if len(compact) <= limit:
         return compact
     return compact[: limit - 3] + '...'
-
-
 
 
 def _event_title(event: dict[str, Any]) -> str:
@@ -258,6 +382,19 @@ def _event_title(event: dict[str, Any]) -> str:
         return f'Result · {_truncate_text(str(case_name), 90)}'
     if event_type == 'run_test_cases_summary':
         return 'Run Test Cases Summary'
+    if event_type == 'cc_mini_llm_call':
+        model = payload.get('model') or payload.get('group_label') or 'LLM'
+        turn_id = payload.get('turn_id', '?')
+        return f'LLM Call T{turn_id} · {_truncate_text(str(model), 80)}'
+    if event_type == 'cc_mini_tool_call':
+        tool_name = payload.get('tool_name') or payload.get('group_label') or 'Tool'
+        return f'Tool Call · {_truncate_text(str(tool_name), 90)}'
+    if event_type == 'cc_mini_tool_result':
+        tool_name = payload.get('tool_name') or payload.get('group_label') or 'Tool'
+        status = payload.get('status') or 'done'
+        return f'Tool Result · {_truncate_text(str(tool_name), 90)} · {status}'
+    if event_type == 'cc_mini_error':
+        return f'cc-mini Error · {_truncate_text(str(payload.get("message", "")), 90)}'
 
     return f'{stage} · {event_type}'
 
@@ -268,6 +405,7 @@ def _extract_token_usage(payload: dict[str, Any]) -> dict[str, int]:
     case_result = payload.get('case_result', {}) if isinstance(payload.get('case_result'), dict) else {}
     candidates: list[Any] = [
         payload.get('token_usage'),
+        payload.get('usage'),
         payload.get('usage_details'),
         payload.get('llm_metrics', {}).get('token_usage')
         if isinstance(payload.get('llm_metrics'), dict)
@@ -285,6 +423,12 @@ def _extract_token_usage(payload: dict[str, Any]) -> dict[str, int]:
             value = candidate.get(key)
             if isinstance(value, (int, float)):
                 usage[key] = int(value)
+        input_value = candidate.get('input_tokens')
+        if 'prompt_tokens' not in usage and isinstance(input_value, (int, float)):
+            usage['prompt_tokens'] = int(input_value)
+        output_value = candidate.get('output_tokens')
+        if 'completion_tokens' not in usage and isinstance(output_value, (int, float)):
+            usage['completion_tokens'] = int(output_value)
         if 'total_tokens' not in usage and {
             'prompt_tokens',
             'completion_tokens',
@@ -332,7 +476,11 @@ def _parse_iso_ts(value: str) -> datetime | None:
         return None
 
 
-def _build_interactive_gantt_tasks(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _build_interactive_gantt_tasks(
+    events: list[dict[str, Any]],
+    *,
+    group_mode: str = 'case',
+) -> list[dict[str, Any]]:
     """Build normalized gantt task entries for interactive HTML rendering."""
     tasks: list[dict[str, Any]] = []
     sorted_events = sorted(events, key=lambda e: str(e.get('timestamp', '')))
@@ -369,6 +517,10 @@ def _build_interactive_gantt_tasks(events: list[dict[str, Any]]) -> list[dict[st
                 'start_ms': int(start_ts.timestamp() * 1000),
                 'end_ms': int(ts.timestamp() * 1000),
                 'duration_seconds': duration_seconds,
+                'group_key': payload.get('group_key'),
+                'group_label': payload.get('group_label'),
+                'node_kind': payload.get('node_kind'),
+                'call_id': payload.get('call_id') or payload.get('correlation_id'),
                 'token_usage': {
                     'prompt_tokens': int(token_usage.get('prompt_tokens', 0)),
                     'completion_tokens': int(token_usage.get('completion_tokens', 0)),
@@ -386,7 +538,8 @@ def _build_interactive_gantt_tasks(events: list[dict[str, Any]]) -> list[dict[st
     # Merge request/response pairs into single duration-spanning nodes.
     # This prevents zero-duration metadata nodes from visually overlapping
     # when request_end and response_start are nearly simultaneous.
-    tasks = _merge_request_response_pairs(tasks)
+    if group_mode == 'case':
+        tasks = _merge_request_response_pairs(tasks)
 
     return tasks
 
@@ -446,8 +599,13 @@ def _merge_request_response_pairs(tasks: list[dict[str, Any]]) -> list[dict[str,
     return [t for t in tasks if t['id'] not in drop_ids]
 
 
-def _render_interactive_gantt_html(tasks: list[dict[str, Any]]) -> str:
+def _render_interactive_gantt_html(
+    tasks: list[dict[str, Any]],
+    *,
+    group_mode: str = 'case',
+) -> str:
     """Render standalone interactive tree+heatmap HTML."""
+    normalized_group_mode = 'tool' if group_mode == 'tool' else 'case'
     tasks_json = (
         json.dumps(tasks, ensure_ascii=False)
         .replace('</', '<\\/')
@@ -664,6 +822,7 @@ def _render_interactive_gantt_html(tasks: list[dict[str, Any]]) -> str:
   <div id="tooltip" class="tooltip"></div>
   <script>
     window.__ganttTasks = {tasks_json};
+    const groupMode = "{normalized_group_mode}";
     const rawTasks = Array.isArray(window.__ganttTasks) ? window.__ganttTasks : [];
     const treeWrap = document.getElementById("treeWrap");
     const treeViewport = document.getElementById("treeViewport");
@@ -743,12 +902,46 @@ def _render_interactive_gantt_html(tasks: list[dict[str, Any]]) -> str:
       return "global";
     }}
 
+    function getGroupKey(task) {{
+      if (groupMode !== "tool") return getCaseKey(task);
+      const payload = (task.event && task.event.payload) || {{}};
+      const key = task.group_key || payload.group_key || payload.tool_name || payload.tool || payload.model || "unknown";
+      return String(key || "unknown");
+    }}
+
+    function groupLabel(key, tasks, index) {{
+      if (groupMode !== "tool") {{
+        const m = String(key).match(/id:case_(\\d+)/);
+        return m ? `Case ${{m[1]}}` : `Case ${{index + 1}}`;
+      }}
+      const found = tasks.find((t) => getGroupKey(t) === key);
+      const payload = (found && found.event && found.event.payload) || {{}};
+      return String(found?.group_label || payload.group_label || payload.tool_name || payload.model || key);
+    }}
+
     function shortLabel(task, caseIndex) {{
       const t = String(task.title || "");
       const et = String(task.event_type || "");
       const p = (task.event && task.event.payload) || {{}};
       const stepIdx = p.planned_step_index || "";
       const stepType = String(p.step_type || "").toLowerCase();
+
+      if (groupMode === "tool") {{
+        if (et === "cc_mini_llm_call") return `LLM T${{p.turn_id || "?"}}`;
+        if (et === "cc_mini_tool_result") {{
+          const rawTool = String(p.tool_name || p.group_label || "Tool");
+          /* row gutter already shows full name; bar only needs the action verb */
+          const shortTool = rawTool.replace(/^mcp__[^_]+(?:_[^_]+)*?__/, "");
+          return shortTool.length > 18 ? shortTool.slice(0, 18) + "…" : shortTool;
+        }}
+        if (et === "cc_mini_error") {{
+          const ti = p.turn_id || "?";
+          const at = Number(p.attempt || 1);
+          return at > 1 ? `Err T${{ti}}·a${{at}}` : `Err T${{ti}}`;
+        }}
+        const label = String(p.group_label || p.tool_name || p.model || t || et);
+        return label.length > 20 ? label.slice(0, 20) + "…" : label;
+      }}
 
       /* step_response: name by actual step_type */
       if (et === "step_response" && stepIdx) {{
@@ -789,6 +982,10 @@ def _render_interactive_gantt_html(tasks: list[dict[str, Any]]) -> str:
       const et = String(task.event_type || "");
       const st = String(task.stage || "");
       if (st === "summary" || et === "run_test_cases_summary") return false;
+      if (groupMode === "tool") {{
+        if (et === "cc_mini_tool_call") return false;
+        return true;
+      }}
       /* keep step_input_sent as fallback when step_response is missing */
       if (et.endsWith("_request") && !et.includes("reflection")) return false;
       if (et === "step_request") return false;
@@ -798,8 +995,13 @@ def _render_interactive_gantt_html(tasks: list[dict[str, Any]]) -> str:
     function dedupKey(task) {{
       let et = String(task.event_type || "");
       const st = String(task.stage || "");
-      const ck = getCaseKey(task);
+      const ck = getGroupKey(task);
       const p = (task.event && task.event.payload) || {{}};
+      if (groupMode === "tool") {{
+        const cid = task.call_id || p.call_id || p.correlation_id || p.tool_call_id || task.id;
+        const seq = p.sequence ?? "";
+        return `${{st}}|${{et}}|${{ck}}|${{cid}}|${{seq}}|${{task.id}}`;
+      }}
       const stepIdx = p.planned_step_index ?? p.step_index ?? "";
       /* normalize step_input_sent → step_response so dedup prefers step_response */
       if (et === "step_input_sent") et = "step_response";
@@ -829,6 +1031,10 @@ def _render_interactive_gantt_html(tasks: list[dict[str, Any]]) -> str:
     function phaseOf(task) {{
       const et = String(task.event_type || "");
       const st = String(task.stage || "");
+      if (groupMode === "tool") {{
+        const p = (task.event && task.event.payload) || {{}};
+        return p.node_kind === "llm" ? "plan" : "execute";
+      }}
       if (st === "planning" && !et.includes("reflection")) return "plan";
       if (et === "case_execution_start") return "case";
       if (et === "case_execution_result" || et.includes("reflection") || et === "replan_enqueue") return "reflect";
@@ -839,6 +1045,10 @@ def _render_interactive_gantt_html(tasks: list[dict[str, Any]]) -> str:
       /* Metadata / aggregate nodes are never LLM tasks even if they carry
          cumulative duration or token stats from their child steps. */
       const et = task.event_type || "";
+      if (groupMode === "tool") {{
+        const p = (task.event && task.event.payload) || {{}};
+        return p.node_kind === "llm";
+      }}
       if (et === "case_execution_start" || et === "case_execution_result") return false;
       const d = Number(task.duration_seconds || 0);
       const u = task.token_usage || {{}};
@@ -890,12 +1100,12 @@ def _render_interactive_gantt_html(tasks: list[dict[str, Any]]) -> str:
       }}
 
       const sorted = [...tasks].sort((a, b) => a.start_ms - b.start_ms);
-      const filterTasks = sorted.filter((t) => phaseOf(t) === "plan" && String(t.event_type || "").includes("stage1_filter"));
-      const planTasks = sorted.filter((t) => phaseOf(t) === "plan" && !String(t.event_type || "").includes("stage1_filter"));
+      const filterTasks = groupMode === "tool" ? [] : sorted.filter((t) => phaseOf(t) === "plan" && String(t.event_type || "").includes("stage1_filter"));
+      const planTasks = groupMode === "tool" ? [] : sorted.filter((t) => phaseOf(t) === "plan" && !String(t.event_type || "").includes("stage1_filter"));
 
       const caseMap = new Map();
       for (const t of sorted) {{
-        const key = getCaseKey(t);
+        const key = getGroupKey(t);
         if (key === "global") continue;
         if (!caseMap.has(key)) caseMap.set(key, []);
         caseMap.get(key).push(t);
@@ -930,8 +1140,14 @@ def _render_interactive_gantt_html(tasks: list[dict[str, Any]]) -> str:
 
       /* LLM node width: sqrt-scale for clear visual diff across all ranges */
       function nodeWidth(task) {{
-        if (!isLlmTask(task)) return nonLlmW;
         const dur = Number(task.duration_seconds || 0);
+        if (!isLlmTask(task)) {{
+          if (groupMode === "tool" && dur > 0) {{
+            const scale = (llmMaxW - llmBaseW) / Math.sqrt(600);
+            return Math.min(Math.round(llmBaseW + Math.sqrt(dur) * scale), llmMaxW);
+          }}
+          return nonLlmW;
+        }}
         if (dur <= 0) return llmBaseW;
         /* sqrt maps: 5s→117, 30s→170, 60s→207, 86s→231, 120s→259, 180s→300, 300s→363, 600s→480 */
         const scale = (llmMaxW - llmBaseW) / Math.sqrt(600);
@@ -952,14 +1168,31 @@ def _render_interactive_gantt_html(tasks: list[dict[str, Any]]) -> str:
       }}
       const ganttSpanMs = ganttMaxMs - ganttMinMs;
       const useGantt = ganttSpanMs >= 1000 && allUnifiedTasks.length > 0;
-      const labelW = 56;
+      const hasFilter = filterTasks.length > 0;
+
+      /* dynamically size the row-label gutter so long tool/group names
+         (e.g. "mcp__browser_navigate_page") never overlap the first node */
+      function measureLabelWidth(text) {{
+        const tmp = document.createElement("div");
+        tmp.style.cssText = "position:absolute;visibility:hidden;font-size:11px;white-space:nowrap;font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;";
+        tmp.textContent = text;
+        document.body.appendChild(tmp);
+        const w = tmp.offsetWidth;
+        document.body.removeChild(tmp);
+        return w;
+      }}
+      const labelTexts = [];
+      if (groupMode !== "tool" && hasFilter) labelTexts.push("Filter");
+      if (groupMode !== "tool") labelTexts.push("Plan");
+      caseKeys.forEach((ck, ci) => labelTexts.push(groupLabel(ck, sorted, ci)));
+      const measuredMaxLabelW = labelTexts.reduce((m, t) => Math.max(m, measureLabelWidth(String(t))), 0);
+      const labelW = Math.max(measuredMaxLabelW + 16, 56);
       let ganttAreaX = startX + labelW;
       let ganttPxPerMs = 0;
       let ganttTickInterval = 0;
-      const hasFilter = filterTasks.length > 0;
       const filterRowY = topY;
       const planRowY = hasFilter ? topY + nodeH + rowGap : topY;
-      const casesTopY = planRowY + nodeH + rowGap;
+      const casesTopY = groupMode === "tool" ? topY : planRowY + nodeH + rowGap;
       let ganttTimelineTopY = filterRowY - 32;
 
       /* ── gap-compressed time mapper ── */
@@ -1036,8 +1269,17 @@ def _render_interactive_gantt_html(tasks: list[dict[str, Any]]) -> str:
         /* helper: compute Gantt node position {{x, w}} from task */
         function ganttNodePos(t) {{
           const x = msToX(t.start_ms);
-          if (!isLlmTask(t)) return {{ x, w: metadataW }};
           const dur = Number(t.duration_seconds || 0);
+          if (!isLlmTask(t)) {{
+            if (groupMode === "tool" && dur > 0) {{
+              const realW = msToX(t.end_ms) - x;
+              /* sub-second tools would otherwise clamp to minBarW=40 ("m…");
+                 sqrt-stretch keeps long tools real-proportional via max() */
+              const stretchedW = 70 + Math.sqrt(dur) * 25;
+              return {{ x, w: Math.max(realW, stretchedW) }};
+            }}
+            return {{ x, w: metadataW }};
+          }}
           const w = dur > 0
             ? Math.max(msToX(t.end_ms) - x, minBarW)
             : metadataW;
@@ -1220,7 +1462,7 @@ def _render_interactive_gantt_html(tasks: list[dict[str, Any]]) -> str:
           gridSvg.appendChild(label);
         }}
         treeCanvas.appendChild(gridSvg);
-        /* row labels: Filter + Plan + Case N */
+        /* row labels: Filter + Plan + Case N, or tool lanes in cc-mini mode */
         const rowLabelX = startX;
         function addRowLabel(text, y) {{
           const lbl = document.createElement("div");
@@ -1228,15 +1470,13 @@ def _render_interactive_gantt_html(tasks: list[dict[str, Any]]) -> str:
           lbl.textContent = text;
           treeCanvas.appendChild(lbl);
         }}
-        if (hasFilter) addRowLabel("Filter", filterRowY);
-        addRowLabel("Plan", planRowY);
+        if (groupMode !== "tool") {{
+          if (hasFilter) addRowLabel("Filter", filterRowY);
+          addRowLabel("Plan", planRowY);
+        }}
         caseKeys.forEach((ck, ci) => {{
           const firstNode = nodes.find((n) => n.id === `n_${{ci}}_0`);
-          if (firstNode) {{
-            const m = ck.match(/id:case_(\d+)/);
-            const label = m ? `Case ${{m[1]}}` : `Case ${{ci + 1}}`;
-            addRowLabel(label, firstNode.y);
-          }}
+          if (firstNode) addRowLabel(groupLabel(ck, sorted, ci), firstNode.y);
         }});
       }}
 
@@ -1375,7 +1615,11 @@ def _render_interactive_gantt_html(tasks: list[dict[str, Any]]) -> str:
 """
 
 
-def generate_data_flow_report(report_dir: str | None = None) -> str | None:
+def generate_data_flow_report(
+    report_dir: str | None = None,
+    *,
+    group_mode: str = 'case',
+) -> str | None:
     """Generate interactive HTML report from collected JSONL events.
 
     Reads ``data_flow_events.jsonl`` and produces
@@ -1404,8 +1648,15 @@ def generate_data_flow_report(report_dir: str | None = None) -> str | None:
         if not events:
             return None
 
-        interactive_tasks = _build_interactive_gantt_tasks(events)
-        interactive_html = _render_interactive_gantt_html(interactive_tasks)
+        normalized_group_mode = 'tool' if group_mode == 'tool' else 'case'
+        interactive_tasks = _build_interactive_gantt_tasks(
+            events,
+            group_mode=normalized_group_mode,
+        )
+        interactive_html = _render_interactive_gantt_html(
+            interactive_tasks,
+            group_mode=normalized_group_mode,
+        )
         interactive_path = target_dir / 'data_flow_report.html'
         interactive_path.write_text(interactive_html, encoding='utf-8')
         return str(interactive_path)

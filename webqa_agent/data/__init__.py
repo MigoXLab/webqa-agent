@@ -5,7 +5,8 @@ from .gen_structures import (ParallelTestSession, SubTestAction, SubTestReport,
                              TestCategory, TestConfiguration, TestResult,
                              TestStatus)
 from .run_structures import (ActionArgs, Case, CaseStep, StepAction,
-                             StepContext, StepVerify, VerifyArgs)
+                             StepContext, StepSwitchAccount, StepVerify,
+                             VerifyArgs)
 
 __all__ = [
     # Case Mode
@@ -14,6 +15,7 @@ __all__ = [
     'CaseStep',
     'StepAction',
     'StepContext',
+    'StepSwitchAccount',
     'StepVerify',
     'VerifyArgs',
     # Test Structures

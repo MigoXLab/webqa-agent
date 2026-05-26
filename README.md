@@ -39,7 +39,7 @@
   </a>
 </p>
 
-<p align="center">🤖 <strong>WebQA Agent</strong> is a fully automated web testing agent that understands the web like a human — generating test cases, evaluating functionality, performance, and UX end-to-end. ✨ Available as GUI/CLI for direct use, or as an OpenClaw skill. </p>
+<p align="center">🤖 <strong>WebQA Agent</strong> is a fully automated web testing agent with multimodal page understanding — no test scripts required. <strong>Powered by ⚡ WebQA Flash mode</strong> — just describe your business goal in one sentence and the agent drives the browser to complete the test in seconds. ✨ Use it via GUI / CLI directly, or integrate seamlessly with Cursor, Claude Code, and OpenClaw via MCP / Skill.</p>
 </div>
 
 <!-- Additional SEO Keywords and Context
@@ -52,7 +52,6 @@ vibecoding, vibe coding, web evaluation, autonomous exploration, web testing aut
 - [Examples](#examples)
 - [Quick Start](#quick-start)
 - [CLI Usage](#cli-usage)
-- [Extending WebQA Agent Tools](#extending-webqa-agent-tools)
 - [Deployment](#deployment)
 - [RoadMap](#roadmap)
 - [Acknowledgements](#acknowledgements)
@@ -62,42 +61,26 @@ vibecoding, vibe coding, web evaluation, autonomous exploration, web testing aut
 
 <a id="core-features"></a>
 
-### 📋 Feature Overview
+### 📋 Product Overview
 
-**WebQA-Agent** provides two testing modes to support different scenarios **🤖 Generate Mode** and **📋 Run Mode**.
+**WebQA Agent** offers three testing forms—from lightweight exploration to deep regression:
 
-| Capability        | 🤖 **Generate Mode**                                                                           | 📋 **Run Mode**                                                                           |
-| :---------------- | :--------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------- |
-| **Core Features** | AI-driven discovery -> Dynamic generation -> Precise execution                                 | Execute based on instructions and expected verification                                   |
-| **Use Cases**     | New feature, comprehensive quality assurance                                                   | Repeatable and regression testing scenarios                                               |
-| **User Input**    | **Minimal**: Only URL or a one-sentence business goal                                          | **Structured**: Simple natural language step descriptions                                 |
-| **Advantages**    | Reflection-based planning, adaptive to UI changes; Configurable functional / performance / security / UX evaluation for comprehensive QA | Stable and predictable results; No selector maintenance; Real-time Console and Network monitoring |
+| Capability       | ⚡ **WebQA Flash** (Default · Recommended)                                   | 🤖 **Standard Generate**                                   | 📋 **Run Mode**                                    |
+| :--------------- | :--------------------------------------------------------------------------- | :--------------------------------------------------------- | :------------------------------------------------- |
+| **Positioning**  | Lightweight exploration engine; natural-language goals in seconds            | AI discovery → dynamic generation → precise execution      | Execute YAML instructions with expected verification |
+| **Use Cases**    | Quick smoke tests, IDE inline runs, platform Flash exploration, MCP/Skill NL tests | New feature exploration, full QA; **Focused** / **Explore** planning | Repeatable and regression testing                  |
+| **User Input**   | One-sentence goal (or concurrent goal list)                                  | URL + optional objectives; platform picks **Focused** when goals are filled, **Explore** when empty | Structured natural-language steps                  |
+| **Entry Points** | CLI `gen` + `engine: flash`, web dashboard, MCP `run_test`, Skill            | CLI `gen` + `engine: standard`, web dashboard              | CLI `run`, web dashboard                           |
 
-**Usage & Deployment**: Supports CLI execution (see [CLI Usage](#cli-usage)); also supports full-stack deployment (Local / Docker / K8s) with a web interface for visual management. See [Deployment](#deployment).
+**Usage & Deployment**: CLI (see [CLI Usage](#cli-usage)); full-stack deployment (Local / Docker / K8s) with Flash reports, API Key management, and one-click parameter backfill. See [Deployment](#deployment).
 
-### 🛠️ Tool System
+For a detailed comparison and configuration guides for standard modes, see **[docs/MODES&CLI.md](docs/MODES&CLI.md)**.
 
-**Default Tools** (Always Enabled):
+### ⚡ Flash Key Advantages
 
-- **UI Actions**: Browser interactions (click, type, navigate)
-- **UI Assertions**: State verification
-- **UX Verification**: Text typo checking, layout analysis
-
-**Custom Tools** (Optional, Configuration-Enabled):
-
-- **Performance**: Lighthouse-based performance testing
-- **Security**: Nuclei vulnerability scanning
-- **Link Detection**: Dynamic link discovery
-
-Enable custom tools in `config.yaml`:
-
-```yaml
-test_config:
-  custom_tools:
-    enabled:
-      - lighthouse
-      - nuclei
-```
+- **Second-scale execution, instant feedback**: No heavy offline planning, no lengthy test setup. Built on the lightweight Chrome DevTools MCP, the agent receives natural-language goals in real time and immediately drives the browser to interact and assert.
+- **Zero selector maintenance**: Say goodbye to CSS selectors and XPath. Multimodal AI identifies page elements directly — when the UI is redesigned or styles change, the agent looks and clicks like a human would.
+- **Native IDE & agent integration**: Ships with a standard MCP server. Issue test commands in natural language directly from **Cursor** or **Claude Code**, letting your AI coding assistant run the automation for you.
 
 ### 🧭 Architecture
 
@@ -117,30 +100,38 @@ test_config:
 
 <a id="quick-start"></a>
 
-Choose between **🛠️ CLI Quick Start** or **🖥️ Full-stack Deployment (Web Dashboard)**.
+Choose between **🛠️ CLI Quick Start (Flash Mode)** or **🖥️ Full-stack Deployment (Web Dashboard)**.
 
-### 🛠️ CLI Quick Start (Recommended for Developers)
+### 🛠️ CLI Quick Start
 
-Recommended using [uv](https://github.com/astral-sh/uv) (Python>=3.11):
+Recommended: install via [uv](https://github.com/astral-sh/uv) (Python>=3.11). Flash mode drives the browser through [chrome-devtools-mcp](https://github.com/ChromeDevTools/chrome-devtools-mcp).
 
 ```bash
 # 1) Create project and install
 uv init my-webqa && cd my-webqa
 uv add webqa-agent
 
-# 2) Install browser (Required)
-uv run playwright install chromium
+# 2) Install Chrome browser & Chrome MCP pre-requisites
+npm install -g chrome-devtools-mcp@latest  # Required for Flash mode
 
-# 3) Generate Mode
-uv run webqa-agent init -m gen  # Init config, edit config.yaml with URL & API Key
-uv run webqa-agent gen          # Start AI-driven testing
-
-# 4) Run Mode
-uv run webqa-agent init -m run  # Init config, write natural language cases
-uv run webqa-agent run          # Start execution
+# 3) Initialize and Run (defaults to Flash mode)
+uv run webqa-agent init      # Generates config.yaml (edit with your target URL & LLM API Key)
+uv run webqa-agent gen       # Start testing
 ```
 
-> See [CLI Usage](#cli-usage) for more CLI details.
+```yaml
+target:
+  url: https://example.com
+  max_concurrent_tests: 2
+test_config:
+  business_objectives:
+    - >
+      Search for "laptop", click the first result and confirm the detail page loads,
+      then go back and switch to the "Images" tab and verify the content is related.
+    - Apply a price filter and verify all displayed results fall within the selected range
+```
+
+**Built-in skills** (loaded on demand, no extra config needed): `plan`, `ui-audit`, `recovery`, `nuclei-scan`, `button-check`. See [docs/MODES&CLI.md](docs/MODES&CLI.md#built-in-skills) for details.
 
 ### 🖥️ Full-stack Deployment (Recommended for Teams)
 
@@ -156,8 +147,6 @@ cp .env.example .env
 
 > Access via `http://localhost`. For other deployment methods, see [Deployment](#deployment).
 
-<a id="usage"></a>
-
 ## ⚙️ CLI Usage
 
 <a id="cli-usage"></a>
@@ -166,149 +155,80 @@ cp .env.example .env
 
 WebQA Agent provides a concise command-line interface for initialization, autonomous exploration, case execution, and launching the Web UI.
 
-| Command | Description                                              | Common Arguments                                                                      |
-| :------ | :------------------------------------------------------- | :------------------------------------------------------------------------------------ |
-| `init`  | Initialize configuration file                            | `-m <gen/run>`: Specify mode; `-o <path>`: Output path; `--force`: Overwrite existing |
-| `gen`   | **Generate Mode**: AI-driven test generation & execution | `-c <path>`: Config path; `-w <n>`: Parallel workers                                  |
-| `run`   | **Run Mode**: Execute YAML-defined test cases            | `-c <path/dir>`: Config file or folder; `-w <n>`: Parallel workers                    |
+| Command | Description                                        | Common Arguments                                                                                                   |
+| :------ | :------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------- |
+| `init`  | Initialize configuration file                      | `-m <gen/run>`: Specify mode; `-o <path>`: Output path; `--force`: Overwrite existing                              |
+| `gen`   | **Generate/Flash Mode**: Autonomous test execution | `-c <path>`: Config path; `-w <n>`: Parallel workers; defaults to Flash engine (local Chrome via Chrome MCP)       |
+| `run`   | **Run Mode**: Execute YAML-defined test cases      | `-c <path/dir>`: Config file or folder; `-w <n>`: Parallel workers; requires Standard engine (Playwright executor) |
 
-**Examples:**
-
-```bash
-# Initialize Run mode configuration
-webqa-agent init -m run
-
-# Run all cases in a directory with 4 parallel workers
-webqa-agent run -c ./my_cases -w 4
-```
-
-______________________________________________________________________
-
-### Generate Mode - Configuration
-
-#### 🔧 Optional Dependencies (Custom Tools)
-
-- Performance testing (Lighthouse): `npm install lighthouse chrome-launcher` (requires Node.js ≥18)
-- Security testing (Nuclei):
-
-```bash
-  brew install nuclei      # macOS
-  nuclei -ut               # Update templates
-  # Linux/Windows: https://github.com/projectdiscovery/nuclei/releases
-```
-
-#### 📄 Configuration Details
-
-The configuration file must include the `test_config` field to define test types.
-
-- **Business Objectives**: Specifies business goals to steer AI test focus and coverage.
-- **Custom Tools**: Optional tools like Performance (Lighthouse), Security (Nuclei), button checks, and link detection.
-- **Dynamic Step Generation**: Automatically generates additional test steps when new UI elements are detected during execution.
-- **Filter Model**: Configures a lightweight model for pre-filtering page elements to improve planning efficiency.
-
-For more details, please refer to [docs/MODES&CLI.md](docs/MODES&CLI.md)
-
-```yaml
-target:
-  url: https://example.com              # Website URL to test
-  description: Website QA testing
-
-test_config:
-  business_objectives: Test search functionality, generate 3 test cases
-  custom_tools:                         # Optional: Enable custom testing tools (by step_type)
-    enabled:
-      # - lighthouse                    # Lighthouse performance testing
-                                        # Requires: npm install lighthouse chrome-launcher (local, recommended)
-                                        # or: npm install -g lighthouse chrome-launcher (global)
-      # - nuclei                        # Nuclei security scanning
-                                        # Requires: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
-                                        # or download from: https://github.com/projectdiscovery/nuclei/releases
-      # - traverse_clickable_elements   # Clickable element traversal testing
-      # - detect_dynamic_links          # Dynamic link discovery and validation
-
-llm_config:                             # LLM configuration, supports OpenAI, Anthropic Claude, Google Gemini, and OpenAI-compatible models (e.g., Doubao, Qwen)
-  model: gpt-5.4                        # Primary model
-  filter_model: gpt-5-mini              # Lightweight model for element filtering (optional)
-  api_key: your_api_key                 # Or set via environment variable (OPENAI_API_KEY)
-  base_url: https://api.openai.com/v1   # Optional, API endpoint. For OpenAI-compatible models (Doubao, Qwen, etc.), set to their API endpoint
-
-browser_config:
-  headless: False                       # Auto True in Docker
-  language: en-US
-
-report:
-  language: en-US                       # zh-CN or en-US
-```
-
-### Run Mode - Configuration
-
-Run Mode configuration must include the `cases` field.
-
-- **Multi-modal Interaction**: Use `action` to describe visible text, images, or relative positions on the page. Supported browser actions include click, hover, input, clear, keyboard input, scrolling, mouse movement, file upload, drag-and-drop, and wait; page actions include navigation, back.
-- **Multi-modal Verification**: Use `verify` to ensure the agent stays on track, validating visual content, URLs, paths, and combined image–element conditions.
-- **End-to-End Monitoring**: Monitoring `Console` logs and `Network` request status, and supporting configuration of `ignore_rules` to ignore known errors.
-
-For more details and test case writing specifications, please refer to [docs/MODES&CLI.md](docs/MODES&CLI.md)
-
-```yaml
-target:
-  url: https://example.com              # Target website URL
-
-llm_config:                             # LLM configuration
-  api: openai
-  model: gpt-5-mini
-  api_key: your_api_key_here
-  base_url: https://api.openai.com/v1
-
-browser_config:
-  viewport: {"width": 1280, "height": 720}
-  headless: False                       # Auto True in Docker
-  language: en-US
-  # cookies: /path/to/cookie.json
-
-ignore_rules:                           # Ignore rules configuration (optional)
-  network:                              # Network request ignore rules
-    - pattern: ".*\\.google-analytics\\.com.*"
-      type: "domain"
-  console:                              # Console log ignore rules
-    - pattern: "Failed to load resource.*favicon"
-      match_type: "regex"
-    - pattern: "Warning:"
-      match_type: "contains"
-
-cases:                                  # Test case list
-  - name: Image Upload                  # Test case name
-    steps:                              # Test steps
-      - action: Upload icon is the image icon in the input box, located next to the Baidu search button, used for uploading files
-        args:
-          file_path: ./tests/data/test.jpeg
-      - action: Wait for image upload
-      - verify: Verify that the input field displays an open palm/hand icon image
-      - action: Enter "How many fingers are in the image?" in the search input box, then press Enter, wait 2 seconds
-```
+For details on Standard Gen and Run modes, see **[docs/MODES&CLI.md](docs/MODES&CLI.md)**.
 
 ### 📊 View Results
 
 Test reports are generated in the `reports/` directory. Open the HTML file to view detailed results.
 
-<a id="extending-webqa-agent-tools"></a>
+______________________________________________________________________
 
-## 🛠️ Extending WebQA Agent Tools
+### 🔌 MCP & Skill Integration
 
-WebQA Agent supports **custom tool development** for domain-specific testing capabilities.
+#### WebQA MCP Server
 
-| Document                                                       | Description                                                             |
-| -------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| **[Custom Tool Development](docs/CUSTOM_TOOL_DEVELOPMENT.md)** | Quick reference for creating custom tools                               |
-| **[LLM Context Document](docs/CUSTOM_TOOL_DEVELOPMENT_AI.md)** | Comprehensive guide for AI-assisted development, useful for vibe coding |
+Expose browser testing to **Cursor**, **Claude Code**, and other IDEs via MCP. After install you get the `webqa-mcp-server` command.
 
-We welcome contributions! Check out [existing tools](webqa_agent/tools/custom/) for examples.
+**1. Install**
+
+```bash
+git clone https://github.com/MigoXLab/webqa-agent.git
+cd webqa-agent
+pip install -e .
+which webqa-mcp-server
+```
+
+**2. API Key**
+
+WebQA platform → **API Keys** → create key (shown once).
+
+**3. IDE config (Cursor example)**
+
+Settings → MCP → Add Server:
+
+```json
+{
+  "mcpServers": {
+    "webqa": {
+      "command": "/absolute/path/to/webqa-mcp-server",
+      "env": {
+        "WEBQA_API_URL": "https://your-webqa-platform.com",
+        "WEBQA_API_KEY": "wqa_xxxxxxxx..."
+      }
+    }
+  }
+}
+```
+
+Full tool reference: **[docs/MCP_SERVER.md](docs/MCP_SERVER.md)**.
+
+#### WebQA Skill
+
+The `skills/webqa/` package works with **OpenClaw** and **Claude Code** for natural-language browser tests without scripts.
+
+- **Claude Code**: Add `skills/webqa` to your project Skills path or copy to `.claude/skills/webqa`.
+- **OpenClaw**: Register `skills/webqa` per your OpenClaw Skill layout.
+
+Key references: `skills/webqa/SKILL.md`, `skills/webqa/references/mini-agent.md`, `skills/webqa/references/setup.md`.
 
 <a id="deployment"></a>
 
 ## 🖥️ Deployment
 
-For teams that need a **persistent web dashboard** with test management, scheduled tasks, and execution history, deploy the full-stack platform:
+For teams that need a **persistent web dashboard** with test management, scheduled tasks, and execution history, deploy the full-stack platform.
+
+**Platform highlights**:
+
+- **Flash exploration**: End-to-end integration with screenshots and step-level report detail
+- **API Key management**: Create MCP API keys for Cursor / Claude Code
+
+Deployment options:
 
 | Method            | Use Case                    | Guide                                                  |
 | ----------------- | --------------------------- | ------------------------------------------------------ |
@@ -324,9 +244,9 @@ For teams that need a **persistent web dashboard** with test management, schedul
 
 ## 🗺️ RoadMap
 
-1. Interaction & Visualization: Real-time display of reasoning processes
-2. Generate Mode Expansion: Integration of additional evaluation dimensions
-3. Tool Agent Context Integration: More comprehensive and precise execution
+1. **Interaction & Visualization**: Display the agent's reasoning chain and decision rationale in real time during test execution, so users can immediately understand why the AI took a particular path and adjust their business-goal descriptions and prompts accordingly (currently only post-hoc replay in the report).
+2. **Flash multi-step cases**: Extend "one-sentence goal → single case chain" into a structured execution model with **precondition / steps / assertions**, enabling regression testing, failure localization, and cross-run reuse for complex scenarios (currently runs user input as a single case chain).
+3. **Explore mode enhancement**: Persist the agent's broad-discovery findings (under no-PRD scenarios) into a structured, reusable test case library, closing the loop from discovery to regression instead of leaving one-off exploration reports (currently broad discovery, results not persisted).
 
 <a id="acknowledgements"></a>
 
@@ -335,6 +255,7 @@ For teams that need a **persistent web dashboard** with test management, schedul
 - [natbot](https://github.com/nat/natbot): Drive a browser with GPT-3
 - [Midscene.js](https://github.com/web-infra-dev/midscene/): AI Operator for Web, Android, Automation & Testing
 - [browser-use](https://github.com/browser-use/browser-use/): AI Agent for Browser control
+- [cc-mini](https://github.com/e10nMa2k/cc-mini): Ultra-light Python harness for agentic Claude Code workflows; provides the core engine, MCP client, skill registry, and cookie-management layer that powers WebQA Agent's Flash execution mode
 
 ## 📄 License
 

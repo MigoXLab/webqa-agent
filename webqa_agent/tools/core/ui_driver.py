@@ -3,7 +3,7 @@ import json
 import logging
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from webqa_agent.actions.action_executor import ActionExecutor
 from webqa_agent.actions.action_handler import ActionHandler
@@ -67,6 +67,9 @@ class UITester:
         self.execution_history: List[Dict[str, Any]] = []
         self.current_test_objective: Optional[str] = None
         self.current_success_criteria: List[str] = []  # Store test success criteria
+        self.current_url: Optional[str] = None
+        self.target_url: Optional[str] = None
+        self.current_account_name: Optional[str] = None
 
     def _localize_system_prompt(self, system_prompt: str) -> str:
         """Append language output instruction to a system prompt."""
@@ -103,8 +106,18 @@ class UITester:
         collector.reset_session()
 
         await self._actions.go_to_page(self.page, url, cookies=cookies)
+        self.target_url = url
+        self.current_url = url
 
-    async def action(self, test_step: str, file_path: str = None, viewport_only: bool = False, full_page: bool = True) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    async def refresh_session_bindings(self) -> None:
+        """Rebind page-dependent helpers after the browser context is reset."""
+        if not self.browser_session:
+            raise ValueError('Browser session is required')
+
+        self.page = self.browser_session.page
+        await self._actions.initialize(page=self.page)
+
+    async def action(self, test_step: str, file_path: Union[str, List[str], None] = None, viewport_only: bool = False, full_page: bool = True) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Execute AI-driven test instructions and return (step_dict,
         summary_dict)
 
@@ -1035,7 +1048,7 @@ class UITester:
                 logging.warning(f'Plan generation attempt {attempt + 1} failed: {str(e)}, retrying...')
                 await asyncio.sleep(1)
 
-    async def _execute_plan(self, plan_json: Dict[str, Any], file_path: str = None, viewport_only: bool = False, full_page: bool = True) -> Dict[str, Any]:
+    async def _execute_plan(self, plan_json: Dict[str, Any], file_path: Union[str, List[str], None] = None, viewport_only: bool = False, full_page: bool = True) -> Dict[str, Any]:
         """Execute test plan."""
         execute_results = []
         action_count = len(plan_json.get('actions', []))

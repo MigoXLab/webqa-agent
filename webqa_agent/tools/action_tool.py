@@ -16,10 +16,11 @@ from pydantic import BaseModel, Field
 from webqa_agent.crawler.deep_crawler import DeepCrawler
 from webqa_agent.executor.gen.utils.case_recorder import CentralCaseRecorder
 from webqa_agent.tools.core.ui_driver import UITester
+from webqa_agent.utils.schema_utils import LLMCompatibleSchema
 from webqa_agent.utils.timing_breakdown import record_tool_timing
 
 
-class UIActionSchema(BaseModel):
+class UIActionSchema(LLMCompatibleSchema):
     """Schema for UI action tool arguments."""
 
     action: str = Field(
@@ -41,13 +42,15 @@ class UIActionSchema(BaseModel):
         )
     )
 
-    target: str = Field(
+    target: Optional[str] = Field(
+        default=None,
         description=(
             'Element identifier or selector to target. '
             'For most actions, this should be the element ID from the page description. '
             'For Scroll actions, this can be a scroll target description. '
-            'For GoToPage action, this should be the URL.'
-        )
+            'For GoToPage action, this should be the URL. '
+            'Not required for page-agnostic actions like Sleep and GoBack.'
+        ),
     )
 
     value: Optional[str] = Field(
@@ -93,6 +96,17 @@ class UITool(BaseTool):
     ui_tester_instance: UITester = Field(...)
     case_recorder: Any | None = Field(default=None, description='Optional CentralCaseRecorder to record action steps')
 
+    @property
+    def tool_call_schema(self) -> dict[str, Any]:
+        """Return LLM-proxy-compatible schema dict.
+
+        Overrides LangChain's default, which re-wraps args_schema via
+        _create_subset_model() into a plain BaseModel — losing the Optional[T]
+        → {type, nullable} fixes applied by LLMCompatibleSchema. Returning the
+        cleaned dict directly ensures the proxy never sees anyOf.
+        """
+        return self.args_schema.model_json_schema()
+
     async def get_full_page_context(
         self, include_screenshot: bool = False, viewport_only: bool = True
     ) -> tuple[str, str | None]:
@@ -121,11 +135,16 @@ class UITool(BaseTool):
         logging.debug(f'Page structure length: {len(page_structure)} characters')
         return page_structure, screenshot
 
-    def _run(self, action: str, target: str, **kwargs) -> str:
+    def _run(self, action: str, target: Optional[str] = None, **kwargs) -> str:
         raise NotImplementedError('Use arun for asynchronous execution.')
 
+    # Actions that require a target element — fast-fail if missing
+    _ACTIONS_REQUIRING_TARGET = frozenset({
+        'Tap', 'Input', 'SelectDropdown', 'Clear', 'Hover', 'Drag', 'GoToPage',
+    })
+
     async def _arun(
-        self, action: str, target: str, value: Optional[str] = None, description: Optional[str] = None, clear_before_type: bool = False
+        self, action: str, target: Optional[str] = None, value: Optional[str] = None, description: Optional[str] = None, clear_before_type: bool = False
     ) -> str:
         """Executes a UI action using the UITester and returns a formatted
         summary of the result."""
@@ -134,6 +153,13 @@ class UITool(BaseTool):
             logging.error(error_msg)
             return f'[FAILURE] Error: {error_msg}'
         tool_started = time.perf_counter()
+
+        # Fast-fail for actions that require a target element
+        if action in self._ACTIONS_REQUIRING_TARGET and not target:
+            return (
+                f'[FAILURE:VALIDATION_ERROR] Action {action!r} requires a target '
+                f'element, but none was provided.'
+            )
 
         logging.debug(f'=== Executing UI Action: {action} ===')
         logging.debug(f'Target: {target}')
@@ -168,7 +194,19 @@ class UITool(BaseTool):
         elif action == 'KeyboardPress':
             action_phrase = f'Press the {value} key'
         elif action == 'Upload':
-            action_phrase = f'Upload file {value} to {target}'
+            if value:
+                # Parse comma-separated paths once for both phrase building and security validation
+                upload_paths = [p.strip() for p in value.split(',') if p.strip()]
+                if len(upload_paths) == 1:
+                    action_phrase = f"Upload file {upload_paths[0]} to {target or 'the file input'}"
+                else:
+                    action_phrase = f"Upload {len(upload_paths)} files to {target or 'the file input'}"
+            else:
+                return (
+                    '[WARNING] Upload skipped: no test files available. '
+                    'Configure test_files_dir in config.yaml to enable '
+                    'file upload testing.'
+                )
         elif action == 'Drag':
             action_phrase = f'Drag {target}'
             if value:
@@ -182,12 +220,12 @@ class UITool(BaseTool):
         elif action == 'Mouse':
             if value and 'move:' in value.lower():
                 # Extract coordinates from 'move:x,y' format
-                action_phrase = f"Move mouse cursor to coordinates {value.split(':', 1)[1]} (specified as {target})"
+                action_phrase = f"Move mouse cursor to coordinates {value.split(':', 1)[1]} (specified as {target or 'the element'})"
             elif value and 'wheel:' in value.lower():
                 # Extract delta values from 'wheel:deltaX,deltaY' format
-                action_phrase = f"Scroll mouse wheel by {value.split(':', 1)[1]} (on {target})"
+                action_phrase = f"Scroll mouse wheel by {value.split(':', 1)[1]} (on {target or 'the element'})"
             else:
-                action_phrase = f"Perform mouse action on {target} with value '{value}'"
+                action_phrase = f"Perform mouse action on {target or 'the element'} with value '{value}'"
         else:
             # Improved fallback logic to avoid malformed phrases like "action on "
             if target:
@@ -213,7 +251,34 @@ class UITool(BaseTool):
             logging.debug(f'Executing UI action: {instruction}')
             start_time = datetime.datetime.now()
 
-            execution_steps, result = await self.ui_tester_instance.action(instruction)
+            # For Upload actions, validate path security and forward file_path
+            if action == 'Upload' and value:
+                # Security: validate file is within configured test_files_dir
+                test_file_library = getattr(
+                    self.ui_tester_instance, 'test_file_library', None
+                )
+                if test_file_library is None:
+                    return (
+                        '[WARNING] Upload skipped: test_files_dir is not '
+                        'configured. Cannot validate file path security.'
+                    )
+                for path in upload_paths:
+                    if not test_file_library.validate_file_path(path):
+                        return (
+                            f'[FAILURE:SECURITY] File path "{path}" is outside '
+                            'the configured test_files_dir. Only files within '
+                            'the test directory can be uploaded.'
+                        )
+
+                # Pass single path as str, multiple as list
+                file_path_arg = upload_paths[0] if len(upload_paths) == 1 else upload_paths
+                execution_steps, result = await self.ui_tester_instance.action(
+                    instruction, file_path=file_path_arg
+                )
+            else:
+                execution_steps, result = await self.ui_tester_instance.action(
+                    instruction
+                )
 
             end_time = datetime.datetime.now()
             duration = (end_time - start_time).total_seconds()

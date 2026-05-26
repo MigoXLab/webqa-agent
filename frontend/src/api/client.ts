@@ -18,6 +18,7 @@ export interface Environment {
   sso_password?: string;
   sso_env?: 'prod' | 'staging';
   cookies?: Array<Record<string, any>>;
+  accounts?: Array<{ name: string; cookies: Array<Record<string, any>> }>;
   created_at?: string;
 }
 
@@ -30,9 +31,10 @@ export interface Business {
 }
 
 export interface TestStep {
-  step_type: 'action' | 'verify';
+  step_type: 'action' | 'verify' | 'switch_account';
   description?: string;
   assertion?: string;
+  switch_account?: string;
   args?: Record<string, any>;
 }
 
@@ -42,6 +44,7 @@ export interface TestCase {
   name: string;
   description?: string;
   login_required: boolean;
+  account?: string;
   steps: TestStep[];
   version?: string;
   snapshot?: string;
@@ -61,6 +64,7 @@ export interface Execution {
   scheduled_task_id?: string;
   model: string;
   workers: number;
+  resolutions?: string[];
   test_case_ids: string[];
   status: 'pending' | 'running' | 'passed' | 'failed' | 'warning' | 'timeout' | 'completed';
   oss_report_url?: string;
@@ -79,6 +83,23 @@ export interface Execution {
   };
   config?: Record<string, any>;
 }
+
+/** UI / normalized runner label (execution history, filters). */
+export type RunnerSource = 'standard' | 'mini';
+
+/** Backend gen_config.runner_source for the Flash runner (API contract). */
+export const MINI_RUNNER_SOURCE_API = 'mini' as const;
+
+export type GenAccountPayload = {
+  name: string;
+  role?: string;
+  default?: boolean;
+  is_default?: boolean;
+  sso_username?: string;
+  sso_password?: string;
+  sso_env?: 'prod' | 'staging' | 'dev';
+  cookies?: Array<Record<string, any>>;
+};
 
 // Progress types for real-time execution tracking
 export interface TaskProgress {
@@ -113,6 +134,20 @@ export interface EnvironmentCookiesResponse {
 export interface ListResponse<T> {
   items: T[];
   total: number;
+}
+
+// API Key types
+export interface ApiKey {
+  id: string;
+  name: string;
+  key_prefix: string;
+  expires_at: string | null;
+  last_used: string | null;
+  created_at: string;
+}
+
+export interface ApiKeyCreated extends ApiKey {
+  full_key: string;
 }
 
 // API Client class
@@ -218,6 +253,7 @@ class APIClient {
     name: string;
     description?: string;
     login_required?: boolean;
+    account?: string;
     steps: TestStep[];
     version?: string;
     snapshot?: string;
@@ -299,6 +335,7 @@ class APIClient {
     test_case_ids?: string[];
     model?: string;
     workers?: number;
+    resolutions?: string[];
     trigger_type?: 'manual' | 'debug' | 'gen';
     case_data?: Record<string, any>;
     gen_config?: {
@@ -308,7 +345,7 @@ class APIClient {
         api_key?: string;
         [key: string]: any;
       };
-      business_objectives?: string;
+      business_objectives?: string | string[];
       custom_tools?: {
         enabled: string[];
       };
@@ -320,6 +357,8 @@ class APIClient {
         cookies?: Array<Record<string, any>>;
         [key: string]: any;
       };
+      auth_type?: 'none' | 'sso' | 'cookies';
+      accounts?: GenAccountPayload[];
       [key: string]: any;
     };
   }): Promise<Execution> {
@@ -332,6 +371,92 @@ class APIClient {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+  }
+
+  async createDualGenExecutions(data: {
+    business_id?: string;
+    model?: string;
+    workers?: number;
+    base_gen_config: Record<string, any>;
+    standard_gen_config?: Record<string, any>;
+    mini_gen_config?: Record<string, any>;
+  }): Promise<{
+    batch_id: string;
+    executions: {
+      standard?: Execution;
+      mini?: Execution;
+    };
+    errors: string[];
+  }> {
+    const batchId = crypto.randomUUID();
+    const baseGenConfig = data.base_gen_config || {};
+    const standardGenConfig = {
+      ...(data.standard_gen_config || {
+        ...baseGenConfig,
+        runner_source: 'standard',
+      }),
+      runner_source: 'standard',
+      batch_id: batchId,
+    };
+    const miniGenConfigMerged = {
+      ...(data.mini_gen_config || {
+        ...baseGenConfig,
+        runner_source: MINI_RUNNER_SOURCE_API,
+      }),
+      runner_source: MINI_RUNNER_SOURCE_API,
+      batch_id: batchId,
+    };
+    // Resolve Flash objectives: preserve array (multi-task) or fall back to
+    // _display_objectives string (single-task legacy path).
+    const existingMiniObjectives = miniGenConfigMerged?.business_objectives;
+    const miniFinalObjectives =
+      Array.isArray(existingMiniObjectives) && existingMiniObjectives.length > 0
+        ? existingMiniObjectives
+        : (() => {
+            const raw =
+              typeof miniGenConfigMerged?._display_objectives === 'string'
+                ? miniGenConfigMerged._display_objectives.trim()
+                : '';
+            return raw || undefined;
+          })();
+    const standardPayload = {
+      business_id: data.business_id,
+      trigger_type: 'gen' as const,
+      model: data.model,
+      workers: data.workers,
+      gen_config: standardGenConfig,
+    };
+    const miniPayload = {
+      business_id: data.business_id,
+      trigger_type: 'gen' as const,
+      model: data.model,
+      workers: data.workers,
+      gen_config: {
+        ...miniGenConfigMerged,
+        business_objectives: miniFinalObjectives,
+      },
+    };
+
+    const [standardRes, miniRes] = await Promise.allSettled([
+      this.createExecution(standardPayload),
+      this.createExecution(miniPayload),
+    ]);
+
+    const errors: string[] = [];
+    const executions: { standard?: Execution; mini?: Execution } = {};
+
+    if (standardRes.status === 'fulfilled') {
+      executions.standard = standardRes.value;
+    } else {
+      errors.push(`standard: ${standardRes.reason?.message || String(standardRes.reason)}`);
+    }
+    if (miniRes.status === 'fulfilled') {
+      executions.mini = miniRes.value;
+    } else {
+      errors.push(`Flash: ${miniRes.reason?.message || String(miniRes.reason)}`);
+    }
+
+    return { batch_id: batchId, executions, errors };
   }
 
   async stopExecution(id: string): Promise<{ message: string }> {
@@ -429,6 +554,7 @@ class APIClient {
     test_case_ids: string[];
     model: string;
     workers: number;
+    resolutions?: string[];
     cron_expression: string;
     enabled: boolean;
     webhook_url?: string;
@@ -462,6 +588,7 @@ class APIClient {
     test_case_ids: string[];
     model: string;
     workers: number;
+    resolutions?: string[];
     cron_expression: string;
     enabled: boolean;
     webhook_url?: string;
@@ -480,6 +607,7 @@ class APIClient {
     test_case_ids?: string[];
     model?: string;
     workers?: number;
+    resolutions?: string[];
     cron_expression?: string;
     enabled?: boolean;
     webhook_url?: string | null;
@@ -518,6 +646,27 @@ class APIClient {
     return this.request('/schedules/validate-cron', {
       method: 'POST',
       body: JSON.stringify({ cron_expression: cronExpression }),
+    });
+  }
+
+  // API Key APIs
+  async getApiKeys(): Promise<ListResponse<ApiKey>> {
+    return this.request<ListResponse<ApiKey>>('/settings/api-keys');
+  }
+
+  async createApiKey(data: {
+    name: string;
+    expires_in_days?: number;
+  }): Promise<ApiKeyCreated> {
+    return this.request<ApiKeyCreated>('/settings/api-keys', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteApiKey(id: string): Promise<void> {
+    await this.request(`/settings/api-keys/${id}`, {
+      method: 'DELETE',
     });
   }
 }

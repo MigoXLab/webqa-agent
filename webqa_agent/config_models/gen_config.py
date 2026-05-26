@@ -1,8 +1,10 @@
 """Gen mode configuration for AI-driven test generation."""
 
-from typing import List
+import logging
+import os
+from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from webqa_agent.config_models.base_config import (BrowserConfig, LLMConfig,
                                                    LogConfig, ReportConfig)
@@ -58,6 +60,11 @@ class GenConfig(BaseModel):
     )
 
     # Test configuration (flattened from FunctionTestConfig)
+    planning_mode: Literal['explore', 'focused'] = Field(
+        default='explore',
+        description='Planning mode: "explore" for broad coverage (default), '
+                    '"focused" for deep end-to-end scenario testing',
+    )
     business_objectives: str = Field(
         default='', description='Business objectives for test generation (optional)'
     )
@@ -70,7 +77,32 @@ class GenConfig(BaseModel):
     max_concurrent_tests: int = Field(
         default=4, ge=1, le=10, description='Maximum concurrent test execution'
     )
-
     skip_reflection: bool = Field(
         default=True, description='Skip reflection/self-correction phase'
     )
+
+    test_files_dir: Optional[str] = Field(
+        default=None,
+        description='Directory containing test files for upload testing. '
+                    'Agent scans this directory and auto-selects files '
+                    'when encountering upload controls in Gen mode.',
+    )
+
+    test_files: Optional[List[str]] = Field(
+        default=None,
+        description='List of specific filenames to include for upload testing. '
+                    'When set, only these files from test_files_dir are available '
+                    'to the agent. When None, all files in the directory are used.',
+    )
+
+    @field_validator('test_files_dir')
+    @classmethod
+    def validate_test_files_dir(cls, v: Optional[str]) -> Optional[str]:
+        """Resolve and validate test files directory path."""
+        if v is None:
+            return None
+        resolved = os.path.realpath(v)
+        if not os.path.isdir(resolved):
+            logging.warning(f'test_files_dir does not exist: {resolved}')
+            return None
+        return resolved

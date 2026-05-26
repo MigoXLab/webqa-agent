@@ -276,21 +276,6 @@ def callback_backend(execution_id: str, status: str, result_count: Dict = None,
                 print(f'[回调] 写入标记文件失败: {write_err}')
 
 
-def send_start_notification(env: str, execution_id: str):
-    """Send Feishu notification that execution has started."""
-    url = 'https://aicarrier.feishu.cn/base/workflow/webhook/event/DVUBaJT4Vwf0yVhbMi6celSanub'
-    payload = {
-        'TARGET_ENV': env,
-        'EXECUTION_ID': execution_id
-    }
-    try:
-        import requests
-        res = requests.post(url, json=payload, timeout=10)
-        print(f'[前置] 发送开始执行通知响应: {res.status_code}')
-    except Exception as e:
-        print(f'[前置] 发送开始执行通知失败: {e}')
-
-
 class ProgressPusher:
     """Background thread that periodically pushes execution progress to Backend
     API."""

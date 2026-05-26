@@ -17,13 +17,15 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from webqa_agent.actions.action_handler import screenshot_prefix_var
-from webqa_agent.browser import BrowserSession, BrowserSessionPool
-from webqa_agent.llm.llm_api import (
-    get_llm_duration_stats, reset_llm_duration_stats,
-    get_llm_io_log, reset_llm_io_log,
-)
-from webqa_agent.data import (CaseStep, StepContext, SubTestResult,
-                              SubTestStep, TestConfiguration, TestStatus)
+from webqa_agent.browser import AccountPool, BrowserSession, BrowserSessionPool
+from webqa_agent.data import (CaseStep, StepContext, SubTestReport,
+                              SubTestResult, SubTestScreenshot, SubTestStep,
+                              TestConfiguration, TestStatus)
+from webqa_agent.executor.gen.utils.error_classifier import \
+    _SYSTEM_ERROR_PATTERNS
+from webqa_agent.llm.llm_api import (get_llm_duration_stats, get_llm_io_log,
+                                     reset_llm_duration_stats,
+                                     reset_llm_io_log)
 from webqa_agent.utils import Display, i18n
 from webqa_agent.utils.data_flow_reporter import record_data_flow_event
 from webqa_agent.utils.get_log import test_id_var
@@ -45,7 +47,13 @@ class CaseRunner:
     - Saving test results to JSON files
     """
 
-    def __init__(self, llm_config: Dict[str, Any], test_config: TestConfiguration, report_dir: Optional[str] = None):
+    def __init__(
+        self,
+        llm_config: Dict[str, Any],
+        test_config: TestConfiguration,
+        report_dir: Optional[str] = None,
+        account_pool: Optional[AccountPool] = None,
+    ):
         """Initialize case runner.
 
         Args:
@@ -59,6 +67,11 @@ class CaseRunner:
         self.report_config = test_config.report_config
         self.test_specific_config = test_config.test_specific_config
         self.report_dir = report_dir
+        self.account_pool = account_pool
+
+        # Pre-compute invariant i18n values for display
+        report_lang = self.report_config.get('language', 'zh-CN') if self.report_config else 'zh-CN'
+        self._display_prefix = i18n.t(report_lang, 'tools.run_mode.display_text', 'Run Mode')
 
         # Pre-compute invariant i18n values for display
         report_lang = self.report_config.get('language', 'zh-CN') if self.report_config else 'zh-CN'
@@ -165,40 +178,42 @@ class CaseRunner:
 
             except asyncio.TimeoutError:
                 logging.error(f"Fixture case '{case_name}' timed out after {case_timeout}s")
+                case_result = SubTestResult(
+                    sub_test_id=case_id,
+                    name=case_name,
+                    status=TestStatus.WARNING,
+                    metrics={'total_steps': 0, 'passed_steps': 0, 'failed_steps': 0},
+                    steps=[],
+                    messages={},
+                    start_time=datetime.now().isoformat(),
+                    end_time=datetime.now().isoformat(),
+                    final_summary=f'Case timed out after {case_timeout} seconds',
+                    report=self._make_error_report('timeout_title', 'timeout_issues', timeout=case_timeout),
+                )
                 async with results_lock:
                     completed_count += 1
-                    results.append(SubTestResult(
-                        sub_test_id=case_id,
-                        name=case_name,
-                        status=TestStatus.FAILED,
-                        metrics={'total_steps': 0, 'passed_steps': 0, 'failed_steps': 0},
-                        steps=[],
-                        messages={},
-                        start_time=datetime.now().isoformat(),
-                        end_time=datetime.now().isoformat(),
-                        final_summary=f'Case timed out after {case_timeout} seconds',
-                        report=[],
-                    ))
+                    results.append(case_result)
                 if session:
                     await session_pool.release(session, failed=True)
                     session = None
 
             except Exception as e:
                 logging.error(f"Exception in fixture case '{case_name}': {e}", exc_info=True)
+                case_result = SubTestResult(
+                    sub_test_id=case_id,
+                    name=case_name,
+                    status=TestStatus.WARNING,
+                    metrics={'total_steps': 0, 'passed_steps': 0, 'failed_steps': 0},
+                    steps=[],
+                    messages={},
+                    start_time=datetime.now().isoformat(),
+                    end_time=datetime.now().isoformat(),
+                    final_summary=f'Exception: {str(e)}',
+                    report=self._make_error_report('exception_title', 'exception_issues', error=str(e)),
+                )
                 async with results_lock:
                     completed_count += 1
-                    results.append(SubTestResult(
-                        sub_test_id=case_id,
-                        name=case_name,
-                        status=TestStatus.FAILED,
-                        metrics={'total_steps': 0, 'passed_steps': 0, 'failed_steps': 0},
-                        steps=[],
-                        messages={},
-                        start_time=datetime.now().isoformat(),
-                        end_time=datetime.now().isoformat(),
-                        final_summary=f'Exception: {str(e)}',
-                        report=[],
-                    ))
+                    results.append(case_result)
 
             finally:
                 # Reset test_id context
@@ -244,8 +259,13 @@ class CaseRunner:
                 case_id = case.get('case_id', f'case_{idx}')
 
                 # Extract browser config for this case
-                browser_cfg = case.get('_config', {}).get('browser_config', self.browser_config)
-                new_config_key = session_pool._make_config_key(browser_cfg)
+                case_cfg = case.get('_config', {})
+                browser_cfg = case_cfg.get('browser_config', self.browser_config)
+                new_config_key = (
+                    session_pool._make_config_key(browser_cfg),
+                    case_cfg.get('account_key'),
+                    bool(case.get('use_snapshot')),
+                )
 
                 # Set test_id context for logging (matching Gen mode pattern: "Run | case_id")
                 log_context = f'Run | {case_id}'
@@ -289,21 +309,21 @@ class CaseRunner:
 
                 except asyncio.TimeoutError:
                     logging.error(f"Worker {worker_id}: Case '{case_name}' timed out after {case_timeout}s")
+                    case_result = SubTestResult(
+                        sub_test_id=case_id,
+                        name=case_name,
+                        status=TestStatus.WARNING,
+                        metrics={'total_steps': 0, 'passed_steps': 0, 'failed_steps': 0},
+                        steps=[],
+                        messages={},
+                        start_time=datetime.now().isoformat(),
+                        end_time=datetime.now().isoformat(),
+                        final_summary=f'Case timed out after {case_timeout} seconds',
+                        report=self._make_error_report('timeout_title', 'timeout_issues', timeout=case_timeout),
+                    )
                     async with results_lock:
                         completed_count += 1
-                        results.append(SubTestResult(
-                            sub_test_id=case_id,
-                            name=case_name,
-                            status=TestStatus.FAILED,
-                            metrics={'total_steps': 0, 'passed_steps': 0, 'failed_steps': 0},
-                            steps=[],
-                            messages={},
-                            start_time=datetime.now().isoformat(),
-                            end_time=datetime.now().isoformat(),
-                            final_summary=f'Case timed out after {case_timeout} seconds',
-                            report=[],
-                        ))
-                    case_result = None
+                        results.append(case_result)
                     raw_monitoring_data = None
                     if session:
                         await session_pool.release(session, failed=True, keep_alive=False)
@@ -312,21 +332,21 @@ class CaseRunner:
 
                 except Exception as e:
                     logging.error(f"Worker {worker_id}: Exception in '{case_name}': {e}", exc_info=True)
+                    case_result = SubTestResult(
+                        sub_test_id=case_id,
+                        name=case_name,
+                        status=TestStatus.WARNING,
+                        metrics={'total_steps': 0, 'passed_steps': 0, 'failed_steps': 0},
+                        steps=[],
+                        messages={},
+                        start_time=datetime.now().isoformat(),
+                        end_time=datetime.now().isoformat(),
+                        final_summary=f'Exception: {str(e)}',
+                        report=self._make_error_report('exception_title', 'exception_issues', error=str(e)),
+                    )
                     async with results_lock:
                         completed_count += 1
-                        results.append(SubTestResult(
-                            sub_test_id=case_id,
-                            name=case_name,
-                            status=TestStatus.FAILED,
-                            metrics={'total_steps': 0, 'passed_steps': 0, 'failed_steps': 0},
-                            steps=[],
-                            messages={},
-                            start_time=datetime.now().isoformat(),
-                            end_time=datetime.now().isoformat(),
-                            final_summary=f'Exception: {str(e)}',
-                            report=[],
-                        ))
-                    case_result = None
+                        results.append(case_result)
                     raw_monitoring_data = None
                     if session:
                         await session_pool.release(session, failed=True, keep_alive=False)
@@ -391,8 +411,23 @@ class CaseRunner:
         # Get case-specific config if available (for multi-YAML support)
         case_config = case.get('_config', {})
         url = case_config.get('url') or self.test_specific_config.get('url')
-
-        cookies = case_config.get('cookies') or self.test_specific_config.get('cookies')
+        account_pool = case_config.get('account_pool') or self.account_pool
+        requested_account = case.get('account')
+        if requested_account and account_pool and not account_pool.resolve_account_name(requested_account):
+            available = ', '.join(account_pool.account_names)
+            logging.warning(
+                f"[{case_id}] Account '{requested_account}' not found. "
+                f'Available accounts: [{available}]. Falling back to default account.'
+            )
+        cookies = (
+            account_pool.resolve_cookies(requested_account)
+            if account_pool else
+            (case_config.get('cookies') or self.test_specific_config.get('cookies'))
+        )
+        resolved_account_name = (
+            account_pool.resolve_account_name(requested_account)
+            if account_pool else None
+        )
 
         # Record case start for data flow reporting
         record_data_flow_event(
@@ -409,6 +444,11 @@ class CaseRunner:
         ignore_rules = case_config.get('ignore_rules') or self.test_specific_config.get('ignore_rules', {})
 
         use_snapshot = case.get('use_snapshot')
+        if use_snapshot or resolved_account_name:
+            await session.reset_context()
+        else:
+            # Legacy single-account path keeps the lighter cleanup behavior.
+            await session.clean_state()
 
         # Always navigate first; snapshot state is applied after
         tester = await self._initialize_tester(
@@ -417,13 +457,24 @@ class CaseRunner:
             cookies=cookies if not use_snapshot else None,
             ignore_rules=ignore_rules
         )
+        tester.current_account_name = resolved_account_name
+        tester.current_case_data = case
 
         if use_snapshot:
-            await self._load_fixture_state(session, case, case_config)
+            await self._load_fixture_state(
+                session,
+                case,
+                case_config,
+                account_cookies=cookies,
+            )
 
         # Execute steps
         executed_steps, case_status, error_messages, prev_step_context, case_llm_metrics = await self._execute_steps(
-            tester, case.get('steps', []), case_id=case_id, case_name=case_name
+            tester,
+            case.get('steps', []),
+            case_id=case_id,
+            case_name=case_name,
+            case_url=url,
         )
 
         # Get monitoring data and cleanup
@@ -490,6 +541,13 @@ class CaseRunner:
     # Private Methods - Tester Lifecycle
     # ========================================================================
 
+    def _make_error_report(self, title_key: str, issues_key: str, **kwargs) -> List[SubTestReport]:
+        lang = self.report_config.get('language', 'zh-CN') if self.report_config else 'zh-CN'
+        title = i18n.t(lang, f'tools.run_mode.{title_key}', title_key)
+        issues_tpl = i18n.t(lang, f'tools.run_mode.{issues_key}', issues_key)
+        issues = issues_tpl.format(**kwargs)
+        return [SubTestReport(title=title, issues=issues)]
+
     def _get_snapshot_dir(self) -> str:
         """Get snapshot base directory within report directory.
 
@@ -502,7 +560,8 @@ class CaseRunner:
         self,
         session: BrowserSession,
         case: Dict[str, Any],
-        case_config: Dict[str, Any]
+        case_config: Dict[str, Any],
+        account_cookies: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
         """Load fixture state (cookies + localStorage + sessionStorage) after
         page navigation.
@@ -534,6 +593,12 @@ class CaseRunner:
             if 'cookies' in storage_state and storage_state['cookies']:
                 await session.context.add_cookies(storage_state['cookies'])
                 logging.info(f"Loaded {len(storage_state['cookies'])} cookies from snapshot '{snapshot_name}'")
+
+            if account_cookies:
+                await session.context.add_cookies(account_cookies)
+                logging.info(
+                    f"Applied {len(account_cookies)} account cookies after snapshot '{snapshot_name}'"
+                )
 
             # load localStorage and sessionStorage
             if 'origins' in storage_state:
@@ -672,6 +737,7 @@ class CaseRunner:
         steps: List[Dict[str, Any]],
         case_id: str = '',
         case_name: str = '',
+        case_url: Optional[str] = None,
     ) -> Tuple[List[SubTestStep], TestStatus, List[str], Optional[StepContext], Dict[str, Any]]:
         """Execute all steps in a case.
 
@@ -707,11 +773,14 @@ class CaseRunner:
 
             parsed_step = CaseStep.model_validate(step)
             step_type = parsed_step.step_type
-            instruction = (
-                parsed_step.action.description if step_type == 'action' and parsed_step.action
-                else parsed_step.verify.assertion if step_type == 'verify' and parsed_step.verify
-                else ''
-            )
+            if step_type == 'action' and parsed_step.action:
+                instruction = parsed_step.action.description
+            elif step_type == 'verify' and parsed_step.verify:
+                instruction = parsed_step.verify.assertion
+            elif step_type == 'switch_account' and parsed_step.switch_account:
+                instruction = parsed_step.switch_account.target
+            else:
+                instruction = ''
 
             # Record step request for data flow reporting
             record_data_flow_event(
@@ -740,6 +809,11 @@ class CaseRunner:
                 logging.info(f'Executing step {step_idx}: {parsed_step.verify}')
                 step_result, prev_step_context = await self._execute_verify_step(
                     tester, parsed_step.verify, step_idx, prev_step_context
+                )
+            elif step_type == 'switch_account':
+                logging.info(f'Executing step {step_idx}: {parsed_step.switch_account}')
+                step_result, prev_step_context = await self._execute_switch_account_step(
+                    tester, parsed_step.switch_account.target, step_idx, case_url
                 )
             else:
                 raise ValueError(f'Unsupported step type: {step_type}')
@@ -879,6 +953,91 @@ class CaseRunner:
 
         return step_result, prev_step_context
 
+    async def _execute_switch_account_step(
+        self,
+        tester,
+        account_name: str,
+        step_idx: int,
+        case_url: Optional[str],
+    ) -> Tuple[SubTestStep, StepContext]:
+        """Execute a switch-account step."""
+        case_pool = None
+        if isinstance(getattr(tester, 'current_case_data', None), dict):
+            case_pool = tester.current_case_data.get('_config', {}).get('account_pool')
+
+        account_pool = case_pool or self.account_pool
+        if not account_pool:
+            raise ValueError('switch_account step requires configured accounts')
+
+        account = account_pool.get(account_name)
+        if not account:
+            raise ValueError(
+                f"Account '{account_name}' not found. Available: {', '.join(account_pool.account_names)}"
+            )
+
+        navigate_url = case_url or tester.target_url or tester.browser_session.page.url
+        await tester.browser_session.switch_account(
+            account.resolved_cookies,
+            navigate_url=navigate_url,
+        )
+        await tester.refresh_session_bindings()
+        tester.current_account_name = account.name
+
+        page = tester.browser_session.page
+        try:
+            await page.wait_for_load_state('networkidle', timeout=3000)
+        except Exception:
+            logging.debug('switch_account step: networkidle wait timed out', exc_info=True)
+
+        await asyncio.sleep(0.5)
+
+        actual_url = navigate_url
+        try:
+            actual_url, _ = await tester.browser_session.get_url()
+        except Exception:
+            logging.debug('Failed to read current URL after account switch', exc_info=True)
+        tester.current_url = actual_url
+
+        redirected = actual_url != navigate_url
+
+        screenshot_b64 = None
+        try:
+            screenshot_b64, _ = await tester._actions.b64_page_screenshot(
+                full_page=False,
+                file_name=f'switch_account_step_{step_idx}',
+                context='test',
+            )
+        except Exception:
+            logging.warning('Failed to capture screenshot after account switch', exc_info=True)
+
+        result_data = {
+            'account': account.name,
+            'role': account.role,
+            'requested_url': navigate_url,
+            'current_url': actual_url,
+            'redirected': redirected,
+        }
+        step_result = SubTestStep(
+            id=step_idx,
+            description=f'switch_account: {account.name}',
+            screenshots=[
+                SubTestScreenshot(
+                    type='base64',
+                    data=screenshot_b64,
+                    label=f"Switched to account '{account.name}'",
+                )
+            ] if screenshot_b64 else [],
+            modelIO=str(result_data),
+            actions=[],
+            status=TestStatus.PASSED,
+            errors='',
+        )
+        prev_step_context = StepContext(
+            description=f"Switched to account '{account.name}'",
+            result=result_data,
+        )
+        return step_result, prev_step_context
+
     async def _execute_verify_step(
         self,
         tester,
@@ -949,14 +1108,15 @@ class CaseRunner:
         case_status: TestStatus,
         monitoring_data: Dict[str, Any],
         error_messages: List[str],
-        ignore_rules: Optional[Dict[str, Any]] = None
+        ignore_rules: Optional[Dict[str, Any]] = None,
+        executed_steps: Optional[List[SubTestStep]] = None,
     ) -> Tuple[TestStatus, List[str], Dict[str, Any], Dict[str, int]]:
-        """Check console and network errors from monitoring data.
+        """Check console, network, and system-level errors from monitoring data.
 
         Logic:
-        - Case status is primarily based on step execution
+        - System-level step failures (LLM API, screenshot, etc.) are downgraded to WARNING
         - Console/network errors downgrade PASSED to WARNING
-        - FAILED from steps is not overridden
+        - Product-defect FAILED from steps is not overridden
 
         Args:
             case_name: Name of the case (for logging)
@@ -964,6 +1124,7 @@ class CaseRunner:
             monitoring_data: Monitoring data from tester
             error_messages: List of error messages to append to
             ignore_rules: Optional case-specific ignore rules
+            executed_steps: Optional list of executed steps for system error reclassification
 
         Returns:
             Tuple of (updated_case_status, updated_error_messages, messages_data, error_counts)
@@ -997,7 +1158,25 @@ class CaseRunner:
             'failed_request_count': failed_request_count,
         }
 
-        # Do not override step failures; still record counts for reporting
+        # ========== 0. Reclassify system-level step failures as WARNING ==========
+        # System errors (LLM API timeout/rate-limit, screenshot failures, etc.) are infrastructure issues, not product defects.
+        if case_status == TestStatus.FAILED and executed_steps:
+            all_failed_are_system = True
+            for step in executed_steps:
+                if step.status == TestStatus.FAILED:
+                    error_text = (step.errors or '').lower()
+                    if not any(p in error_text for p in _SYSTEM_ERROR_PATTERNS):
+                        all_failed_are_system = False
+                        break
+            if all_failed_are_system:
+                for step in executed_steps:
+                    if step.status == TestStatus.FAILED:
+                        step.status = TestStatus.WARNING
+                        error_messages.append(f'Step {step.id} system error downgraded to warning: {step.errors}')
+                        logging.warning(f'{case_name} step {step.id} system error downgraded to WARNING: {step.errors}')
+                case_status = TestStatus.WARNING
+
+        # Do not override product-defect step failures; still record counts for reporting
         if case_status == TestStatus.FAILED:
             return case_status, error_messages, messages_data, error_counts
 
@@ -1083,7 +1262,8 @@ class CaseRunner:
             case_status=case_status,
             monitoring_data=monitoring_data,
             error_messages=error_messages,
-            ignore_rules=ignore_rules
+            ignore_rules=ignore_rules,
+            executed_steps=executed_steps,
         )
 
         if error_messages:

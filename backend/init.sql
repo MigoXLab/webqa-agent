@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS environments (
     sso_password VARCHAR(200),
     sso_env VARCHAR(20) DEFAULT 'prod' NOT NULL,
     cookies JSONB,
+    accounts JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
@@ -55,6 +56,7 @@ CREATE TABLE IF NOT EXISTS test_cases (
     status VARCHAR(20) DEFAULT 'active' NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0,
     version VARCHAR(50),
+    account VARCHAR(100),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
@@ -71,6 +73,7 @@ CREATE TABLE IF NOT EXISTS executions (
     scheduled_task_id UUID,
     model VARCHAR(100) NOT NULL,
     workers INTEGER DEFAULT 1 NOT NULL,
+    resolutions JSONB,
     test_case_ids JSONB DEFAULT '[]'::jsonb NOT NULL,
     status VARCHAR(20) DEFAULT 'pending' NOT NULL,
     oss_report_url VARCHAR(1000),
@@ -99,6 +102,7 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
     test_case_ids JSONB NOT NULL,
     model VARCHAR(100) NOT NULL,
     workers INTEGER NOT NULL DEFAULT 1,
+    resolutions JSONB,
     cron_expression VARCHAR(100) NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     webhook_url VARCHAR(500),
@@ -114,6 +118,23 @@ CREATE INDEX IF NOT EXISTS ix_scheduled_tasks_enabled ON scheduled_tasks(enabled
 CREATE INDEX IF NOT EXISTS ix_scheduled_tasks_next_run_at ON scheduled_tasks(next_run_at);
 
 -- ============================================================
+-- 6. API Keys
+-- ============================================================
+CREATE TABLE IF NOT EXISTS api_keys (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id VARCHAR(100) NOT NULL,
+    key_hash VARCHAR(64) NOT NULL UNIQUE,
+    key_prefix VARCHAR(12) NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE,
+    last_used TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_api_keys_user_id ON api_keys(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS ix_api_keys_key_hash ON api_keys(key_hash);
+
+-- ============================================================
 -- Alembic version tracking
 -- ============================================================
 CREATE TABLE IF NOT EXISTS alembic_version (
@@ -121,6 +142,6 @@ CREATE TABLE IF NOT EXISTS alembic_version (
     CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)
 );
 DELETE FROM alembic_version;
-INSERT INTO alembic_version (version_num) VALUES ('009_make_business_id_nullable');
+INSERT INTO alembic_version (version_num) VALUES ('014_add_api_keys');
 
 COMMIT;

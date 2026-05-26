@@ -2,6 +2,7 @@
 from typing import Optional
 from uuid import UUID
 
+from app.api.environments import normalize_accounts
 from app.database import get_db
 from app.models import Business, Environment, TestCase
 from app.schemas.business import (BusinessCreate, BusinessListResponse,
@@ -71,6 +72,13 @@ async def create_business(
 
     # Create environments
     for env_data in data.environments:
+        try:
+            normalized = normalize_accounts(env_data.auth_type, env_data.accounts)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={'code': 2005, 'message': str(e)},
+            ) from e
         env = Environment(
             business_id=business.id,
             name=env_data.name,
@@ -82,6 +90,7 @@ async def create_business(
             sso_password=env_data.sso_password,
             sso_env=env_data.sso_env or 'prod',
             cookies=env_data.cookies,
+            accounts=normalized,
         )
         db.add(env)
 
@@ -174,18 +183,38 @@ async def update_business(
                     select(Environment).where(Environment.id == env_data.id)
                 )
                 env = env_result.scalar_one()
+                try:
+                    normalized = normalize_accounts(env_data.auth_type, env_data.accounts, env.accounts)
+                except ValueError as e:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={'code': 2005, 'message': str(e)},
+                    ) from e
                 env.name = env_data.name
                 env.url = env_data.url
                 env.browser_config = env_data.browser_config
                 env.ignore_rules = env_data.ignore_rules
                 env.auth_type = env_data.auth_type
-                env.sso_username = env_data.sso_username
-                if env_data.sso_password:  # Only update if provided
+                if env_data.auth_type == 'none':
+                    env.sso_username = None
+                    env.sso_password = None
+                    env.cookies = None
+                else:
+                    env.sso_username = env_data.sso_username
+                if env_data.auth_type != 'none' and env_data.sso_password:  # Only update if provided
                     env.sso_password = env_data.sso_password
                 env.sso_env = env_data.sso_env or env.sso_env or 'prod'
-                env.cookies = env_data.cookies
+                env.cookies = None if env_data.auth_type == 'none' else env_data.cookies
+                env.accounts = normalized
             else:
                 # Create new
+                try:
+                    new_normalized = normalize_accounts(env_data.auth_type, env_data.accounts)
+                except ValueError as e:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={'code': 2005, 'message': str(e)},
+                    ) from e
                 env = Environment(
                     business_id=business.id,
                     name=env_data.name,
@@ -197,6 +226,7 @@ async def update_business(
                     sso_password=env_data.sso_password,
                     sso_env=env_data.sso_env or 'prod',
                     cookies=env_data.cookies,
+                    accounts=new_normalized,
                 )
                 db.add(env)
 

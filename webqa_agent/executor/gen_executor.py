@@ -14,12 +14,15 @@ from webqa_agent.data import (ParallelTestSession, SubTestReport,
                               TestCategory, TestResult, TestStatus)
 from webqa_agent.executor.gen.utils.case_recorder import get_report_summary
 from webqa_agent.executor.result_aggregator import ResultAggregator
-from webqa_agent.utils.data_flow_reporter import (generate_data_flow_report,
-                                                    set_dataflow_enabled)
 from webqa_agent.utils import Display, i18n
 from webqa_agent.utils.get_log import GetLog
 from webqa_agent.utils.log_icon import icon
 from webqa_agent.utils.reporting_utils import save_index_json
+
+from webqa_agent.utils.data_flow_reporter import (  # isort: skip
+    generate_data_flow_report,
+    set_dataflow_enabled,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -267,6 +270,25 @@ class GenExecutor:
         # Get enabled custom tools
         enabled_custom_tools = self.config.custom_tools.enabled
 
+        # Initialize test file library if configured
+        test_file_library = None
+        if self.config.test_files_dir:
+            from webqa_agent.utils.test_file_library import TestFileLibrary
+            test_file_library = TestFileLibrary(
+                self.config.test_files_dir,
+                file_whitelist=self.config.test_files,
+            )
+            if test_file_library.files:
+                logger.info(
+                    f'TestFileLibrary loaded: {len(test_file_library.files)} files '
+                    f'from {self.config.test_files_dir}'
+                )
+            else:
+                logger.warning(
+                    f'TestFileLibrary: no valid files found in {self.config.test_files_dir}'
+                )
+                test_file_library = None
+
         # Build state for LangGraph
         initial_state = {
             # Core configuration
@@ -283,6 +305,8 @@ class GenExecutor:
             # Control flags
             'generate_only': False,
             'skip_reflection': self.config.skip_reflection,
+            'planning_mode': self.config.planning_mode,
+            'max_replan_count': 1 if self.config.planning_mode == 'focused' else 3,
 
             # Feature configuration
             'dynamic_step_generation': self.config.dynamic_step_generation.model_dump(),
@@ -296,6 +320,9 @@ class GenExecutor:
                 **self.config.report_config.model_dump(),
                 'report_dir': report_dir,
             },
+
+            # File upload testing
+            'test_file_library': test_file_library,
         }
 
         graph_config = {'recursion_limit': 100}

@@ -222,7 +222,6 @@ export function ExecutionDetail() {
 
   const isRunning = ['pending', 'running'].includes(execution.status);
   const isCompleted = ['completed', 'passed', 'failed', 'timeout'].includes(execution.status);
-
   return (
     <div className="min-h-screen bg-gray-50 px-4 sm:px-6 py-4 sm:py-6">
       <div className="max-w-7xl mx-auto">

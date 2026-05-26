@@ -237,7 +237,7 @@ class ActionHandler:
         try:
             # networkidle is often blocked by long-polling or analytics in clusters.
             # We use a short timeout so we don't stall the tests unnecessarily.
-            await self.page.wait_for_load_state('networkidle', timeout=3000)
+            await self.page.wait_for_load_state('networkidle', timeout=5000)
         except Exception as e:
             logging.warning(f'Wait for networkidle timed out: {e}. Proceeding since domcontentloaded is complete.')
 
@@ -364,7 +364,7 @@ class ActionHandler:
             return True
 
     async def set_overflow_hidden(self):
-        await self.page.evaluate("document.body.style.overflow = 'hidden'")
+        await self.page.evaluate("if(document.body) document.body.style.overflow = 'hidden'")
 
     async def close_page(self) -> None:
         """Close the current page."""
@@ -599,13 +599,13 @@ class ActionHandler:
 
         try:
             elapsed = 0.0
-            last_height = await page.evaluate('document.body.scrollHeight')
+            last_height = await page.evaluate('document.body ? document.body.scrollHeight : document.documentElement.scrollHeight')
 
             while elapsed < timeout:
                 await asyncio.sleep(check_interval)
                 elapsed += check_interval
 
-                current_height = await page.evaluate('document.body.scrollHeight')
+                current_height = await page.evaluate('document.body ? document.body.scrollHeight : document.documentElement.scrollHeight')
 
                 # If page height hasn't changed, consider it stable
                 if current_height == last_height:
@@ -2538,7 +2538,7 @@ class ActionHandler:
 
                                         // close dropdown
                                         setTimeout(() => {
-                                            document.body.click();
+                                            if(document.body) document.body.click();
                                         }, 100);
                                     }
 
@@ -2740,7 +2740,7 @@ class ActionHandler:
                                 setTimeout(() => {
                                     antCascader.dispatchEvent(new Event('change', { bubbles: true }));
                                     // close dropdown
-                                    document.body.click();
+                                    if(document.body) document.body.click();
                                 }, 100);
                             }
 

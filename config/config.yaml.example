@@ -1,36 +1,45 @@
-# WebQA Agent Configuration - AI Mode (default)
-# This mode uses AI to automatically generate and execute test cases
+# WebQA Agent Configuration - Flash Mode (default)
+# This mode uses a lightweight browser exploration engine (Chrome DevTools MCP)
+# to execute natural-language test goals in seconds.
 # To create this config: webqa-agent init
 # Documentation: https://github.com/MigoXLab/webqa-agent
+
+# Engine selection:
+#   * flash (default) — Lightweight and fast autonomous browser agent.
+#   * standard — Deep AI-driven test generation & execution (LangGraph).
+engine: flash
 
 target:
   url: https://baidu.com
   description: Test search functionality
-  max_concurrent_tests: 5  # Optional, default parallel 2
+  max_concurrent_tests: 3  # Optional, concurrent business objectives for Flash mode
 
-test_config: # Test configuration for Gen mode (AI-driven test generation)
-  business_objectives: Generate 5 test cases, exclude login cases   # Optional. If empty, AI will automatically explore and generate test cases. If specified, AI will focus on testing the specified business objectives.
+test_config: # Test configuration
+  business_objectives: Verify the search box is visible, type hello, and confirm results page loads
+  # Or concurrent goals:
+  # business_objectives:
+  #   - Verify homepage and core entry points
+  #   - Verify end-to-end search flow
 
-  # Custom tools configuration (optional, advanced features)
-  custom_tools:
-    enabled: []  # Optional: Enable additional testing tools (by step_type)
-                 # Available custom tools:
-                 # - lighthouse: Performance testing with Google Lighthouse (requires: npm install -g lighthouse chrome-launcher)
-                 # - nuclei: Security vulnerability scanning with Nuclei (requires: nuclei installed, see https://github.com/projectdiscovery/nuclei)
-                 # - traverse_clickable_elements: Clickable element traversal testing
-                 # - detect_dynamic_links: Dynamic link discovery and validation
-                 # Example: ['lighthouse', 'nuclei']
-
-  # Intelligent reflection (optional, default: True)
-  # When enabled, LLM analyzes failed test cases and replans them.
-  # This improves test coverage but increases execution time and token usage.
-  enable_reflection: True
-
-  # Dynamic step generation (optional, adaptive testing)
-  dynamic_step_generation:
-    enabled: True  # Optional, default: True - Master switch for dynamic generation
-    max_dynamic_steps: 8  # Optional, default: 8 - Max steps per UI change (range: 3-15)
-    min_elements_threshold: 2  # Optional, default: 2 - Min new elements to trigger (1=sensitive, 3+=selective)
+  # =========================================================================
+  # Standard (Classic) Engine Configuration Options
+  # (These options only apply when engine: standard is configured)
+  # =========================================================================
+  #
+  # # Intelligent reflection (optional, default: True)
+  # # When enabled, LLM analyzes failed test cases and replans them.
+  # enable_reflection: True
+  #
+  # # Dynamic step generation (optional, adaptive testing)
+  # dynamic_step_generation:
+  #   enabled: True  # Optional, default: True - Master switch for dynamic generation
+  #   max_dynamic_steps: 8  # Optional, default: 8 - Max steps per UI change (range: 3-15)
+  #   min_elements_threshold: 2  # Optional, default: 2 - Min new elements to trigger (1=sensitive, 3+=selective)
+  #
+  # # Custom tools configuration (optional, advanced features)
+  # custom_tools:
+  #   enabled: []  # Optional: Enable additional testing tools (by step_type)
+  #                # Available custom tools: ['lighthouse', 'nuclei', 'traverse_clickable_elements', 'detect_dynamic_links']
 
 llm_config: # LLM configuration, supports OpenAI, Anthropic Claude, and Google Gemini models
   # =========================
@@ -41,7 +50,7 @@ llm_config: # LLM configuration, supports OpenAI, Anthropic Claude, and Google G
   filter_model: gpt-4o-mini  # Lightweight model for Stage 1 element filtering (cost-effective)
   api_key: your_openai_api_key  # Or set OPENAI_API_KEY environment variable
   base_url: https://api.openai.com/v1  # Optional, OpenAI default endpoint
-  temperature: 0.1   # Optional, default 0.1 for OpenAI
+  # temperature: 0.1   # Optional, default 0.1 for OpenAI
   # top_p: 0.9       # Optional, nucleus sampling parameter
   # max_tokens: 8192  # Optional, maximum output tokens
 
@@ -107,12 +116,34 @@ browser_config:
   viewport: {"width": 1280, "height": 720}
   headless: False  # Docker environment will automatically override to True
   language: zh-CN
+  # Single-identity cookie injection. Accepts an inline list (each cookie
+  # needs `name`, `value`, plus either `domain` or `url`) or a path to a
+  # cookies JSON file. Ignored when the top-level `accounts:` block is set —
+  # `accounts:` takes priority and supports HttpOnly cookies + runtime
+  # switching.
   cookies: []
+
+# accounts: top-level multi-account user pool (Flash mode).
+#   * Each entry needs `name` and either `cookies:` (inline list) or
+#     `cookies_file:` (relative paths resolve against this YAML's dir).
+#   * Mark one account `default: true` to inject its cookies at startup.
+#     If none is marked, the first account is auto-promoted (logged warning).
+#   * Each cookie dict must have `name`, `value`, and either `domain` or
+#     `url` — otherwise the run aborts before the agent starts.
+#   * The agent can mid-run call `switch_account(account=..., navigate_url=...)`
+#     to swap identity.
+# accounts:
+#   - name: admin
+#     role: Full administrator
+#     default: true
+#     cookies_file: ./admin-cookies.json
+#   - name: viewer
+#     role: Read-only user
+#     cookies_file: ./viewer-cookies.json
 
 report:
   language: en-US # zh-CN, en-US
-  save_screenshots: False  # Whether to enable screenshots. If True, screenshots are saved as local files. If False, screenshots are stored as base64 in the test data.
-
+  save_screenshots: True  # Whether to enable screenshots. If True, screenshots are saved as local files. If False, screenshots are stored as base64 in the test data.
 
 log:
   level: info

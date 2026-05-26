@@ -1,11 +1,136 @@
 # WebQA Agent 配置与 CLI 使用说明
 
-WebQA Agent 支持两种执行模式，分别针对不同的测试场景和工作流进行设计。
+WebQA Agent 支持三种执行模式，覆盖从轻量探索到深度回归的全链路 QA。
+
+## ⚡ Flash 模式 (轻量探索)
+
+**适用场景：** 秒级执行自然语言测试目标，适合快速冒烟、IDE 内联调用、MCP/Skill 自然语言测试。
+
+### 核心能力
+
+- **Chrome MCP 浏览器驱动** — 基于 Chrome DevTools MCP 执行点击、输入、导航等自动化操作
+- **Skill 渐进式披露** — 启动时仅注入 Skill 摘要，按需加载完整指令，控制 context 膨胀；内置能力：`plan`、`ui-audit`、`recovery`、`nuclei-scan`、`button-check`
+- **高效可观测执行** — 支持多条业务目标并发批量执行，统一聚合报告；Agent Trace 记录完整执行轨迹
+- **Context 自动压缩** — 达到 token 阈值后自动触发 compact，避免 context 溢出导致执行中断
+- **CDP 能力** — 支持注入 Cookies + `switch_account` 运行时切换账号；从业务文件池选择文件自动上传
+
+### 前置依赖
+
+```bash
+# Node.js v20.19+ LTS，Chrome 稳定版
+npm install -g chrome-devtools-mcp@latest
+```
+
+### 配置示例
+
+Flash 模式是默认启用的执行引擎。您也可以显式设置 `engine: flash`：
+
+**单条目标：**
+
+```yaml
+engine: flash                       # 可选，默认即为 flash
+
+target:
+  url: https://example.com
+
+test_config:
+  business_objectives: 在搜索框输入"笔记本电脑"，验证结果页正常加载并包含相关商品
+
+llm_config:
+  model: gpt-5.4-mini
+  api_key: ${OPENAI_API_KEY}
+
+browser_config:
+  headless: false
+```
+
+**多条目标（并发执行）：**
+
+```yaml
+test_config:
+  business_objectives:
+    - >
+      在搜索框输入"笔记本电脑"，验证结果页正常加载并包含相关商品，
+      点击第一条结果确认详情页正常打开，
+      返回后切换到"图片"或"资讯"子频道，验证内容与搜索词相关且页面无报错。
+    - 使用价格筛选功能，验证过滤后的结果均符合所选价格区间
+
+# 可选：多账号 Cookie 注入与运行时切号
+# accounts:
+#   - name: admin
+#     default: true
+#     cookies_file: ./admin-cookies.json
+
+# 可选：业务文件池（上传测试）
+# test_config:
+#   test_files_dir: ./test_files
+```
+
+### 运行
+
+```bash
+webqa-agent gen -c config.yaml
+```
+
+报告与 Agent Trace 默认输出到 `reports/` 目录。更多引擎细节见 [webqa_agent/executor/flash/README.md](../webqa_agent/executor/flash/README.md)。
+
+______________________________________________________________________
 
 ## 🤖 Gen 模式 (自动生成模式)
 
+若要运行标准的自动生成模式，请在配置文件中配置 `engine: standard`。
+
 **适用场景：** AI 自动探索网页，解析业务目标（例如“测试搜索逻辑”），生成测试用例，并执行端到端测试流程。
 该模式适用于探索式测试和全面的质量评估。
+
+### 前置依赖
+
+Standard Gen 与 Run 模式均使用 Playwright 驱动浏览器：
+
+```bash
+uv run playwright install chromium
+```
+
+### 规划模式
+
+Gen 模式支持两种规划策略，可在配置中通过 `planning_mode` 切换：
+
+#### Focused（聚焦模式）
+
+针对明确业务目标进行深度端到端场景探索。在平台填写业务目标时自动启用。
+
+```yaml
+test_config:
+  planning_mode: focused
+  business_objectives: 验证用户登录流程，包括表单校验、错误提示与成功跳转
+```
+
+#### Explore（探索模式）
+
+业务目标留空时，Agent 执行广覆盖发现式测试，自动规划更广泛的测试覆盖范围。默认模式。
+
+```yaml
+test_config:
+  planning_mode: explore
+  # business_objectives 留空 → Agent 广覆盖发现页面问题
+```
+
+> **说明**：未提供 PRD 或业务目标时，不会预先规划结构化测试用例，而是由 Agent 执行广覆盖发现式测试。
+
+### 多账号 SSO 管理
+
+支持多 SSO / Cookies 账号配置，运行时可通过 `accounts` 与 `switch_account` 切换身份（Flash 模式同样支持 CDP Cookie 注入与运行时切号）：
+
+```yaml
+accounts:
+  - name: admin
+    default: true                      # 默认使用此账号
+    cookies_file: ./cookies/admin.json
+  - name: editor
+    cookies_file: ./cookies/editor.json
+  - name: viewer
+    cookies_file: ./cookies/viewer.json
+```
 
 ### 核心特性
 
@@ -117,6 +242,31 @@ test_config:
       - lighthouse                      # Lighthouse 性能测试（需要：npm install -g lighthouse）
       - nuclei                          # Nuclei 安全扫描（需要：安装 nuclei）
 ```
+
+### 🛠️ 工具系统（默认工具与自定义工具）
+
+Standard Gen 模式通过工具注册表扩展测试能力。
+
+**默认工具**（始终启用）：
+
+- **UI 操作**：浏览器交互（点击、输入、导航）
+- **UI 断言**：状态验证
+- **UX 验证**：文本错误检查、布局分析
+
+**自定义工具**（可选，通过 `test_config.custom_tools.enabled` 启用）：
+
+- **性能测试** `lighthouse`：基于 Lighthouse 的性能审计（需 `npm install -g lighthouse`）
+- **安全测试** `nuclei`：Nuclei 漏洞扫描（需安装 nuclei CLI）
+- **链接检测**：动态链接发现
+
+WebQA Agent 也支持自行开发工具以满足特定领域的测试需求：
+
+| 文档                                                   | 描述                                |
+| ------------------------------------------------------ | ----------------------------------- |
+| **[自定义工具开发](CUSTOM_TOOL_DEVELOPMENT_zh-CN.md)** | 自定义工具开发快速参考              |
+| **[LLM 上下文文档](CUSTOM_TOOL_DEVELOPMENT_AI.md)**    | AI 辅助开发完整指南，可用于氛围编程 |
+
+参考 [`webqa_agent/tools/custom/`](../webqa_agent/tools/custom/) 中的现有实现作为起点。
 
 ## 📋 Run 模式 (用例执行模式)
 

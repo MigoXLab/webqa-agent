@@ -40,171 +40,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { apiClient, ExecutionProgress, TestCase as APITestCase } from '../api/client';
 import { TestCase, TestStep, Environment, BusinessFile } from '../App';
-import yaml from 'js-yaml';
-
-// ============================================================================
-// YAML Helpers (shared with TestCaseManager)
-// ============================================================================
-
-const validateYamlSyntax = (yamlText: string): { valid: boolean; error: string | null } => {
-  try {
-    yaml.load(yamlText);
-    return { valid: true, error: null };
-  } catch (err: any) {
-    const match = err.message?.match(/at line (\d+)/);
-    const lineInfo = match ? ` (第 ${match[1]} 行)` : '';
-    return { valid: false, error: `YAML 格式错误${lineInfo}: ${err.reason || err.message}` };
-  }
-};
-
-const convertArraysToFlowStyle = (yamlText: string): string => {
-  const lines = yamlText.split('\n');
-  const result: string[] = [];
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    const filePathMatch = line.match(/^(\s*)file_path:\s*$/);
-    if (filePathMatch) {
-      const baseIndent = filePathMatch[1].length;
-      const arrayIndent = baseIndent + 2;
-      const items: string[] = [];
-      let j = i + 1;
-      while (j < lines.length) {
-        const nextLine = lines[j];
-        const itemMatch = nextLine.match(new RegExp(`^\\s{${arrayIndent}}-\\s+(.+)$`));
-        if (itemMatch) { items.push(itemMatch[1].trim()); j++; } else break;
-      }
-      if (items.length > 0) {
-        result.push(`${filePathMatch[1]}file_path: [${items.join(', ')}]`);
-        i = j;
-        continue;
-      }
-    }
-    result.push(line);
-    i++;
-  }
-  return result.join('\n');
-};
-
-const formToYaml = (formData: Partial<TestCase>): string => {
-  const obj: any = { name: formData.name || '', login_required: formData.login_required ?? false };
-  if (formData.description) obj.description = formData.description;
-  if (formData.version) obj.version = formData.version;
-  if (formData.snapshot) obj.snapshot = formData.snapshot;
-  if (formData.use_snapshot) obj.use_snapshot = formData.use_snapshot;
-  obj.steps = formData.steps?.map(step => {
-    if (step.step_type === 'action') {
-      const s: any = { action: step.action?.description || '' };
-      if (step.action?.args && Object.keys(step.action.args).length > 0) {
-        const filteredArgs: Record<string, any> = {};
-        Object.entries(step.action.args).forEach(([k, v]) => {
-          if (v !== undefined && v !== null && v !== '') {
-            if (k === 'file_path' && typeof v === 'string' && v.includes(','))
-              filteredArgs[k] = v.split(',').map((x: string) => x.trim());
-            else filteredArgs[k] = v;
-          }
-        });
-        if (Object.keys(filteredArgs).length > 0) s.args = filteredArgs;
-      }
-      return s;
-    } else {
-      const s: any = { verify: step.verify?.assertion || '' };
-      if (step.verify?.args && Object.keys(step.verify.args).length > 0) {
-        const filteredArgs: Record<string, any> = {};
-        Object.entries(step.verify.args).forEach(([k, v]) => {
-          if (v !== undefined && v !== null && String(v) !== '') filteredArgs[k] = v;
-        });
-        if (Object.keys(filteredArgs).length > 0) s.args = filteredArgs;
-      }
-      return s;
-    }
-  }) || [];
-  const yamlText = yaml.dump([obj], { lineWidth: -1, noRefs: true });
-  return convertArraysToFlowStyle(yamlText);
-};
-
-const yamlToForm = (yamlText: string): { data: Partial<TestCase> | null; error: string | null } => {
-  const syntaxCheck = validateYamlSyntax(yamlText);
-  if (!syntaxCheck.valid) return { data: null, error: syntaxCheck.error };
-  try {
-    let parsed: any = yaml.load(yamlText);
-    if (!parsed || typeof parsed !== 'object') return { data: null, error: 'YAML 格式错误: 必须是一个对象或数组' };
-    if (Array.isArray(parsed)) {
-      if (parsed.length === 0) return { data: null, error: 'YAML 格式错误: 数组不能为空' };
-      if (parsed.length > 1) return { data: null, error: 'YAML 格式错误: 单个用例编辑器只能包含一个测试用例' };
-      parsed = parsed[0];
-    }
-    const result: Partial<TestCase> = {
-      name: parsed.name || '', description: parsed.description || '',
-      login_required: parsed.login_required ?? false,
-      version: parsed.version,
-      snapshot: parsed.snapshot, use_snapshot: parsed.use_snapshot,
-      status: 'active', steps: [],
-    };
-    if (!Array.isArray(parsed.steps)) return { data: null, error: 'YAML 格式错误: steps 必须是一个列表' };
-    for (const rawStep of parsed.steps) {
-      if (!rawStep || typeof rawStep !== 'object') continue;
-      let step_type: 'action' | 'verify' | null = null;
-      let description: string | undefined;
-      let assertion: string | undefined;
-      let args: Record<string, any> | undefined;
-      if (rawStep.action !== undefined) { step_type = 'action'; description = String(rawStep.action); args = rawStep.args; }
-      else if (rawStep.verify !== undefined) { step_type = 'verify'; assertion = String(rawStep.verify); args = rawStep.args; }
-      if (!step_type) continue;
-      result.steps!.push({
-        id: crypto.randomUUID(), order: result.steps!.length + 1, step_type,
-        action: step_type === 'action' ? { description: description || '', args } : undefined,
-        verify: step_type === 'verify' ? { assertion: assertion || '', args } : undefined,
-      });
-    }
-    if (!result.name || result.name.trim() === '') return { data: null, error: '用例名称不能为空' };
-    const validSteps = result.steps!.filter(s =>
-      s.step_type === 'action' ? s.action?.description?.trim() : s.verify?.assertion?.trim()
-    );
-    if (validSteps.length === 0) return { data: null, error: '至少需要一个有效的测试步骤' };
-    result.steps = validSteps;
-    return { data: result, error: null };
-  } catch (err) {
-    return { data: null, error: 'YAML 解析失败: ' + (err as Error).message };
-  }
-};
-
-// Convert API TestCase to frontend TestCase
-function toFrontendTestCase(apiCase: APITestCase): TestCase {
-  return {
-    id: apiCase.id,
-    businessId: apiCase.business_id,
-    name: apiCase.name,
-    description: apiCase.description || '',
-    login_required: apiCase.login_required ?? false,
-    steps: (apiCase.steps || []).map((step, idx) => {
-      let description = '';
-      let assertion = '';
-      let args = step.args || {};
-      if (step.step_type === 'action') {
-        if (typeof step.description === 'object' && step.description !== null) {
-          const descObj = step.description as any;
-          description = descObj.description || JSON.stringify(step.description);
-          if (descObj.args) args = { ...args, ...descObj.args };
-        } else {
-          description = step.description || '';
-        }
-      } else {
-        assertion = step.assertion || '';
-      }
-      return {
-        id: crypto.randomUUID(), order: idx + 1, step_type: step.step_type,
-        action: step.step_type === 'action' ? { description, args } : undefined,
-        verify: step.step_type === 'verify' ? { assertion, args } : undefined,
-      };
-    }),
-    version: apiCase.version,
-    snapshot: apiCase.snapshot,
-    use_snapshot: apiCase.use_snapshot,
-    createdAt: (apiCase.created_at || new Date().toISOString()).split('T')[0],
-    status: (apiCase.status || 'active') as 'draft' | 'active' | 'disabled',
-  };
-}
+import { formToYaml, yamlToForm, toFrontendTestCase, stepsToApiFormat } from '../utils/testCaseUtils';
 
 // ============================================================================
 // Types
@@ -436,6 +272,7 @@ export function CaseEditorPage() {
           const tc = toFrontendTestCase(apiCase);
           const data: Partial<TestCase> = {
             name: tc.name, description: tc.description, login_required: tc.login_required,
+            account: tc.account,
             version: tc.version, snapshot: tc.snapshot, use_snapshot: tc.use_snapshot, status: tc.status,
             steps: tc.steps.length > 0 ? tc.steps : [{ id: crypto.randomUUID(), order: 1, step_type: 'action', action: { description: '' } }],
           };
@@ -501,12 +338,7 @@ export function CaseEditorPage() {
 
       const dataToSave = activeTab === 'yaml' ? (() => { const r = yamlToForm(modalYaml); return r.data || formData; })() : formData;
 
-      const apiSteps = dataToSave.steps!.map(step => ({
-        step_type: step.step_type,
-        description: step.step_type === 'action' ? step.action?.description : undefined,
-        assertion: step.step_type === 'verify' ? step.verify?.assertion : undefined,
-        args: step.step_type === 'action' ? step.action?.args : step.verify?.args,
-      }));
+      const apiSteps = stepsToApiFormat(dataToSave.steps!);
 
       if (isNewCase) {
         const created = await apiClient.createTestCase({
@@ -514,6 +346,7 @@ export function CaseEditorPage() {
           name: dataToSave.name!,
           description: dataToSave.description,
           login_required: dataToSave.login_required ?? false,
+          account: dataToSave.account,
           version: dataToSave.version || undefined,
           snapshot: dataToSave.snapshot,
           use_snapshot: dataToSave.use_snapshot,
@@ -526,6 +359,7 @@ export function CaseEditorPage() {
           name: dataToSave.name,
           description: dataToSave.description,
           login_required: dataToSave.login_required,
+          account: dataToSave.account ?? null,
           version: dataToSave.version,
           snapshot: dataToSave.snapshot,
           use_snapshot: dataToSave.use_snapshot,
@@ -710,17 +544,13 @@ export function CaseEditorPage() {
       testCaseIds.push(effectiveCaseId);
 
       if (isNewCase || isDirty) {
-        const steps = validSteps.map(step => ({
-          step_type: step.step_type,
-          description: step.step_type === 'action' ? step.action?.description : undefined,
-          assertion: step.step_type === 'verify' ? step.verify?.assertion : undefined,
-          args: step.step_type === 'action' ? step.action?.args : step.verify?.args,
-        }));
+        const steps = stepsToApiFormat(validSteps);
 
         caseData = {
           [effectiveCaseId]: {
             login_required: dataToUse.login_required ?? false,
             name: dataToUse.name,
+            account: dataToUse.account || undefined,
             steps,
             snapshot: dataToUse.snapshot || undefined,
             use_snapshot: dataToUse.use_snapshot || undefined,

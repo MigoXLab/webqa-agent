@@ -1,11 +1,148 @@
 # WebQA Agent Configuration & CLI Guide
 
-WebQA Agent supports two execution modes, designed for different testing scenarios and workflows.
+WebQA Agent supports three execution modes, covering the full QA spectrum from lightweight exploration to deep regression.
 
-## 🤖 Generate Mode
+## ⚡ Flash Mode (Lightweight Exploration)
+
+**Use Cases:** Execute natural-language test objectives in seconds. Ideal for quick smoke tests, IDE inline invocation, and MCP/Skill natural-language testing.
+
+### Core Capabilities
+
+- **Chrome MCP Browser Driver** — Click, type, navigate, and more via Chrome DevTools MCP
+- **Progressive Skill Disclosure** — Only injects a skill summary on startup; loads full instructions on demand to control context bloat. Built-in skills: `plan`, `ui-audit`, `recovery`, `nuclei-scan`, `button-check`
+- **Efficient Observable Execution** — Supports concurrent batch execution of multiple business objectives with unified aggregated reports; Agent Trace records the complete execution trajectory
+- **Automatic Context Compression** — Triggers compaction when token threshold is reached, preventing context overflow
+- **CDP Capabilities** — Cookie injection + `switch_account` runtime identity switching; automatic file upload from a business file pool
+
+### Prerequisites
+
+```bash
+# Node.js v20.19+ LTS, Chrome stable
+npm install -g chrome-devtools-mcp@latest
+```
+
+### Configuration Example
+
+Flash mode is the default execution engine. You can also explicitly set `engine: flash`:
+
+**Single objective:**
+
+```yaml
+engine: flash                       # optional, defaults to flash
+
+target:
+  url: https://example.com
+
+test_config:
+  business_objectives: Search for "laptop", verify the results page loads and displays relevant items
+
+llm_config:
+  model: gpt-5.4-mini
+  api_key: ${OPENAI_API_KEY}
+
+browser_config:
+  headless: false
+```
+
+**Multiple objectives (concurrent):**
+
+```yaml
+test_config:
+  business_objectives:
+    - >
+      Search for "laptop", verify the results page loads and displays relevant items,
+      click the first result and confirm the detail page loads correctly,
+      then go back and switch to the "Images" or "News" tab and verify the content is related.
+    - Apply a price filter on the search results page and verify all displayed items fall within the selected range
+
+# Optional: multi-account cookie injection & runtime switching
+# accounts:
+#   - name: admin
+#     default: true
+#     cookies_file: ./cookies/admin.json
+
+# Optional: business file pool (upload tests)
+# test_config:
+#   test_files_dir: ./test_files
+```
+
+### Built-in Skills
+
+Skills extend the agent with optional domain knowledge, loaded on demand to keep token usage low.
+
+| Skill          | Description                                                              |
+| :------------- | :----------------------------------------------------------------------- |
+| `plan`         | Decompose a broad objective into steps with completion checkpoints       |
+| `ui-audit`     | Audit UI hierarchy, accessibility, and UX patterns                       |
+| `recovery`     | Structured error recovery when browser actions fail or produce no effect |
+| `nuclei-scan`  | Run a Nuclei security scan against the target URL and report findings    |
+| `button-check` | Traverse all interactive elements, verify each one triggers no errors    |
+
+### Running
+
+```bash
+webqa-agent gen -c config.yaml
+```
+
+Reports and Agent Traces are output to the `reports/` directory by default. For more engine details, see [webqa_agent/executor/flash/README.md](../webqa_agent/executor/flash/README.md).
+
+______________________________________________________________________
+
+## 🤖 Standard Generate Mode
+
+To run standard Generate mode, configure `engine: standard` in your config file.
 
 **Use Cases:** AI autonomously explores web pages, decomposes business objectives (e.g., “test search logic”), generates test cases, and executes them end to end.
 This mode is suitable for exploratory testing and comprehensive quality evaluation.
+
+### Prerequisites
+
+Both Standard Generate and Run modes use Playwright to drive the browser:
+
+```bash
+uv run playwright install chromium
+```
+
+### Planning Modes
+
+Gen mode supports two planning strategies, switchable via `planning_mode` in the config:
+
+#### Focused
+
+Targets explicit business objectives for deep end-to-end scenario exploration. Automatically enabled when business objectives are provided on the platform.
+
+```yaml
+test_config:
+  planning_mode: focused
+  business_objectives: Verify the user login flow, including form validation, error messages, and successful redirect
+```
+
+#### Explore
+
+When business objectives are left empty, the Agent performs broad-coverage discovery testing, automatically planning wider test coverage. This is the default mode.
+
+```yaml
+test_config:
+  planning_mode: explore
+  # business_objectives left empty → Agent discovers issues broadly
+```
+
+> **Note**: When no PRD or business objectives are provided, structured test cases are not planned in advance; instead the Agent performs broad-coverage discovery testing.
+
+### Multi-Account SSO Management
+
+Supports multi-SSO / Cookies account configuration with runtime identity switching via `accounts` and `switch_account` (Flash mode also supports CDP cookie injection and runtime switching):
+
+```yaml
+accounts:
+  - name: admin
+    default: true                      # use this account by default
+    cookies_file: ./cookies/admin.json
+  - name: editor
+    cookies_file: ./cookies/editor.json
+  - name: viewer
+    cookies_file: ./cookies/viewer.json
+```
 
 ### Core Features
 
@@ -115,6 +252,31 @@ test_config:
       - lighthouse                      # Lighthouse performance testing (requires: npm install -g lighthouse)
       - nuclei                          # Nuclei security scanning (requires: nuclei installed)
 ```
+
+### 🛠️ Tool System (Default & Custom Tools)
+
+Standard Generate mode extends testing capabilities through a tool registry.
+
+**Default tools** (always enabled):
+
+- **UI actions**: Browser interactions (click, type, navigate)
+- **UI assertions**: State verification
+- **UX verification**: Text typo checking, layout analysis
+
+**Custom tools** (optional, enabled via `test_config.custom_tools.enabled`):
+
+- **Performance** `lighthouse`: Lighthouse-based performance auditing (requires `npm install -g lighthouse`)
+- **Security** `nuclei`: Nuclei vulnerability scanning (requires the nuclei CLI installed)
+- **Link detection**: Dynamic link discovery
+
+WebQA Agent also supports authoring your own tools for domain-specific testing needs:
+
+| Document                                                  | Description                                                             |
+| --------------------------------------------------------- | ----------------------------------------------------------------------- |
+| **[Custom Tool Development](CUSTOM_TOOL_DEVELOPMENT.md)** | Quick reference for creating custom tools                               |
+| **[LLM Context Document](CUSTOM_TOOL_DEVELOPMENT_AI.md)** | Comprehensive guide for AI-assisted development, useful for vibe coding |
+
+See existing implementations under [`webqa_agent/tools/custom/`](../webqa_agent/tools/custom/) as a starting point.
 
 ## 📋 Run Mode (Test Case Execution)
 

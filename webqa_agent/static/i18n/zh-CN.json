@@ -112,7 +112,11 @@
     },
     "run_mode": {
       "display_text": "执行模式",
-      "test_name": "执行模式"
+      "test_name": "执行模式",
+      "timeout_title": "执行超时",
+      "timeout_issues": "用例执行超过 {timeout} 秒限制，已强制终止",
+      "exception_title": "执行异常",
+      "exception_issues": "{error}"
     }
   },
   "common": {

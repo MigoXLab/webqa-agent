@@ -1,8 +1,20 @@
 """Base configuration models shared across Gen and Run modes."""
 
+import warnings
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
+
+from webqa_agent.utils.config import load_cookies
+
+
+def warn_if_dual_cookies(accounts: Optional[List], browser_cookies: Optional[List]) -> None:
+    """Emit a warning when both named accounts and browser-level cookies exist."""
+    if accounts and browser_cookies:
+        warnings.warn(
+            "When 'accounts' is configured, browser_config.cookies is used only as fallback.",
+            stacklevel=3,
+        )
 
 
 class CloudConfig(BaseModel):
@@ -45,6 +57,62 @@ class BrowserConfig(BaseModel):
         if v.get('width', 0) < 100 or v.get('height', 0) < 100:
             raise ValueError('Viewport dimensions must be at least 100x100')
         return v
+
+
+class AccountConfig(BaseModel):
+    """Named account with role metadata and resolved cookie state."""
+
+    name: str = Field(..., description='Unique account identifier')
+    role: str = Field(default='', description='Semantic role description for the LLM')
+    description: str = Field(default='', description='Human-readable account description')
+    cookies: Optional[List[Dict[str, Any]]] = Field(
+        default=None, description='Inline account cookies'
+    )
+    cookies_file: Optional[str] = Field(
+        default=None, description='Path to cookies JSON file'
+    )
+    default: bool = Field(default=False, description='Whether this is the default account')
+    resolved_cookies: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description='Resolved cookies from inline config or cookies_file',
+        exclude=True,
+    )
+
+    @model_validator(mode='after')
+    def validate_cookie_sources(self, info: ValidationInfo) -> 'AccountConfig':
+        """Ensure at least one cookie source exists and resolve file cookies."""
+        if not self.cookies and not self.cookies_file:
+            raise ValueError("Either 'cookies' or 'cookies_file' must be provided")
+
+        resolved = list(self.cookies or [])
+        if not resolved and self.cookies_file:
+            config_dir = info.context.get('config_dir') if info.context else None
+            resolved = load_cookies(self.cookies_file, config_dir=config_dir)
+
+        self.resolved_cookies = resolved
+        return self
+
+    @field_validator('name')
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Require non-empty account names."""
+        value = v.strip()
+        if not value:
+            raise ValueError('Account name cannot be empty')
+        return value
+
+    @classmethod
+    def from_raw(cls, raw: Dict[str, Any], config_dir: Optional[str] = None) -> 'AccountConfig':
+        """Build an account config with config-dir-aware cookie resolution."""
+        normalized = dict(raw)
+        if normalized.get('role') is None:
+            normalized['role'] = ''
+
+        legacy_default = normalized.pop('is_default', None)
+        if normalized.get('default') is None and legacy_default is not None:
+            normalized['default'] = bool(legacy_default)
+
+        return cls.model_validate(normalized, context={'config_dir': config_dir})
 
 
 class ReportConfig(BaseModel):
