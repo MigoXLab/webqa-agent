@@ -203,9 +203,6 @@ deploy-fe-prod:
       allow_failure: true
 
 # --- PR Agent Stage ---
-
-stages:
-  - pr_agent
 coderiva_job:
   stage: pr_agent
   retry: 2
