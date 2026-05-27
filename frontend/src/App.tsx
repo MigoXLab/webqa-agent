@@ -280,6 +280,8 @@ export default function App() {
                location.pathname.startsWith('/business/') ? 'business_detail' :
                location.pathname.startsWith('/execution/') ? 'execution_detail' : 'businesses';
 
+  const casePortalUrl = getCasePortalUrl();
+
   // Load businesses and models on mount
   useEffect(() => {
     loadBusinesses();
@@ -400,9 +402,9 @@ export default function App() {
                   AI 探索
                 </div>
               </Link>
-              {getCasePortalUrl() && (
+              {casePortalUrl && (
                 <a
-                  href={getCasePortalUrl()}
+                  href={casePortalUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="px-4 py-2 rounded-lg text-sm font-medium transition-colors text-gray-600 hover:text-gray-900 hover:bg-gray-50"

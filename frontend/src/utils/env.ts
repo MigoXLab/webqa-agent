@@ -1,5 +1,18 @@
-/** External case portal URL, configured via VITE_CASE_PORTAL_URL build-time env var. */
+const CASE_PORTAL_PATH = '/case';
+
+/**
+ * External case portal URL.
+ * Priority: VITE_CASE_PORTAL_URL (build-time) > current origin + /case (runtime).
+ */
 export function getCasePortalUrl(): string {
-  const url = import.meta.env.VITE_CASE_PORTAL_URL;
-  return typeof url === 'string' ? url.trim() : '';
+  const override = import.meta.env.VITE_CASE_PORTAL_URL;
+  if (typeof override === 'string' && override.trim()) {
+    return override.trim();
+  }
+
+  if (typeof window !== 'undefined') {
+    return `${window.location.origin}${CASE_PORTAL_PATH}`;
+  }
+
+  return '';
 }
