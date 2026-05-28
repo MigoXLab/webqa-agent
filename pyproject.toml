@@ -45,6 +45,7 @@ dependencies = [
     "typing-extensions>=4.14.0",
     "fastmcp>=2.0.0",
     "httpx>=0.28.0",
+    "websocket-client>=1.7.0",
 ]
 [project.scripts]
 webqa-agent = "webqa_agent.cli:main"

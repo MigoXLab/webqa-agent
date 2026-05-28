@@ -161,6 +161,7 @@ async def execute_cc_mini_mode(
     worker_id: int = 0,
     extensions: Any = None,
     filter_model: str | None = None,
+    enable_monitor: bool = False,
 ):
     """Execute one cc-mini run without blocking the main event loop.
 
@@ -216,6 +217,7 @@ async def execute_cc_mini_mode(
         worker_id=worker_id,
         on_event=on_event,
         filter_model=filter_model,
+        enable_monitor=enable_monitor,
         **extension_kwargs,
     )
 
@@ -415,6 +417,7 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
         report_cfg_raw = cfg.get('report', {})
         save_screenshots = bool(report_cfg_raw.get('save_screenshots', False))
         save_dataflow = bool(report_cfg_raw.get('save_dataflow', True))
+        save_monitor = bool(report_cfg_raw.get('save_monitor', True))
 
         from webqa_agent.utils.data_flow_reporter import set_dataflow_enabled
         set_dataflow_enabled(save_dataflow)
@@ -548,6 +551,7 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
                 log_level=log_level,
                 extensions=cc_mini_extensions,
                 filter_model=llm_config.filter_model,
+                enable_monitor=save_monitor,
             ),
             max_concurrent=max_concurrent,
             report_dir=resolved_report_dir,

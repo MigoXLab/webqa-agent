@@ -46,6 +46,34 @@ from webqa_agent.utils.reporting_utils import sanitize_case_name
 # full DOM dumps) and inlining them verbatim would bloat every report.
 _RESULT_TEXT_LIMIT = 4000
 
+# Hard cap on the storage-safe portion of a case name. The full task text
+# stays in ``display_name`` for the UI to render (with CSS ellipsis as
+# needed); ``safe_name`` is only used for filenames and dict keys, where
+# a 200-char task string makes ``ls`` and HTML payloads unreadable.
+# Counted in characters, so CJK and ASCII share the budget fairly.
+_MAX_SAFE_NAME_CHARS = 40
+
+
+def _truncate_safe_name(name: str) -> str:
+    """Cap a sanitized case name at :data:`_MAX_SAFE_NAME_CHARS` characters.
+
+    Cuts on the last underscore at or after the midpoint when possible so we
+    don't slice through a "word" mid-token; otherwise hard-truncates.
+    Trailing underscores from sanitization are stripped for cleanliness.
+    Returns a non-empty string (falls back to ``'flash_run'``).
+    """
+    if not name:
+        return 'flash_run'
+    if len(name) <= _MAX_SAFE_NAME_CHARS:
+        return name
+    cut = name[:_MAX_SAFE_NAME_CHARS]
+    midpoint = _MAX_SAFE_NAME_CHARS // 2
+    last_sep = cut.rfind('_')
+    if last_sep >= midpoint:
+        cut = cut[:last_sep]
+    cut = cut.rstrip('_')
+    return cut or 'flash_run'
+
 
 def _bare_tool_name(tool: str) -> str:
     """Strip MCP namespace prefix; e.g. 'mcp__browser__click' -> 'click'."""
@@ -328,59 +356,163 @@ def run_results_to_aggregated_data(
     all_end_ts: list[float] = []
 
     for idx, (run_result, task) in enumerate(zip(run_results, tasks), start=1):
-        case_key, case_entry, gen_entry, summary_text = _build_case_entry(
+        payload = build_case_payload(
             run_result=run_result,
             task=task,
             case_index=idx,
             now_iso=now_iso,
         )
-        gen_block[case_key] = case_entry
-        gen_results.append(gen_entry)
-        if summary_text:
-            summaries.append(f'[case-{idx}] {summary_text}')
-        total_steps_all += int(case_entry['metrics'].get('total_steps', 0) or 0)
-        status = case_entry['status']
+        gen_block[payload['case_key']] = payload['case_entry']
+        # The React frontend's ``loadMonitorData`` looks for a sibling key
+        # named ``<fileName>_monitor`` inside the same mode block (see
+        # webqa_agent/static/assets/index.js). Same shape as the per-case
+        # ``case_<n>_<safe>_monitor.json`` written into ``<report_dir>/tmp/``.
+        if payload['monitor_entry'] is not None:
+            gen_block[f'{payload["case_key"]}_monitor'] = payload['monitor_entry']
+        gen_results.append(payload['gen_result_entry'])
+        if payload['summary_text']:
+            summaries.append(f'[case-{idx}] {payload["summary_text"]}')
+        total_steps_all += int(
+            payload['case_entry']['metrics'].get('total_steps', 0) or 0,
+        )
+        status = payload['case_entry']['status']
         count['total'] += 1
         if status in count:
             count[status] += 1
         else:  # status not in canonical bucket falls back to 'failed'
             count['failed'] += 1
 
-        # Accumulate per-run timestamps for session-level start/end.
-        steps = list(getattr(run_result, 'steps', None) or [])
-        if steps:
-            first_ts: float = getattr(steps[0], 'timestamp', 0) or 0.0
-            last_step = steps[-1]
-            last_ts: float = (
-                getattr(last_step, 'end_ts', 0)
-                or getattr(last_step, 'timestamp', 0)
-                or 0.0
-            )
-            if first_ts:
-                all_start_ts.append(first_ts)
-            if last_ts:
-                all_end_ts.append(last_ts)
+        first_ts, last_ts = payload['session_timestamps']
+        if first_ts:
+            all_start_ts.append(first_ts)
+        if last_ts:
+            all_end_ts.append(last_ts)
 
+    index_entry = build_index_entry(
+        url=url,
+        language=language,
+        model=model,
+        filter_model=filter_model,
+        now_iso=now_iso,
+        count=count,
+        total_steps=total_steps_all,
+        summaries=summaries,
+        gen_results=gen_results,
+        session_start_ts=min(all_start_ts) if all_start_ts else None,
+        session_end_ts=max(all_end_ts) if all_end_ts else None,
+    )
+
+    gen_block['index'] = index_entry
+    return {'gen': gen_block}
+
+
+def build_case_payload(
+    *,
+    run_result: Any,
+    task: str,
+    case_index: int,
+    now_iso: str | None = None,
+) -> dict[str, Any]:
+    """Build a per-case payload for one ``RunResult``.
+
+    Returned dict keys::
+
+        case_key:           "case_<n>_<safe_name>"
+        case_entry:          the dict that goes into ``gen_block[case_key]``
+        gen_result_entry:    minimal {name, status, sub_test_id, ...} entry
+                             for the index block
+        summary_text:        final-summary text (for index aggregation)
+        monitor_entry:       the wrapped monitor payload (same shape as the
+                             tmp sidecar file) or None when monitoring was
+                             disabled
+        session_timestamps:  (first_step_ts, last_step_ts) — floats or 0;
+                             callers feed these into the session start/end
+                             aggregation in :func:`build_index_entry`.
+
+    Pure dict construction — safe to call from concurrent worker threads.
+    """
+    now_iso = now_iso or datetime.now().isoformat(timespec='seconds')
+    case_key, case_entry, gen_entry, summary_text = _build_case_entry(
+        run_result=run_result, task=task,
+        case_index=case_index, now_iso=now_iso,
+    )
+
+    monitor_entry: dict[str, Any] | None = None
+    monitoring_data = getattr(run_result, 'monitoring_data', None)
+    if monitoring_data is not None:
+        try:
+            from webqa_agent.executor.flash.features.monitor import \
+                wrap_monitor_payload
+            wrapped = wrap_monitor_payload(
+                monitoring_data,
+                sub_test_id=case_entry['sub_test_id'],
+                name=case_entry['display_name'],
+                display_name=case_entry['display_name'],
+                safe_name=case_entry['safe_name'],
+            )
+            monitor_entry = next(iter(wrapped.values()))
+        except Exception:
+            monitor_entry = None
+
+    steps = list(getattr(run_result, 'steps', None) or [])
+    first_ts: float = float(getattr(steps[0], 'timestamp', 0) or 0.0) if steps else 0.0
+    last_step = steps[-1] if steps else None
+    last_ts: float = float(
+        (getattr(last_step, 'end_ts', 0) or getattr(last_step, 'timestamp', 0) or 0.0)
+        if last_step is not None else 0.0
+    )
+
+    return {
+        'case_key': case_key,
+        'case_entry': case_entry,
+        'gen_result_entry': gen_entry,
+        'summary_text': summary_text,
+        'monitor_entry': monitor_entry,
+        'session_timestamps': (first_ts, last_ts),
+    }
+
+
+def build_index_entry(
+    *,
+    url: str,
+    language: str,
+    model: str | None,
+    filter_model: str | None,
+    now_iso: str,
+    count: dict[str, int],
+    total_steps: int,
+    summaries: list[str],
+    gen_results: list[dict[str, Any]],
+    session_start_ts: float | None,
+    session_end_ts: float | None,
+) -> dict[str, Any]:
+    """Build the ``index`` entry of the gen block from already-aggregated stats.
+
+    Split out so both the in-memory path
+    (:func:`run_results_to_aggregated_data`) and the disk-pipeline path
+    (:func:`assemble_aggregated_data_from_tmp`) can produce identical index
+    blocks without duplicating the layout.
+    """
     session_start_iso = (
-        datetime.fromtimestamp(min(all_start_ts)).isoformat(timespec='seconds')
-        if all_start_ts else now_iso
+        datetime.fromtimestamp(session_start_ts).isoformat(timespec='seconds')
+        if session_start_ts else now_iso
     )
     session_end_iso = (
-        datetime.fromtimestamp(max(all_end_ts)).isoformat(timespec='seconds')
-        if all_end_ts else now_iso
+        datetime.fromtimestamp(session_end_ts).isoformat(timespec='seconds')
+        if session_end_ts else now_iso
     )
 
     test_items = [{
         'name': '功能测试' if language != 'en-US' else 'Functional',
         'item': (
-            f'执行了 {total_steps_all} 个步骤(共 {count["total"]} 个 case)'
+            f'执行了 {total_steps} 个步骤(共 {count["total"]} 个 case)'
             if language != 'en-US'
-            else f'Executed {total_steps_all} steps across {count["total"]} cases'
+            else f'Executed {total_steps} steps across {count["total"]} cases'
         ),
     }]
     summary_text = '\n\n'.join(summaries)
 
-    index_entry = {
+    return {
         'session_info': {
             'session_id': f'flash-{uuid.uuid4().hex[:8]}',
             'target_url': url,
@@ -405,9 +537,6 @@ def run_results_to_aggregated_data(
             'browser_config': {},
         },
     }
-
-    gen_block['index'] = index_entry
-    return {'gen': gen_block}
 
 
 def _extract_case_timing(
@@ -464,7 +593,13 @@ def _build_case_entry(
     )
 
     display_name = (task or 'Flash run').strip()
-    safe_name = sanitize_case_name(display_name) or 'flash_run'
+    # ``display_name`` stays intact for the UI (full task text). ``safe_name``
+    # is what feeds into filenames and dict keys downstream, so we cap it —
+    # see :func:`_truncate_safe_name`. ``case_id`` already guarantees per-case
+    # uniqueness within a batch, so the truncation is collision-safe.
+    safe_name = _truncate_safe_name(
+        sanitize_case_name(display_name) or 'flash_run',
+    )
     case_id = f'case_{case_index}'
     case_key = f'{case_id}_{safe_name}'
     sub_test_id = case_id
@@ -610,3 +745,198 @@ def _build_model_io(*, tool: str, input_dict: dict[str, Any], result_text: str) 
         )
     except (TypeError, ValueError):
         return repr({'tool': tool, 'input': input_dict, 'result': result_text})
+
+
+# ---------------------------------------------------------------------------
+# Disk pipeline: per-case dump + tmp-assemble + test_results.json
+# ---------------------------------------------------------------------------
+
+TMP_SUBDIR = 'tmp'
+
+
+def dump_case_artifacts_to_tmp(
+    payload: dict[str, Any],
+    *,
+    report_dir: str,
+) -> dict[str, str]:
+    """Persist a case payload as two JSON files under ``<report_dir>/tmp/``.
+
+    Writes:
+      * ``<tmp>/<case_key>_data.json``    — case_entry (unwrapped)
+      * ``<tmp>/<case_key>_monitor.json`` — monitor_entry (unwrapped); skipped
+        when ``payload['monitor_entry']`` is None.
+
+    Files are written as soon as a case completes, so a mid-batch crash
+    still preserves the artifacts for cases that finished. Returns the
+    paths actually written (keys: ``data``, optionally ``monitor``).
+    """
+    from pathlib import Path as _Path
+    tmp_dir = _Path(report_dir) / TMP_SUBDIR
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    case_key = payload['case_key']
+    written: dict[str, str] = {}
+
+    data_path = tmp_dir / f'{case_key}_data.json'
+    data_path.write_text(
+        json.dumps(payload['case_entry'], ensure_ascii=False, indent=2, default=str),
+        encoding='utf-8',
+    )
+    written['data'] = str(data_path)
+
+    if payload.get('monitor_entry') is not None:
+        monitor_path = tmp_dir / f'{case_key}_monitor.json'
+        monitor_path.write_text(
+            json.dumps(payload['monitor_entry'], ensure_ascii=False, indent=2, default=str),
+            encoding='utf-8',
+        )
+        written['monitor'] = str(monitor_path)
+
+    return written
+
+
+def _case_index_from_entry(case_entry: dict[str, Any]) -> int:
+    """Extract the 1-based case index from a case_entry.
+
+    Reads ``sub_test_id`` (e.g. ``"case_3"``) or falls back to ``case_id``;
+    returns a large sentinel when both are unparsable so unknown-index
+    entries sort to the end without crashing.
+    """
+    raw = case_entry.get('sub_test_id') or case_entry.get('case_id') or ''
+    if isinstance(raw, str) and raw.startswith('case_'):
+        try:
+            return int(raw.removeprefix('case_'))
+        except ValueError:
+            pass
+    return 10**9
+
+
+def _iso_to_epoch(iso_str: str) -> float:
+    """Parse an ISO timestamp; return 0.0 on failure."""
+    if not iso_str:
+        return 0.0
+    try:
+        return datetime.fromisoformat(iso_str).timestamp()
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def assemble_aggregated_data_from_tmp(
+    *,
+    report_dir: str,
+    url: str,
+    language: str = 'zh-CN',
+    model: str | None = None,
+    filter_model: str | None = None,
+    write_test_results_json: bool = True,
+) -> dict[str, Any]:
+    """Reconstruct ``aggregated_data`` from per-case JSONs in ``<report_dir>/tmp/``.
+
+    Reads every ``case_<n>_<safe>_data.json`` (and the matching
+    ``_monitor.json`` if present), orders by case index, builds the index
+    block, and — when ``write_test_results_json`` is True — writes the
+    merged structure to ``<report_dir>/test_results.json``.
+
+    Robust to partial state: missing data files for some indexes are
+    skipped (still rendered as empty gen block if zero cases produced
+    artifacts) so a half-crashed batch can still render whatever finished.
+    """
+    from pathlib import Path as _Path
+    tmp_dir = _Path(report_dir) / TMP_SUBDIR
+    gen_block: dict[str, Any] = {}
+    case_entries: list[dict[str, Any]] = []
+
+    if tmp_dir.is_dir():
+        data_files = sorted(tmp_dir.glob('case_*_data.json'))
+        loaded: list[tuple[int, str, dict[str, Any]]] = []
+        for f in data_files:
+            try:
+                entry = json.loads(f.read_text(encoding='utf-8'))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(entry, dict):
+                continue
+            stem = f.stem  # case_<n>_<safe>_data
+            case_key = stem[:-len('_data')] if stem.endswith('_data') else stem
+            loaded.append((_case_index_from_entry(entry), case_key, entry))
+
+        loaded.sort(key=lambda triple: triple[0])
+        for _, case_key, entry in loaded:
+            gen_block[case_key] = entry
+            case_entries.append(entry)
+            monitor_file = tmp_dir / f'{case_key}_monitor.json'
+            if monitor_file.exists():
+                try:
+                    monitor_entry = json.loads(
+                        monitor_file.read_text(encoding='utf-8'),
+                    )
+                except (OSError, json.JSONDecodeError):
+                    monitor_entry = None
+                if isinstance(monitor_entry, dict):
+                    gen_block[f'{case_key}_monitor'] = monitor_entry
+
+    now_iso = datetime.now().isoformat(timespec='seconds')
+    count = {'total': 0, 'passed': 0, 'failed': 0, 'warning': 0}
+    total_steps_all = 0
+    summaries: list[str] = []
+    gen_results: list[dict[str, Any]] = []
+    all_start_ts: list[float] = []
+    all_end_ts: list[float] = []
+
+    for entry in case_entries:
+        status = entry.get('status', 'failed')
+        count['total'] += 1
+        if status in count:
+            count[status] += 1
+        else:
+            count['failed'] += 1
+        metrics = entry.get('metrics') or {}
+        total_steps_all += int(metrics.get('total_steps', 0) or 0)
+        idx = _case_index_from_entry(entry)
+        summary_text = entry.get('final_summary') or ''
+        if summary_text:
+            summaries.append(f'[case-{idx}] {summary_text}')
+        gen_results.append({
+            'name': entry.get('safe_name') or entry.get('name') or '',
+            'display_name': entry.get('display_name') or entry.get('name') or '',
+            'safe_name': entry.get('safe_name') or entry.get('name') or '',
+            'status': status,
+            'sub_test_id': entry.get('sub_test_id') or f'case_{idx}',
+        })
+        start_ts = _iso_to_epoch(entry.get('start_time') or '')
+        end_ts = _iso_to_epoch(entry.get('end_time') or '')
+        if start_ts:
+            all_start_ts.append(start_ts)
+        if end_ts:
+            all_end_ts.append(end_ts)
+
+    index_entry = build_index_entry(
+        url=url,
+        language=language,
+        model=model,
+        filter_model=filter_model,
+        now_iso=now_iso,
+        count=count,
+        total_steps=total_steps_all,
+        summaries=summaries,
+        gen_results=gen_results,
+        session_start_ts=min(all_start_ts) if all_start_ts else None,
+        session_end_ts=max(all_end_ts) if all_end_ts else None,
+    )
+
+    gen_block['index'] = index_entry
+    aggregated_data: dict[str, Any] = {'gen': gen_block}
+
+    if write_test_results_json:
+        out_path = _Path(report_dir) / 'test_results.json'
+        try:
+            out_path.write_text(
+                json.dumps(aggregated_data, ensure_ascii=False, indent=2, default=str),
+                encoding='utf-8',
+            )
+        except OSError:
+            # Best-effort — the HTML render still works from the in-memory
+            # ``aggregated_data`` even if the sidecar write fails.
+            pass
+
+    return aggregated_data

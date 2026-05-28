@@ -181,6 +181,7 @@ def render_flash_multi_report(
     language: str = 'zh-CN',
     model: str | None = None,
     filter_model: str | None = None,
+    aggregated_data: dict[str, Any] | None = None,
 ) -> Optional[str]:
     """Render a single HTML report from N Flash ``RunResult`` objects.
 
@@ -217,14 +218,18 @@ def render_flash_multi_report(
             report_dir=str(out_dir),
             language=language,
         )
-        aggregated_data = run_results_to_aggregated_data(
-            run_results,
-            url=url,
-            tasks=tasks,
-            language=language,
-            model=model,
-            filter_model=filter_model,
-        )
+        # Caller can pass a pre-built aggregated_data (the disk-pipeline path
+        # used by FlashExecutor reads it from tmp/ JSONs); fall back to the
+        # in-memory build when not provided.
+        if aggregated_data is None:
+            aggregated_data = run_results_to_aggregated_data(
+                run_results,
+                url=url,
+                tasks=tasks,
+                language=language,
+                model=model,
+                filter_model=filter_model,
+            )
         aggregator = ResultAggregator(report_config={
             'language': language,
             'report_dir': str(out_dir),

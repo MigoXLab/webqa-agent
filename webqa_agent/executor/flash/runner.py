@@ -257,6 +257,12 @@ class RunResult:
     output_tokens: int = 0
     extensions_failed: list[str] = field(default_factory=list)
     data_flow_events: list[dict[str, Any]] = field(default_factory=list)
+    # Populated when ``enable_monitor=True`` was passed to run_cc_mini.
+    # Shape: {"console": [...], "network": {"requests": [...],
+    # "responses": [...], "failed_requests": [...]}}. None when the monitor
+    # was disabled; an empty payload when it was enabled but no events fired
+    # (e.g. CDP attach failed).
+    monitoring_data: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +441,7 @@ def run_cc_mini(
     pre_engine_hook: Callable[['MCPManager', int], None] | None = None,
     extra_section: str | None = None,
     filter_model: str | None = None,
+    enable_monitor: bool = False,
 ) -> RunResult:
     """Run the web agent on *url* with *user_input* and return a RunResult.
 
@@ -518,6 +525,14 @@ def run_cc_mini(
         countering self-verification bias. When ``None`` (default), inherits
         the main ``model``. The provider is auto-detected from the model name
         (``claude-*`` → Anthropic, everything else → OpenAI-compatible).
+    enable_monitor:
+        When True, attach a passive CDP listener for the lifetime of the
+        case that captures every console message (including ``Log.entryAdded``
+        resource errors) and every network request / response in the
+        browser. Results are placed on ``RunResult.monitoring_data``. The
+        listener requires the CDP TCP port to be reachable; for custom
+        ``mcp_servers`` configs that don't expose one, the start step records
+        a message in ``extensions_failed`` and ``monitoring_data`` stays None.
 
     Known failure modes
     -------------------
@@ -554,6 +569,7 @@ def run_cc_mini(
     cdp_required = (
         pre_engine_hook is not None
         or any(hasattr(t, 'bind_mcp') for t in (extra_tools or []))
+        or enable_monitor
     )
 
     mcp = MCPManager(mcp_servers)
@@ -601,6 +617,7 @@ def run_cc_mini(
     _run_result: RunResult | None = None
     cdp_port = _resolve_cdp_port(mcp_servers, worker_id)
     extensions_failed: list[str] = []
+    monitor: Any = None  # MonitorListener; None when disabled or failed
 
     try:
         _ensure_cdp_port_available_for_extensions(
@@ -677,6 +694,23 @@ def run_cc_mini(
                     extensions_failed.append(
                         f'pre_engine_hook failed: {exc}',
                     )
+
+        if enable_monitor:
+            if cdp_port is None:
+                extensions_failed.append(
+                    'monitor: CDP port unresolved; monitor will not start. '
+                    'Provide --browser-url / --ws-endpoint / '
+                    '--chrome-arg=--remote-debugging-port=N.'
+                )
+            else:
+                try:
+                    from .core.monitor import MonitorListener
+                    monitor = MonitorListener(host='127.0.0.1', port=cdp_port)
+                    monitor.start()
+                except Exception as exc:
+                    log.warning('Monitor failed to start: %s', exc)
+                    extensions_failed.append(f'monitor start failed: {exc}')
+                    monitor = None
 
         if extra_tools:
             for t in extra_tools:
@@ -897,6 +931,23 @@ def run_cc_mini(
         return _run_result
 
     finally:
+        # Stop monitor BEFORE MCP shutdown so the CDP WebSocket can still
+        # drain queued events; doing it after MCP kill races against Chrome
+        # exit and loses the tail of the network log.
+        if monitor is not None:
+            try:
+                monitoring_data = monitor.stop()
+                if _run_result is not None:
+                    _run_result.monitoring_data = monitoring_data
+            except Exception as exc:
+                log.warning('Monitor stop failed: %s', exc)
+                if _run_result is not None and _run_result.monitoring_data is None:
+                    _run_result.monitoring_data = {
+                        'console': [],
+                        'network': {
+                            'requests': [], 'responses': [], 'failed_requests': [],
+                        },
+                    }
         _ft = ''
         if _run_result is not None:
             _ft = _run_result.final_text or ''
@@ -1204,6 +1255,11 @@ def _default_browser_mcp(
         '--chrome-arg=--disable-dev-shm-usage',
         '--chrome-arg=--remote-debugging-address=127.0.0.1',
         f'--chrome-arg=--remote-debugging-port={9222 + worker_id}',
+        # Recent Chrome blocks CDP WS handshakes whose Origin header isn't
+        # explicitly whitelisted (CVE-2023-4863 hardening). The TCP port is
+        # already bound to loopback above, so allowing all origins here only
+        # affects local clients on this machine.
+        '--chrome-arg=--remote-allow-origins=*',
         '--no-usage-statistics',
         '--experimentalVision',
     ]

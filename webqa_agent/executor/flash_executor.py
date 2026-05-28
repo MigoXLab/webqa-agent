@@ -243,18 +243,99 @@ class FlashExecutor:
                     raise RuntimeError('runner returned None')
                 if tracker is not None and hasattr(tracker, 'result'):
                     tracker.result = _derive_case_status(result)
+            self._dump_case_artifacts(
+                idx=idx, task=task_text, run_result=result,
+            )
             return result
         except Exception as exc:
             logger.exception('Flash case %d/%d aborted', idx + 1, total)
-            return _synthesize_failure_result(exc)
+            failure_result = _synthesize_failure_result(exc)
+            # Best-effort: still emit a tmp data file for the crashed case
+            # so the merge step renders it (status=failed) instead of
+            # silently dropping it. Monitor sidecar is skipped because the
+            # listener never returned a payload.
+            self._dump_case_artifacts(
+                idx=idx, task=task_text, run_result=failure_result,
+            )
+            return failure_result
+
+    def _dump_case_artifacts(
+        self, *, idx: int, task: str, run_result: Any,
+    ) -> None:
+        """Write per-case data + monitor JSONs to ``<report_dir>/tmp/`` as
+        soon as the case finishes.
+
+        Files are tagged ``case_<n>_<safe>_data.json`` and (when monitoring
+        was enabled) ``case_<n>_<safe>_monitor.json``. Used as the source of
+        truth for the final ``test_results.json`` merge — guarantees that a
+        mid-batch crash still preserves every case that already completed.
+        Failures here log but never escalate; the case's status comes from
+        the runner, not from whether disk I/O succeeded.
+        """
+        try:
+            from webqa_agent.executor.flash_report_adapter import (
+                build_case_payload, dump_case_artifacts_to_tmp)
+        except Exception as exc:
+            logger.warning('Failed to import case-dump helpers: %s', exc)
+            return
+        try:
+            payload = build_case_payload(
+                run_result=run_result, task=task, case_index=idx + 1,
+            )
+        except Exception:
+            logger.exception(
+                'Failed to build case payload for case %d', idx + 1,
+            )
+            return
+        try:
+            written = dump_case_artifacts_to_tmp(
+                payload, report_dir=self._report_dir,
+            )
+            if 'monitor' in written:
+                logger.info(
+                    'Case %d artifacts written: data=%s monitor=%s',
+                    idx + 1, written['data'], written['monitor'],
+                )
+            else:
+                logger.info(
+                    'Case %d artifacts written: data=%s (no monitor)',
+                    idx + 1, written['data'],
+                )
+        except Exception:
+            logger.exception(
+                'Failed to write case artifacts for case %d', idx + 1,
+            )
 
     def _render_report(
         self, tasks: list[str], run_results: list[Any],
     ) -> str | None:
+        from webqa_agent.executor.flash_report_adapter import \
+            assemble_aggregated_data_from_tmp
         from webqa_agent.utils.flash_utils import render_flash_multi_report
 
         model = str(self._shared_kwargs.get('model') or '')
         filter_model = str(self._shared_kwargs.get('filter_model') or '')
+
+        # Read the per-case JSONs that each case dumped under <report_dir>/tmp/
+        # as it finished. Merging from disk (instead of from run_results in
+        # memory) means a crash during the merge step still leaves all the
+        # per-case artifacts intact for manual recovery, and ``test_results.json``
+        # is written as a single canonical artifact for downstream tools.
+        try:
+            aggregated_data = assemble_aggregated_data_from_tmp(
+                report_dir=self._report_dir,
+                url=self._url,
+                language=self._language,
+                model=model or None,
+                filter_model=filter_model or None,
+                write_test_results_json=True,
+            )
+        except Exception:
+            logger.exception(
+                'Failed to assemble aggregated_data from tmp/, '
+                'falling back to in-memory build',
+            )
+            aggregated_data = None
 
         try:
             return render_flash_multi_report(
@@ -265,6 +346,7 @@ class FlashExecutor:
                 language=self._language,
                 model=model or None,
                 filter_model=filter_model or None,
+                aggregated_data=aggregated_data,
             )
         except Exception:
             logger.exception('Flash multi-report rendering failed')
