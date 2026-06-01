@@ -182,6 +182,7 @@ def render_flash_multi_report(
     model: str | None = None,
     filter_model: str | None = None,
     aggregated_data: dict[str, Any] | None = None,
+    display_names: list[str] | None = None,
 ) -> Optional[str]:
     """Render a single HTML report from N Flash ``RunResult`` objects.
 
@@ -229,6 +230,7 @@ def render_flash_multi_report(
                 language=language,
                 model=model,
                 filter_model=filter_model,
+                display_names=display_names,
             )
         aggregator = ResultAggregator(report_config={
             'language': language,

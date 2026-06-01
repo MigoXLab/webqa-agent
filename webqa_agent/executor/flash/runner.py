@@ -442,6 +442,7 @@ def run_cc_mini(
     extra_section: str | None = None,
     filter_model: str | None = None,
     enable_monitor: bool = False,
+    monitor_ignore_rules: dict | None = None,
 ) -> RunResult:
     """Run the web agent on *url* with *user_input* and return a RunResult.
 
@@ -705,7 +706,10 @@ def run_cc_mini(
             else:
                 try:
                     from .core.monitor import MonitorListener
-                    monitor = MonitorListener(host='127.0.0.1', port=cdp_port)
+                    monitor = MonitorListener(
+                        host='127.0.0.1', port=cdp_port,
+                        ignore_rules=monitor_ignore_rules,
+                    )
                     monitor.start()
                 except Exception as exc:
                     log.warning('Monitor failed to start: %s', exc)

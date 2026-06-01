@@ -131,16 +131,45 @@ class FlashExecutor:
                     'executor injects this per-task.'
                 )
 
-    async def execute(self, tasks: list[str]) -> FlashBatchResult:
+    async def execute(
+        self,
+        tasks: list[str],
+        *,
+        task_names: list[str] | None = None,
+    ) -> FlashBatchResult:
         """Run ``tasks`` concurrently and return the aggregated result.
 
         ``tasks`` must be non-empty; an empty list raises ``ValueError``.
+
+        ``task_names`` (optional, positional with respect to ``tasks``)
+        provides per-case display labels for the report. Without it, the
+        task text doubles as the display name (legacy behaviour). With it,
+        the LLM still receives the task text while the report shows the
+        provided name — used by the CLI when loading YAML cases so the
+        case ``name`` field surfaces in the UI instead of a concatenated
+        step blob.
         """
         if not tasks:
             raise ValueError('tasks must not be empty')
-        cleaned = [t.strip() for t in tasks if isinstance(t, str) and t.strip()]
-        if not cleaned:
+        if task_names is not None and len(task_names) != len(tasks):
+            raise ValueError(
+                f'task_names ({len(task_names)}) and tasks ({len(tasks)}) '
+                'must have the same length.'
+            )
+        # Pair tasks with names so the post-clean filter drops them together.
+        paired = [
+            (t, task_names[i] if task_names is not None else None)
+            for i, t in enumerate(tasks)
+        ]
+        paired = [
+            (t.strip(), (n.strip() if isinstance(n, str) else n))
+            for (t, n) in paired
+            if isinstance(t, str) and t.strip()
+        ]
+        if not paired:
             raise ValueError('tasks must contain at least one non-empty string')
+        cleaned = [t for (t, _n) in paired]
+        cleaned_names = [n for (_t, n) in paired]
 
         n = len(cleaned)
         concurrency = min(self._max_concurrent, n)
@@ -151,17 +180,21 @@ class FlashExecutor:
             'Flash batch: %d task(s), concurrency=%d', n, concurrency,
         )
 
-        async def _run_one(idx: int, task_text: str) -> Any:
+        async def _run_one(idx: int, task_text: str, name: str | None) -> Any:
             async with sem:
                 return await self._invoke_one(
                     idx=idx,
                     total=n,
                     task_text=task_text,
+                    display_name=name,
                     is_multi=is_multi,
                 )
 
         run_results = await asyncio.gather(
-            *[_run_one(i, t) for i, t in enumerate(cleaned)],
+            *[
+                _run_one(i, t, n)
+                for i, (t, n) in enumerate(zip(cleaned, cleaned_names))
+            ],
         )
 
         statuses = [_derive_case_status(r) for r in run_results]
@@ -169,7 +202,9 @@ class FlashExecutor:
             'passed' if all(s == 'passed' for s in statuses) else 'failed'
         )
 
-        report_path = self._render_report(cleaned, run_results)
+        report_path = self._render_report(
+            cleaned, run_results, display_names=cleaned_names,
+        )
         dataflow_path = self._render_dataflow() if self._save_dataflow else None
 
         total_in = sum(int(getattr(r, 'input_tokens', 0) or 0) for r in run_results)
@@ -188,7 +223,13 @@ class FlashExecutor:
         )
 
     async def _invoke_one(
-        self, *, idx: int, total: int, task_text: str, is_multi: bool,
+        self,
+        *,
+        idx: int,
+        total: int,
+        task_text: str,
+        is_multi: bool,
+        display_name: str | None = None,
     ) -> Any:
         """Run a single task; convert any exception into a synthetic RunResult.
 
@@ -231,8 +272,11 @@ class FlashExecutor:
         # escapes. We set ``tracker.result`` only on the success path; if
         # the runner crashes, the tracker writes ``error=str(exc)`` and
         # ``result=None``, which the frontend renders as "异常中断 / -".
+        # Use display_name as the tracker label when available so concurrent
+        # progress lines show the case name, not the full step blob.
+        tracker_label = display_name if display_name else task_text
         cm = (
-            self._tracker_factory(task_text)
+            self._tracker_factory(tracker_label)
             if self._tracker_factory is not None
             else nullcontext()
         )
@@ -245,6 +289,7 @@ class FlashExecutor:
                     tracker.result = _derive_case_status(result)
             self._dump_case_artifacts(
                 idx=idx, task=task_text, run_result=result,
+                display_name=display_name,
             )
             return result
         except Exception as exc:
@@ -256,14 +301,20 @@ class FlashExecutor:
             # listener never returned a payload.
             self._dump_case_artifacts(
                 idx=idx, task=task_text, run_result=failure_result,
+                display_name=display_name,
             )
             return failure_result
 
     def _dump_case_artifacts(
-        self, *, idx: int, task: str, run_result: Any,
+        self,
+        *,
+        idx: int,
+        task: str,
+        run_result: Any,
+        display_name: str | None = None,
     ) -> None:
-        """Write per-case data + monitor JSONs to ``<report_dir>/tmp/`` as
-        soon as the case finishes.
+        """Write per-case data + monitor JSONs to ``<report_dir>/tmp/`` as soon
+        as the case finishes.
 
         Files are tagged ``case_<n>_<safe>_data.json`` and (when monitoring
         was enabled) ``case_<n>_<safe>_monitor.json``. Used as the source of
@@ -281,6 +332,7 @@ class FlashExecutor:
         try:
             payload = build_case_payload(
                 run_result=run_result, task=task, case_index=idx + 1,
+                display_name=display_name,
             )
         except Exception:
             logger.exception(
@@ -307,7 +359,11 @@ class FlashExecutor:
             )
 
     def _render_report(
-        self, tasks: list[str], run_results: list[Any],
+        self,
+        tasks: list[str],
+        run_results: list[Any],
+        *,
+        display_names: list[str | None] | None = None,
     ) -> str | None:
         from webqa_agent.executor.flash_report_adapter import \
             assemble_aggregated_data_from_tmp
@@ -337,6 +393,15 @@ class FlashExecutor:
             )
             aggregated_data = None
 
+        # ``display_names`` only flows into the in-memory fallback in
+        # render_flash_multi_report; the main path reads display_name from
+        # the per-case tmp JSONs (already populated via build_case_payload).
+        fallback_display_names: list[str] | None = None
+        if display_names is not None:
+            fallback_display_names = [
+                (n if (n and n.strip()) else tasks[i])
+                for i, n in enumerate(display_names)
+            ]
         try:
             return render_flash_multi_report(
                 run_results,
@@ -347,6 +412,7 @@ class FlashExecutor:
                 model=model or None,
                 filter_model=filter_model or None,
                 aggregated_data=aggregated_data,
+                display_names=fallback_display_names,
             )
         except Exception:
             logger.exception('Flash multi-report rendering failed')

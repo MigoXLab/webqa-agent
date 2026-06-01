@@ -58,9 +58,9 @@ def _truncate_safe_name(name: str) -> str:
     """Cap a sanitized case name at :data:`_MAX_SAFE_NAME_CHARS` characters.
 
     Cuts on the last underscore at or after the midpoint when possible so we
-    don't slice through a "word" mid-token; otherwise hard-truncates.
-    Trailing underscores from sanitization are stripped for cleanliness.
-    Returns a non-empty string (falls back to ``'flash_run'``).
+    don't slice through a "word" mid-token; otherwise hard-truncates. Trailing
+    underscores from sanitization are stripped for cleanliness. Returns a non-
+    empty string (falls back to ``'flash_run'``).
     """
     if not name:
         return 'flash_run'
@@ -323,6 +323,7 @@ def run_results_to_aggregated_data(
     language: str = 'zh-CN',
     model: str | None = None,
     filter_model: str | None = None,
+    display_names: list[str] | None = None,
 ) -> dict:
     """Multi-case version of :func:`run_result_to_aggregated_data`.
 
@@ -331,12 +332,22 @@ def run_results_to_aggregated_data(
     ``gen_result``. ``run_results`` and ``tasks`` are zipped positionally
     — they must have the same length.
 
+    ``display_names`` (when provided) overrides the report-facing case
+    label per index; ``tasks`` are still the LLM-facing instructions.
+    Used by the CLI when loading YAML cases so the report shows the case
+    ``name`` field instead of the concatenated step blob.
+
     Used by :class:`webqa_agent.executor.flash_executor.FlashExecutor`
     to render one HTML report containing every concurrent task.
     """
     if len(run_results) != len(tasks):
         raise ValueError(
             f'run_results ({len(run_results)}) and tasks ({len(tasks)}) '
+            'must have the same length.'
+        )
+    if display_names is not None and len(display_names) != len(tasks):
+        raise ValueError(
+            f'display_names ({len(display_names)}) and tasks ({len(tasks)}) '
             'must have the same length.'
         )
     if not run_results:
@@ -361,6 +372,9 @@ def run_results_to_aggregated_data(
             task=task,
             case_index=idx,
             now_iso=now_iso,
+            display_name=(
+                display_names[idx - 1] if display_names is not None else None
+            ),
         )
         gen_block[payload['case_key']] = payload['case_entry']
         # The React frontend's ``loadMonitorData`` looks for a sibling key
@@ -412,6 +426,7 @@ def build_case_payload(
     task: str,
     case_index: int,
     now_iso: str | None = None,
+    display_name: str | None = None,
 ) -> dict[str, Any]:
     """Build a per-case payload for one ``RunResult``.
 
@@ -429,12 +444,16 @@ def build_case_payload(
                              callers feed these into the session start/end
                              aggregation in :func:`build_index_entry`.
 
+    ``display_name`` (when non-empty) overrides the report-facing label;
+    ``task`` is still forwarded to the LLM. See :func:`_build_case_entry`.
+
     Pure dict construction — safe to call from concurrent worker threads.
     """
     now_iso = now_iso or datetime.now().isoformat(timespec='seconds')
     case_key, case_entry, gen_entry, summary_text = _build_case_entry(
         run_result=run_result, task=task,
         case_index=case_index, now_iso=now_iso,
+        display_name_override=display_name,
     )
 
     monitor_entry: dict[str, Any] | None = None
@@ -486,7 +505,8 @@ def build_index_entry(
     session_start_ts: float | None,
     session_end_ts: float | None,
 ) -> dict[str, Any]:
-    """Build the ``index`` entry of the gen block from already-aggregated stats.
+    """Build the ``index`` entry of the gen block from already-aggregated
+    stats.
 
     Split out so both the in-memory path
     (:func:`run_results_to_aggregated_data`) and the disk-pipeline path
@@ -575,9 +595,17 @@ def _build_case_entry(
     task: str,
     case_index: int,
     now_iso: str,
+    display_name_override: str | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any], str]:
     """Build (case_key, case_entry, gen_result_entry, summary_text) for one
-    run."""
+    run.
+
+    ``display_name_override`` decouples the report-facing case label from
+    ``task`` (the LLM-facing instruction). The CLI uses this when loading
+    YAML cases: ``task`` holds the concatenated steps that the agent
+    executes, while ``display_name_override`` carries the case ``name``
+    field so reports show it verbatim instead of a long step blob.
+    """
     raw_steps = list(getattr(run_result, 'steps', None) or [])
     step_dicts: list[dict] = [
         _map_step_dict(i, step) for i, step in enumerate(raw_steps, start=1)
@@ -592,7 +620,10 @@ def _build_case_entry(
         aborted=aborted, failed_count=failed_count, outcome=outcome,
     )
 
-    display_name = (task or 'Flash run').strip()
+    if display_name_override is not None and display_name_override.strip():
+        display_name = display_name_override.strip()
+    else:
+        display_name = (task or 'Flash run').strip()
     # ``display_name`` stays intact for the UI (full task text). ``safe_name``
     # is what feeds into filenames and dict keys downstream, so we cap it —
     # see :func:`_truncate_safe_name`. ``case_id`` already guarantees per-case
@@ -830,7 +861,8 @@ def assemble_aggregated_data_from_tmp(
     filter_model: str | None = None,
     write_test_results_json: bool = True,
 ) -> dict[str, Any]:
-    """Reconstruct ``aggregated_data`` from per-case JSONs in ``<report_dir>/tmp/``.
+    """Reconstruct ``aggregated_data`` from per-case JSONs in
+    ``<report_dir>/tmp/``.
 
     Reads every ``case_<n>_<safe>_data.json`` (and the matching
     ``_monitor.json`` if present), orders by case index, builds the index

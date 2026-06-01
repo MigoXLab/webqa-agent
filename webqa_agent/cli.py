@@ -4,6 +4,7 @@
 import argparse
 import asyncio
 import os
+import signal
 import sys
 import traceback
 from datetime import datetime
@@ -162,6 +163,7 @@ async def execute_cc_mini_mode(
     extensions: Any = None,
     filter_model: str | None = None,
     enable_monitor: bool = False,
+    monitor_ignore_rules: dict | None = None,
 ):
     """Execute one cc-mini run without blocking the main event loop.
 
@@ -218,11 +220,67 @@ async def execute_cc_mini_mode(
         on_event=on_event,
         filter_model=filter_model,
         enable_monitor=enable_monitor,
+        monitor_ignore_rules=monitor_ignore_rules,
         **extension_kwargs,
     )
 
 
 _execute_cc_mini_mode = execute_cc_mini_mode
+
+
+def _format_case_step(index: int, step) -> str | None:
+    """Render one YAML case step as a single instruction line for Flash.
+
+    Two shapes accepted:
+      * Dict form: ``action:`` / ``verify:`` keys with optional ``args:`` —
+        rendered as ``"<i>. <kind>: <text> (args: k=v, ...)"``.
+      * Plain string: a free-form merged instruction (the writing style
+        used in newer cases where action+verify are pre-merged) — rendered
+        as ``"<i>. <text>"``.
+    Anything else (None, list, etc.) is skipped.
+    """
+    if isinstance(step, str):
+        text = step.strip()
+        return f'{index}. {text}' if text else None
+    if not isinstance(step, dict):
+        return None
+    for kind in ('action', 'verify'):
+        text = step.get(kind)
+        if text is None:
+            continue
+        line = f'{index}. {kind}: {str(text).strip()}'
+        args = step.get('args')
+        if isinstance(args, dict) and args:
+            args_str = ', '.join(f'{k}={v}' for k, v in args.items())
+            line += f' (args: {args_str})'
+        return line
+    return None
+
+
+def _cases_to_flash_tasks(cases: list) -> tuple[list[str], list[str]]:
+    """Convert a Run-mode ``cases:`` list into Flash (task, name) lists.
+
+    The task string concatenates every step in the case so the Flash agent
+    sees one instruction per case. The case ``name`` is returned separately
+    so the report shows it verbatim (instead of the step blob).
+    """
+    tasks: list[str] = []
+    names: list[str] = []
+    for idx, case in enumerate(cases, start=1):
+        if not isinstance(case, dict):
+            continue
+        steps = case.get('steps') or []
+        lines = [
+            line for line in (
+                _format_case_step(i, step)
+                for i, step in enumerate(steps, start=1)
+            ) if line is not None
+        ]
+        if not lines:
+            continue
+        tasks.append('\n'.join(lines))
+        names.append(str(case.get('name') or f'Case {idx}').strip())
+    return tasks, names
 
 
 def _resolve_cc_mini_report_dir(*, cfg: dict, run_timestamp: str | None) -> str:
@@ -385,10 +443,38 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
         sys.exit(1)
 
     if use_flash:
-        # Normalize tasks: accept either a single string (legacy) or a list of
-        # strings (new — concurrent batch). Whitespace-only entries are dropped
-        # so a stray blank line in YAML doesn't waste a worker slot.
-        if isinstance(business_objectives, str):
+        # Task-input shapes supported (first non-empty wins):
+        #   1. Top-level `cases:` (Run-mode YAML) — each case's steps are
+        #      concatenated into one instruction; `name` becomes the report
+        #      label.
+        #   2. `test_config.business_objectives` as a list of case-dicts
+        #      ({name, steps}) — same conversion as `cases:`, lets users
+        #      keep their existing YAML key.
+        #   3. `test_config.business_objectives` as a string or list of
+        #      strings — legacy free-text tasks.
+        task_names: list[str] | None = None
+        raw_cases = cfg.get('cases')
+        if isinstance(raw_cases, list) and raw_cases:
+            tasks, task_names = _cases_to_flash_tasks(raw_cases)
+            if not tasks:
+                print('❌ cases: provided but no case yielded any steps', file=sys.stderr)
+                sys.exit(1)
+            print(f'📋 Loaded {len(tasks)} case(s) from cases:')
+        elif isinstance(business_objectives, list) and any(
+            isinstance(t, dict) for t in business_objectives
+        ):
+            tasks, task_names = _cases_to_flash_tasks(business_objectives)
+            if not tasks:
+                print(
+                    '❌ test_config.business_objectives provided as case-dicts '
+                    'but no case yielded any steps',
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            print(
+                f'📋 Loaded {len(tasks)} case(s) from test_config.business_objectives'
+            )
+        elif isinstance(business_objectives, str):
             tasks = [business_objectives.strip()] if business_objectives.strip() else []
         elif isinstance(business_objectives, list):
             tasks = [
@@ -397,13 +483,13 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
             ]
         else:
             print(
-                '❌ test_config.business_objectives must be a string or list of '
-                f'strings, got {type(business_objectives).__name__}',
+                '❌ test_config.business_objectives must be a string, list of '
+                f'strings, or list of case-dicts, got {type(business_objectives).__name__}',
                 file=sys.stderr,
             )
             sys.exit(1)
         if not tasks:
-            print('❌ test_config.business_objectives is required when engine is flash', file=sys.stderr)
+            print('❌ Provide either `cases:` or `test_config.business_objectives` for flash engine', file=sys.stderr)
             sys.exit(1)
 
         run_timestamp = (
@@ -457,7 +543,9 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
         print(f'🌐 Flash URL: {target_url}')
         print(f'📝 Flash Tasks: {len(tasks)} (concurrency={max_concurrent})')
         for i, t in enumerate(tasks, start=1):
-            print(f'   {i}. {t}')
+            label = task_names[i - 1] if task_names is not None else t
+            preview = label if len(label) <= 80 else label[:77] + '...'
+            print(f'   {i}. {preview}')
         print(f'🤖 Flash LLM Provider: {provider}')
         print('-' * 60, flush=True)
 
@@ -552,6 +640,7 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
                 extensions=cc_mini_extensions,
                 filter_model=llm_config.filter_model,
                 enable_monitor=save_monitor,
+                monitor_ignore_rules=cfg.get('ignore_rules'),
             ),
             max_concurrent=max_concurrent,
             report_dir=resolved_report_dir,
@@ -565,7 +654,7 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
         prev_report_ts = os.environ.get('WEBQA_REPORT_TIMESTAMP')
         os.environ['WEBQA_REPORT_TIMESTAMP'] = run_timestamp
         try:
-            batch = await executor.execute(tasks)
+            batch = await executor.execute(tasks, task_names=task_names)
         except Exception:
             # Only infrastructure-level failure (e.g. ResultAggregator crash)
             # reaches here; per-task crashes are absorbed inside the executor.
@@ -591,7 +680,8 @@ async def execute_gen_mode(cfg, config_path: str | None = None, workers: int = 1
         )
         for i, (task_text, status) in enumerate(zip(tasks, batch.statuses), start=1):
             icon = {'passed': '✅', 'warning': '⚠️ ', 'failed': '❌'}.get(status, '❌')
-            preview = task_text if len(task_text) <= 60 else task_text[:57] + '...'
+            label = task_names[i - 1] if task_names is not None else task_text
+            preview = label if len(label) <= 60 else label[:57] + '...'
             print(f'   case-{i} {icon} {status:<7}  {preview}')
 
         # Surface extension-loading failures from any case. Each result keeps
@@ -891,9 +981,16 @@ def cmd_gen(args):
 
     print(f'📂 Using config: {config_path}')
     cfg = load_yaml(config_path)
+    # Record the YAML location so downstream resolvers (cookies_file,
+    # accounts.cookies_file, etc.) can resolve relative paths against the
+    # config's directory — matching `cmd_run`'s behaviour via load_yaml_files.
+    cfg['_source_file'] = config_path
 
-    if 'test_config' not in cfg:
-        print('❌ Gen mode requires "test_config" field in configuration', file=sys.stderr)
+    # Gen mode accepts either `test_config` (AI-driven, business_objectives)
+    # or `cases:` (Run-mode YAML, executed on the Flash engine — each case's
+    # steps are concatenated into a single instruction for the agent).
+    if 'test_config' not in cfg and 'cases' not in cfg:
+        print('❌ Gen mode requires "test_config" or "cases" field in configuration', file=sys.stderr)
         print('💡 Create a Gen mode config: webqa-agent init', file=sys.stderr)
         sys.exit(1)
 
@@ -1034,8 +1131,60 @@ Documentation: https://github.com/MigoXLab/webqa-agent
     return parser
 
 
+def _install_shutdown_handlers() -> None:
+    """Install SIGINT/SIGTERM/SIGHUP handlers that reap MCP subprocess trees.
+
+    Why this exists: ``run_cc_mini`` executes inside ``asyncio.to_thread`` so
+    its own signal handlers (registered via :func:`signal.signal`) can't be
+    installed — Python only allows that on the main thread. Meanwhile MCP
+    subprocesses launch with ``start_new_session=True`` (their own process
+    group), so a plain Python interpreter exit does NOT bring down
+    chrome-devtools-mcp and Chrome. The result was orphan Chromes holding
+    port 9222 across runs.
+
+    Approach:
+
+    * First signal — walk the live MCPManager registry and call
+      ``shutdown_all`` on each (graceful close → SIGTERM → SIGKILL on the
+      whole subprocess group, see ``MCPServer._kill_process_group``).
+    * Then ``os._exit(128+signum)`` — skips the join on non-daemon
+      ThreadPoolExecutor workers that would otherwise block the interpreter
+      until ``run_cc_mini`` finishes naturally.
+    * Second signal arriving mid-cleanup — hard-exit immediately so a stuck
+      cleanup can't trap a user who Ctrl-C's again.
+    """
+    state = {'cleaning': False}
+
+    def _handler(signum: int, _frame: Any) -> None:
+        if state['cleaning']:
+            os._exit(128 + signum)
+        state['cleaning'] = True
+        print(
+            f'\n⚠️  Received signal {signum}; shutting down MCP servers '
+            '(Ctrl-C again to force-kill)...',
+            file=sys.stderr,
+            flush=True,
+        )
+        try:
+            from webqa_agent.executor.flash.core.mcp_client import \
+                shutdown_all_active_managers
+            shutdown_all_active_managers()
+        except Exception as exc:
+            print(f'cleanup error: {exc}', file=sys.stderr)
+        os._exit(128 + signum)
+
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        try:
+            signal.signal(sig, _handler)
+        except (OSError, ValueError):
+            # SIGHUP missing on Windows; signal.signal restricted in some
+            # embedded contexts. Skip and continue — best effort.
+            pass
+
+
 def main():
     """Main entry point for the CLI."""
+    _install_shutdown_handlers()
     parser = create_parser()
     args = parser.parse_args()
 

@@ -27,6 +27,7 @@ import signal
 import subprocess
 import threading
 import time
+import weakref
 from collections import deque
 from dataclasses import dataclass
 from typing import Any, Iterable
@@ -34,6 +35,33 @@ from typing import Any, Iterable
 from .tool import Tool, ToolResult
 
 _log = logging.getLogger('cc_mini.mcp')
+
+# Process-wide registry of every live MCPManager. The CLI's signal handler
+# (installed in webqa_agent/cli.py::main) walks this on Ctrl-C / SIGTERM to
+# kill child subprocess trees that would otherwise outlive the Python
+# interpreter — chrome-devtools-mcp spawns Chrome with start_new_session=True
+# so the children are in their own process group and survive ordinary
+# parent-death, which is the root cause of "9222 already in use" errors on
+# subsequent runs.
+_ACTIVE_MANAGERS: 'weakref.WeakSet[MCPManager]' = weakref.WeakSet()
+_ACTIVE_MANAGERS_LOCK = threading.Lock()
+
+
+def shutdown_all_active_managers() -> None:
+    """Synchronously shut down every still-live MCPManager.
+
+    Safe to call from signal handlers — each manager's shutdown delegates to
+    ``MCPServer.shutdown`` which sends graceful close → SIGTERM → SIGKILL
+    to the whole subprocess group (see :meth:`MCPServer._kill_process_group`).
+    Exceptions are swallowed so one stuck server can't block the others.
+    """
+    with _ACTIVE_MANAGERS_LOCK:
+        managers = list(_ACTIVE_MANAGERS)
+    for mgr in managers:
+        try:
+            mgr.shutdown_all()
+        except Exception as exc:
+            _log.warning('shutdown_all_active_managers: %s failed: %s', mgr, exc)
 
 # Known-benign stderr patterns from upstream MCP servers. Each pattern matches
 # harmless diagnostic output that would otherwise flood the DEBUG log
@@ -584,6 +612,11 @@ class MCPManager:
         # Accepts MCPServerConfig-likes: attributes name, command, args, env.
         self._configs = list(server_configs)
         self._servers: dict[str, MCPServer] = {}
+        # Register so the CLI's signal handler can find and kill us on
+        # Ctrl-C. WeakSet means we vanish from the registry automatically
+        # when the last strong ref is dropped — no manual unregister needed.
+        with _ACTIVE_MANAGERS_LOCK:
+            _ACTIVE_MANAGERS.add(self)
 
     def start_and_collect_tools(self) -> list[Tool]:
         if not self._configs:
